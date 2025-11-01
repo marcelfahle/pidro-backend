@@ -656,16 +656,18 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "raises FunctionClauseError when first argument is not a GameState" do
+      # These intentionally pass invalid types to test error handling
+      # Using apply/3 to bypass compile-time type checking
       assert_raise FunctionClauseError, fn ->
-        GameState.update(%{}, :phase, :dealing)
+        apply(GameState, :update, [%{}, :phase, :dealing])
       end
 
       assert_raise FunctionClauseError, fn ->
-        GameState.update(nil, :phase, :dealing)
+        apply(GameState, :update, [nil, :phase, :dealing])
       end
 
       assert_raise FunctionClauseError, fn ->
-        GameState.update("not a state", :phase, :dealing)
+        apply(GameState, :update, ["not a state", :phase, :dealing])
       end
     end
   end
