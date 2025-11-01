@@ -19,7 +19,10 @@ defmodule Pidro.IEx do
   ## Demo Games
 
       iex> demo_game()
-      # Runs a full automated demo game
+      # Runs a partial demo (bidding, trump, 3 tricks)
+
+      iex> full_demo_game()
+      # Plays complete game(s) until a team wins
 
   ## Available Functions
 
@@ -27,7 +30,8 @@ defmodule Pidro.IEx do
   - `show_legal_actions/2` - Display available actions for a position
   - `step/3` - Apply an action and pretty print result
   - `new_game/0` - Create a new game with dealer selection complete
-  - `demo_game/0` - Run a sample game demonstration
+  - `demo_game/0` - Run a partial game demonstration
+  - `full_demo_game/0` - Play complete game to 62 points
   """
 
   alias Pidro.Core.{Types, Card, GameState, Deck}
@@ -269,6 +273,36 @@ defmodule Pidro.IEx do
     IO.puts("#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n")
 
     state
+  end
+
+  @doc """
+  Plays a complete Pidro game from start to finish.
+
+  Unlike `demo_game/0` which stops after a few tricks, this function plays
+  through all phases of each hand and continues until one team reaches
+  the winning score (default: 62 points).
+
+  ## Returns
+
+  Final `GameState.t()` with phase `:complete` and a winner declared.
+
+  ## Examples
+
+      iex> final_state = Pidro.IEx.full_demo_game()
+      # Plays complete game(s) with automated moves until winner
+      iex> final_state.phase
+      :complete
+      iex> final_state.winner
+      :north_south  # or :east_west
+  """
+  @spec full_demo_game() :: Types.GameState.t()
+  def full_demo_game do
+    IO.puts("\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts("#{bright()}#{magenta()}         FULL PIDRO GAME - PLAYING TO 62 POINTS#{reset()}")
+    IO.puts("#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n")
+
+    state = new_game()
+    play_until_complete(state)
   end
 
   # =============================================================================
@@ -613,4 +647,214 @@ defmodule Pidro.IEx do
     IO.puts("\n#{faint()}[Press Enter to continue]#{reset()}")
     IO.gets("")
   end
+
+  # =============================================================================
+  # Full Game Loop
+  # =============================================================================
+
+  defp play_until_complete(%Types.GameState{phase: :complete} = state) do
+    IO.puts("\n#{bright()}#{green()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts("#{bright()}#{green()}         GAME OVER!#{reset()}")
+    IO.puts("#{bright()}#{green()}═══════════════════════════════════════════════════════════#{reset()}\n")
+    
+    IO.puts("#{bright()}Winner: #{format_team(state.winner)}#{reset()}")
+    IO.puts("\n#{bright()}Final Scores:#{reset()}")
+    IO.puts("  North/South: #{state.cumulative_scores.north_south}")
+    IO.puts("  East/West: #{state.cumulative_scores.east_west}")
+    IO.puts("\n#{bright()}Hands Played: #{state.hand_number}#{reset()}")
+    
+    state
+  end
+
+  defp play_until_complete(state) do
+    IO.puts("\n#{bright()}#{cyan()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts("#{bright()}#{cyan()}         HAND ##{state.hand_number}#{reset()}")
+    IO.puts("#{bright()}#{cyan()}═══════════════════════════════════════════════════════════#{reset()}")
+    
+    # Play one complete hand
+    state = play_complete_hand(state)
+    
+    # Show hand results
+    if state.phase != :complete do
+      IO.puts("\n#{bright()}Hand ##{state.hand_number - 1} Complete#{reset()}")
+      IO.puts("#{bright()}Scores:#{reset()}")
+      IO.puts("  North/South: #{state.cumulative_scores.north_south}")
+      IO.puts("  East/West: #{state.cumulative_scores.east_west}")
+    end
+    
+    # Continue to next hand
+    play_until_complete(state)
+  end
+
+  defp play_complete_hand(state) do
+    # Play through all phases until scoring or complete
+    play_hand_loop(state)
+  end
+
+  defp play_hand_loop(%Types.GameState{phase: phase} = state) when phase in [:scoring, :complete] do
+    # Hand is over, trigger scoring if needed
+    if phase == :scoring do
+      play_scoring_phase(state)
+    else
+      state
+    end
+  end
+
+  defp play_hand_loop(state) do
+    # Handle current phase
+    new_state = case state.phase do
+      :bidding -> play_bidding_phase(state)
+      :declaring -> play_trump_phase(state)
+      :discarding -> play_discard_phase(state)
+      :second_deal -> play_second_deal_phase(state)
+      :playing -> play_all_tricks(state)
+      _ -> state
+    end
+
+    # Continue if phase changed
+    if new_state.phase != state.phase or new_state.phase == :playing do
+      play_hand_loop(new_state)
+    else
+      new_state
+    end
+  end
+
+  defp play_bidding_phase(%Types.GameState{phase: :bidding} = state) do
+    IO.puts("\n#{bright()}Bidding...#{reset()}")
+    pause()
+    positions = get_bidding_order(state.current_dealer)
+    
+    Enum.reduce(positions, state, fn pos, acc_state ->
+      if acc_state.phase != :bidding do
+        acc_state
+      else
+        actions = Engine.legal_actions(acc_state, pos)
+        
+        if actions == [] do
+          acc_state
+        else
+          action = if length(actions) > 2 and :rand.uniform(10) > 3 do
+            bid_actions = Enum.filter(actions, fn
+              {:bid, _} -> true
+              _ -> false
+            end)
+            if bid_actions != [], do: Enum.random(bid_actions), else: hd(actions)
+          else
+            hd(actions)
+          end
+          
+          IO.puts("  #{format_position(pos)}: #{format_action(action, acc_state)}")
+          
+          case Engine.apply_action(acc_state, pos, action) do
+            {:ok, new_state} -> new_state
+            {:error, _} -> acc_state
+          end
+        end
+      end
+    end)
+  end
+
+  defp play_bidding_phase(state), do: state
+
+  defp play_trump_phase(%Types.GameState{phase: :declaring, highest_bid: {pos, _}} = state) do
+    IO.puts("\n#{bright()}Trump Declaration...#{reset()}")
+    pause()
+    
+    # Pick a random trump suit
+    trump_suit = Enum.random([:hearts, :diamonds, :clubs, :spades])
+    
+    IO.puts("  #{format_position(pos)}: Declare #{format_suit(trump_suit)}")
+    
+    case Engine.apply_action(state, pos, {:declare_trump, trump_suit}) do
+      {:ok, new_state} -> new_state
+      {:error, _} -> state
+    end
+  end
+
+  defp play_trump_phase(state), do: state
+
+  defp play_discard_phase(%Types.GameState{phase: :discarding} = state) do
+    IO.puts("\n#{bright()}Discarding non-trumps (automatic)...#{reset()}")
+    # Discarding phase was already handled - state should have auto-transitioned
+    # This shouldn't be called, but if it is, just return state
+    state
+  end
+
+  defp play_discard_phase(state), do: state
+
+  defp play_second_deal_phase(%Types.GameState{phase: :second_deal} = state) do
+    IO.puts("\n#{bright()}Second deal...#{reset()}")
+    pause()
+    
+    case Engine.apply_action(state, state.current_dealer, :deal_second) do
+      {:ok, new_state} -> new_state
+      {:error, _} -> state
+    end
+  end
+
+  defp play_second_deal_phase(state), do: state
+
+  defp play_all_tricks(%Types.GameState{phase: :playing} = state) do
+    IO.puts("\n#{bright()}Playing tricks...#{reset()}")
+    pause()
+    play_all_tricks_loop(state, 1)
+  end
+
+  defp play_all_tricks(state), do: state
+
+  defp play_all_tricks_loop(%Types.GameState{phase: :playing} = state, trick_num) do
+    IO.puts("\n  #{cyan()}Trick ##{trick_num}#{reset()}")
+    state = play_one_complete_trick(state)
+    
+    if state.phase == :playing do
+      play_all_tricks_loop(state, trick_num + 1)
+    else
+      state
+    end
+  end
+
+  defp play_all_tricks_loop(state, _), do: state
+
+  defp play_one_complete_trick(%Types.GameState{phase: :playing} = state) do
+    # Play 4 cards (or until all players eliminated)
+    play_trick_cards(state, 4)
+  end
+
+  defp play_trick_cards(state, 0), do: state
+
+  defp play_trick_cards(%Types.GameState{phase: :playing, current_turn: turn} = state, cards_left) when turn != nil do
+    actions = Engine.legal_actions(state, turn)
+    
+    if actions == [] do
+      state
+    else
+      action = Enum.random(actions)
+      IO.puts("    #{format_position(turn)}: #{format_action(action, state)}")
+      
+      case Engine.apply_action(state, turn, action) do
+        {:ok, new_state} ->
+          if new_state.phase == :playing do
+            play_trick_cards(new_state, cards_left - 1)
+          else
+            new_state
+          end
+        {:error, _} ->
+          play_trick_cards(state, cards_left - 1)
+      end
+    end
+  end
+
+  defp play_trick_cards(state, _), do: state
+
+  defp play_scoring_phase(%Types.GameState{phase: :scoring} = state) do
+    IO.puts("\n#{bright()}Scoring hand...#{reset()}")
+    pause()
+    
+    case Engine.apply_action(state, :system, :score_hand) do
+      {:ok, new_state} -> new_state
+      {:error, _} -> state
+    end
+  end
+
+  defp play_scoring_phase(state), do: state
 end
