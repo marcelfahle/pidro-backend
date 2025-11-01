@@ -192,9 +192,13 @@ defmodule Pidro.Core.Types do
   typedstruct module: Bid do
     @moduledoc """
     Represents a bid made by a player.
+
+    The amount can be:
+    - A numeric bid (6-14)
+    - `:pass` to indicate the player passed
     """
     field :position, Pidro.Core.Types.position(), enforce: true
-    field :amount, Pidro.Core.Types.bid_amount(), enforce: true
+    field :amount, Pidro.Core.Types.bid_amount() | :pass, enforce: true
     field :timestamp, integer(), default: 0
   end
 
