@@ -5,6 +5,8 @@ defmodule Pidro.Core.GameStateTest do
   alias Pidro.Core.Types.GameState, as: GameStateStruct
   alias Pidro.Core.Types.Player
 
+  @dialyzer :no_match
+
   describe "new/0" do
     test "creates initial state in :dealer_selection phase" do
       state = GameState.new()

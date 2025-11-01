@@ -488,24 +488,29 @@ defmodule Pidro.IEx do
       # Get legal actions
       actions = Engine.legal_actions(acc_state, pos)
 
-      # Make a random bid (favor bidding over passing early)
-      action = if length(actions) > 2 and :rand.uniform(10) > 3 do
-        # Pick a random bid (not pass)
-        bid_actions = Enum.filter(actions, fn
-          {:bid, _} -> true
-          _ -> false
-        end)
-        Enum.random(bid_actions || [hd(actions)])
+      # Skip if no actions available (shouldn't happen during bidding)
+      if actions == [] do
+        acc_state
       else
-        # Pass or pick first action
-        hd(actions)
-      end
+        # Make a random bid (favor bidding over passing early)
+        action = if length(actions) > 2 and :rand.uniform(10) > 3 do
+          # Pick a random bid (not pass)
+          bid_actions = Enum.filter(actions, fn
+            {:bid, _} -> true
+            _ -> false
+          end)
+          if bid_actions != [], do: Enum.random(bid_actions), else: hd(actions)
+        else
+          # Pass or pick first action
+          hd(actions)
+        end
 
-      IO.puts("  #{format_position(pos)}: #{format_action(action, acc_state)}")
+        IO.puts("  #{format_position(pos)}: #{format_action(action, acc_state)}")
 
-      case Engine.apply_action(acc_state, pos, action) do
-        {:ok, new_state} -> new_state
-        {:error, _} -> acc_state
+        case Engine.apply_action(acc_state, pos, action) do
+          {:ok, new_state} -> new_state
+          {:error, _} -> acc_state
+        end
       end
     end)
 
