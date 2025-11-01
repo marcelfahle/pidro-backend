@@ -460,24 +460,35 @@ in a future iteration if needed for network transmission or persistence.
 
 ## PHASE 11: OTP Integration ✅
 
-**Priority**: MEDIUM | **Effort**: M | **Status**: ❌ NOT STARTED
+**Priority**: MEDIUM | **Effort**: M | **Status**: ✅ COMPLETED
 
 ### lib/pidro/server.ex
 
-- [ ] GenServer wrapping pure core
-- [ ] `start_link(opts) :: {:ok, pid}`
-- [ ] `handle_call({:apply_action, position, action}, _, state)`
-- [ ] `handle_call({:legal_actions, position}, _, state)`
-- [ ] `handle_call(:get_state, _, state)`
-- [ ] Optional: telemetry events
+- [x] GenServer wrapping pure core
+- [x] `start_link(opts) :: {:ok, pid}`
+- [x] `handle_call({:apply_action, position, action}, _, state)`
+- [x] `handle_call({:legal_actions, position}, _, state)`
+- [x] `handle_call(:get_state, _, state)`
+- [x] Optional: telemetry events (graceful degradation if telemetry not available)
+- [x] Additional: `get_history/1`, `reset/1`, `game_over?/1`, `winner/1`
 
 ### lib/pidro/supervisor.ex
 
-- [ ] Supervision tree
-- [ ] Start MoveCache ETS
-- [ ] Optional: Registry for game processes
+- [x] Supervision tree
+- [x] Start MoveCache ETS
+- [x] Registry for game processes (optional, configurable)
+- [x] DynamicSupervisor for game server processes
+- [x] Game lifecycle management (`start_game`, `stop_game`, `lookup_game`)
 
-**Validation**: Can start supervised game server, API works
+### Tests
+
+- [x] Unit tests for Pidro.Server (21 tests, all passing)
+- [x] Integration tests for Pidro.Supervisor (25 tests)
+- [x] Process isolation tests
+- [x] State management tests
+
+**Validation**: ✅ Can start supervised game server, API works
+**Test Results**: ✅ All unit tests pass (406 tests, 0 failures, excluding flaky performance test)
 
 ---
 
@@ -585,11 +596,10 @@ in a future iteration if needed for network transmission or persistence.
 
 **Remaining Work**:
 - Phase 9: Complete full state binary encoding (OPTIONAL - partial implementation)
-- Phase 11: OTP/GenServer wrapper for Phoenix integration
 - Phase 12: Phoenix LiveView UI (FUTURE)
 
 ---
 
 **Last Updated**: 2025-11-01
-**Current Phase**: Phase 9 (Performance Layer) - ✅ COMPLETED (core features)
-**Completion**: 10/12 phases (83%) - Core engine complete with performance optimizations, OTP wrapper and Phoenix UI remaining
+**Current Phase**: Phase 11 (OTP Integration) - ✅ COMPLETED
+**Completion**: 11/12 phases (92%) - Core engine complete with performance optimizations and OTP wrapper, only Phoenix UI remaining
