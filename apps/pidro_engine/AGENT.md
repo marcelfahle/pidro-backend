@@ -110,28 +110,27 @@ When a player wins a trick containing the 2 of trump, they keep 1 point for them
 
 ```
 lib/pidro/
-├── core/                    # Core data structures
-│   ├── types.ex            # Type definitions
+├── core/                    # Core data structures (Phase 0-1)
+│   ├── types.ex            # Type definitions and helper functions
 │   ├── card.ex             # Card operations (trump logic, ranking)
 │   ├── deck.ex             # Deck operations (shuffle, deal)
 │   ├── player.ex           # Player state
 │   ├── trick.ex            # Trick-taking logic
 │   └── gamestate.ex        # Game state container
-├── game/                    # Game logic (Phase 2+)
+├── game/                    # Game logic (Phase 2-7)
 │   ├── engine.ex           # Main game engine API
 │   ├── state_machine.ex    # Phase transitions
 │   ├── bidding.ex          # Bidding logic
-│   ├── dealing.ex          # Card dealing
-│   ├── trump.ex            # Trump declaration
-│   ├── discard.ex          # Discard phase
+│   ├── dealing.ex          # Card dealing and dealer selection
+│   ├── trump.ex            # Trump declaration and utilities
+│   ├── discard.ex          # Discard and second deal
 │   ├── play.ex             # Trick-taking gameplay
-│   └── scoring.ex          # Scoring logic
-├── finnish/                 # Finnish variant specifics
+│   └── errors.ex           # Error handling and formatting
+├── finnish/                 # Finnish variant specifics (Phase 7)
 │   ├── rules.ex            # Finnish rule validation
-│   ├── scorer.ex           # Finnish scoring rules
-│   └── engine.ex           # Finnish-specific engine wrapper
-└── notation/                # Game notation (Phase 8)
-    └── pgn.ex              # PGN-like notation system
+│   └── scorer.ex           # Finnish scoring rules
+├── iex.ex                   # IEx interactive helpers (Phase 10)
+└── pidro_engine.ex          # Public API module
 
 test/
 ├── unit/                    # Unit tests for modules
@@ -144,19 +143,20 @@ test/
 
 ## Development Workflow
 
-### Current Status (as of Phase 1)
-Phase 0 and Phase 1 are complete:
+### Current Status
+Phases 0-7 and 10 are complete:
 - Project scaffold with all dependencies
 - Core types (Card, Deck, Player, Trick, GameState)
-- Property-based tests for deck and card operations
-- All wrong 5 logic implemented and tested
-
-### Next Steps (Phase 2+)
 - State machine and game engine API
-- Bidding system
-- Trump declaration and discard phase
-- Trick-taking gameplay
-- Scoring system
+- Bidding, trump declaration, discarding
+- Trick-taking gameplay and scoring
+- IEx interactive helpers for testing
+- Full game is playable in IEx console
+
+### Remaining Work
+- Phase 8: Event sourcing and notation (optional)
+- Phase 9: Performance optimizations (optional)
+- Phase 11: OTP/GenServer wrapper (future)
 
 ### Development Cycle
 1. Read the phase requirements in `_masterplan.md`
@@ -218,7 +218,34 @@ card_generator =
 iex -S mix
 ```
 
-### Common IEx Commands
+### Playing a Game Interactively
+
+```elixir
+# Import IEx helpers
+import Pidro.IEx
+
+# Start a new game (dealer selected, cards dealt)
+state = new_game()
+
+# View the game state with pretty formatting
+pretty_print(state)
+
+# Check legal actions for a player
+show_legal_actions(state, :north)
+
+# Apply an action (returns {:ok, new_state} or {:error, reason})
+{:ok, state} = step(state, :north, {:bid, 10})
+
+# Continue playing...
+show_legal_actions(state, :east)
+{:ok, state} = step(state, :east, :pass)
+
+# Run a full demo game
+demo_game()
+```
+
+### Low-Level Testing Commands
+
 ```elixir
 # Create a card
 card = Pidro.Core.Card.new(14, :hearts)
@@ -238,8 +265,15 @@ player = Pidro.Core.Player.new(:north, :north_south)
 # Add cards to player's hand
 player = Pidro.Core.Player.add_cards(player, cards)
 
+# Use the engine directly
+alias Pidro.Game.Engine
+state = Pidro.Core.GameState.new()
+{:ok, state} = Pidro.Game.Dealing.select_dealer(state)
+{:ok, state} = Engine.apply_action(state, :north, {:bid, 10})
+
 # Reload modules after changes
 r Pidro.Core.Card
+r Pidro.Game.Engine
 ```
 
 ---
@@ -290,6 +324,28 @@ Current focus: Correctness first, performance later.
 
 ---
 
+## Quick Reference: Game Testing Commands
+
+```bash
+# Run all tests
+mix test
+
+# Run IEx to play a game
+iex -S mix
+
+# In IEx:
+import Pidro.IEx
+state = new_game()
+pretty_print(state)
+show_legal_actions(state, :north)
+{:ok, state} = step(state, :north, {:bid, 10})
+
+# Run a demo game
+demo_game()
+```
+
+---
+
 **Last Updated**: 2025-11-01
-**Current Phase**: Phase 1 Complete, Phase 2 Next
-**Status**: Core types implemented and tested
+**Current Phase**: Phases 0-7, 10 Complete
+**Status**: Full game playable in IEx
