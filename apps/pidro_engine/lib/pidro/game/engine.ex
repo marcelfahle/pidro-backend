@@ -280,14 +280,22 @@ defmodule Pidro.Game.Engine do
   end
 
   # Declaring Phase
-  defp dispatch_action(%Types.GameState{phase: :declaring} = state, _position, {:declare_trump, suit}) do
+  defp dispatch_action(
+         %Types.GameState{phase: :declaring} = state,
+         _position,
+         {:declare_trump, suit}
+       ) do
     Trump.declare_trump(state, suit)
   end
 
   # Discarding Phase
   # Note: Discarding is automatic in Finnish Pidro (all non-trumps are discarded)
   # This is handled by the state machine transition, not by player action
-  defp dispatch_action(%Types.GameState{phase: :discarding} = _state, _position, {:discard, _cards}) do
+  defp dispatch_action(
+         %Types.GameState{phase: :discarding} = _state,
+         _position,
+         {:discard, _cards}
+       ) do
     # Discarding is automatic, players don't manually discard
     {:error, {:invalid_action, :discard, :discarding}}
   end
@@ -326,6 +334,20 @@ defmodule Pidro.Game.Engine do
   end
 
   # =============================================================================
+  # Event Recording
+  # =============================================================================
+
+  # Records an event in the game state's event history.
+  #
+  # This function creates an event tuple from the given type and data,
+  # then appends it to the state's events list. Events are used for
+  # event sourcing, replay, and state reconstruction.
+  @spec record_event(Types.GameState.t(), Types.event()) :: Types.GameState.t()
+  defp record_event(%Types.GameState{} = state, event) do
+    %{state | events: state.events ++ [event]}
+  end
+
+  # =============================================================================
   # Legal Actions by Phase
   # =============================================================================
 
@@ -351,12 +373,15 @@ defmodule Pidro.Game.Engine do
       []
     else
       # Get valid bid amounts based on current highest bid
-      min_bid = case state.highest_bid do
-        nil -> 6  # Minimum bid
-        {_pos, amount} -> amount + 1
-      end
+      min_bid =
+        case state.highest_bid do
+          # Minimum bid
+          nil -> 6
+          {_pos, amount} -> amount + 1
+        end
 
-      max_bid = 14  # Maximum bid
+      # Maximum bid
+      max_bid = 14
 
       if min_bid <= max_bid do
         # Return all valid bid amounts plus pass
@@ -544,9 +569,10 @@ defmodule Pidro.Game.Engine do
   defp handle_automatic_phase(%Types.GameState{phase: :scoring} = state) do
     # Automatically score the hand using Finnish Pidro rules
     # Score all tricks
-    scored_tricks = Enum.map(state.tricks, fn trick ->
-      Scorer.score_trick(trick, state.trump_suit)
-    end)
+    scored_tricks =
+      Enum.map(state.tricks, fn trick ->
+        Scorer.score_trick(trick, state.trump_suit)
+      end)
 
     # Aggregate team scores
     hand_points = Scorer.aggregate_team_scores(scored_tricks)
@@ -561,11 +587,15 @@ defmodule Pidro.Game.Engine do
     if Scorer.game_over?(scored_state) do
       case Scorer.determine_winner(scored_state) do
         {:ok, winner} ->
+          # Get winning team's score
+          winning_score = Map.get(scored_state.cumulative_scores, winner, 0)
+
           # Game over, set winner and transition to complete
           final_state =
             scored_state
             |> GameState.update(:winner, winner)
             |> GameState.update(:phase, :complete)
+            |> record_event({:game_won, winner, winning_score})
 
           {:ok, final_state}
 
@@ -599,7 +629,13 @@ defmodule Pidro.Game.Engine do
         # Reset player hands and elimination status
         reset_players =
           Enum.reduce(state.players, state.players, fn {pos, player}, acc ->
-            Map.put(acc, pos, %{player | hand: [], eliminated?: false, revealed_cards: [], tricks_won: 0})
+            Map.put(acc, pos, %{
+              player
+              | hand: [],
+                eliminated?: false,
+                revealed_cards: [],
+                tricks_won: 0
+            })
           end)
 
         final_state = GameState.update(reset_state, :players, reset_players)

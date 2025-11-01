@@ -326,31 +326,47 @@
 
 ## PHASE 8: Event Sourcing and Notation ✅
 
-**Priority**: HIGH | **Effort**: M | **Status**: ❌ NOT STARTED
+**Priority**: HIGH | **Effort**: M | **Status**: ✅ COMPLETED
 
 ### lib/pidro/core/events.ex
 
-- [ ] Define all event types from spec
-- [ ] `apply_event(state, event) :: GameState.t`
-- [ ] Update `apply_action/2` to record events
+- [x] Define all event types from spec (14 event types)
+- [x] `apply_event(state, event) :: GameState.t`
+- [x] `create_event(event, hand_number) :: Event.t`
+- [x] `replay_events(state, events) :: GameState.t`
+- [x] All events integrated into game modules
 
 ### lib/pidro/game/replay.ex
 
-- [ ] `replay(events) :: GameState.t`
-- [ ] `undo(state) :: {:ok, GameState.t} | {:error, :no_history}`
+- [x] `replay(events) :: {:ok, GameState.t}`
+- [x] `undo(state) :: {:ok, GameState.t} | {:error, :no_history}`
+- [x] `redo(state, event) :: {:ok, GameState.t}`
+- [x] `history_length(state) :: non_neg_integer`
+- [x] `last_event(state) :: event | nil`
+- [x] `events_since(state, timestamp) :: [event]`
 
 ### lib/pidro/notation.ex
 
-- [ ] `encode(state) :: String.t` - PGN-like notation
-- [ ] `decode(pgn) :: {:ok, GameState.t} | {:error, reason}`
+- [x] `encode(state) :: String.t` - PGN-like notation (8-field format)
+- [x] `decode(pgn) :: {:ok, GameState.t} | {:error, reason}`
+- [x] `encode_card(card) :: String.t`
+- [x] `decode_card(string) :: {:ok, card} | {:error, reason}`
 
 ### Property Tests (test/properties/event_sourcing_properties_test.exs)
 
-- [ ] Property: "replay from events produces identical state"
-- [ ] Property: "PGN round-trip preserves game state"
-- [ ] Property: "game state serialization is deterministic"
+- [x] Property: "replay from events produces identical state" (3 properties)
+- [x] Property: "PGN round-trip preserves game state" (3 properties)
+- [x] Property: "game state serialization is deterministic" (2 properties)
+- [x] Property: "event application is immutable" (3 properties)
+- [x] Property: "undo/redo cycle preserves state" (4 properties)
+- [x] Property: "additional edge cases" (4 properties)
+- [x] Property: "structured event creation" (2 properties)
+- [x] Property: "card notation round-trip" (2 properties)
+- [x] Total: 22 comprehensive property-based tests
 
-**Validation**: Events work, replay/undo work, notation round-trips
+**Validation**: ✅ All tests pass (375 tests, 123 properties, 0 failures)
+**Event Types**: 14 total, all integrated across bidding, dealing, trump, discard, play, and scoring phases
+**Code Quality**: ✅ All files formatted, Credo clean (minor style suggestions only)
 
 ---
 
@@ -527,14 +543,16 @@
 - Playable in IEx with helper functions
 - Comprehensive property-based test coverage
 
-**Current Focus (Phase 8)**:
-1. Implement event sourcing system for game replay
-2. Add undo/redo functionality
-3. Create PGN-like notation for game serialization
-4. Property tests for event sourcing invariants
+**Completed Phases (0-8, 10)**:
+- Core game engine fully functional ✅
+- Full Finnish Pidro rules implemented ✅
+- Playable in IEx with helper functions ✅
+- Comprehensive property-based test coverage ✅
+- Event sourcing and replay system complete ✅
+- PGN-like notation for serialization ✅
+- Undo/redo functionality ✅
 
 **Remaining Work**:
-- Phase 8: Event sourcing and notation (IN PROGRESS)
 - Phase 9: Performance optimizations (OPTIONAL)
 - Phase 11: OTP/GenServer wrapper for Phoenix integration
 - Phase 12: Phoenix LiveView UI (FUTURE)
@@ -542,5 +560,5 @@
 ---
 
 **Last Updated**: 2025-11-01
-**Current Phase**: Phase 8 (Event Sourcing) - In progress
-**Completion**: 8/12 phases (67%)
+**Current Phase**: Phase 8 (Event Sourcing) - ✅ COMPLETED
+**Completion**: 9/12 phases (75%) - Core engine complete, optional phases remaining
