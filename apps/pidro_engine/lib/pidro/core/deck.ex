@@ -48,8 +48,8 @@ defmodule Pidro.Core.Deck do
   # =============================================================================
 
   typedstruct enforce: true do
-    field :cards, [Types.card()]
-    field :shuffled?, boolean(), default: false
+    field(:cards, [Types.card()])
+    field(:shuffled?, boolean(), default: false)
   end
 
   # =============================================================================

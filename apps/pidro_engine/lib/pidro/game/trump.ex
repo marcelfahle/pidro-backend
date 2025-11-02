@@ -128,7 +128,9 @@ defmodule Pidro.Game.Trump do
   # Validates trump has not already been declared
   @spec validate_trump_not_declared(game_state()) :: :ok | {:error, error()}
   defp validate_trump_not_declared(%Types.GameState{trump_suit: nil}), do: :ok
-  defp validate_trump_not_declared(%Types.GameState{trump_suit: suit}), do: {:error, {:trump_already_declared, suit}}
+
+  defp validate_trump_not_declared(%Types.GameState{trump_suit: suit}),
+    do: {:error, {:trump_already_declared, suit}}
 
   # =============================================================================
   # Card Categorization
@@ -187,10 +189,12 @@ defmodule Pidro.Game.Trump do
       %{trump: [], non_trump: [{14, :clubs}, {10, :spades}, {7, :diamonds}]}
   """
   @spec categorize_hand([card()], suit()) :: %{trump: [card()], non_trump: [card()]}
-  def categorize_hand(hand, trump_suit) when is_list(hand) and trump_suit in [:hearts, :diamonds, :clubs, :spades] do
-    {trump, non_trump} = Enum.split_with(hand, fn card ->
-      Card.is_trump?(card, trump_suit)
-    end)
+  def categorize_hand(hand, trump_suit)
+      when is_list(hand) and trump_suit in [:hearts, :diamonds, :clubs, :spades] do
+    {trump, non_trump} =
+      Enum.split_with(hand, fn card ->
+        Card.is_trump?(card, trump_suit)
+      end)
 
     %{trump: trump, non_trump: non_trump}
   end

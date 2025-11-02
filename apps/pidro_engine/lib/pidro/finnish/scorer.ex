@@ -328,8 +328,12 @@ defmodule Pidro.Finnish.Scorer do
       |> Map.put(defending_team, new_defending_score)
 
     # Create scoring events
-    bidding_event = {:hand_scored, bidding_team, new_bidding_score - state.cumulative_scores[bidding_team]}
-    defending_event = {:hand_scored, defending_team, new_defending_score - state.cumulative_scores[defending_team]}
+    bidding_event =
+      {:hand_scored, bidding_team, new_bidding_score - state.cumulative_scores[bidding_team]}
+
+    defending_event =
+      {:hand_scored, defending_team,
+       new_defending_score - state.cumulative_scores[defending_team]}
 
     # Update state
     state
@@ -377,7 +381,9 @@ defmodule Pidro.Finnish.Scorer do
       - Game not over cases
   """
   @spec determine_winner(Types.GameState.t()) :: {:ok, team()} | {:error, :game_not_over}
-  def determine_winner(%Types.GameState{cumulative_scores: scores, bidding_team: bidding_team} = state) do
+  def determine_winner(
+        %Types.GameState{cumulative_scores: scores, bidding_team: bidding_team} = state
+      ) do
     if game_over?(state) do
       ns_score = scores.north_south
       ew_score = scores.east_west

@@ -109,7 +109,8 @@ defmodule Pidro.Game.Discard do
       # Process each player's hand
       {updated_players, all_discarded_cards, events} =
         state.players
-        |> Enum.reduce({state.players, [], []}, fn {position, player}, {players_acc, discards_acc, events_acc} ->
+        |> Enum.reduce({state.players, [], []}, fn {position, player},
+                                                   {players_acc, discards_acc, events_acc} ->
           # Categorize player's hand into trump and non-trump
           %{trump: trump_cards, non_trump: non_trump_cards} =
             Trump.categorize_hand(player.hand, state.trump_suit)
@@ -119,11 +120,12 @@ defmodule Pidro.Game.Discard do
           updated_players = Map.put(players_acc, position, updated_player)
 
           # Record discard event if player discarded any cards
-          event = if length(non_trump_cards) > 0 do
-            [{:cards_discarded, position, non_trump_cards}]
-          else
-            []
-          end
+          event =
+            if length(non_trump_cards) > 0 do
+              [{:cards_discarded, position, non_trump_cards}]
+            else
+              []
+            end
 
           {updated_players, discards_acc ++ non_trump_cards, events_acc ++ event}
         end)
@@ -244,7 +246,9 @@ defmodule Pidro.Game.Discard do
 
       # Deal cards to each player to reach 6 cards (or skip if they have 6+)
       {updated_players, remaining_deck, dealt_cards_map} =
-        Enum.reduce(deal_order, {state.players, state.deck, %{}}, fn position, {players_acc, deck_acc, dealt_acc} ->
+        Enum.reduce(deal_order, {state.players, state.deck, %{}}, fn position,
+                                                                     {players_acc, deck_acc,
+                                                                      dealt_acc} ->
           player = Map.get(players_acc, position)
           current_hand_size = length(player.hand)
 
@@ -425,7 +429,8 @@ defmodule Pidro.Game.Discard do
 
   # Validates it's the dealer's turn
   @spec validate_dealer_turn(game_state()) :: :ok | {:error, error()}
-  defp validate_dealer_turn(%Types.GameState{current_dealer: dealer, current_turn: dealer}), do: :ok
+  defp validate_dealer_turn(%Types.GameState{current_dealer: dealer, current_turn: dealer}),
+    do: :ok
 
   defp validate_dealer_turn(%Types.GameState{current_dealer: dealer, current_turn: turn}) do
     {:error, {:not_dealer_turn, dealer, turn}}

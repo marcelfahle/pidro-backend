@@ -366,32 +366,8 @@ defmodule Pidro.Game.Engine do
   end
 
   defp get_legal_actions_for_phase(%Types.GameState{phase: :bidding} = state, position) do
-    # Check if player has already bid or passed
-    already_acted? = Enum.any?(state.bids, fn bid -> bid.position == position end)
-
-    if already_acted? do
-      []
-    else
-      # Get valid bid amounts based on current highest bid
-      min_bid =
-        case state.highest_bid do
-          # Minimum bid
-          nil -> 6
-          {_pos, amount} -> amount + 1
-        end
-
-      # Maximum bid
-      max_bid = 14
-
-      if min_bid <= max_bid do
-        # Return all valid bid amounts plus pass
-        bid_actions = for amount <- min_bid..max_bid, do: {:bid, amount}
-        bid_actions ++ [:pass]
-      else
-        # Can only pass if bidding is at maximum
-        [:pass]
-      end
-    end
+    # Delegate to Bidding module which handles all validation logic
+    Bidding.legal_actions(state, position)
   end
 
   defp get_legal_actions_for_phase(%Types.GameState{phase: :declaring} = state, position) do
@@ -663,8 +639,10 @@ defmodule Pidro.Game.Engine do
     StateMachine.can_transition_from_dealing?(state)
   end
 
-  defp can_auto_transition?(%Types.GameState{phase: :bidding} = state) do
-    StateMachine.can_transition_from_bidding?(state)
+  defp can_auto_transition?(%Types.GameState{phase: :bidding}) do
+    # Bidding phase manages its own transitions via Bidding.finalize_bidding/1
+    # Do not auto-transition here
+    false
   end
 
   defp can_auto_transition?(%Types.GameState{phase: :declaring} = state) do

@@ -68,8 +68,8 @@ defmodule Pidro.Core.Trick do
   # =============================================================================
 
   typedstruct do
-    field :leader, Types.position(), enforce: true
-    field :plays, [{Types.position(), Types.card()}], default: []
+    field(:leader, Types.position(), enforce: true)
+    field(:plays, [{Types.position(), Types.card()}], default: [])
   end
 
   # =============================================================================
@@ -416,7 +416,8 @@ defmodule Pidro.Core.Trick do
 
   # Subtracts 1 point if the 2 of trump was played in this trick
   # The player who played the 2 keeps that point, not the trick winner
-  @spec subtract_two_of_trump(non_neg_integer(), [{position(), card()}], suit()) :: non_neg_integer()
+  @spec subtract_two_of_trump(non_neg_integer(), [{position(), card()}], suit()) ::
+          non_neg_integer()
   defp subtract_two_of_trump(total_points, plays, trump_suit) do
     has_two_of_trump? =
       Enum.any?(plays, fn {_position, {rank, suit}} ->

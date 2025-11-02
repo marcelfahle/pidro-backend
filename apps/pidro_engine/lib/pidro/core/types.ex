@@ -197,9 +197,9 @@ defmodule Pidro.Core.Types do
     - A numeric bid (6-14)
     - `:pass` to indicate the player passed
     """
-    field :position, Pidro.Core.Types.position(), enforce: true
-    field :amount, Pidro.Core.Types.bid_amount() | :pass, enforce: true
-    field :timestamp, integer(), default: 0
+    field(:position, Pidro.Core.Types.position(), enforce: true)
+    field(:amount, Pidro.Core.Types.bid_amount() | :pass, enforce: true)
+    field(:timestamp, integer(), default: 0)
   end
 
   typedstruct module: Trick do
@@ -209,11 +209,11 @@ defmodule Pidro.Core.Types do
     A trick consists of up to 4 card plays (one per active player).
     The highest trump card wins, with special handling for the 2 of trump.
     """
-    field :number, pos_integer(), enforce: true
-    field :leader, Pidro.Core.Types.position(), enforce: true
-    field :plays, [{Pidro.Core.Types.position(), Pidro.Core.Types.card()}], default: []
-    field :winner, Pidro.Core.Types.position() | nil, default: nil
-    field :points, non_neg_integer(), default: 0
+    field(:number, pos_integer(), enforce: true)
+    field(:leader, Pidro.Core.Types.position(), enforce: true)
+    field(:plays, [{Pidro.Core.Types.position(), Pidro.Core.Types.card()}], default: [])
+    field(:winner, Pidro.Core.Types.position() | nil, default: nil)
+    field(:points, non_neg_integer(), default: 0)
   end
 
   typedstruct module: Player do
@@ -224,12 +224,12 @@ defmodule Pidro.Core.Types do
     - `eliminated?` indicates player has gone "cold" (out of trumps)
     - `revealed_cards` shows non-trump cards when going cold
     """
-    field :position, Pidro.Core.Types.position(), enforce: true
-    field :team, Pidro.Core.Types.team(), enforce: true
-    field :hand, [Pidro.Core.Types.card()], default: []
-    field :eliminated?, boolean(), default: false
-    field :revealed_cards, [Pidro.Core.Types.card()], default: []
-    field :tricks_won, non_neg_integer(), default: 0
+    field(:position, Pidro.Core.Types.position(), enforce: true)
+    field(:team, Pidro.Core.Types.team(), enforce: true)
+    field(:hand, [Pidro.Core.Types.card()], default: [])
+    field(:eliminated?, boolean(), default: false)
+    field(:revealed_cards, [Pidro.Core.Types.card()], default: [])
+    field(:tricks_won, non_neg_integer(), default: 0)
   end
 
   typedstruct module: GameState do
@@ -255,52 +255,64 @@ defmodule Pidro.Core.Types do
     """
 
     # Core game state
-    field :phase, Pidro.Core.Types.phase(), default: :dealer_selection
-    field :hand_number, non_neg_integer(), default: 1
-    field :variant, atom(), default: :finnish
+    field(:phase, Pidro.Core.Types.phase(), default: :dealer_selection)
+    field(:hand_number, non_neg_integer(), default: 1)
+    field(:variant, atom(), default: :finnish)
 
     # Players
-    field :players, %{Pidro.Core.Types.position() => Pidro.Core.Types.Player.t()}, enforce: true
-    field :current_dealer, Pidro.Core.Types.position() | nil, default: nil
-    field :current_turn, Pidro.Core.Types.position() | nil, default: nil
+    field(:players, %{Pidro.Core.Types.position() => Pidro.Core.Types.Player.t()}, enforce: true)
+    field(:current_dealer, Pidro.Core.Types.position() | nil, default: nil)
+    field(:current_turn, Pidro.Core.Types.position() | nil, default: nil)
 
     # Deck
-    field :deck, [Pidro.Core.Types.card()], default: []
-    field :discarded_cards, [Pidro.Core.Types.card()], default: []
+    field(:deck, [Pidro.Core.Types.card()], default: [])
+    field(:discarded_cards, [Pidro.Core.Types.card()], default: [])
 
     # Bidding
-    field :bids, [Pidro.Core.Types.Bid.t()], default: []
-    field :highest_bid, {Pidro.Core.Types.position(), Pidro.Core.Types.bid_amount()} | nil, default: nil
-    field :bidding_team, Pidro.Core.Types.team() | nil, default: nil
+    field(:bids, [Pidro.Core.Types.Bid.t()], default: [])
+
+    field(:highest_bid, {Pidro.Core.Types.position(), Pidro.Core.Types.bid_amount()} | nil,
+      default: nil
+    )
+
+    field(:bidding_team, Pidro.Core.Types.team() | nil, default: nil)
 
     # Trump
-    field :trump_suit, Pidro.Core.Types.suit() | nil, default: nil
+    field(:trump_suit, Pidro.Core.Types.suit() | nil, default: nil)
 
     # Play
-    field :tricks, [Pidro.Core.Types.Trick.t()], default: []
-    field :current_trick, Pidro.Core.Types.Trick.t() | nil, default: nil
-    field :trick_number, non_neg_integer(), default: 0
+    field(:tricks, [Pidro.Core.Types.Trick.t()], default: [])
+    field(:current_trick, Pidro.Core.Types.Trick.t() | nil, default: nil)
+    field(:trick_number, non_neg_integer(), default: 0)
 
     # Scoring
-    field :hand_points, %{Pidro.Core.Types.team() => non_neg_integer()}, default: %{north_south: 0, east_west: 0}
-    field :cumulative_scores, %{Pidro.Core.Types.team() => integer()}, default: %{north_south: 0, east_west: 0}
-    field :winner, Pidro.Core.Types.team() | nil, default: nil
+    field(:hand_points, %{Pidro.Core.Types.team() => non_neg_integer()},
+      default: %{north_south: 0, east_west: 0}
+    )
+
+    field(:cumulative_scores, %{Pidro.Core.Types.team() => integer()},
+      default: %{north_south: 0, east_west: 0}
+    )
+
+    field(:winner, Pidro.Core.Types.team() | nil, default: nil)
 
     # History (for replay/undo)
-    field :events, [Pidro.Core.Types.event()], default: []
+    field(:events, [Pidro.Core.Types.event()], default: [])
 
     # Configuration
-    field :config, map(), default: %{
-      min_bid: 6,
-      max_bid: 14,
-      winning_score: 62,
-      initial_deal_count: 9,
-      final_hand_size: 6,
-      allow_negative_scores: true
-    }
+    field(:config, map(),
+      default: %{
+        min_bid: 6,
+        max_bid: 14,
+        winning_score: 62,
+        initial_deal_count: 9,
+        final_hand_size: 6,
+        allow_negative_scores: true
+      }
+    )
 
     # Performance cache (optional, not serialized)
-    field :cache, map(), default: %{}
+    field(:cache, map(), default: %{})
   end
 
   # =============================================================================
