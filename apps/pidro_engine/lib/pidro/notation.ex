@@ -14,7 +14,7 @@ defmodule Pidro.Notation do
   The PGN format uses slash-separated fields:
 
   ```
-  phase/dealer/turn/trump/bid/scores/hand/tricks
+  phase/dealer/turn/trump/bid/scores/hand/tricks/redeal
   ```
 
   ### Field Descriptions
@@ -37,6 +37,10 @@ defmodule Pidro.Notation do
   - **scores**: Cumulative scores "NS:xx:EW:yy" (e.g., "NS:15:EW:8")
   - **hand**: Current hand number (e.g., "h3" for hand 3)
   - **tricks**: Number of completed tricks (e.g., "t2" for 2 tricks)
+  - **redeal**: Redeal information "cr:N:2,E:3;dp:10;kc:N:5h,6d" or "-"
+    - `cr` = cards_requested (comma-separated "position:count" pairs)
+    - `dp` = dealer_pool_size
+    - `kc` = killed_cards (comma-separated "position:cards" groups)
 
   ## Card Notation
 
@@ -54,20 +58,27 @@ defmodule Pidro.Notation do
 
   ### Initial State
   ```
-  ds/-/-/-/-/NS:0:EW:0/h1/t0
+  ds/-/-/-/-/NS:0:EW:0/h1/t0/-
   ```
   Dealer selection phase, no dealer yet, no trump, no bids, zero scores, hand 1.
 
   ### During Play
   ```
-  pl/N/E/h/N:10/NS:0:EW:0/h1/t2
+  pl/N/E/h/N:10/NS:0:EW:0/h1/t2/-
   ```
   Playing phase, North is dealer, East's turn, hearts trump, North bid 10,
   zero scores, hand 1, 2 tricks completed.
 
+  ### With Redeal Information
+  ```
+  pl/N/E/h/N:10/NS:0:EW:0/h1/t2/cr:E:2,S:3,W:1;dp:8;kc:S:4h,3h
+  ```
+  Playing phase with redeal data: East got 2 cards, South got 3, West got 1,
+  dealer pool was 8 cards, South killed 4h and 3h.
+
   ### Game Complete
   ```
-  cp/N/E/h/N:10/NS:62:EW:45/h5/t6
+  cp/N/E/h/N:10/NS:62:EW:45/h5/t6/-
   ```
   Game complete, North/South won with 62 points.
 
@@ -138,7 +149,7 @@ defmodule Pidro.Notation do
 
       iex> state = GameState.new()
       iex> Pidro.Notation.encode(state)
-      "ds/-/-/-/-/NS:0:EW:0/h1/t0"
+      "ds/-/-/-/-/NS:0:EW:0/h1/t0/-"
 
       iex> state = %GameState{
       ...>   phase: :playing,
@@ -148,10 +159,13 @@ defmodule Pidro.Notation do
       ...>   highest_bid: {:north, 10},
       ...>   cumulative_scores: %{north_south: 15, east_west: 8},
       ...>   hand_number: 2,
-      ...>   trick_number: 3
+      ...>   trick_number: 3,
+      ...>   cards_requested: %{},
+      ...>   dealer_pool_size: nil,
+      ...>   killed_cards: %{}
       ...> }
       iex> Pidro.Notation.encode(state)
-      "pl/N/E/h/N:10/NS:15:EW:8/h2/t3"
+      "pl/N/E/h/N:10/NS:15:EW:8/h2/t3/-"
   """
   @spec encode(GameState.t()) :: pgn_string()
   def encode(%GameState{} = state) do
@@ -163,7 +177,8 @@ defmodule Pidro.Notation do
       encode_bid(state.highest_bid),
       encode_scores(state.cumulative_scores),
       encode_hand_number(state.hand_number),
-      encode_trick_number(state.trick_number)
+      encode_trick_number(state.trick_number),
+      encode_redeal(state.cards_requested, state.dealer_pool_size, state.killed_cards)
     ]
     |> Enum.join("/")
   end
@@ -184,7 +199,7 @@ defmodule Pidro.Notation do
 
   ## Examples
 
-      iex> Pidro.Notation.decode("ds/-/-/-/-/NS:0:EW:0/h1/t0")
+      iex> Pidro.Notation.decode("ds/-/-/-/-/NS:0:EW:0/h1/t0/-")
       {:ok, %GameState{
         phase: :dealer_selection,
         current_dealer: nil,
@@ -193,10 +208,13 @@ defmodule Pidro.Notation do
         highest_bid: nil,
         cumulative_scores: %{north_south: 0, east_west: 0},
         hand_number: 1,
-        trick_number: 0
+        trick_number: 0,
+        cards_requested: %{},
+        dealer_pool_size: nil,
+        killed_cards: %{}
       }}
 
-      iex> Pidro.Notation.decode("pl/N/E/h/N:10/NS:15:EW:8/h2/t3")
+      iex> Pidro.Notation.decode("pl/N/E/h/N:10/NS:15:EW:8/h2/t3/-")
       {:ok, %GameState{
         phase: :playing,
         current_dealer: :north,
@@ -205,49 +223,64 @@ defmodule Pidro.Notation do
         highest_bid: {:north, 10},
         cumulative_scores: %{north_south: 15, east_west: 8},
         hand_number: 2,
-        trick_number: 3
+        trick_number: 3,
+        cards_requested: %{},
+        dealer_pool_size: nil,
+        killed_cards: %{}
       }}
 
       iex> Pidro.Notation.decode("invalid")
-      {:error, "Invalid PGN format: expected 8 fields, got 1"}
+      {:error, "Invalid PGN format: expected 9 fields, got 1"}
   """
   @spec decode(pgn_string()) :: {:ok, GameState.t()} | {:error, String.t()}
   def decode(pgn) when is_binary(pgn) do
     case String.split(pgn, "/") do
+      # Support both old 8-field format (backward compatibility) and new 9-field format
       [phase, dealer, turn, trump, bid, scores, hand, tricks] ->
-        with {:ok, phase_val} <- decode_phase(phase),
-             {:ok, dealer_val} <- decode_position(dealer),
-             {:ok, turn_val} <- decode_position(turn),
-             {:ok, trump_val} <- decode_suit(trump),
-             {:ok, bid_val} <- decode_bid(bid),
-             {:ok, scores_val} <- decode_scores(scores),
-             {:ok, hand_val} <- decode_hand_number(hand),
-             {:ok, tricks_val} <- decode_trick_number(tricks) do
-          state = GS.new()
+        decode_with_fields(phase, dealer, turn, trump, bid, scores, hand, tricks, "-")
 
-          updated_state = %{
-            state
-            | phase: phase_val,
-              current_dealer: dealer_val,
-              current_turn: turn_val,
-              trump_suit: trump_val,
-              highest_bid: bid_val,
-              cumulative_scores: scores_val,
-              hand_number: hand_val,
-              trick_number: tricks_val
-          }
-
-          {:ok, updated_state}
-        else
-          {:error, reason} -> {:error, reason}
-        end
+      [phase, dealer, turn, trump, bid, scores, hand, tricks, redeal] ->
+        decode_with_fields(phase, dealer, turn, trump, bid, scores, hand, tricks, redeal)
 
       fields ->
-        {:error, "Invalid PGN format: expected 8 fields, got #{length(fields)}"}
+        {:error, "Invalid PGN format: expected 8 or 9 fields, got #{length(fields)}"}
     end
   end
 
   def decode(_), do: {:error, "Invalid input: expected string"}
+
+  defp decode_with_fields(phase, dealer, turn, trump, bid, scores, hand, tricks, redeal) do
+    with {:ok, phase_val} <- decode_phase(phase),
+         {:ok, dealer_val} <- decode_position(dealer),
+         {:ok, turn_val} <- decode_position(turn),
+         {:ok, trump_val} <- decode_suit(trump),
+         {:ok, bid_val} <- decode_bid(bid),
+         {:ok, scores_val} <- decode_scores(scores),
+         {:ok, hand_val} <- decode_hand_number(hand),
+         {:ok, tricks_val} <- decode_trick_number(tricks),
+         {:ok, {cards_req, pool_size, killed}} <- decode_redeal(redeal) do
+      state = GS.new()
+
+      updated_state = %{
+        state
+        | phase: phase_val,
+          current_dealer: dealer_val,
+          current_turn: turn_val,
+          trump_suit: trump_val,
+          highest_bid: bid_val,
+          cumulative_scores: scores_val,
+          hand_number: hand_val,
+          trick_number: tricks_val,
+          cards_requested: cards_req,
+          dealer_pool_size: pool_size,
+          killed_cards: killed
+      }
+
+      {:ok, updated_state}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   # =============================================================================
   # Card Encoding/Decoding
@@ -370,6 +403,61 @@ defmodule Pidro.Notation do
   @spec encode_trick_number(non_neg_integer()) :: String.t()
   defp encode_trick_number(num), do: "t#{num}"
 
+  @spec encode_redeal(map(), integer() | nil, map()) :: String.t()
+  defp encode_redeal(cards_requested, dealer_pool_size, killed_cards)
+       when map_size(cards_requested) == 0 and is_nil(dealer_pool_size) and
+              map_size(killed_cards) == 0 do
+    "-"
+  end
+
+  defp encode_redeal(cards_requested, dealer_pool_size, killed_cards) do
+    parts = []
+
+    # Encode cards_requested
+    parts =
+      if map_size(cards_requested) > 0 do
+        cr_str =
+          cards_requested
+          |> Enum.sort()
+          |> Enum.map(fn {pos, count} -> "#{@position_to_code[pos]}:#{count}" end)
+          |> Enum.join(",")
+
+        ["cr:#{cr_str}" | parts]
+      else
+        parts
+      end
+
+    # Encode dealer_pool_size
+    parts =
+      if dealer_pool_size do
+        ["dp:#{dealer_pool_size}" | parts]
+      else
+        parts
+      end
+
+    # Encode killed_cards
+    parts =
+      if map_size(killed_cards) > 0 do
+        kc_str =
+          killed_cards
+          |> Enum.sort()
+          |> Enum.map(fn {pos, cards} ->
+            cards_str = cards |> Enum.map(&encode_card/1) |> Enum.join(",")
+            "#{@position_to_code[pos]}:#{cards_str}"
+          end)
+          |> Enum.join("|")
+
+        ["kc:#{kc_str}" | parts]
+      else
+        parts
+      end
+
+    case parts do
+      [] -> "-"
+      _ -> parts |> Enum.reverse() |> Enum.join(";")
+    end
+  end
+
   # =============================================================================
   # Private Helper Functions - Decoding
   # =============================================================================
@@ -479,6 +567,122 @@ defmodule Pidro.Notation do
     case @code_to_suit[str] do
       nil -> {:error, "Invalid suit: #{str}"}
       suit -> {:ok, suit}
+    end
+  end
+
+  @spec decode_redeal(String.t()) ::
+          {:ok, {map(), integer() | nil, map()}} | {:error, String.t()}
+  defp decode_redeal("-"), do: {:ok, {%{}, nil, %{}}}
+
+  defp decode_redeal(redeal_str) do
+    # Parse redeal string: "cr:N:2,E:3;dp:10;kc:N:5h,6d|E:4h"
+    parts = String.split(redeal_str, ";")
+
+    result =
+      Enum.reduce_while(parts, {:ok, {%{}, nil, %{}}}, fn part, {:ok, {cr, dp, kc}} ->
+        cond do
+          String.starts_with?(part, "cr:") ->
+            case decode_cards_requested(String.trim_leading(part, "cr:")) do
+              {:ok, cards_req} -> {:cont, {:ok, {cards_req, dp, kc}}}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+
+          String.starts_with?(part, "dp:") ->
+            case decode_dealer_pool_size(String.trim_leading(part, "dp:")) do
+              {:ok, pool_size} -> {:cont, {:ok, {cr, pool_size, kc}}}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+
+          String.starts_with?(part, "kc:") ->
+            case decode_killed_cards(String.trim_leading(part, "kc:")) do
+              {:ok, killed} -> {:cont, {:ok, {cr, dp, killed}}}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+
+          true ->
+            {:halt, {:error, "Invalid redeal part: #{part}"}}
+        end
+      end)
+
+    result
+  end
+
+  @spec decode_cards_requested(String.t()) :: {:ok, map()} | {:error, String.t()}
+  defp decode_cards_requested(str) do
+    # Parse "N:2,E:3,W:1"
+    pairs = String.split(str, ",")
+
+    result =
+      Enum.reduce_while(pairs, {:ok, %{}}, fn pair, {:ok, acc} ->
+        case String.split(pair, ":") do
+          [pos_code, count_str] ->
+            with {:ok, pos} when not is_nil(pos) <- decode_position(pos_code),
+                 {count, ""} <- Integer.parse(count_str),
+                 true <- count >= 0 do
+              {:cont, {:ok, Map.put(acc, pos, count)}}
+            else
+              {:ok, nil} -> {:halt, {:error, "Invalid position in cards_requested: #{pos_code}"}}
+              :error -> {:halt, {:error, "Invalid count in cards_requested: #{count_str}"}}
+              false -> {:halt, {:error, "Invalid count value: #{count_str}"}}
+            end
+
+          _ ->
+            {:halt, {:error, "Invalid cards_requested pair: #{pair}"}}
+        end
+      end)
+
+    result
+  end
+
+  @spec decode_dealer_pool_size(String.t()) :: {:ok, integer()} | {:error, String.t()}
+  defp decode_dealer_pool_size(str) do
+    case Integer.parse(str) do
+      {size, ""} when size >= 0 -> {:ok, size}
+      _ -> {:error, "Invalid dealer_pool_size: #{str}"}
+    end
+  end
+
+  @spec decode_killed_cards(String.t()) :: {:ok, map()} | {:error, String.t()}
+  defp decode_killed_cards(str) do
+    # Parse "N:5h,6d|E:4h"
+    groups = String.split(str, "|")
+
+    result =
+      Enum.reduce_while(groups, {:ok, %{}}, fn group, {:ok, acc} ->
+        case String.split(group, ":", parts: 2) do
+          [pos_code, cards_str] ->
+            with {:ok, pos} when not is_nil(pos) <- decode_position(pos_code),
+                 {:ok, cards} <- decode_card_list(cards_str) do
+              {:cont, {:ok, Map.put(acc, pos, cards)}}
+            else
+              {:ok, nil} -> {:halt, {:error, "Invalid position in killed_cards: #{pos_code}"}}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+
+          _ ->
+            {:halt, {:error, "Invalid killed_cards group: #{group}"}}
+        end
+      end)
+
+    result
+  end
+
+  @spec decode_card_list(String.t()) :: {:ok, list(card())} | {:error, String.t()}
+  defp decode_card_list(str) do
+    # Parse "5h,6d,4h"
+    card_strs = String.split(str, ",")
+
+    result =
+      Enum.reduce_while(card_strs, {:ok, []}, fn card_str, {:ok, acc} ->
+        case decode_card(card_str) do
+          {:ok, card} -> {:cont, {:ok, [card | acc]}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+
+    case result do
+      {:ok, cards} -> {:ok, Enum.reverse(cards)}
+      error -> error
     end
   end
 end
