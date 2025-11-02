@@ -356,7 +356,9 @@ defmodule PidroServerWeb.GameChannel do
     if room_code && user_id && role do
       case role do
         :player ->
-          Logger.info("Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}")
+          Logger.info(
+            "Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}"
+          )
 
           # Notify room manager - this will handle cleanup and broadcast to room channel
           RoomManager.leave_room(user_id)
@@ -369,7 +371,9 @@ defmodule PidroServerWeb.GameChannel do
           })
 
         :spectator ->
-          Logger.info("Spectator #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}")
+          Logger.info(
+            "Spectator #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}"
+          )
 
           # Remove spectator immediately (no reconnection grace period)
           RoomManager.leave_spectator(user_id)
@@ -421,7 +425,8 @@ defmodule PidroServerWeb.GameChannel do
     Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end)
   end
 
-  @spec determine_user_role(RoomManager.Room.t(), String.t()) :: :player | :spectator | :unauthorized
+  @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
+          :player | :spectator | :unauthorized
   defp determine_user_role(room, user_id) do
     user_id_str = to_string(user_id)
 

@@ -811,13 +811,16 @@ defmodule PidroServer.Games.RoomManager do
           %Room{} =
             updated_room = %Room{
               room
-              | disconnected_players: Map.put(room.disconnected_players, user_id, DateTime.utc_now())
+              | disconnected_players:
+                  Map.put(room.disconnected_players, user_id, DateTime.utc_now())
             }
 
           %State{} =
             updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
 
-          Logger.info("Player #{user_id} disconnected from room #{room_code}, grace period started")
+          Logger.info(
+            "Player #{user_id} disconnected from room #{room_code}, grace period started"
+          )
 
           # Broadcast room update
           broadcast_room(room_code, updated_room)

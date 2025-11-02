@@ -1,4 +1,17 @@
-defmodule PidroServerWeb.StatsLive do
+defmodule PidroServerWeb.Dev.AnalyticsLive do
+  @moduledoc """
+  Development analytics dashboard for monitoring server metrics and game statistics.
+
+  This LiveView provides real-time analytics including:
+  - Server status and uptime
+  - Game statistics (total rooms, active games, waiting rooms, finished games)
+  - Room status breakdown
+  - System information
+
+  The dashboard subscribes to lobby updates and refreshes metrics every second
+  for live monitoring during development.
+  """
+
   use PidroServerWeb, :live_view
   alias PidroServer.Games.RoomManager
 
@@ -13,7 +26,7 @@ defmodule PidroServerWeb.StatsLive do
 
     {:ok,
      socket
-     |> assign(:page_title, "Server Stats")
+     |> assign(:page_title, "Analytics Dashboard")
      |> assign(:uptime_start, DateTime.utc_now())
      |> assign(:current_time, DateTime.utc_now())
      |> load_stats()}
@@ -38,13 +51,16 @@ defmodule PidroServerWeb.StatsLive do
         <!-- Header -->
         <div class="mb-8">
           <.link
-            navigate={~p"/admin/lobby"}
+            navigate={~p"/dev/games"}
             class="text-sm text-indigo-600 hover:text-indigo-900 mb-2 inline-block"
           >
-            ← Back to Lobby
+            ← Back to Games
           </.link>
-          <h1 class="text-4xl font-bold text-zinc-900">Server Statistics</h1>
+          <h1 class="text-4xl font-bold text-zinc-900">Development Analytics</h1>
           <p class="mt-2 text-lg text-zinc-600">Real-time server metrics and performance</p>
+          <div class="mt-3 text-sm text-zinc-500 bg-blue-50 border border-blue-200 rounded-md p-3">
+            This is a development analytics dashboard. More metrics coming in Phase 2.
+          </div>
         </div>
         
     <!-- Server Status -->

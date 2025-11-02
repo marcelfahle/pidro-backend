@@ -96,6 +96,14 @@ defmodule PidroServerWeb.Router do
       live_dashboard "/dashboard", metrics: PidroServerWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
+
+    scope "/dev", PidroServerWeb.Dev do
+      pipe_through :browser
+
+      live "/games", GameListLive
+      live "/games/:code", GameDetailLive
+      live "/analytics", AnalyticsLive
+    end
   end
 
   # Private functions
