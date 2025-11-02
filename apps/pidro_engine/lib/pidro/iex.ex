@@ -27,6 +27,7 @@ defmodule Pidro.IEx do
   ## Available Functions
 
   - `pretty_print/1` - Visualize game state in a readable format
+  - `show_event_log/1` - Display chronological event log
   - `show_legal_actions/2` - Display available actions for a position
   - `step/3` - Apply an action and pretty print result
   - `new_game/0` - Create a new game with dealer selection complete
@@ -115,9 +116,17 @@ defmodule Pidro.IEx do
   """
   @spec pretty_print(Types.GameState.t()) :: :ok
   def pretty_print(%Types.GameState{} = state) do
-    IO.puts("\n#{bright()}#{blue()}╔═══════════════════════════════════════════════════════════╗#{reset()}")
-    IO.puts("#{bright()}#{blue()}║#{reset()}              #{bright()}PIDRO - Finnish Variant#{reset()}                 #{bright()}#{blue()}║#{reset()}")
-    IO.puts("#{bright()}#{blue()}╚═══════════════════════════════════════════════════════════╝#{reset()}\n")
+    IO.puts(
+      "\n#{bright()}#{blue()}╔═══════════════════════════════════════════════════════════╗#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{blue()}║#{reset()}              #{bright()}PIDRO - Finnish Variant#{reset()}                 #{bright()}#{blue()}║#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{blue()}╚═══════════════════════════════════════════════════════════╝#{reset()}\n"
+    )
 
     print_game_info(state)
     print_scores(state)
@@ -126,6 +135,55 @@ defmodule Pidro.IEx do
     print_players(state)
     print_current_trick(state)
     print_game_status(state)
+
+    :ok
+  end
+
+  @doc """
+  Shows the event log for the game in chronological order.
+
+  Displays all events that have occurred in the game with:
+  - Event number
+  - Event type (color-coded)
+  - Event details
+  - Affected positions/teams
+
+  ## Parameters
+
+  - `state` - The current game state
+
+  ## Examples
+
+      iex> state = Pidro.IEx.new_game()
+      iex> Pidro.IEx.show_event_log(state)
+      # Displays all events
+      :ok
+  """
+  @spec show_event_log(Types.GameState.t()) :: :ok
+  def show_event_log(%Types.GameState{} = state) do
+    IO.puts(
+      "\n#{bright()}#{magenta()}╔═══════════════════════════════════════════════════════════╗#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{magenta()}║#{reset()}                    #{bright()}EVENT LOG#{reset()}                        #{bright()}#{magenta()}║#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{magenta()}╚═══════════════════════════════════════════════════════════╝#{reset()}\n"
+    )
+
+    if Enum.empty?(state.events) do
+      IO.puts("#{faint()}No events recorded yet#{reset()}\n")
+    else
+      state.events
+      |> Enum.with_index(1)
+      |> Enum.each(fn {event, idx} ->
+        print_event(event, idx)
+      end)
+
+      IO.puts("\n#{bright()}Total Events: #{length(state.events)}#{reset()}\n")
+    end
 
     :ok
   end
@@ -205,7 +263,9 @@ defmodule Pidro.IEx do
   @spec step(Types.GameState.t(), Types.position(), Types.action()) ::
           {:ok, Types.GameState.t()} | {:error, any()}
   def step(%Types.GameState{} = state, position, action) do
-    IO.puts("\n#{bright()}#{yellow()}► #{format_position(position)} performs: #{format_action(action, state)}#{reset()}\n")
+    IO.puts(
+      "\n#{bright()}#{yellow()}► #{format_position(position)} performs: #{format_action(action, state)}#{reset()}\n"
+    )
 
     case Engine.apply_action(state, position, action) do
       {:ok, new_state} ->
@@ -246,9 +306,15 @@ defmodule Pidro.IEx do
   """
   @spec demo_game() :: Types.GameState.t()
   def demo_game do
-    IO.puts("\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts(
+      "\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}"
+    )
+
     IO.puts("#{bright()}#{magenta()}         PIDRO DEMONSTRATION GAME#{reset()}")
-    IO.puts("#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n")
+
+    IO.puts(
+      "#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n"
+    )
 
     # Start new game
     state = new_game()
@@ -268,9 +334,15 @@ defmodule Pidro.IEx do
     # Play a few tricks if we get to playing phase
     state = demo_play_tricks(state)
 
-    IO.puts("\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts(
+      "\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}"
+    )
+
     IO.puts("#{bright()}#{magenta()}         DEMO COMPLETE#{reset()}")
-    IO.puts("#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n")
+
+    IO.puts(
+      "#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n"
+    )
 
     state
   end
@@ -297,9 +369,15 @@ defmodule Pidro.IEx do
   """
   @spec full_demo_game() :: Types.GameState.t()
   def full_demo_game do
-    IO.puts("\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts(
+      "\n#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}"
+    )
+
     IO.puts("#{bright()}#{magenta()}         FULL PIDRO GAME - PLAYING TO 62 POINTS#{reset()}")
-    IO.puts("#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n")
+
+    IO.puts(
+      "#{bright()}#{magenta()}═══════════════════════════════════════════════════════════#{reset()}\n"
+    )
 
     state = new_game()
     play_until_complete(state)
@@ -332,12 +410,19 @@ defmodule Pidro.IEx do
     ns_total = state.cumulative_scores.north_south
     ew_total = state.cumulative_scores.east_west
 
-    IO.puts("  #{format_team(:north_south)}: #{ns_hand} this hand, #{bright()}#{ns_total} total#{reset()}")
-    IO.puts("  #{format_team(:east_west)}: #{ew_hand} this hand, #{bright()}#{ew_total} total#{reset()}")
+    IO.puts(
+      "  #{format_team(:north_south)}: #{ns_hand} this hand, #{bright()}#{ns_total} total#{reset()}"
+    )
+
+    IO.puts(
+      "  #{format_team(:east_west)}: #{ew_hand} this hand, #{bright()}#{ew_total} total#{reset()}"
+    )
+
     IO.puts("")
   end
 
-  defp print_bidding_info(%Types.GameState{bids: bids, highest_bid: highest_bid}) when length(bids) > 0 do
+  defp print_bidding_info(%Types.GameState{bids: bids, highest_bid: highest_bid})
+       when length(bids) > 0 do
     IO.puts("#{bright()}#{cyan()}Bidding:#{reset()}")
 
     if highest_bid do
@@ -347,6 +432,7 @@ defmodule Pidro.IEx do
 
     if length(bids) > 0 do
       IO.puts("  #{bright()}History:#{reset()}")
+
       Enum.each(bids, fn bid ->
         amount_str = if bid.amount == :pass, do: "#{red()}PASS#{reset()}", else: "#{bid.amount}"
         IO.puts("    #{format_position(bid.position)}: #{amount_str}")
@@ -380,7 +466,10 @@ defmodule Pidro.IEx do
 
   defp print_player(%Types.Player{} = player, trump_suit) do
     status = if player.eliminated?, do: " #{red()}[COLD]#{reset()}", else: ""
-    IO.puts("\n  #{bright()}#{format_position(player.position)}#{reset()} (#{format_team(player.team)})#{status}")
+
+    IO.puts(
+      "\n  #{bright()}#{format_position(player.position)}#{reset()} (#{format_team(player.team)})#{status}"
+    )
 
     if player.eliminated? and length(player.revealed_cards) > 0 do
       IO.puts("    Revealed: #{format_cards(player.revealed_cards, trump_suit)}")
@@ -405,6 +494,7 @@ defmodule Pidro.IEx do
 
     if length(trick.plays) > 0 do
       IO.puts("  Plays:")
+
       Enum.each(trick.plays, fn {pos, card} ->
         IO.puts("    #{format_position(pos)}: #{format_card(card, trump_suit)}")
       end)
@@ -416,10 +506,21 @@ defmodule Pidro.IEx do
   end
 
   defp print_game_status(%Types.GameState{phase: :complete, winner: winner}) do
-    IO.puts("#{bright()}#{green()}╔═══════════════════════════════════════════════════════════╗#{reset()}")
-    IO.puts("#{bright()}#{green()}║                    GAME OVER!                             ║#{reset()}")
-    IO.puts("#{bright()}#{green()}║          Winner: #{String.pad_trailing(format_team(winner), 30)}           ║#{reset()}")
-    IO.puts("#{bright()}#{green()}╚═══════════════════════════════════════════════════════════╝#{reset()}\n")
+    IO.puts(
+      "#{bright()}#{green()}╔═══════════════════════════════════════════════════════════╗#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{green()}║                    GAME OVER!                             ║#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{green()}║          Winner: #{String.pad_trailing(format_team(winner), 30)}           ║#{reset()}"
+    )
+
+    IO.puts(
+      "#{bright()}#{green()}╚═══════════════════════════════════════════════════════════╝#{reset()}\n"
+    )
   end
 
   defp print_game_status(_state), do: :ok
@@ -494,16 +595,30 @@ defmodule Pidro.IEx do
 
   defp format_action({:bid, amount}, _state), do: "#{green()}Bid #{amount}#{reset()}"
   defp format_action(:pass, _state), do: "#{red()}Pass#{reset()}"
-  defp format_action({:declare_trump, suit}, _state), do: "#{yellow()}Declare #{format_suit(suit)}#{reset()}"
-  defp format_action({:play_card, card}, state), do: "#{cyan()}Play #{format_card(card, state.trump_suit)}#{reset()}"
-  defp format_action({:discard, cards}, state), do: "Discard #{length(cards)} cards: #{format_cards(cards, state.trump_suit)}"
-  defp format_action({:select_hand, cards}, state) when is_list(cards), do: "Select hand: #{format_cards(cards, state.trump_suit)}"
+
+  defp format_action({:declare_trump, suit}, _state),
+    do: "#{yellow()}Declare #{format_suit(suit)}#{reset()}"
+
+  defp format_action({:play_card, card}, state),
+    do: "#{cyan()}Play #{format_card(card, state.trump_suit)}#{reset()}"
+
+  defp format_action({:discard, cards}, state),
+    do: "Discard #{length(cards)} cards: #{format_cards(cards, state.trump_suit)}"
+
+  defp format_action({:select_hand, cards}, state) when is_list(cards),
+    do: "Select hand: #{format_cards(cards, state.trump_suit)}"
+
   defp format_action({:select_hand, _}, _state), do: "Select 6 cards for final hand"
   defp format_action(action, _state), do: "#{inspect(action)}"
 
-  defp format_error({:not_your_turn, turn}), do: "Not your turn (current turn: #{format_position(turn)})"
+  defp format_error({:not_your_turn, turn}),
+    do: "Not your turn (current turn: #{format_position(turn)})"
+
   defp format_error({:player_eliminated, pos}), do: "Player #{format_position(pos)} is eliminated"
-  defp format_error({:invalid_action, action, phase}), do: "Invalid action #{inspect(action)} for phase #{format_phase(phase)}"
+
+  defp format_error({:invalid_action, action, phase}),
+    do: "Invalid action #{inspect(action)} for phase #{format_phase(phase)}"
+
   defp format_error(:game_already_complete), do: "Game is already complete"
   defp format_error(reason), do: "#{inspect(reason)}"
 
@@ -518,35 +633,39 @@ defmodule Pidro.IEx do
     positions = get_bidding_order(state.current_dealer)
 
     # Simulate bids
-    state = Enum.reduce(positions, state, fn pos, acc_state ->
-      # Get legal actions
-      actions = Engine.legal_actions(acc_state, pos)
+    state =
+      Enum.reduce(positions, state, fn pos, acc_state ->
+        # Get legal actions
+        actions = Engine.legal_actions(acc_state, pos)
 
-      # Skip if no actions available (shouldn't happen during bidding)
-      if actions == [] do
-        acc_state
-      else
-        # Make a random bid (favor bidding over passing early)
-        action = if length(actions) > 2 and :rand.uniform(10) > 3 do
-          # Pick a random bid (not pass)
-          bid_actions = Enum.filter(actions, fn
-            {:bid, _} -> true
-            _ -> false
-          end)
-          if bid_actions != [], do: Enum.random(bid_actions), else: hd(actions)
+        # Skip if no actions available (shouldn't happen during bidding)
+        if actions == [] do
+          acc_state
         else
-          # Pass or pick first action
-          hd(actions)
-        end
+          # Make a random bid (favor bidding over passing early)
+          action =
+            if length(actions) > 2 and :rand.uniform(10) > 3 do
+              # Pick a random bid (not pass)
+              bid_actions =
+                Enum.filter(actions, fn
+                  {:bid, _} -> true
+                  _ -> false
+                end)
 
-        IO.puts("  #{format_position(pos)}: #{format_action(action, acc_state)}")
+              if bid_actions != [], do: Enum.random(bid_actions), else: hd(actions)
+            else
+              # Pass or pick first action
+              hd(actions)
+            end
 
-        case Engine.apply_action(acc_state, pos, action) do
-          {:ok, new_state} -> new_state
-          {:error, _} -> acc_state
+          IO.puts("  #{format_position(pos)}: #{format_action(action, acc_state)}")
+
+          case Engine.apply_action(acc_state, pos, action) do
+            {:ok, new_state} -> new_state
+            {:error, _} -> acc_state
+          end
         end
-      end
-    end)
+      end)
 
     pretty_print(state)
     state
@@ -599,7 +718,8 @@ defmodule Pidro.IEx do
 
   defp play_n_tricks(state, _n), do: state
 
-  defp play_one_trick(%Types.GameState{phase: :playing, current_turn: turn} = state) when turn != nil do
+  defp play_one_trick(%Types.GameState{phase: :playing, current_turn: turn} = state)
+       when turn != nil do
     # Get legal actions for current player
     actions = Engine.legal_actions(state, turn)
 
@@ -635,6 +755,7 @@ defmodule Pidro.IEx do
 
   defp get_bidding_order(dealer) do
     first = Types.next_position(dealer)
+
     [
       first,
       Types.next_position(first),
@@ -653,27 +774,39 @@ defmodule Pidro.IEx do
   # =============================================================================
 
   defp play_until_complete(%Types.GameState{phase: :complete} = state) do
-    IO.puts("\n#{bright()}#{green()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts(
+      "\n#{bright()}#{green()}═══════════════════════════════════════════════════════════#{reset()}"
+    )
+
     IO.puts("#{bright()}#{green()}         GAME OVER!#{reset()}")
-    IO.puts("#{bright()}#{green()}═══════════════════════════════════════════════════════════#{reset()}\n")
-    
+
+    IO.puts(
+      "#{bright()}#{green()}═══════════════════════════════════════════════════════════#{reset()}\n"
+    )
+
     IO.puts("#{bright()}Winner: #{format_team(state.winner)}#{reset()}")
     IO.puts("\n#{bright()}Final Scores:#{reset()}")
     IO.puts("  North/South: #{state.cumulative_scores.north_south}")
     IO.puts("  East/West: #{state.cumulative_scores.east_west}")
     IO.puts("\n#{bright()}Hands Played: #{state.hand_number}#{reset()}")
-    
+
     state
   end
 
   defp play_until_complete(state) do
-    IO.puts("\n#{bright()}#{cyan()}═══════════════════════════════════════════════════════════#{reset()}")
+    IO.puts(
+      "\n#{bright()}#{cyan()}═══════════════════════════════════════════════════════════#{reset()}"
+    )
+
     IO.puts("#{bright()}#{cyan()}         HAND ##{state.hand_number}#{reset()}")
-    IO.puts("#{bright()}#{cyan()}═══════════════════════════════════════════════════════════#{reset()}")
-    
+
+    IO.puts(
+      "#{bright()}#{cyan()}═══════════════════════════════════════════════════════════#{reset()}"
+    )
+
     # Play one complete hand
     state = play_complete_hand(state)
-    
+
     # Show hand results
     if state.phase != :complete do
       IO.puts("\n#{bright()}Hand ##{state.hand_number - 1} Complete#{reset()}")
@@ -681,7 +814,7 @@ defmodule Pidro.IEx do
       IO.puts("  North/South: #{state.cumulative_scores.north_south}")
       IO.puts("  East/West: #{state.cumulative_scores.east_west}")
     end
-    
+
     # Continue to next hand
     play_until_complete(state)
   end
@@ -691,7 +824,8 @@ defmodule Pidro.IEx do
     play_hand_loop(state)
   end
 
-  defp play_hand_loop(%Types.GameState{phase: phase} = state) when phase in [:scoring, :complete] do
+  defp play_hand_loop(%Types.GameState{phase: phase} = state)
+       when phase in [:scoring, :complete] do
     # Hand is over, trigger scoring if needed
     if phase == :scoring do
       play_scoring_phase(state)
@@ -702,14 +836,15 @@ defmodule Pidro.IEx do
 
   defp play_hand_loop(state) do
     # Handle current phase
-    new_state = case state.phase do
-      :bidding -> play_bidding_phase(state)
-      :declaring -> play_trump_phase(state)
-      :discarding -> play_discard_phase(state)
-      :second_deal -> play_second_deal_phase(state)
-      :playing -> play_all_tricks(state)
-      _ -> state
-    end
+    new_state =
+      case state.phase do
+        :bidding -> play_bidding_phase(state)
+        :declaring -> play_trump_phase(state)
+        :discarding -> play_discard_phase(state)
+        :second_deal -> play_second_deal_phase(state)
+        :playing -> play_all_tricks(state)
+        _ -> state
+      end
 
     # Continue if phase changed
     if new_state.phase != state.phase or new_state.phase == :playing do
@@ -723,28 +858,31 @@ defmodule Pidro.IEx do
     IO.puts("\n#{bright()}Bidding...#{reset()}")
     pause()
     positions = get_bidding_order(state.current_dealer)
-    
+
     Enum.reduce(positions, state, fn pos, acc_state ->
       if acc_state.phase != :bidding do
         acc_state
       else
         actions = Engine.legal_actions(acc_state, pos)
-        
+
         if actions == [] do
           acc_state
         else
-          action = if length(actions) > 2 and :rand.uniform(10) > 3 do
-            bid_actions = Enum.filter(actions, fn
-              {:bid, _} -> true
-              _ -> false
-            end)
-            if bid_actions != [], do: Enum.random(bid_actions), else: hd(actions)
-          else
-            hd(actions)
-          end
-          
+          action =
+            if length(actions) > 2 and :rand.uniform(10) > 3 do
+              bid_actions =
+                Enum.filter(actions, fn
+                  {:bid, _} -> true
+                  _ -> false
+                end)
+
+              if bid_actions != [], do: Enum.random(bid_actions), else: hd(actions)
+            else
+              hd(actions)
+            end
+
           IO.puts("  #{format_position(pos)}: #{format_action(action, acc_state)}")
-          
+
           case Engine.apply_action(acc_state, pos, action) do
             {:ok, new_state} -> new_state
             {:error, _} -> acc_state
@@ -759,12 +897,12 @@ defmodule Pidro.IEx do
   defp play_trump_phase(%Types.GameState{phase: :declaring, highest_bid: {pos, _}} = state) do
     IO.puts("\n#{bright()}Trump Declaration...#{reset()}")
     pause()
-    
+
     # Pick a random trump suit
     trump_suit = Enum.random([:hearts, :diamonds, :clubs, :spades])
-    
+
     IO.puts("  #{format_position(pos)}: Declare #{format_suit(trump_suit)}")
-    
+
     case Engine.apply_action(state, pos, {:declare_trump, trump_suit}) do
       {:ok, new_state} -> new_state
       {:error, _} -> state
@@ -785,7 +923,7 @@ defmodule Pidro.IEx do
   defp play_second_deal_phase(%Types.GameState{phase: :second_deal} = state) do
     IO.puts("\n#{bright()}Second deal...#{reset()}")
     pause()
-    
+
     case Engine.apply_action(state, state.current_dealer, :deal_second) do
       {:ok, new_state} -> new_state
       {:error, _} -> state
@@ -805,7 +943,7 @@ defmodule Pidro.IEx do
   defp play_all_tricks_loop(%Types.GameState{phase: :playing} = state, trick_num) do
     IO.puts("\n  #{cyan()}Trick ##{trick_num}#{reset()}")
     state = play_one_complete_trick(state)
-    
+
     if state.phase == :playing do
       play_all_tricks_loop(state, trick_num + 1)
     else
@@ -822,15 +960,16 @@ defmodule Pidro.IEx do
 
   defp play_trick_cards(state, 0), do: state
 
-  defp play_trick_cards(%Types.GameState{phase: :playing, current_turn: turn} = state, cards_left) when turn != nil do
+  defp play_trick_cards(%Types.GameState{phase: :playing, current_turn: turn} = state, cards_left)
+       when turn != nil do
     actions = Engine.legal_actions(state, turn)
-    
+
     if actions == [] do
       state
     else
       action = Enum.random(actions)
       IO.puts("    #{format_position(turn)}: #{format_action(action, state)}")
-      
+
       case Engine.apply_action(state, turn, action) do
         {:ok, new_state} ->
           if new_state.phase == :playing do
@@ -838,6 +977,7 @@ defmodule Pidro.IEx do
           else
             new_state
           end
+
         {:error, _} ->
           play_trick_cards(state, cards_left - 1)
       end
@@ -849,7 +989,7 @@ defmodule Pidro.IEx do
   defp play_scoring_phase(%Types.GameState{phase: :scoring} = state) do
     IO.puts("\n#{bright()}Scoring hand...#{reset()}")
     pause()
-    
+
     case Engine.apply_action(state, :system, :score_hand) do
       {:ok, new_state} -> new_state
       {:error, _} -> state
@@ -857,4 +997,107 @@ defmodule Pidro.IEx do
   end
 
   defp play_scoring_phase(state), do: state
+
+  # =============================================================================
+  # Event Formatting
+  # =============================================================================
+
+  defp print_event({:dealer_selected, position, card}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{cyan()}[DEALER]#{reset()} #{format_position(position)} selected as dealer (cut #{format_event_card(card)})"
+    )
+  end
+
+  defp print_event({:cards_dealt, hands}, idx) do
+    total_cards = hands |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{green()}[DEAL]#{reset()} Initial deal complete (#{total_cards} cards dealt)"
+    )
+  end
+
+  defp print_event({:bid_made, position, amount}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{yellow()}[BID]#{reset()} #{format_position(position)} bid #{amount}"
+    )
+  end
+
+  defp print_event({:player_passed, position}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{faint()}[PASS]#{reset()} #{format_position(position)} passed"
+    )
+  end
+
+  defp print_event({:bidding_complete, position, amount}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{bright()}#{yellow()}[BID COMPLETE]#{reset()} #{format_position(position)} won with bid of #{amount}"
+    )
+  end
+
+  defp print_event({:trump_declared, suit}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{bright()}#{magenta()}[TRUMP]#{reset()} #{format_suit(suit)} declared as trump"
+    )
+  end
+
+  defp print_event({:cards_discarded, position, cards}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{faint()}[DISCARD]#{reset()} #{format_position(position)} discarded #{length(cards)} card(s)"
+    )
+  end
+
+  defp print_event({:second_deal_complete, hands}, idx) do
+    total_cards = hands |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{green()}[REDEAL]#{reset()} Second deal complete (#{total_cards} cards dealt)"
+    )
+  end
+
+  defp print_event({:dealer_robbed_pack, position, took, kept}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{cyan()}[ROB]#{reset()} #{format_position(position)} robbed pack (took #{length(took)}, kept #{length(kept)})"
+    )
+  end
+
+  defp print_event({:card_played, position, card}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{blue()}[PLAY]#{reset()} #{format_position(position)} played #{format_event_card(card)}"
+    )
+  end
+
+  defp print_event({:trick_won, position, points}, idx) do
+    point_str = if points > 0, do: " (#{points} points)", else: ""
+
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{bright()}#{green()}[TRICK]#{reset()} #{format_position(position)} won trick#{point_str}"
+    )
+  end
+
+  defp print_event({:player_went_cold, position, revealed_cards}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{red()}[COLD]#{reset()} #{format_position(position)} went cold (revealed #{length(revealed_cards)} card(s))"
+    )
+  end
+
+  defp print_event({:hand_scored, team, points}, idx) do
+    sign = if points >= 0, do: "+", else: ""
+
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{bright()}#{cyan()}[SCORE]#{reset()} #{format_team(team)} scored #{sign}#{points} points"
+    )
+  end
+
+  defp print_event({:game_won, team, score}, idx) do
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{bright()}#{green()}[WINNER]#{reset()} #{format_team(team)} won the game with #{score} points!"
+    )
+  end
+
+  defp format_event_card({rank, suit}) do
+    rank_str = format_rank(rank)
+    suit_str = format_suit_symbol(suit)
+    color = suit_color(suit)
+    "#{color}#{rank_str}#{suit_str}#{reset()}"
+  end
 end
