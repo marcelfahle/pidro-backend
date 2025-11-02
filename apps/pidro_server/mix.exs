@@ -27,7 +27,44 @@ defmodule PidroServer.MixProject do
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
         plt_add_apps: [:ex_unit]
       ],
-      releases: releases()
+      releases: releases(),
+      # Documentation
+      name: "Pidro Server",
+      source_url: "https://github.com/pidro/pidro_backend",
+      docs: [
+        main: "readme",
+        extras: ["README.md", "DEPLOYMENT.md"],
+        groups_for_modules: [
+          "Web Controllers": [
+            PidroServerWeb.API.AuthController,
+            PidroServerWeb.API.RoomController,
+            PidroServerWeb.API.UserController,
+            PidroServerWeb.API.FallbackController
+          ],
+          "WebSocket Channels": [
+            PidroServerWeb.UserSocket,
+            PidroServerWeb.LobbyChannel,
+            PidroServerWeb.GameChannel,
+            PidroServerWeb.Presence
+          ],
+          "Game Management": [
+            PidroServer.Games.Supervisor,
+            PidroServer.Games.GameSupervisor,
+            PidroServer.Games.GameRegistry,
+            PidroServer.Games.RoomManager,
+            PidroServer.Games.GameAdapter
+          ],
+          Accounts: [
+            PidroServer.Accounts.Auth,
+            PidroServer.Accounts.Token,
+            PidroServer.Accounts.User
+          ],
+          Statistics: [
+            PidroServer.Stats,
+            PidroServer.Stats.GameStats
+          ]
+        ]
+      ]
     ]
   end
 
@@ -87,7 +124,9 @@ defmodule PidroServer.MixProject do
       {:cors_plug, "~> 3.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:excoveralls, "~> 0.18", only: :test}
+      {:excoveralls, "~> 0.18", only: :test},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:open_api_spex, "~> 3.20"}
     ]
   end
 

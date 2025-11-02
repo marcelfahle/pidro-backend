@@ -1,13 +1,65 @@
 defmodule PidroServerWeb.API.UserController do
   @moduledoc """
-  Controller for user-related endpoints.
+  API controller for user-related operations.
+
+  This controller handles user-specific functionality including statistics
+  and user data retrieval. All endpoints are protected and require authentication
+  via Bearer token in the Authorization header.
+
+  ## Authentication
+
+  All endpoints in this controller require a valid Bearer token in the
+  Authorization header. Tokens are validated via the Authenticate plug.
+
+  ## OpenAPI Documentation
+
+  This controller includes OpenAPI 3.0 specifications for all endpoints:
+  - GET /api/v1/users/me/stats - Get current user's game statistics
+
+  All endpoints are tagged with "Users" in the OpenAPI specification.
   """
 
   use PidroServerWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
   alias PidroServer.Stats
+  alias PidroServerWeb.Schemas.{UserSchemas, ErrorSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
+
+  tags(["Users"])
+
+  operation(:stats,
+    summary: "Get current user's game statistics",
+    description: """
+    Retrieves aggregated game statistics for the currently authenticated user.
+
+    This endpoint requires authentication. The Bearer token must be included
+    in the Authorization header: `Authorization: Bearer <token>`
+
+    Returns comprehensive statistics including:
+    - Total games played
+    - Total wins and losses
+    - Win rate (as a decimal from 0.0 to 1.0)
+    - Total time spent playing (in seconds)
+    - Average bid amount across all games
+
+    All statistics are calculated from the user's complete game history and
+    updated in real-time based on their participation in games.
+
+    ## Error Responses
+    - Returns 401 Unauthorized if token is missing, invalid, or expired
+    """,
+    security: [%{"bearer" => []}],
+    responses: [
+      ok:
+        {"User statistics retrieved successfully", "application/json",
+         UserSchemas.UserStatsResponse},
+      unauthorized:
+        {"Authentication required or invalid", "application/json",
+         ErrorSchemas.unauthorized_error()}
+    ]
+  )
 
   @doc """
   Get current user's game statistics.

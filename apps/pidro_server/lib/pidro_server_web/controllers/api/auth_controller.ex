@@ -11,14 +11,50 @@ defmodule PidroServerWeb.API.AuthController do
 
   Protected endpoints (like `me/1`) require a valid Bearer token in the
   Authorization header. Tokens are validated via the Authenticate plug.
+
+  ## OpenAPI Documentation
+
+  This controller includes OpenAPI 3.0 specifications for all endpoints:
+  - POST /api/v1/auth/register - Register a new user account
+  - POST /api/v1/auth/login - Authenticate and receive a token
+  - GET /api/v1/auth/me - Retrieve current authenticated user
+
+  All endpoints are tagged with "Authentication" in the OpenAPI specification.
   """
 
   use PidroServerWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
   alias PidroServer.Accounts.{Auth, Token}
   alias PidroServerWeb.API.UserJSON
+  alias PidroServerWeb.Schemas.{UserSchemas, ErrorSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
+
+  tags(["Authentication"])
+
+  operation(:register,
+    summary: "Register a new user",
+    description: """
+    Creates a new user account with username, email, and password.
+    Returns the created user data along with a JWT authentication token.
+
+    The token should be included in subsequent requests in the Authorization header
+    as a Bearer token: `Authorization: Bearer <token>`
+
+    ## Validation Rules
+    - Username must be at least 3 characters and unique
+    - Email must be valid format and unique
+    - Password must be at least 8 characters
+    """,
+    request_body: {"User registration data", "application/json", UserSchemas.RegisterRequest},
+    responses: [
+      created:
+        {"User created successfully", "application/json", UserSchemas.UserWithTokenResponse},
+      unprocessable_entity:
+        {"Validation errors", "application/json", ErrorSchemas.validation_error()}
+    ]
+  )
 
   @doc """
   Register a new user.
@@ -83,6 +119,25 @@ defmodule PidroServerWeb.API.AuthController do
     end
   end
 
+  operation(:login,
+    summary: "Authenticate a user",
+    description: """
+    Authenticates a user by verifying their username and password credentials.
+    Returns the user data along with a JWT authentication token on success.
+
+    The token should be included in subsequent requests in the Authorization header
+    as a Bearer token: `Authorization: Bearer <token>`
+
+    ## Error Responses
+    - Returns 401 Unauthorized if credentials are invalid
+    """,
+    request_body: {"Login credentials", "application/json", UserSchemas.LoginRequest},
+    responses: [
+      ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
+      unauthorized: {"Invalid credentials", "application/json", ErrorSchemas.unauthorized_error()}
+    ]
+  )
+
   @doc """
   Authenticate a user and retrieve a token.
 
@@ -142,6 +197,29 @@ defmodule PidroServerWeb.API.AuthController do
       |> render(:show, %{user: user, token: token})
     end
   end
+
+  operation(:me,
+    summary: "Get current authenticated user",
+    description: """
+    Retrieves the current authenticated user's profile information.
+
+    This endpoint requires authentication. The Bearer token must be included
+    in the Authorization header: `Authorization: Bearer <token>`
+
+    The current user is loaded by the authentication middleware and available
+    in the request context.
+
+    ## Error Responses
+    - Returns 401 Unauthorized if token is missing, invalid, or expired
+    """,
+    security: [%{"bearer" => []}],
+    responses: [
+      ok: {"Current user retrieved successfully", "application/json", UserSchemas.UserResponse},
+      unauthorized:
+        {"Authentication required or invalid", "application/json",
+         ErrorSchemas.unauthorized_error()}
+    ]
+  )
 
   @doc """
   Retrieve the current authenticated user.
