@@ -58,8 +58,8 @@ defmodule PidroServerWeb.LobbyChannel do
     # Subscribe to lobby updates
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
-    # Get current room list
-    rooms = RoomManager.list_rooms()
+    # Get current available room list (excludes finished and closed)
+    rooms = RoomManager.list_rooms(:available)
 
     # Track presence after join
     send(self(), :after_join)
@@ -68,23 +68,20 @@ defmodule PidroServerWeb.LobbyChannel do
   end
 
   @doc """
-  Handles lobby updates from RoomManager.
+  Handles internal messages.
 
-  Broadcasts the updated room list to all lobby subscribers.
+  Processes the following events:
+  - `:lobby_update` - Room list changed
+  - `:after_join` - Presence tracking after join
   """
   @impl true
+  def handle_info(msg, socket)
+
   def handle_info({:lobby_update, rooms}, socket) do
     broadcast(socket, "lobby_update", %{rooms: serialize_rooms(rooms)})
     {:noreply, socket}
   end
 
-  @doc """
-  Tracks presence after a user joins the lobby.
-
-  This is delayed until after join completes to ensure the socket
-  is fully initialized.
-  """
-  @impl true
   def handle_info(:after_join, socket) do
     user_id = socket.assigns.user_id
 

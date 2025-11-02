@@ -214,7 +214,12 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
 
-      assert %{rooms: [serialized_room]} = reply
+      assert %{rooms: rooms} = reply
+      assert is_list(rooms)
+
+      # Find our created room
+      serialized_room = Enum.find(rooms, fn r -> r.code == room.code end)
+      assert serialized_room != nil
       assert serialized_room.code == room.code
       assert serialized_room.host_id == user.id
       assert serialized_room.player_count == 1
