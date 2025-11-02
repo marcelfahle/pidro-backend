@@ -345,4 +345,320 @@ defmodule PidroServerWeb.GameChannelTest do
       end)
     end
   end
+
+  describe "reconnection handling" do
+    test "detects reconnection attempt when player was disconnected", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      # First join
+      {:ok, _reply, joined_socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      # Simulate disconnect by leaving the channel and marking as disconnected
+      leave(joined_socket)
+      :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+
+      # Attempt to rejoin - should detect as reconnection
+      {:ok, new_socket} = create_socket(user)
+
+      {:ok, reply, _reconnected_socket} =
+        subscribe_and_join(new_socket, GameChannel, "game:#{room_code}", %{})
+
+      # Should indicate this was a reconnection
+      assert reply.reconnected == true
+      assert reply.position in [:north, :east, :south, :west]
+      assert reply.state != nil
+    end
+
+    test "successful reconnection broadcasts to other players", %{
+      users: users,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      [user1, user2 | _] = users
+
+      # Both players join
+      {:ok, _reply, socket1} =
+        subscribe_and_join(sockets[user1.id], GameChannel, "game:#{room_code}", %{})
+
+      {:ok, _reply, _socket2} =
+        subscribe_and_join(sockets[user2.id], GameChannel, "game:#{room_code}", %{})
+
+      # User2 disconnects
+      :ok = RoomManager.handle_player_disconnect(room_code, user2.id)
+
+      # User2 reconnects
+      {:ok, new_socket2} = create_socket(user2)
+
+      {:ok, _reply, _reconnected_socket} =
+        subscribe_and_join(new_socket2, GameChannel, "game:#{room_code}", %{})
+
+      # Socket1 (user1) should receive reconnection broadcast
+      assert_broadcast "player_reconnected", %{user_id: user_id, position: position}, 1000
+      assert to_string(user_id) == to_string(user2.id)
+      assert position in [:north, :east, :south, :west]
+    end
+
+    test "reconnection returns correct state with reconnected flag", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      # First join
+      {:ok, initial_reply, joined_socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      initial_position = initial_reply.position
+      assert initial_reply.reconnected == false
+
+      # Disconnect and reconnect
+      leave(joined_socket)
+      :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+
+      {:ok, new_socket} = create_socket(user)
+
+      {:ok, reconnect_reply, _reconnected_socket} =
+        subscribe_and_join(new_socket, GameChannel, "game:#{room_code}", %{})
+
+      # Should have same position and reconnected flag
+      assert reconnect_reply.reconnected == true
+      assert reconnect_reply.position == initial_position
+      assert reconnect_reply.state.phase in [:dealer_selection, :dealing, :bidding]
+    end
+
+    test "normal join still works without reconnected flag", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      # First join should not be marked as reconnection
+      assert reply.reconnected == false
+      assert reply.position in [:north, :east, :south, :west]
+    end
+
+    test "reconnection after grace period fails", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      # Join and then disconnect
+      {:ok, _reply, joined_socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      leave(joined_socket)
+      :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+
+      # Manually expire grace period by updating disconnect time in the past
+      {:ok, room} = RoomManager.get_room(room_code)
+      past_time = DateTime.add(DateTime.utc_now(), -130, :second)
+
+      # We need to update the room state directly (this is a test helper scenario)
+      # In real scenario, we'd wait 120+ seconds
+      # For this test, we'll verify the error handling when grace period has expired
+
+      # Simulate expired grace period by removing player from room
+      :ok = RoomManager.leave_room(user.id)
+
+      # Attempt reconnection should fail
+      {:ok, new_socket} = create_socket(user)
+
+      assert {:error, %{reason: reason}} =
+               subscribe_and_join(new_socket, GameChannel, "game:#{room_code}", %{})
+
+      assert reason =~ "Not a player"
+    end
+
+    test "multiple players can reconnect independently", %{
+      users: users,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      [user1, user2, user3 | _] = users
+
+      # All join
+      {:ok, _reply, socket1} =
+        subscribe_and_join(sockets[user1.id], GameChannel, "game:#{room_code}", %{})
+
+      {:ok, _reply, socket2} =
+        subscribe_and_join(sockets[user2.id], GameChannel, "game:#{room_code}", %{})
+
+      {:ok, _reply, _socket3} =
+        subscribe_and_join(sockets[user3.id], GameChannel, "game:#{room_code}", %{})
+
+      # User1 and User2 disconnect
+      leave(socket1)
+      leave(socket2)
+      :ok = RoomManager.handle_player_disconnect(room_code, user1.id)
+      :ok = RoomManager.handle_player_disconnect(room_code, user2.id)
+
+      # User1 reconnects
+      {:ok, new_socket1} = create_socket(user1)
+
+      {:ok, reply1, _reconnected1} =
+        subscribe_and_join(new_socket1, GameChannel, "game:#{room_code}", %{})
+
+      assert reply1.reconnected == true
+
+      # User2 reconnects
+      {:ok, new_socket2} = create_socket(user2)
+
+      {:ok, reply2, _reconnected2} =
+        subscribe_and_join(new_socket2, GameChannel, "game:#{room_code}", %{})
+
+      assert reply2.reconnected == true
+
+      # Both should have valid positions
+      assert reply1.position in [:north, :east, :south, :west]
+      assert reply2.position in [:north, :east, :south, :west]
+    end
+  end
+
+  describe "terminate/disconnect handling" do
+    test "terminate callback notifies RoomManager on disconnect", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, joined_socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      # Close the socket (simulates disconnect)
+      Process.unlink(joined_socket.channel_pid)
+      close(joined_socket)
+
+      # Give it time to process
+      Process.sleep(100)
+
+      # Player should be removed from room (since leave_room is called in terminate)
+      # Note: In actual implementation with reconnection, this would mark as disconnected
+      # But current terminate calls leave_room which removes the player
+      {:ok, room} = RoomManager.get_room(room_code)
+
+      # The current implementation calls leave_room, so player is removed
+      # If we change to handle_player_disconnect, this test would change
+      refute to_string(user.id) in Enum.map(room.player_ids, &to_string/1)
+    end
+
+    test "terminate broadcasts disconnect to other players", %{
+      users: users,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      [user1, user2 | _] = users
+
+      # Both join
+      {:ok, _reply, _socket1} =
+        subscribe_and_join(sockets[user1.id], GameChannel, "game:#{room_code}", %{})
+
+      {:ok, _reply, socket2} =
+        subscribe_and_join(sockets[user2.id], GameChannel, "game:#{room_code}", %{})
+
+      # User2 disconnects
+      Process.unlink(socket2.channel_pid)
+      close(socket2)
+
+      # Socket1 should receive disconnect broadcast
+      assert_broadcast "player_disconnected", %{user_id: user_id, reason: reason}, 1000
+      assert to_string(user_id) == to_string(user2.id)
+      assert reason in ["left", "connection_lost", "error"]
+    end
+
+    test "handles normal leave reason", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, joined_socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      # Normal leave
+      leave(joined_socket)
+
+      # Should broadcast player_disconnected
+      assert_broadcast "player_disconnected", %{user_id: _user_id, reason: reason}, 1000
+      assert reason == "left"
+    end
+  end
+
+  describe "reconnection edge cases" do
+    test "reconnecting when not actually disconnected returns error", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      # Join normally
+      {:ok, _reply, _joined_socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      # Try to trigger reconnection manually
+      result = RoomManager.handle_player_reconnect(room_code, user.id)
+
+      assert {:error, :player_not_disconnected} = result
+    end
+
+    test "joining with fresh socket after disconnect works correctly", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      # Join, disconnect, and rejoin cycle
+      {:ok, _reply1, socket1} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      leave(socket1)
+      :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+
+      # Create fresh socket and rejoin
+      {:ok, fresh_socket} = create_socket(user)
+
+      {:ok, reply2, _socket2} =
+        subscribe_and_join(fresh_socket, GameChannel, "game:#{room_code}", %{})
+
+      assert reply2.reconnected == true
+      assert %{state: _state, position: _position} = reply2
+    end
+
+    test "handles concurrent join attempts gracefully", %{
+      user1: user,
+      room_code: room_code
+    } do
+      # Create two sockets for same user
+      {:ok, socket1} = create_socket(user)
+      {:ok, socket2} = create_socket(user)
+
+      # Both try to join
+      {:ok, _reply1, _joined1} =
+        subscribe_and_join(socket1, GameChannel, "game:#{room_code}", %{})
+
+      # Second join with same user should work (they're in the room)
+      {:ok, _reply2, _joined2} =
+        subscribe_and_join(socket2, GameChannel, "game:#{room_code}", %{})
+
+      # Both should succeed (same player, multiple connections)
+      {:ok, room} = RoomManager.get_room(room_code)
+      user_count = Enum.count(room.player_ids, fn id -> to_string(id) == to_string(user.id) end)
+      assert user_count == 1
+    end
+  end
 end
