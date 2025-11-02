@@ -399,7 +399,56 @@ defmodule Pidro.IEx do
       IO.puts("#{bright()}Turn:#{reset()}        #{format_position(state.current_turn)}")
     end
 
+    # Show redeal information
+    print_redeal_info(state)
+
     IO.puts("")
+  end
+
+  defp print_redeal_info(%Types.GameState{} = state) do
+    # Show cards requested information if any players requested cards
+    if map_size(state.cards_requested) > 0 do
+      IO.puts("\n#{bright()}#{magenta()}Redeal Info:#{reset()}")
+      IO.puts("  #{bright()}Cards Requested:#{reset()}")
+
+      [:north, :east, :south, :west]
+      |> Enum.each(fn pos ->
+        if Map.has_key?(state.cards_requested, pos) do
+          count = Map.get(state.cards_requested, pos)
+          IO.puts("    #{format_position(pos)}: #{count} cards")
+        end
+      end)
+    end
+
+    # Show dealer pool size when dealer is robbing
+    if state.dealer_pool_size != nil and state.phase == :second_deal do
+      IO.puts(
+        "  #{bright()}#{cyan()}[ROB]#{reset()} Dealer Pool Size: #{state.dealer_pool_size} cards"
+      )
+    end
+
+    # Show killed cards for each player
+    if map_size(state.killed_cards) > 0 do
+      has_kills =
+        state.killed_cards
+        |> Map.values()
+        |> Enum.any?(fn cards -> length(cards) > 0 end)
+
+      if has_kills do
+        IO.puts("\n#{bright()}#{red()}Killed Cards:#{reset()}")
+
+        [:north, :east, :south, :west]
+        |> Enum.each(fn pos ->
+          killed = Map.get(state.killed_cards, pos, [])
+
+          if length(killed) > 0 do
+            IO.puts(
+              "  #{format_position(pos)}: #{format_cards(killed, state.trump_suit)} (#{length(killed)} card#{if length(killed) > 1, do: "s", else: ""})"
+            )
+          end
+        end)
+      end
+    end
   end
 
   defp print_scores(%Types.GameState{} = state) do
@@ -586,7 +635,10 @@ defmodule Pidro.IEx do
   defp format_phase(:bidding), do: "#{yellow()}Bidding#{reset()}"
   defp format_phase(:declaring), do: "#{yellow()}Trump Declaration#{reset()}"
   defp format_phase(:discarding), do: "#{yellow()}Discarding#{reset()}"
-  defp format_phase(:second_deal), do: "#{yellow()}Second Deal#{reset()}"
+
+  defp format_phase(:second_deal),
+    do: "#{yellow()}Second Deal#{reset()} #{bright()}#{magenta()}[REDEAL]#{reset()}"
+
   defp format_phase(:playing), do: "#{green()}Playing#{reset()}"
   defp format_phase(:scoring), do: "#{yellow()}Scoring#{reset()}"
   defp format_phase(:hand_complete), do: "#{yellow()}Hand Complete#{reset()}"
@@ -1046,7 +1098,15 @@ defmodule Pidro.IEx do
     )
   end
 
-  defp print_event({:second_deal_complete, hands}, idx) do
+  defp print_event({:second_deal_complete, %{dealt: hands, requested: _req}}, idx) do
+    total_cards = hands |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+
+    IO.puts(
+      "#{faint()}#{idx}.#{reset()} #{green()}[REDEAL]#{reset()} Second deal complete (#{total_cards} cards dealt)"
+    )
+  end
+
+  defp print_event({:second_deal_complete, hands}, idx) when is_map(hands) do
     total_cards = hands |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
 
     IO.puts(
@@ -1056,8 +1116,22 @@ defmodule Pidro.IEx do
 
   defp print_event({:dealer_robbed_pack, position, took, kept}, idx) do
     IO.puts(
-      "#{faint()}#{idx}.#{reset()} #{cyan()}[ROB]#{reset()} #{format_position(position)} robbed pack (took #{length(took)}, kept #{length(kept)})"
+      "#{faint()}#{idx}.#{reset()} #{cyan()}[ROB]#{reset()} #{format_position(position)} robbed pack (took #{took}, kept #{kept})"
     )
+  end
+
+  defp print_event({:cards_killed, killed_map}, idx) do
+    total_killed =
+      killed_map
+      |> Map.values()
+      |> Enum.map(&length/1)
+      |> Enum.sum()
+
+    if total_killed > 0 do
+      IO.puts(
+        "#{faint()}#{idx}.#{reset()} #{red()}[KILL]#{reset()} #{total_killed} card(s) killed across players"
+      )
+    end
   end
 
   defp print_event({:card_played, position, card}, idx) do
