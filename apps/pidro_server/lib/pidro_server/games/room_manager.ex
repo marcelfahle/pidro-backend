@@ -290,6 +290,25 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, {:close_room, String.upcase(room_code)})
   end
 
+  @doc """
+  Resets the RoomManager state for testing purposes.
+
+  This function is only intended for use in tests to clear all rooms and
+  player mappings between test runs.
+
+  ## Returns
+
+  - `:ok` - State reset successfully
+
+  ## Examples
+
+      :ok = RoomManager.reset_for_test()
+  """
+  @spec reset_for_test() :: :ok
+  def reset_for_test do
+    GenServer.call(__MODULE__, :reset_for_test)
+  end
+
   ## GenServer Callbacks
 
   @impl true
@@ -533,6 +552,12 @@ defmodule PidroServer.Games.RoomManager do
 
         {:reply, :ok, new_state}
     end
+  end
+
+  @impl true
+  def handle_call(:reset_for_test, _from, _state) do
+    Logger.info("RoomManager state reset for testing")
+    {:reply, :ok, %State{}}
   end
 
   ## Private Helper Functions
