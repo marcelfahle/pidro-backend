@@ -75,16 +75,20 @@ defmodule PidroServerWeb.API.RoomJSON do
   # - code: Unique room code
   # - host_id: User ID of the room host
   # - player_ids: List of player user IDs
-  # - status: Current room status (:waiting or :ready)
+  # - spectator_ids: List of spectator user IDs
+  # - status: Current room status (:waiting, :ready, :playing, :finished, or :closed)
   # - max_players: Maximum number of players allowed
+  # - max_spectators: Maximum number of spectators allowed
   # - created_at: Room creation timestamp in ISO8601 format
   defp data(room) do
     %{
       code: room.code,
       host_id: room.host_id,
       player_ids: room.player_ids,
+      spectator_ids: room.spectator_ids || [],
       status: room.status,
       max_players: room.max_players,
+      max_spectators: room.max_spectators || 10,
       created_at: DateTime.to_iso8601(room.created_at)
     }
   end

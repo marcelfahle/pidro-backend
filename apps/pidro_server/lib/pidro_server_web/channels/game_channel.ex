@@ -57,19 +57,19 @@ defmodule PidroServerWeb.GameChannel do
   intercept ["presence_diff", "player_ready", "player_reconnected"]
 
   @doc """
-  Authorizes and joins a player to the game channel.
+  Authorizes and joins a player or spectator to the game channel.
 
   Verifies that:
   1. The user is authenticated (user_id in socket assigns)
   2. The room exists
-  3. The user is a player in the room
+  3. The user is either a player or spectator in the room
   4. The game process exists
 
   On successful join:
   - Detects and handles reconnection attempts if player was previously disconnected
   - Subscribes to game updates via PubSub
-  - Tracks presence
-  - Returns initial game state and player position
+  - Tracks presence with role (player or spectator)
+  - Returns initial game state and role-specific information
   """
   @impl true
   def join("game:" <> room_code, _params, socket) do
@@ -77,34 +77,47 @@ defmodule PidroServerWeb.GameChannel do
 
     # First, check if this is a reconnection attempt
     with {:ok, room} <- RoomManager.get_room(room_code) do
-      # Check if player is in disconnected list
-      if Map.has_key?(room.disconnected_players || %{}, user_id) do
-        # Attempt reconnection
-        case RoomManager.handle_player_reconnect(room_code, user_id) do
-          {:ok, updated_room} ->
-            Logger.info("Player #{user_id} reconnected to room #{room_code}")
+      # Determine user role (player or spectator)
+      role = determine_user_role(room, user_id)
 
-            # Broadcast reconnection to other players
-            position = get_player_position(updated_room, user_id)
+      case role do
+        :player ->
+          # Check if player is in disconnected list
+          if Map.has_key?(room.disconnected_players || %{}, user_id) do
+            # Attempt reconnection
+            case RoomManager.handle_player_reconnect(room_code, user_id) do
+              {:ok, updated_room} ->
+                Logger.info("Player #{user_id} reconnected to room #{room_code}")
 
-            broadcast_from(socket, "player_reconnected", %{
-              user_id: user_id,
-              position: position
-            })
+                # Broadcast reconnection to other players
+                position = get_player_position(updated_room, user_id)
 
-            # Continue with normal join flow
-            proceed_with_join(room_code, user_id, socket, :reconnect)
+                broadcast_from(socket, "player_reconnected", %{
+                  user_id: user_id,
+                  position: position
+                })
 
-          {:error, :grace_period_expired} ->
-            {:error, %{reason: "reconnection grace period expired"}}
+                # Continue with normal join flow
+                proceed_with_join(room_code, user_id, socket, :reconnect, :player)
 
-          {:error, reason} ->
-            Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
-            {:error, %{reason: "reconnection failed: #{inspect(reason)}"}}
-        end
-      else
-        # Not a reconnection, proceed with normal join
-        proceed_with_join(room_code, user_id, socket, :new)
+              {:error, :grace_period_expired} ->
+                {:error, %{reason: "reconnection grace period expired"}}
+
+              {:error, reason} ->
+                Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
+                {:error, %{reason: "reconnection failed: #{inspect(reason)}"}}
+            end
+          else
+            # Not a reconnection, proceed with normal join
+            proceed_with_join(room_code, user_id, socket, :new, :player)
+          end
+
+        :spectator ->
+          # Spectators join directly without reconnection logic
+          proceed_with_join(room_code, user_id, socket, :new, :spectator)
+
+        :unauthorized ->
+          {:error, %{reason: "not authorized to join this room"}}
       end
     else
       _ -> {:error, %{reason: "room not found"}}
@@ -112,18 +125,20 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   # Extract the common join logic into a helper function
-  defp proceed_with_join(room_code, user_id, socket, join_type) do
+  defp proceed_with_join(room_code, user_id, socket, join_type, role) do
     with {:ok, room} <- RoomManager.get_room(room_code),
-         true <- user_in_room?(user_id, room),
+         true <- user_authorized?(user_id, room, role),
          {:ok, _pid} <- GameAdapter.get_game(room_code),
          :ok <- GameAdapter.subscribe(room_code) do
-      position = get_player_position(room, user_id)
+      # Position only applies to players, not spectators
+      position = if role == :player, do: get_player_position(room, user_id), else: nil
       {:ok, state} = GameAdapter.get_state(room_code)
 
       socket =
         socket
         |> assign(:room_code, room_code)
         |> assign(:position, position)
+        |> assign(:role, role)
         |> assign(:join_type, join_type)
 
       # Track presence after join
@@ -131,9 +146,12 @@ defmodule PidroServerWeb.GameChannel do
 
       reply_data = %{
         state: state,
-        position: position,
+        role: role,
         reconnected: join_type == :reconnect
       }
+
+      # Add position only for players
+      reply_data = if position, do: Map.put(reply_data, :position, position), else: reply_data
 
       {:ok, reply_data, socket}
     else
@@ -144,7 +162,7 @@ defmodule PidroServerWeb.GameChannel do
         {:error, %{reason: "Game not started yet"}}
 
       false ->
-        {:error, %{reason: "Not a player in this room"}}
+        {:error, %{reason: "Not authorized for this room"}}
 
       error ->
         Logger.error("Error joining game channel: #{inspect(error)}")
@@ -156,44 +174,70 @@ defmodule PidroServerWeb.GameChannel do
   Handles game actions from players.
 
   Supports the following actions:
-  - `"bid"` - Make a bid or pass
-  - `"declare_trump"` - Declare trump suit (after winning bid)
-  - `"play_card"` - Play a card from hand
-  - `"ready"` - Signal ready status
+  - `"bid"` - Make a bid or pass (players only)
+  - `"declare_trump"` - Declare trump suit (players only)
+  - `"play_card"` - Play a card from hand (players only)
+  - `"ready"` - Signal ready status (players only)
+
+  Spectators cannot perform game actions and will receive an error.
   """
   @impl true
   def handle_in(event, params, socket)
 
   def handle_in("bid", %{"amount" => "pass"}, socket) do
-    apply_game_action(socket, :pass)
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+    else
+      apply_game_action(socket, :pass)
+    end
   end
 
   def handle_in("bid", %{"amount" => amount}, socket) when is_integer(amount) do
-    apply_game_action(socket, {:bid, amount})
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+    else
+      apply_game_action(socket, {:bid, amount})
+    end
   end
 
   def handle_in("bid", %{"amount" => amount}, socket) when is_binary(amount) do
-    case Integer.parse(amount) do
-      {num, _} -> apply_game_action(socket, {:bid, num})
-      :error -> {:reply, {:error, %{reason: "Invalid bid amount"}}, socket}
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+    else
+      case Integer.parse(amount) do
+        {num, _} -> apply_game_action(socket, {:bid, num})
+        :error -> {:reply, {:error, %{reason: "Invalid bid amount"}}, socket}
+      end
     end
   end
 
   def handle_in("declare_trump", %{"suit" => suit}, socket) when is_binary(suit) do
-    suit_atom = String.to_atom(suit)
-    apply_game_action(socket, {:declare_trump, suit_atom})
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot declare trump"}}, socket}
+    else
+      suit_atom = String.to_atom(suit)
+      apply_game_action(socket, {:declare_trump, suit_atom})
+    end
   end
 
   def handle_in("play_card", %{"card" => %{"rank" => rank, "suit" => suit}}, socket) do
-    suit_atom = String.to_atom(suit)
-    card = {rank, suit_atom}
-    apply_game_action(socket, {:play_card, card})
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot play cards"}}, socket}
+    else
+      suit_atom = String.to_atom(suit)
+      card = {rank, suit_atom}
+      apply_game_action(socket, {:play_card, card})
+    end
   end
 
   def handle_in("ready", _params, socket) do
-    Logger.debug("Player #{socket.assigns.position} is ready")
-    broadcast(socket, "player_ready", %{position: socket.assigns.position})
-    {:reply, :ok, socket}
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot signal ready"}}, socket}
+    else
+      Logger.debug("Player #{socket.assigns.position} is ready")
+      broadcast(socket, "player_ready", %{position: socket.assigns.position})
+      {:reply, :ok, socket}
+    end
   end
 
   @doc """
@@ -239,12 +283,22 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_info(:after_join, socket) do
     user_id = socket.assigns.user_id
+    role = socket.assigns.role
 
-    {:ok, _} =
-      Presence.track(socket, user_id, %{
-        online_at: DateTime.utc_now() |> DateTime.to_unix(),
-        position: socket.assigns.position
-      })
+    presence_data = %{
+      online_at: DateTime.utc_now() |> DateTime.to_unix(),
+      role: role
+    }
+
+    # Add position only for players
+    presence_data =
+      if socket.assigns.position do
+        Map.put(presence_data, :position, socket.assigns.position)
+      else
+        presence_data
+      end
+
+    {:ok, _} = Presence.track(socket, user_id, presence_data)
 
     push(socket, "presence_state", Presence.list(socket))
     {:noreply, socket}
@@ -273,16 +327,17 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   @doc """
-  Handles player disconnection from the channel.
+  Handles player or spectator disconnection from the channel.
 
-  Called automatically when a player's channel connection terminates.
-  This ensures proper cleanup and notification of other players.
+  Called automatically when a user's channel connection terminates.
+  This ensures proper cleanup and notification of other users.
 
   ## Actions performed:
 
-  1. Extracts room_code and user_id from socket assigns
-  2. Notifies RoomManager about the disconnect via leave_room
-  3. Broadcasts disconnect event to other players in the channel
+  1. Extracts room_code, user_id, and role from socket assigns
+  2. Notifies RoomManager about the disconnect (players only)
+  3. Spectators are removed immediately
+  4. Broadcasts disconnect event to other users in the channel
 
   ## Disconnect reasons:
 
@@ -295,20 +350,36 @@ defmodule PidroServerWeb.GameChannel do
   def terminate(reason, socket) do
     room_code = socket.assigns[:room_code]
     user_id = socket.assigns[:user_id]
+    role = socket.assigns[:role]
 
     # Only handle disconnect if we have necessary assigns
-    if room_code && user_id do
-      Logger.info("Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}")
+    if room_code && user_id && role do
+      case role do
+        :player ->
+          Logger.info("Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}")
 
-      # Notify room manager - this will handle cleanup and broadcast to room channel
-      RoomManager.leave_room(user_id)
+          # Notify room manager - this will handle cleanup and broadcast to room channel
+          RoomManager.leave_room(user_id)
 
-      # Broadcast to other players in the game channel
-      broadcast_from(socket, "player_disconnected", %{
-        user_id: user_id,
-        position: socket.assigns[:position],
-        reason: format_reason(reason)
-      })
+          # Broadcast to other users in the game channel
+          broadcast_from(socket, "player_disconnected", %{
+            user_id: user_id,
+            position: socket.assigns[:position],
+            reason: format_reason(reason)
+          })
+
+        :spectator ->
+          Logger.info("Spectator #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}")
+
+          # Remove spectator immediately (no reconnection grace period)
+          RoomManager.leave_spectator(user_id)
+
+          # Broadcast to other users in the game channel
+          broadcast_from(socket, "spectator_left", %{
+            user_id: user_id,
+            reason: format_reason(reason)
+          })
+      end
     end
 
     :ok
@@ -338,6 +409,32 @@ defmodule PidroServerWeb.GameChannel do
     # Convert user_id to string if it's an integer
     user_id_str = to_string(user_id)
     Enum.any?(room.player_ids, fn id -> to_string(id) == user_id_str end)
+  end
+
+  @spec user_authorized?(String.t(), RoomManager.Room.t(), atom()) :: boolean()
+  defp user_authorized?(user_id, room, :player) do
+    user_in_room?(user_id, room)
+  end
+
+  defp user_authorized?(user_id, room, :spectator) do
+    user_id_str = to_string(user_id)
+    Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end)
+  end
+
+  @spec determine_user_role(RoomManager.Room.t(), String.t()) :: :player | :spectator | :unauthorized
+  defp determine_user_role(room, user_id) do
+    user_id_str = to_string(user_id)
+
+    cond do
+      Enum.any?(room.player_ids, fn id -> to_string(id) == user_id_str end) ->
+        :player
+
+      Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
+        :spectator
+
+      true ->
+        :unauthorized
+    end
   end
 
   @spec get_player_position(RoomManager.Room.t(), String.t()) :: atom()

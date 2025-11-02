@@ -616,13 +616,13 @@ Add to mix.exs:
 4. ~~Performance testing (10 concurrent games, 100 connections)~~ ✅ **DONE** (2025-11-02)
 5. ~~Add comprehensive API documentation~~ ✅ **DONE** (2025-11-02)
 6. ~~Implement reconnection handling for dropped connections~~ ✅ **DONE** (2025-11-02)
-7. **[NEXT]** Add spectator mode (optional enhancement)
-8. Implement tournament system (optional enhancement)
+7. ~~Add spectator mode (optional enhancement)~~ ✅ **DONE** (2025-11-02)
+8. **[NEXT]** Implement tournament system (optional enhancement)
 9. Add leaderboards (stats infrastructure ready)
 10. Add replay system using event sourcing
 
-**Completed Phases**: 0, 1, 2, 3, 4, 5, 6, 7 ✅ + Deployment ✅ + Performance Testing ✅ + API Documentation ✅ + Reconnection ✅
-**MVP Status**: ✅ COMPLETE - All core features, quality gates, deployment, performance validated, fully documented, with reconnection support
+**Completed Phases**: 0, 1, 2, 3, 4, 5, 6, 7 ✅ + Deployment ✅ + Performance Testing ✅ + API Documentation ✅ + Reconnection ✅ + Spectator Mode ✅
+**MVP Status**: ✅ COMPLETE - All core features, quality gates, deployment, performance validated, fully documented, with reconnection and spectator support
 
 ---
 
@@ -671,6 +671,19 @@ Add to mix.exs:
   - Broadcasting of disconnect/reconnect events to other players
   - Maintains game state during temporary disconnections
   - Client-side reconnection flag in join response
+- **Spectator Mode** - Full spectator support for watching live games ✅ (2025-11-02)
+  - Spectators can watch games in `:playing` or `:finished` status
+  - Separate spectator tracking in RoomManager (spectator_ids, max_spectators)
+  - GameChannel role-based access control (:player vs :spectator)
+  - Spectators cannot perform game actions (bid, play cards, etc.)
+  - Real-time game state updates via WebSocket for spectators
+  - Presence tracking with role field (player/spectator)
+  - API endpoints: POST /api/v1/rooms/:code/watch, DELETE /api/v1/rooms/:code/unwatch
+  - Immediate spectator removal on disconnect (no reconnection grace period)
+  - Error handling for spectator-full, room not available, etc.
+  - Room serialization includes spectator_ids and max_spectators fields
+  - Spectators can join via GameChannel and receive full game state
+  - Broadcasting of spectator join/leave events to other participants
 
-**Last update**: 2025-11-02 - Reconnection handling complete
-**Completion status**: 7/7 phases complete + deployment ready + performance validated + API documentation + reconnection ✅
+**Last update**: 2025-11-02 - Spectator mode complete
+**Completion status**: 7/7 phases complete + deployment ready + performance validated + API documentation + reconnection + spectator mode ✅

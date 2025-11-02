@@ -638,6 +638,134 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc """
+  Joins a room as a spectator.
+
+  Adds the authenticated user as a spectator to an active game room. Spectators
+  can only join rooms that are currently playing or finished. They can watch the
+  game state but cannot perform any game actions.
+
+  Requires authentication via Bearer token.
+
+  Returns HTTP 200 (OK) on success.
+
+  ## Parameters
+
+    * `conn` - The Plug.Conn connection struct (must have :current_user assigned)
+    * `params` - Request parameters, must include:
+      - `code` - The unique room code (case-insensitive)
+
+  ## Headers Required
+
+      Authorization: Bearer <token>
+
+  ## Route Example
+
+      POST /api/v1/rooms/A1B2/watch
+
+  ## Response Example (Success)
+
+      {
+        "data": {
+          "room": {
+            "code": "A1B2",
+            "host_id": "user123",
+            "player_ids": ["user123", "user456", "user789", "user012"],
+            "spectator_ids": ["user_spectator_1"],
+            "status": "playing",
+            "max_players": 4,
+            "max_spectators": 10,
+            "created_at": "2024-11-02T10:30:00Z"
+          }
+        }
+      }
+
+  ## Response Example (Error - Room Not Available for Spectators)
+
+      {
+        "errors": [
+          {
+            "code": "ROOM_NOT_AVAILABLE_FOR_SPECTATORS",
+            "title": "Room not available for spectators",
+            "detail": "Can only spectate games that are playing or finished"
+          }
+        ]
+      }
+
+  ## Response Example (Error - Spectators Full)
+
+      {
+        "errors": [
+          {
+            "code": "SPECTATORS_FULL",
+            "title": "Spectators full",
+            "detail": "Room has reached maximum number of spectators"
+          }
+        ]
+      }
+  """
+  @spec watch(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def watch(conn, %{"code" => code}) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, room} <- RoomManager.join_spectator_room(code, user.id) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
+  @doc """
+  Removes the authenticated user from spectating a room.
+
+  Leaves the room as a spectator. The response indicates success without
+  returning room details.
+
+  Requires authentication via Bearer token.
+
+  Returns HTTP 204 (No Content) on success.
+
+  ## Parameters
+
+    * `conn` - The Plug.Conn connection struct (must have :current_user assigned)
+    * `params` - Request parameters, must include:
+      - `code` - The unique room code (case-insensitive)
+
+  ## Headers Required
+
+      Authorization: Bearer <token>
+
+  ## Route Example
+
+      DELETE /api/v1/rooms/A1B2/unwatch
+
+  ## Response Example (Success)
+
+      (204 No Content response with empty body)
+
+  ## Response Example (Error - Not Spectating)
+
+      {
+        "errors": [
+          {
+            "code": "NOT_SPECTATING",
+            "title": "Not spectating",
+            "detail": "User is not spectating any room"
+          }
+        ]
+      }
+  """
+  @spec unwatch(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def unwatch(conn, %{"code" => _code}) do
+    user = conn.assigns[:current_user]
+
+    with :ok <- RoomManager.leave_spectator(user.id) do
+      conn
+      |> put_status(:no_content)
+      |> send_resp(:no_content, "")
+    end
+  end
+
+  @doc """
   Gets the current game state for a room.
 
   Retrieves the current game state from the Pidro.Server process. This includes
