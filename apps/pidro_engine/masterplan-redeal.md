@@ -1,12 +1,13 @@
 # Finnish Pidro Redeal Implementation Masterplan
 
-**Status**: ✅ P0 + P1 FULLY COMPLETED (Implementation + Tests)
+**Status**: ✅ P0 + P1 FULLY COMPLETED (Implementation + Tests) + P2 Partially Complete (2/7)
 **Goal**: Implement complete Finnish redeal mechanics with dealer advantage, kill rules, and information asymmetry
 **Analysis Date**: 2025-11-02
 **Implementation Date**: 2025-11-02
 **Test Completion Date**: 2025-11-02
+**Last Update**: 2025-11-02 (Added total_available_points/1 helper for killed cards scoring)
 **Analyzed**: 30 lib/ modules, 40+ test files, comprehensive oracle consultation
-**Test Stats**: 516 tests, 157 properties, 76 doctests - all passing (except 1 flaky performance test)
+**Test Stats**: 525 tests, 157 properties, 76 doctests - all passing (except 1 flaky performance test)
 
 ---
 
@@ -712,11 +713,11 @@ end
 
 ### P2 (MEDIUM - Polish & Optimization)
 
-**Estimated effort: 6-8 hours** | **Status**: 🔄 IN PROGRESS (1/7 tasks complete)
+**Estimated effort: 6-8 hours** | **Status**: 🔄 IN PROGRESS (2/7 tasks complete)
 
 - [ ] **[1h]** Add test generators in `test/support/generators.ex`: `pre_dealer_selection_generator`, `dealer_with_excess_trump_generator`, etc.
 - [x] **[1h]** Update IEx pretty_print to show `[REDEAL]`, `[ROB]`, cards_requested, killed_cards in [iex.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/iex.ex) - ✅ COMPLETED 2025-11-02
-- [ ] **[1h]** Update Finnish.Scorer to exclude killed cards from scoring in [scorer.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/finnish/scorer.ex)
+- [x] **[1h]** Update Finnish.Scorer to add `total_available_points/1` helper that excludes killed cards (except top card) from the standard 14-point total in [scorer.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/finnish/scorer.ex) - ✅ COMPLETED 2025-11-02
 - [ ] **[1h]** Update hash_state and cache keys to include redeal fields in [perf.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/perf.ex)
 - [ ] **[1h]** Update PGN notation to include redeal fields in [notation.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/notation.ex)
 - [ ] **[1h]** Add redeal telemetry events in [server.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/server.ex)
