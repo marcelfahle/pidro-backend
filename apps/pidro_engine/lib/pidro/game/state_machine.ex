@@ -37,6 +37,7 @@ defmodule Pidro.Game.StateMachine do
   """
 
   alias Pidro.Core.Types.GameState
+  alias Pidro.Core.Card
 
   # =============================================================================
   # Phase Transition Validation
@@ -286,19 +287,34 @@ defmodule Pidro.Game.StateMachine do
 
   ## Requirements
 
-  - All players must have exactly 6 cards (final hand size)
+  - All players must have exactly 6 cards (final hand size), OR
+  - More than 6 cards IF all cards are trump (kill rule exception)
   - Dealer must have robbed the pack
+
+  ## Kill Rule Exception
+
+  A player may keep more than 6 cards if all remaining cards are trump.
+  This allows a player with an exceptionally strong trump hand to retain
+  the additional strength while still meeting the transition criteria.
 
   ## Returns
 
   `true` if ready to transition, `false` otherwise.
   """
   @spec can_transition_from_second_deal?(GameState.t()) :: boolean()
-  def can_transition_from_second_deal?(%GameState{players: players, config: config}) do
+  def can_transition_from_second_deal?(%GameState{
+        players: players,
+        trump_suit: trump,
+        config: config
+      }) do
     final_hand_size = Map.get(config, :final_hand_size, 6)
 
     Enum.all?(players, fn {_pos, player} ->
-      length(player.hand) == final_hand_size
+      hand_size = length(player.hand)
+      trump_count = Enum.count(player.hand, fn card -> Card.is_trump?(card, trump) end)
+
+      # Allow: exactly 6 OR (all trump AND >6) - kill rule exception
+      hand_size == final_hand_size or (hand_size == trump_count and trump_count > final_hand_size)
     end)
   end
 

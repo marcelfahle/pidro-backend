@@ -1,5 +1,5 @@
 while true; do
-    cat PROMPT.md | claude -p \
+    cat PROMPT-redeal.md | claude -p \
         --dangerously-skip-permissions \
         --output-format=stream-json \
         --verbose \

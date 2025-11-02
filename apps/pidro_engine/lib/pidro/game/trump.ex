@@ -309,4 +309,96 @@ defmodule Pidro.Game.Trump do
     %{non_trump: non_trump} = categorize_hand(hand, trump_suit)
     non_trump
   end
+
+  @doc """
+  Check if a player can kill down to 6 cards.
+
+  The "kill" rule allows a player to discard non-point trump cards to reduce
+  their hand down to 6 cards. This function validates whether a player has
+  enough non-point trump cards available to kill down to 6.
+
+  ## Parameters
+  - `hand` - List of cards in the player's hand
+  - `trump_suit` - The declared trump suit
+
+  ## Returns
+  - `true` if the player can kill down to 6 cards
+  - `false` if the player cannot (not enough non-point trump cards)
+
+  ## Logic
+  A player can kill if the number of excess cards (cards above 6) is less than
+  or equal to the number of available non-point trump cards.
+
+  ## Examples
+
+      # Hand with 8 cards, 2 excess, and 3 non-point trumps
+      iex> hand = [{14, :hearts}, {10, :hearts}, {7, :hearts}, {5, :hearts}, {4, :hearts}, {3, :hearts}, {14, :clubs}, {13, :clubs}]
+      iex> Trump.can_kill_to_six?(hand, :hearts)
+      true
+
+      # Hand with 10 cards but only 1 non-point trump (4 excess cards)
+      iex> hand = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {10, :hearts}, {14, :clubs}, {13, :clubs}, {12, :clubs}, {11, :clubs}, {10, :clubs}, {9, :clubs}]
+      iex> Trump.can_kill_to_six?(hand, :hearts)
+      false
+  """
+  @spec can_kill_to_six?([card()], suit()) :: boolean()
+  def can_kill_to_six?(hand, trump_suit) do
+    point_cards = Enum.count(hand, &Card.is_point_card?(&1, trump_suit))
+    non_point_cards = length(hand) - point_cards
+
+    # Can kill if: excess cards <= non_point_cards
+    excess = length(hand) - 6
+    excess <= non_point_cards
+  end
+
+  @doc """
+  Validate that kill cards are all non-point trumps.
+
+  When a player elects to kill (discard trumps to reduce hand to 6 cards),
+  this function validates that the selected cards meet all requirements:
+  - All selected cards are in the player's hand
+  - All selected cards are trump cards
+  - None of the selected cards are point cards (cannot kill point cards)
+
+  ## Parameters
+  - `kill_cards` - List of cards the player wants to kill
+  - `hand` - List of cards in the player's hand
+  - `trump_suit` - The declared trump suit
+
+  ## Returns
+  - `:ok` if all validations pass
+  - `{:error, :cards_not_in_hand}` if any kill cards are not in the hand
+  - `{:error, :can_only_kill_trump}` if any kill cards are not trump cards
+  - `{:error, :cannot_kill_point_cards}` if any kill cards are point cards
+
+  ## Examples
+
+      iex> hand = [{14, :hearts}, {10, :hearts}, {7, :hearts}, {5, :hearts}]
+      iex> Trump.validate_kill_cards([{7, :hearts}], hand, :hearts)
+      :ok
+
+      iex> hand = [{14, :hearts}, {10, :hearts}, {7, :hearts}]
+      iex> Trump.validate_kill_cards([{14, :hearts}], hand, :hearts)
+      {:error, :cannot_kill_point_cards}
+
+      iex> hand = [{14, :hearts}, {10, :hearts}]
+      iex> Trump.validate_kill_cards([{7, :hearts}], hand, :hearts)
+      {:error, :cards_not_in_hand}
+  """
+  @spec validate_kill_cards([card()], [card()], suit()) :: :ok | {:error, atom()}
+  def validate_kill_cards(kill_cards, hand, trump_suit) do
+    cond do
+      not Enum.all?(kill_cards, &(&1 in hand)) ->
+        {:error, :cards_not_in_hand}
+
+      not Enum.all?(kill_cards, &Card.is_trump?(&1, trump_suit)) ->
+        {:error, :can_only_kill_trump}
+
+      Enum.any?(kill_cards, &Card.is_point_card?(&1, trump_suit)) ->
+        {:error, :cannot_kill_point_cards}
+
+      true ->
+        :ok
+    end
+  end
 end

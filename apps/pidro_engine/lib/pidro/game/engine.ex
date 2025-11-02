@@ -521,16 +521,15 @@ defmodule Pidro.Game.Engine do
   end
 
   defp handle_automatic_phase(%Types.GameState{phase: :second_deal} = state) do
-    # Automatically perform second deal if dealer doesn't need to rob pack
-    # If dealer needs to rob, wait for dealer action
-    dealer_hand_size = length(Map.get(state.players, state.current_dealer).hand)
+    # Dealer ALWAYS robs when deck has cards (per specs/redeal.md)
+    # Dealer combines hand + remaining deck, then selects best 6
     deck_size = length(state.deck)
 
-    if deck_size > 0 and dealer_hand_size < 6 do
-      # Dealer needs to rob the pack, wait for dealer action
-      {:ok, state}
+    if deck_size > 0 do
+      # Dealer must rob the pack, set turn to dealer and wait for action
+      {:ok, GameState.update(state, :current_turn, state.current_dealer)}
     else
-      # No cards to rob, or dealer already has 6 cards, perform second deal
+      # No cards to rob, proceed automatically with second deal
       case Discard.second_deal(state) do
         {:ok, new_state} ->
           # After second deal, auto-transition to playing
@@ -540,6 +539,13 @@ defmodule Pidro.Game.Engine do
           error
       end
     end
+  end
+
+  defp handle_automatic_phase(%Types.GameState{phase: :playing} = state) do
+    # Compute kills at the start of the playing phase
+    # This determines which players have been eliminated in this round
+    kill_state = Play.compute_kills(state)
+    {:ok, kill_state}
   end
 
   defp handle_automatic_phase(%Types.GameState{phase: :scoring} = state) do

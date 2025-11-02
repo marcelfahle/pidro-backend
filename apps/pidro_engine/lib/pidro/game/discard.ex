@@ -245,16 +245,18 @@ defmodule Pidro.Game.Discard do
       deal_order = get_deal_order(first_player)
 
       # Deal cards to each player to reach 6 cards (or skip if they have 6+)
-      {updated_players, remaining_deck, dealt_cards_map} =
-        Enum.reduce(deal_order, {state.players, state.deck, %{}}, fn position,
-                                                                     {players_acc, deck_acc,
-                                                                      dealt_acc} ->
+      {updated_players, remaining_deck, dealt_cards_map, cards_requested_map} =
+        Enum.reduce(deal_order, {state.players, state.deck, %{}, %{}}, fn position,
+                                                                          {players_acc, deck_acc,
+                                                                           dealt_acc,
+                                                                           requested_acc} ->
           player = Map.get(players_acc, position)
           current_hand_size = length(player.hand)
 
           if current_hand_size >= 6 do
             # Player already has 6+ cards, skip
-            {players_acc, deck_acc, Map.put(dealt_acc, position, [])}
+            {players_acc, deck_acc, Map.put(dealt_acc, position, []),
+             Map.put(requested_acc, position, 0)}
           else
             # Deal cards to reach 6
             cards_needed = 6 - current_hand_size
@@ -264,7 +266,8 @@ defmodule Pidro.Game.Discard do
             updated_player = %{player | hand: player.hand ++ dealt_cards}
             updated_players = Map.put(players_acc, position, updated_player)
 
-            {updated_players, new_deck, Map.put(dealt_acc, position, dealt_cards)}
+            {updated_players, new_deck, Map.put(dealt_acc, position, dealt_cards),
+             Map.put(requested_acc, position, cards_needed)}
           end
         end)
 
@@ -281,6 +284,7 @@ defmodule Pidro.Game.Discard do
         state
         |> GameState.update(:players, updated_players)
         |> GameState.update(:deck, remaining_deck)
+        |> GameState.update(:cards_requested, cards_requested_map)
         |> GameState.update(:events, state.events ++ [event])
 
       # If dealer needs to rob the pack, stay in second_deal phase
@@ -324,7 +328,8 @@ defmodule Pidro.Game.Discard do
   ## State Changes
   - Sets dealer's `hand` to the selected 6 cards
   - Adds remaining cards to `discarded_cards` pile
-  - Records `{:dealer_robbed_pack, position, taken_cards, kept_cards}` event
+  - Records `{:dealer_robbed_pack, position, taken_count, kept_count}` event
+  - Stores `dealer_pool_size` in game state (total cards before selection)
   - Transitions `phase` to `:playing`
   - Sets `current_turn` to player left of dealer (to start first trick)
 
@@ -360,6 +365,9 @@ defmodule Pidro.Game.Discard do
       remaining_cards = state.deck
       dealer_full_hand = dealer_player.hand ++ remaining_cards
 
+      # Calculate pool size (total cards dealer has before selection)
+      dealer_pool_size = length(dealer_full_hand)
+
       # Validate selected cards are all in dealer's full hand
       case validate_cards_in_hand(selected_cards, dealer_full_hand) do
         :ok ->
@@ -370,8 +378,8 @@ defmodule Pidro.Game.Discard do
           updated_dealer = %{dealer_player | hand: selected_cards}
           updated_players = Map.put(state.players, dealer, updated_dealer)
 
-          # Record dealer robbed pack event
-          event = {:dealer_robbed_pack, dealer, remaining_cards, selected_cards}
+          # Record dealer robbed pack event (emit counts only for hidden info protection)
+          event = {:dealer_robbed_pack, dealer, length(remaining_cards), length(selected_cards)}
 
           # Update game state
           updated_state =
@@ -379,6 +387,7 @@ defmodule Pidro.Game.Discard do
             |> GameState.update(:players, updated_players)
             |> GameState.update(:deck, [])
             |> GameState.update(:discarded_cards, state.discarded_cards ++ discarded)
+            |> GameState.update(:dealer_pool_size, dealer_pool_size)
             |> GameState.update(:events, state.events ++ [event])
             |> GameState.update(:phase, :playing)
             |> GameState.update(:current_turn, Types.next_position(dealer))

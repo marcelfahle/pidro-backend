@@ -25,6 +25,7 @@ defmodule Pidro.Game.Errors do
   - `:card_not_in_hand` - Attempted to play a card not in player's hand
   - `:must_follow_suit` - Must play trump card when holding trumps
   - `:cannot_play_non_trump` - Non-trump cards cannot be played in Finnish variant
+  - `:must_play_top_killed_card_first` - Player must play top killed card on first trick play
 
   ### Player State Errors
   - `:player_eliminated` - Player has gone "cold" (out of trumps)
@@ -97,6 +98,8 @@ defmodule Pidro.Game.Errors do
           | {:must_follow_suit, trump_suit :: Types.suit()}
           | :cannot_play_non_trump
           | {:cannot_play_non_trump, card :: Types.card(), trump_suit :: Types.suit()}
+          | :must_play_top_killed_card_first
+          | {:must_play_top_killed_card_first, card :: Types.card()}
 
           # Discard errors
           | :cannot_discard_trump
@@ -271,6 +274,14 @@ defmodule Pidro.Game.Errors do
 
   def format_error({:cannot_play_non_trump, card, trump_suit}) do
     "Cannot play #{Types.card_to_string(card)}. Only #{Types.suit_to_name(trump_suit)} (trump) cards can be played"
+  end
+
+  def format_error(:must_play_top_killed_card_first) do
+    "You must play your top killed card first on your first trick play"
+  end
+
+  def format_error({:must_play_top_killed_card_first, card}) do
+    "You must play your top killed card first. Top card: #{Types.card_to_string(card)}"
   end
 
   # Discard errors
@@ -501,6 +512,7 @@ defmodule Pidro.Game.Errors do
       :card_not_in_hand,
       :must_follow_suit,
       :cannot_play_non_trump,
+      :must_play_top_killed_card_first,
       :cannot_discard_trump,
       :no_dealer,
       :not_dealer_turn,

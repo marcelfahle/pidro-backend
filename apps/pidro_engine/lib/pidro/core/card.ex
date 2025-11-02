@@ -311,6 +311,89 @@ defmodule Pidro.Core.Card do
   def same_color_suit(:clubs), do: :spades
   def same_color_suit(:spades), do: :clubs
 
+  @doc """
+  Checks if a card is a point card.
+
+  A card is considered a point card if it awards points in the trump suit.
+  Point cards are: A, J, 10, Right-5, Wrong-5, 2
+
+  ## Parameters
+  - `card` - The card to check
+  - `trump_suit` - The declared trump suit
+
+  ## Returns
+  `true` if the card is a point card, `false` otherwise
+
+  ## Examples
+
+      iex> Pidro.Core.Card.is_point_card?({14, :hearts}, :hearts)
+      true  # Ace
+
+      iex> Pidro.Core.Card.is_point_card?({11, :hearts}, :hearts)
+      true  # Jack
+
+      iex> Pidro.Core.Card.is_point_card?({5, :hearts}, :hearts)
+      true  # Right 5
+
+      iex> Pidro.Core.Card.is_point_card?({7, :hearts}, :hearts)
+      false  # No points
+  """
+  @spec is_point_card?(card(), suit()) :: boolean()
+  def is_point_card?(card, trump_suit) do
+    point_value(card, trump_suit) > 0
+  end
+
+  @doc """
+  Gets all non-point trump cards from a hand.
+
+  Filters a hand to return only trump cards that don't award points.
+  Non-point trumps are trump cards other than A, J, 10, Right-5, Wrong-5, 2.
+
+  ## Parameters
+  - `hand` - List of cards in the hand
+  - `trump_suit` - The declared trump suit
+
+  ## Returns
+  List of non-point trump cards
+
+  ## Examples
+
+      iex> hand = [{14, :hearts}, {7, :hearts}, {6, :hearts}, {10, :clubs}]
+      iex> Pidro.Core.Card.non_point_trumps(hand, :hearts)
+      [{7, :hearts}, {6, :hearts}]
+  """
+  @spec non_point_trumps([card()], suit()) :: [card()]
+  def non_point_trumps(hand, trump_suit) do
+    hand
+    |> Enum.filter(&is_trump?(&1, trump_suit))
+    |> Enum.reject(&is_point_card?(&1, trump_suit))
+  end
+
+  @doc """
+  Counts the number of trump cards in a hand.
+
+  ## Parameters
+  - `hand` - List of cards in the hand
+  - `trump_suit` - The declared trump suit
+
+  ## Returns
+  The count of trump cards in the hand
+
+  ## Examples
+
+      iex> hand = [{14, :hearts}, {7, :hearts}, {5, :diamonds}, {5, :hearts}]
+      iex> Pidro.Core.Card.count_trump(hand, :hearts)
+      4
+
+      iex> hand = [{10, :clubs}, {3, :spades}]
+      iex> Pidro.Core.Card.count_trump(hand, :hearts)
+      0
+  """
+  @spec count_trump([card()], suit()) :: non_neg_integer()
+  def count_trump(hand, trump_suit) do
+    Enum.count(hand, &is_trump?(&1, trump_suit))
+  end
+
   # =============================================================================
   # Private Helper Functions
   # =============================================================================

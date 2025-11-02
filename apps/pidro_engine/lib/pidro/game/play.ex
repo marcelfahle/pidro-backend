@@ -64,6 +64,77 @@ defmodule Pidro.Game.Play do
   @type error :: Errors.error()
 
   # =============================================================================
+  # Kill Rule (Redeal)
+  # =============================================================================
+
+  @doc """
+  Compute killed cards for all players entering playing phase.
+
+  Players with >6 trump must kill down to 6 using non-point cards.
+  If a player has 7+ point cards, they cannot kill and keep all their cards.
+
+  ## Parameters
+  - `state` - Current game state with players' hands set
+
+  ## Returns
+  Updated game state with killed cards removed from hands and stored in state.killed_cards
+
+  ## State Changes
+  - Updates `killed_cards` map with {position => [cards]} entries
+  - Removes killed cards from players' hands
+  - Records `{:cards_killed, killed_map}` event
+
+  ## Examples
+
+      iex> player = %Player{hand: [{7, :h}, {6, :h}, {4, :h}, {3, :h}, {2, :h}, {14, :h}, {11, :h}]}
+      iex> state = %GameState{trump_suit: :hearts, players: %{north: player}}
+      iex> state = Play.compute_kills(state)
+      iex> length(state.players[:north].hand)
+      6
+  """
+  @spec compute_kills(game_state()) :: game_state()
+  def compute_kills(%Types.GameState{players: players, trump_suit: trump} = state) do
+    killed_cards =
+      players
+      |> Enum.reduce(%{}, fn {pos, player}, acc ->
+        hand_size = length(player.hand)
+
+        if hand_size > 6 do
+          # Must kill excess cards
+          excess = hand_size - 6
+          non_point = Card.non_point_trumps(player.hand, trump)
+
+          if length(non_point) >= excess do
+            # Kill oldest non-point cards (arbitrary choice)
+            to_kill = Enum.take(non_point, excess)
+            Map.put(acc, pos, to_kill)
+          else
+            # Cannot kill (7+ point cards) - keep all cards
+            Map.put(acc, pos, [])
+          end
+        else
+          acc
+        end
+      end)
+
+    # Remove killed cards from hands and store in state
+    new_players =
+      players
+      |> Enum.map(fn {pos, player} ->
+        kills = Map.get(killed_cards, pos, [])
+        new_hand = player.hand -- kills
+        {pos, %{player | hand: new_hand}}
+      end)
+      |> Map.new()
+
+    # Update state with killed cards and new hands
+    state
+    |> GameState.update(:killed_cards, killed_cards)
+    |> GameState.update(:players, new_players)
+    |> record_cards_killed_event(killed_cards)
+  end
+
+  # =============================================================================
   # Card Playing
   # =============================================================================
 
@@ -114,6 +185,7 @@ defmodule Pidro.Game.Play do
     with :ok <- validate_playing_phase(state),
          :ok <- validate_trump_declared(state),
          {:ok, card} <- Errors.validate_card(card),
+         :ok <- validate_killed_card_rule(state, position, card),
          :ok <- validate_play(state, position, card),
          {:ok, state} <- remove_card_from_hand(state, position, card),
          {:ok, state} <- add_card_to_trick(state, position, card),
@@ -183,6 +255,30 @@ defmodule Pidro.Game.Play do
       :ok
     else
       {:error, {:cannot_play_non_trump, card, trump_suit}}
+    end
+  end
+
+  # Validates killed card rule: if player has killed cards, they must play top one first
+  @spec validate_killed_card_rule(game_state(), position(), card()) :: :ok | {:error, error()}
+  defp validate_killed_card_rule(state, position, card) do
+    # Check if this is the first play of the current trick
+    trick = state.current_trick
+    first_play? = trick == nil or Enum.empty?(trick.plays)
+
+    # Get killed cards for this player
+    player_killed = Map.get(state.killed_cards, position, [])
+
+    # If first play and player has killed cards, enforce playing top killed card
+    if first_play? and length(player_killed) > 0 do
+      top_killed_card = hd(player_killed)
+
+      if card == top_killed_card do
+        :ok
+      else
+        {:error, {:must_play_top_killed_card_first, top_killed_card}}
+      end
+    else
+      :ok
     end
   end
 
@@ -640,5 +736,13 @@ defmodule Pidro.Game.Play do
       # No more cards, playing phase is complete
       {:ok, state}
     end
+  end
+
+  # Records cards killed event
+  @spec record_cards_killed_event(game_state(), map()) :: game_state()
+  defp record_cards_killed_event(state, killed_cards) do
+    event = {:cards_killed, killed_cards}
+    updated_events = state.events ++ [event]
+    GameState.update(state, :events, updated_events)
   end
 end
