@@ -55,5 +55,27 @@ defmodule PidroServerWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+
+  # CORS configuration for mobile clients
+  # Configure allowed origins in config/runtime.exs
+  plug CORSPlug,
+    origin: &PidroServerWeb.Endpoint.cors_origins/0,
+    headers: ["Authorization", "Content-Type", "Accept"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
   plug PidroServerWeb.Router
+
+  @doc """
+  Returns the list of allowed CORS origins based on environment configuration.
+
+  In development: allows all origins (*)
+  In production: uses the CORS_ORIGINS environment variable (comma-separated list)
+  """
+  def cors_origins do
+    case Application.get_env(:pidro_server, :cors_origins) do
+      :all -> ["*"]
+      origins when is_list(origins) -> origins
+      _ -> ["*"]
+    end
+  end
 end

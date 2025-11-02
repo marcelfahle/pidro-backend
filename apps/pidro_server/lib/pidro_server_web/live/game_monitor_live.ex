@@ -1,6 +1,6 @@
 defmodule PidroServerWeb.GameMonitorLive do
   use PidroServerWeb, :live_view
-  alias PidroServer.Games.{RoomManager, GameAdapter}
+  alias PidroServer.Games.{GameAdapter, RoomManager}
 
   @impl true
   def mount(%{"code" => room_code}, _session, socket) do

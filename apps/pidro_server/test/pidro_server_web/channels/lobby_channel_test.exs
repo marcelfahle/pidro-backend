@@ -11,9 +11,9 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
   use PidroServerWeb.ChannelCase, async: false
 
-  alias PidroServer.Games.RoomManager
   alias PidroServer.Accounts
-  alias PidroServerWeb.{UserSocket, LobbyChannel}
+  alias PidroServer.Games.RoomManager
+  alias PidroServerWeb.LobbyChannel
 
   @moduletag :channel
 
@@ -82,7 +82,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
   end
 
   describe "lobby_update event" do
-    test "broadcasts when new room is created", %{socket: socket, user: user} do
+    test "broadcasts when new room is created", %{socket: socket, user: _user} do
       {:ok, _reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
 
       # Create another user to create a room (so it's not us)

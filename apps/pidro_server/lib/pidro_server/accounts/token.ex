@@ -29,7 +29,7 @@ defmodule PidroServer.Accounts.Token do
   """
 
   @signing_salt "pidro_auth_salt"
-  @token_age_secs 86400 * 30
+  @token_age_secs 86_400 * 30
 
   @doc """
   Generates a signed token for the given user.

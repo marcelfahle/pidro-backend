@@ -67,6 +67,19 @@ if config_env() == :prod do
     ],
     secret_key_base: secret_key_base
 
+  # CORS configuration for mobile clients
+  # Set CORS_ORIGINS environment variable to comma-separated list of allowed origins
+  # Example: "https://app.example.com,https://mobile.example.com"
+  # Or set to "*" to allow all origins (not recommended for production)
+  cors_origins =
+    case System.get_env("CORS_ORIGINS") do
+      nil -> :all
+      "*" -> :all
+      origins -> String.split(origins, ",", trim: true)
+    end
+
+  config :pidro_server, :cors_origins, cors_origins
+
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key

@@ -26,7 +26,8 @@ defmodule PidroServer.MixProject do
       dialyzer: [
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
         plt_add_apps: [:ex_unit]
-      ]
+      ],
+      releases: releases()
     ]
   end
 
@@ -83,6 +84,7 @@ defmodule PidroServer.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
+      {:cors_plug, "~> 3.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test}
@@ -107,6 +109,20 @@ defmodule PidroServer.MixProject do
         "tailwind pidro_server --minify",
         "esbuild pidro_server --minify",
         "phx.digest"
+      ]
+    ]
+  end
+
+  # Release configuration for production deployments
+  defp releases do
+    [
+      pidro_server: [
+        include_executables_for: [:unix],
+        applications: [
+          pidro_engine: :permanent,
+          pidro_server: :permanent
+        ],
+        steps: [:assemble, :tar]
       ]
     ]
   end

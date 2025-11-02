@@ -47,7 +47,7 @@ defmodule PidroServerWeb.GameChannel do
   use PidroServerWeb, :channel
   require Logger
 
-  alias PidroServer.Games.{RoomManager, GameAdapter}
+  alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServer.Stats
   alias PidroServerWeb.Presence
 

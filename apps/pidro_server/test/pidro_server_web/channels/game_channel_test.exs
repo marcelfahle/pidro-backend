@@ -13,10 +13,9 @@ defmodule PidroServerWeb.GameChannelTest do
 
   use PidroServerWeb.ChannelCase, async: false
 
-  alias PidroServer.Games.{RoomManager, GameSupervisor, GameAdapter}
   alias PidroServer.Accounts
-  alias PidroServer.Repo
-  alias PidroServerWeb.{UserSocket, GameChannel}
+  alias PidroServer.Games.{GameAdapter, GameSupervisor, RoomManager}
+  alias PidroServerWeb.GameChannel
 
   @moduletag :channel
 
@@ -158,7 +157,7 @@ defmodule PidroServerWeb.GameChannelTest do
     } do
       socket = sockets[user.id]
 
-      {:ok, _reply, socket} =
+      {:ok, _reply, _socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       # Should receive presence_state after join
@@ -177,7 +176,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
       socket = sockets[user.id]
 
-      {:ok, reply, socket} =
+      {:ok, _reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       # The action might succeed or fail depending on game state
@@ -197,7 +196,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
       socket = sockets[user.id]
 
-      {:ok, reply, socket} =
+      {:ok, _reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       ref = push(socket, "bid", %{"amount" => "pass"})
@@ -214,7 +213,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
       socket = sockets[user.id]
 
-      {:ok, reply, socket} =
+      {:ok, _reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       ref = push(socket, "bid", %{"amount" => "10"})
