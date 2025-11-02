@@ -25,13 +25,19 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
     }
   end
 
-  # Generator for a sequence of bids
+  # Generator for a sequence of bids (exactly 4 bids - one per player in Finnish Pidro)
   defp bid_sequence_gen do
     gen all(
-          count <- integer(1..10),
-          positions <- list_of(member_of(@positions), length: count),
-          amounts <- list_of(bid_amount_gen(), length: count)
+          # Generate a random starting position
+          start_pos <- member_of(@positions),
+          # Generate amounts for each of the 4 players
+          amounts <- list_of(bid_amount_gen(), length: 4)
         ) do
+      # Get positions in clockwise order starting from start_pos
+      start_idx = Enum.find_index(@positions, &(&1 == start_pos))
+      positions = Enum.map(0..3, fn i -> Enum.at(@positions, rem(start_idx + i, 4)) end)
+
+      # Create bids for each position
       positions
       |> Enum.zip(amounts)
       |> Enum.with_index()
@@ -56,78 +62,58 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
       end
     end
 
-    property "bidding is complete iff last bid followed by 3+ consecutive passes" do
+    property "bidding is complete when all 4 players have acted" do
       check all(
               bids <- bid_sequence_gen(),
               max_runs: 50
             ) do
-        # Find the last non-pass bid
-        last_bid_index =
+        # Get highest bid from bids list
+        highest_bid_entry =
           bids
-          |> Enum.reverse()
-          |> Enum.find_index(fn b -> b.amount != :pass end)
+          |> Enum.filter(fn b -> b.amount != :pass end)
+          |> Enum.max_by(fn b -> b.amount end, fn -> nil end)
 
-        if last_bid_index == nil do
-          # No numeric bids at all
-          state = %{GameState.new() | bids: bids, highest_bid: nil}
-          refute Bidding.bidding_complete?(state)
-        else
-          actual_index = length(bids) - 1 - last_bid_index
-          trailing = Enum.drop(bids, actual_index + 1)
-          trailing_passes = Enum.take_while(trailing, fn b -> b.amount == :pass end)
+        highest_bid =
+          if highest_bid_entry do
+            {highest_bid_entry.position, highest_bid_entry.amount}
+          else
+            nil
+          end
 
-          # Get highest bid from bids list
-          highest_bid_entry =
-            bids
-            |> Enum.filter(fn b -> b.amount != :pass end)
-            |> Enum.max_by(fn b -> b.amount end, fn -> nil end)
+        state = %{GameState.new() | bids: bids, highest_bid: highest_bid}
 
-          highest_bid =
-            if highest_bid_entry do
-              {highest_bid_entry.position, highest_bid_entry.amount}
-            else
-              nil
-            end
-
-          state = %{GameState.new() | bids: bids, highest_bid: highest_bid}
-
-          expected_complete =
-            (highest_bid != nil and elem(highest_bid, 1) == 14) or
-              length(trailing_passes) >= 3
-
-          assert Bidding.bidding_complete?(state) == expected_complete,
-                 """
-                 Bidding completion mismatch:
-                 Bids: #{inspect(bids)}
-                 Last bid index: #{actual_index}
-                 Trailing passes: #{length(trailing_passes)}
-                 Highest bid: #{inspect(highest_bid)}
-                 Expected complete: #{expected_complete}
-                 Actual complete: #{Bidding.bidding_complete?(state)}
-                 """
-        end
+        # With exactly 4 bids, bidding should always be complete
+        assert Bidding.bidding_complete?(state),
+               """
+               Bidding should be complete with 4 bids:
+               Bids: #{inspect(bids)}
+               Highest bid: #{inspect(highest_bid)}
+               """
       end
     end
 
-    property "bidding is not complete with fewer than 3 trailing passes (unless bid is 14)" do
+    property "bidding is not complete with fewer than 4 bids" do
       check all(
               bid_amount <- integer(6..13),
-              pass_count <- integer(0..2),
+              bid_count <- integer(1..3),
               max_runs: 20
             ) do
-        initial_bid = bid_gen(:north, bid_amount, 1000)
+        # Generate bid_count bids in clockwise order starting from north
+        positions = [:north, :east, :south, :west]
 
-        passes =
-          Enum.map(1..pass_count, fn i ->
-            bid_gen(:east, :pass, 2000 + i)
+        bids =
+          Enum.map(0..(bid_count - 1), fn i ->
+            pos = Enum.at(positions, i)
+            # First bid is the actual bid, rest are passes
+            amount = if i == 0, do: bid_amount, else: :pass
+            bid_gen(pos, amount, 1000 + i)
           end)
 
-        bids = [initial_bid | passes]
         highest = {:north, bid_amount}
         state = %{GameState.new() | bids: bids, highest_bid: highest}
 
         refute Bidding.bidding_complete?(state),
-               "Should not be complete with only #{pass_count} trailing passes"
+               "Should not be complete with only #{bid_count} bids (need 4)"
       end
     end
 

@@ -22,19 +22,19 @@ defmodule Pidro.SupervisorTest do
   end
 
   describe "start_link/1" do
-    test "starts supervisor successfully" do
-      {:ok, pid} = Supervisor.start_link(name: :"test_sup_#{:erlang.unique_integer()}")
-      assert Process.alive?(pid)
+    test "starts supervisor successfully", %{supervisor: sup} do
+      # The global supervisor is already started in setup_all
+      assert Process.alive?(sup)
     end
 
     test "starts with cache enabled by default" do
-      {:ok, _pid} = Supervisor.start_link(name: :"test_sup_#{:erlang.unique_integer()}")
+      # The global supervisor has cache enabled
       # Verify MoveCache is running
       assert Process.whereis(Pidro.MoveCache) != nil
     end
 
     test "starts with registry enabled by default" do
-      {:ok, _pid} = Supervisor.start_link(name: :"test_sup_#{:erlang.unique_integer()}")
+      # The global supervisor has registry enabled
       # Verify Registry is running
       assert Process.whereis(Pidro.Registry) != nil
     end
@@ -212,12 +212,14 @@ defmodule Pidro.SupervisorTest do
 
       # Kill the process
       Process.exit(pid1, :kill)
+
+      # Wait for the process to die and registry to clean up
       Process.sleep(100)
 
       # Process should be dead
       refute Process.alive?(pid1)
 
-      # However, a new game can be started with the same ID since the old one is gone
+      # A new game can be started with the same ID since the old one is gone
       {:ok, pid2} = Supervisor.start_game(game_id: game_id, register: true)
       assert Process.alive?(pid2)
       assert pid1 != pid2
@@ -264,12 +266,10 @@ defmodule Pidro.SupervisorTest do
     test "can play full game through supervised server", %{supervisor: _sup} do
       {:ok, pid} = Supervisor.start_game(game_id: "integration_game")
 
-      # Start game
+      # Select dealer - this automatically transitions through dealing to bidding
       {:ok, state} = Server.apply_action(pid, :north, :select_dealer)
-      assert state.phase == :dealing
-
-      {:ok, state} = Server.apply_action(pid, :north, :deal_initial)
       assert state.phase == :bidding
+      assert state.current_dealer != nil
 
       # Make a bid
       current_turn = state.current_turn
@@ -283,13 +283,13 @@ defmodule Pidro.SupervisorTest do
       {:ok, pid1} = Supervisor.start_game(game_id: "game_a", register: true)
       {:ok, pid2} = Supervisor.start_game(game_id: "game_b", register: true)
 
-      # Advance first game
-      {:ok, state1} = Server.apply_action(pid1, :north, :select_dealer)
-      {:ok, state1} = Server.apply_action(pid1, :north, :deal_initial)
+      # Advance first game - select_dealer auto-transitions through dealing to bidding
+      {:ok, _state1} = Server.apply_action(pid1, :north, :select_dealer)
 
       # Second game should be unchanged
       state2 = Server.get_state(pid2)
 
+      state1 = Server.get_state(pid1)
       assert state1.phase == :bidding
       assert state2.phase == :dealer_selection
 

@@ -111,12 +111,16 @@ defmodule Pidro.Game.Dealing do
     # Winner is the player with the highest card
     [{winner_pos, winner_card, _rank} | _rest] = cuts
 
-    # Update state with selected dealer
+    # Create and shuffle a new deck for the hand
+    deck = Pidro.Core.Deck.new()
+
+    # Update state with selected dealer and shuffled deck
     event = {:dealer_selected, winner_pos, winner_card}
 
     updated_state =
       state
       |> GameState.update(:current_dealer, winner_pos)
+      |> GameState.update(:deck, deck.cards)
       |> GameState.update(:events, state.events ++ [event])
 
     {:ok, updated_state}

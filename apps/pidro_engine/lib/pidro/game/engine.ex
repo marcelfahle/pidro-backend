@@ -263,6 +263,14 @@ defmodule Pidro.Game.Engine do
   defp dispatch_action(
          %Types.GameState{phase: :dealer_selection} = state,
          _position,
+         :select_dealer
+       ) do
+    Dealing.select_dealer(state)
+  end
+
+  defp dispatch_action(
+         %Types.GameState{phase: :dealer_selection} = state,
+         _position,
          {:cut_deck, _pos}
        ) do
     # For now, dealer selection is handled automatically
@@ -355,9 +363,8 @@ defmodule Pidro.Game.Engine do
   # Called by legal_actions/2 after basic validation
 
   defp get_legal_actions_for_phase(%Types.GameState{phase: :dealer_selection}, _position) do
-    # TODO: Return valid cut_deck actions
-    # For now, return empty as we need to implement dealer selection logic
-    []
+    # Any player can trigger dealer selection
+    [:select_dealer]
   end
 
   defp get_legal_actions_for_phase(%Types.GameState{phase: :dealing}, _position) do
@@ -460,8 +467,13 @@ defmodule Pidro.Game.Engine do
 
   # Checks if it's the player's turn for the current phase
   @spec is_players_turn?(Types.GameState.t(), Types.position(), Types.phase()) :: boolean()
+  defp is_players_turn?(%Types.GameState{}, _position, :dealer_selection) do
+    # Dealer selection is not turn-based - any player can trigger it
+    true
+  end
+
   defp is_players_turn?(%Types.GameState{current_turn: nil}, _position, phase)
-       when phase in [:dealer_selection, :dealing, :scoring, :complete] do
+       when phase in [:dealing, :scoring, :complete] do
     # These phases don't have turn-based actions
     false
   end
