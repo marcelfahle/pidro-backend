@@ -21,6 +21,8 @@ defmodule PidroServerWeb.GameChannel do
   * `"game_state"` - Full game state update: `%{state: game_state}`
   * `"player_joined"` - New player joined: `%{player_id: id, position: :north}`
   * `"player_left"` - Player left: `%{player_id: id}`
+  * `"player_disconnected"` - Player disconnected: `%{user_id: id, position: :north, reason: "left"}`
+  * `"player_reconnected"` - Player reconnected: `%{user_id: id, position: position}`
   * `"turn_changed"` - Current player changed: `%{current_player: :north}`
   * `"game_over"` - Game ended: `%{winner: :north_south, scores: %{...}}`
   * `"presence_state"` - Presence information (who's online)
@@ -51,8 +53,8 @@ defmodule PidroServerWeb.GameChannel do
   alias PidroServer.Stats
   alias PidroServerWeb.Presence
 
-  # Intercept presence_diff and player_ready broadcasts to handle them explicitly
-  intercept ["presence_diff", "player_ready"]
+  # Intercept presence_diff, player_ready, and player_reconnected broadcasts to handle them explicitly
+  intercept ["presence_diff", "player_ready", "player_reconnected"]
 
   @doc """
   Authorizes and joins a player to the game channel.
@@ -64,6 +66,7 @@ defmodule PidroServerWeb.GameChannel do
   4. The game process exists
 
   On successful join:
+  - Detects and handles reconnection attempts if player was previously disconnected
   - Subscribes to game updates via PubSub
   - Tracks presence
   - Returns initial game state and player position
@@ -72,25 +75,67 @@ defmodule PidroServerWeb.GameChannel do
   def join("game:" <> room_code, _params, socket) do
     user_id = socket.assigns.user_id
 
+    # First, check if this is a reconnection attempt
+    with {:ok, room} <- RoomManager.get_room(room_code) do
+      # Check if player is in disconnected list
+      if Map.has_key?(room.disconnected_players || %{}, user_id) do
+        # Attempt reconnection
+        case RoomManager.handle_player_reconnect(room_code, user_id) do
+          {:ok, updated_room} ->
+            Logger.info("Player #{user_id} reconnected to room #{room_code}")
+
+            # Broadcast reconnection to other players
+            position = get_player_position(updated_room, user_id)
+
+            broadcast_from(socket, "player_reconnected", %{
+              user_id: user_id,
+              position: position
+            })
+
+            # Continue with normal join flow
+            proceed_with_join(room_code, user_id, socket, :reconnect)
+
+          {:error, :grace_period_expired} ->
+            {:error, %{reason: "reconnection grace period expired"}}
+
+          {:error, reason} ->
+            Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
+            {:error, %{reason: "reconnection failed: #{inspect(reason)}"}}
+        end
+      else
+        # Not a reconnection, proceed with normal join
+        proceed_with_join(room_code, user_id, socket, :new)
+      end
+    else
+      _ -> {:error, %{reason: "room not found"}}
+    end
+  end
+
+  # Extract the common join logic into a helper function
+  defp proceed_with_join(room_code, user_id, socket, join_type) do
     with {:ok, room} <- RoomManager.get_room(room_code),
          true <- user_in_room?(user_id, room),
          {:ok, _pid} <- GameAdapter.get_game(room_code),
          :ok <- GameAdapter.subscribe(room_code) do
-      # Determine player position (order they joined the room)
       position = get_player_position(room, user_id)
-
-      # Get initial game state
       {:ok, state} = GameAdapter.get_state(room_code)
 
       socket =
         socket
         |> assign(:room_code, room_code)
         |> assign(:position, position)
+        |> assign(:join_type, join_type)
 
       # Track presence after join
       send(self(), :after_join)
 
-      {:ok, %{state: state, position: position}, socket}
+      reply_data = %{
+        state: state,
+        position: position,
+        reconnected: join_type == :reconnect
+      }
+
+      {:ok, reply_data, socket}
     else
       {:error, :room_not_found} ->
         {:error, %{reason: "Room not found"}}
@@ -222,6 +267,53 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_out("player_reconnected", msg, socket) do
+    push(socket, "player_reconnected", msg)
+    {:noreply, socket}
+  end
+
+  @doc """
+  Handles player disconnection from the channel.
+
+  Called automatically when a player's channel connection terminates.
+  This ensures proper cleanup and notification of other players.
+
+  ## Actions performed:
+
+  1. Extracts room_code and user_id from socket assigns
+  2. Notifies RoomManager about the disconnect via leave_room
+  3. Broadcasts disconnect event to other players in the channel
+
+  ## Disconnect reasons:
+
+  - `:normal` - Clean disconnect (e.g., user closed tab)
+  - `:shutdown` - Server shutdown or connection lost
+  - `{:shutdown, _}` - Forced disconnect
+  - Other reasons are treated as errors
+  """
+  @impl true
+  def terminate(reason, socket) do
+    room_code = socket.assigns[:room_code]
+    user_id = socket.assigns[:user_id]
+
+    # Only handle disconnect if we have necessary assigns
+    if room_code && user_id do
+      Logger.info("Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}")
+
+      # Notify room manager - this will handle cleanup and broadcast to room channel
+      RoomManager.leave_room(user_id)
+
+      # Broadcast to other players in the game channel
+      broadcast_from(socket, "player_disconnected", %{
+        user_id: user_id,
+        position: socket.assigns[:position],
+        reason: format_reason(reason)
+      })
+    end
+
+    :ok
+  end
+
   ## Private Helpers
 
   @spec apply_game_action(Phoenix.Socket.t(), term()) ::
@@ -265,6 +357,12 @@ defmodule PidroServerWeb.GameChannel do
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason), do: inspect(reason)
+
+  @spec format_reason(term()) :: String.t()
+  defp format_reason(:normal), do: "left"
+  defp format_reason(:shutdown), do: "connection_lost"
+  defp format_reason({:shutdown, _}), do: "connection_lost"
+  defp format_reason(_), do: "error"
 
   @spec save_game_stats(String.t(), atom(), map()) :: :ok
   defp save_game_stats(room_code, winner, scores) do

@@ -62,6 +62,7 @@ defmodule PidroServer.Games.RoomManager do
     - `:max_players` - Maximum number of players (default: 4)
     - `:created_at` - DateTime when the room was created
     - `:metadata` - Additional room metadata (e.g., room name)
+    - `:disconnected_players` - Map of disconnected players with their disconnect timestamps (%{user_id => DateTime.t()})
     """
 
     @type status :: :waiting | :ready | :playing | :finished | :closed
@@ -72,7 +73,8 @@ defmodule PidroServer.Games.RoomManager do
             status: status(),
             max_players: integer(),
             created_at: DateTime.t(),
-            metadata: map()
+            metadata: map(),
+            disconnected_players: %{String.t() => DateTime.t()}
           }
 
     defstruct [
@@ -82,7 +84,8 @@ defmodule PidroServer.Games.RoomManager do
       :status,
       :max_players,
       :created_at,
-      :metadata
+      :metadata,
+      disconnected_players: %{}
     ]
   end
 
@@ -288,6 +291,63 @@ defmodule PidroServer.Games.RoomManager do
   @spec close_room(String.t()) :: :ok | {:error, :room_not_found}
   def close_room(room_code) do
     GenServer.call(__MODULE__, {:close_room, String.upcase(room_code)})
+  end
+
+  @doc """
+  Handles a player disconnect and starts the reconnection grace period.
+
+  When a player disconnects, they are tracked in the disconnected_players map
+  with a timestamp. The player has a 2-minute grace period to reconnect before
+  being removed from the room entirely.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `user_id` - User ID of the disconnected player
+
+  ## Returns
+
+  - `:ok` - Disconnect tracked successfully
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :player_not_in_room}` - Player is not in this room
+
+  ## Examples
+
+      :ok = RoomManager.handle_player_disconnect("A1B2", "user123")
+  """
+  @spec handle_player_disconnect(String.t(), String.t()) ::
+          :ok | {:error, :room_not_found | :player_not_in_room}
+  def handle_player_disconnect(room_code, user_id) do
+    GenServer.call(__MODULE__, {:player_disconnect, String.upcase(room_code), user_id})
+  end
+
+  @doc """
+  Handles a player reconnection within the grace period.
+
+  If a player reconnects within the 2-minute grace period, they are removed
+  from the disconnected_players map and remain in the room.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `user_id` - User ID of the reconnecting player
+
+  ## Returns
+
+  - `{:ok, room}` - Successfully reconnected
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :player_not_disconnected}` - Player was not marked as disconnected
+  - `{:error, :grace_period_expired}` - Grace period has expired (player already removed)
+
+  ## Examples
+
+      {:ok, room} = RoomManager.handle_player_reconnect("A1B2", "user123")
+  """
+  @spec handle_player_reconnect(String.t(), String.t()) ::
+          {:ok, Room.t()}
+          | {:error, :room_not_found | :player_not_disconnected | :grace_period_expired}
+  def handle_player_reconnect(room_code, user_id) do
+    GenServer.call(__MODULE__, {:player_reconnect, String.upcase(room_code), user_id})
   end
 
   @doc """
@@ -555,9 +615,138 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:player_disconnect, room_code, user_id}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+
+      %Room{} = room ->
+        # Only track disconnect if player is actually in the room
+        if user_id in room.player_ids do
+          %Room{} =
+            updated_room = %Room{
+              room
+              | disconnected_players: Map.put(room.disconnected_players, user_id, DateTime.utc_now())
+            }
+
+          %State{} =
+            updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+          Logger.info("Player #{user_id} disconnected from room #{room_code}, grace period started")
+
+          # Broadcast room update
+          broadcast_room(room_code, updated_room)
+
+          # Schedule cleanup check after grace period (2 minutes = 120,000 milliseconds)
+          Process.send_after(self(), {:check_disconnect_timeout, room_code, user_id}, 120_000)
+
+          {:reply, :ok, updated_state}
+        else
+          {:reply, {:error, :player_not_in_room}, state}
+        end
+    end
+  end
+
+  @impl true
+  def handle_call({:player_reconnect, room_code, user_id}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+
+      %Room{} = room ->
+        # Check if player was disconnected
+        if Map.has_key?(room.disconnected_players, user_id) do
+          # Check if grace period hasn't expired
+          disconnect_time = Map.get(room.disconnected_players, user_id)
+          grace_period_seconds = 120
+
+          if DateTime.diff(DateTime.utc_now(), disconnect_time) <= grace_period_seconds do
+            # Remove from disconnected list
+            %Room{} =
+              updated_room = %Room{
+                room
+                | disconnected_players: Map.delete(room.disconnected_players, user_id)
+              }
+
+            %State{} =
+              updated_state = %State{
+                state
+                | rooms: Map.put(state.rooms, room_code, updated_room)
+              }
+
+            Logger.info("Player #{user_id} reconnected to room #{room_code}")
+
+            # Broadcast reconnection
+            broadcast_room(room_code, updated_room)
+
+            {:reply, {:ok, updated_room}, updated_state}
+          else
+            {:reply, {:error, :grace_period_expired}, state}
+          end
+        else
+          {:reply, {:error, :player_not_disconnected}, state}
+        end
+    end
+  end
+
+  @impl true
   def handle_call(:reset_for_test, _from, _state) do
     Logger.info("RoomManager state reset for testing")
     {:reply, :ok, %State{}}
+  end
+
+  @impl true
+  def handle_info({:check_disconnect_timeout, room_code, user_id}, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        # Room no longer exists
+        {:noreply, state}
+
+      %Room{} = room ->
+        # Check if player is still disconnected
+        case Map.get(room.disconnected_players, user_id) do
+          nil ->
+            # Already reconnected, nothing to do
+            {:noreply, state}
+
+          disconnect_time ->
+            # Check if grace period expired
+            if DateTime.diff(DateTime.utc_now(), disconnect_time) >= 120 do
+              Logger.info(
+                "Player #{user_id} grace period expired for room #{room_code}, removing from room"
+              )
+
+              # Remove player from room entirely
+              %Room{} =
+                updated_room = %Room{
+                  room
+                  | player_ids: List.delete(room.player_ids, user_id),
+                    disconnected_players: Map.delete(room.disconnected_players, user_id)
+                }
+
+              # Update player_rooms
+              updated_player_rooms = Map.delete(state.player_rooms, user_id)
+
+              updated_rooms = Map.put(state.rooms, room_code, updated_room)
+
+              %State{} =
+                updated_state = %State{
+                  state
+                  | rooms: updated_rooms,
+                    player_rooms: updated_player_rooms
+                }
+
+              # Broadcast player removed
+              broadcast_room(room_code, updated_room)
+              broadcast_lobby(updated_state)
+
+              {:noreply, updated_state}
+            else
+              # Grace period hasn't expired yet (edge case, shouldn't happen)
+              {:noreply, state}
+            end
+        end
+    end
   end
 
   ## Private Helper Functions

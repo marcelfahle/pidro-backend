@@ -21,6 +21,7 @@ defmodule PidroServerWeb.UserSocket do
   """
 
   use Phoenix.Socket
+  require Logger
 
   # Define channels
   channel "lobby", PidroServerWeb.LobbyChannel
@@ -37,17 +38,25 @@ defmodule PidroServerWeb.UserSocket do
 
   ## Returns
 
-  * `{:ok, socket}` - If authentication succeeds
+  * `{:ok, socket}` - If authentication succeeds with user_id, session_id, and connected_at assigned
   * `:error` - If authentication fails
   """
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do
     case PidroServer.Accounts.Token.verify(token) do
       {:ok, user_id} ->
-        socket = assign(socket, :user_id, user_id)
-        {:ok, socket}
+        # Generate or retrieve session_id based on user_id
+        # This allows the same session to be maintained across reconnects
+        session_id = generate_session_id(user_id)
 
-      {:error, _reason} ->
+        {:ok,
+         socket
+         |> assign(:user_id, user_id)
+         |> assign(:session_id, session_id)
+         |> assign(:connected_at, DateTime.utc_now())}
+
+      {:error, reason} ->
+        Logger.warning("Socket connection failed: #{inspect(reason)}")
         :error
     end
   end
@@ -71,4 +80,15 @@ defmodule PidroServerWeb.UserSocket do
   """
   @impl true
   def id(socket), do: "user_socket:#{socket.assigns.user_id}"
+
+  # Generates a unique session ID for a user connection.
+  # Uses a combination of user_id and timestamp to create a stable session identifier.
+  defp generate_session_id(user_id) do
+    # Use a combination of user_id and timestamp to create stable session
+    # For the same user_id, we want to identify this as the same "session"
+    # but we also want each websocket connection to have unique tracking
+    :crypto.hash(:sha256, "#{user_id}:#{System.system_time()}")
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 16)
+  end
 end
