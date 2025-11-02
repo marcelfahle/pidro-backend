@@ -219,7 +219,7 @@ defmodule Pidro.Generators do
     players =
       positions
       |> Enum.with_index()
-      |> Enum.map(fn {pos, idx} ->
+      |> Enum.map(fn {pos, _idx} ->
         trump_count =
           if pos == dealer do
             dealer_trumps
