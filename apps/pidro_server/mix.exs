@@ -44,6 +44,8 @@ defmodule PidroServer.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:pidro_engine, in_umbrella: true},
+      {:bcrypt_elixir, "~> 3.0"},
       {:phoenix, "~> 1.8.1"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
@@ -91,8 +93,7 @@ defmodule PidroServer.MixProject do
         "tailwind pidro_server --minify",
         "esbuild pidro_server --minify",
         "phx.digest"
-      ],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      ]
     ]
   end
 end
