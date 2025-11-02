@@ -1,4 +1,4 @@
-defmodule PidroServerWeb.Api.FallbackController do
+defmodule PidroServerWeb.API.FallbackController do
   @moduledoc """
   Fallback controller for handling errors in API responses.
 
@@ -39,22 +39,24 @@ defmodule PidroServerWeb.Api.FallbackController do
       }
   """
   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
-    errors = Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {key, value}, acc ->
-        String.replace(acc, "%{#{key}}", to_string(value))
+    errors =
+      Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+        Enum.reduce(opts, msg, fn {key, value}, acc ->
+          String.replace(acc, "%{#{key}}", to_string(value))
+        end)
       end)
-    end)
 
-    formatted_errors = Enum.map(errors, fn {field, messages} ->
-      Enum.map(messages, fn message ->
-        %{
-          code: to_string(field),
-          title: humanize_field(field),
-          detail: message
-        }
+    formatted_errors =
+      Enum.map(errors, fn {field, messages} ->
+        Enum.map(messages, fn message ->
+          %{
+            code: to_string(field),
+            title: humanize_field(field),
+            detail: message
+          }
+        end)
       end)
-    end)
-    |> List.flatten()
+      |> List.flatten()
 
     conn
     |> put_status(:unprocessable_entity)

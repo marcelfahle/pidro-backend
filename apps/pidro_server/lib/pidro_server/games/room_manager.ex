@@ -299,7 +299,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:create_room, host_id, metadata}, _from, state) do
+  def handle_call({:create_room, host_id, metadata}, _from, %State{} = state) do
     cond do
       Map.has_key?(state.player_rooms, host_id) ->
         {:reply, {:error, :already_in_room}, state}
@@ -317,11 +317,12 @@ defmodule PidroServer.Games.RoomManager do
           metadata: metadata
         }
 
-        new_state = %State{
-          state
-          | rooms: Map.put(state.rooms, room_code, room),
-            player_rooms: Map.put(state.player_rooms, host_id, room_code)
-        }
+        %State{} =
+          new_state = %State{
+            state
+            | rooms: Map.put(state.rooms, room_code, room),
+              player_rooms: Map.put(state.player_rooms, host_id, room_code)
+          }
 
         Logger.info("Room created: #{room_code} by host: #{host_id}")
         broadcast_lobby(new_state)
@@ -331,7 +332,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:join_room, room_code, player_id}, _from, state) do
+  def handle_call({:join_room, room_code, player_id}, _from, %State{} = state) do
     cond do
       not Map.has_key?(state.rooms, room_code) ->
         {:reply, {:error, :room_not_found}, state}
@@ -345,7 +346,7 @@ defmodule PidroServer.Games.RoomManager do
         end
 
       true ->
-        room = state.rooms[room_code]
+        %Room{} = room = state.rooms[room_code]
 
         cond do
           room.status not in [:waiting, :ready] ->
@@ -361,17 +362,19 @@ defmodule PidroServer.Games.RoomManager do
             # Auto-start game when 4th player joins
             new_status = if player_count == @max_players, do: :ready, else: :waiting
 
-            updated_room = %Room{
-              room
-              | player_ids: updated_player_ids,
-                status: new_status
-            }
+            %Room{} =
+              updated_room = %Room{
+                room
+                | player_ids: updated_player_ids,
+                  status: new_status
+              }
 
-            new_state = %State{
-              state
-              | rooms: Map.put(state.rooms, room_code, updated_room),
-                player_rooms: Map.put(state.player_rooms, player_id, room_code)
-            }
+            %State{} =
+              new_state = %State{
+                state
+                | rooms: Map.put(state.rooms, room_code, updated_room),
+                  player_rooms: Map.put(state.player_rooms, player_id, room_code)
+              }
 
             Logger.info(
               "Player #{player_id} joined room #{room_code} (#{player_count}/#{@max_players})"
@@ -394,23 +397,24 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:leave_room, player_id}, _from, state) do
+  def handle_call({:leave_room, player_id}, _from, %State{} = state) do
     case Map.get(state.player_rooms, player_id) do
       nil ->
         {:reply, {:error, :not_in_room}, state}
 
       room_code ->
-        room = state.rooms[room_code]
+        %Room{} = room = state.rooms[room_code]
 
         # If host leaves, close the room entirely
         if room.host_id == player_id do
           Logger.info("Host #{player_id} left room #{room_code}, closing room")
 
-          new_state = %State{
-            state
-            | rooms: Map.delete(state.rooms, room_code),
-              player_rooms: Map.drop(state.player_rooms, room.player_ids)
-          }
+          %State{} =
+            new_state = %State{
+              state
+              | rooms: Map.delete(state.rooms, room_code),
+                player_rooms: Map.drop(state.player_rooms, room.player_ids)
+            }
 
           broadcast_room(room_code, nil)
           broadcast_lobby(new_state)
@@ -424,28 +428,31 @@ defmodule PidroServer.Games.RoomManager do
           if Enum.empty?(updated_player_ids) do
             Logger.info("Room #{room_code} is now empty, deleting")
 
-            new_state = %State{
-              state
-              | rooms: Map.delete(state.rooms, room_code),
-                player_rooms: Map.delete(state.player_rooms, player_id)
-            }
+            %State{} =
+              new_state = %State{
+                state
+                | rooms: Map.delete(state.rooms, room_code),
+                  player_rooms: Map.delete(state.player_rooms, player_id)
+              }
 
             broadcast_room(room_code, nil)
             broadcast_lobby(new_state)
 
             {:reply, :ok, new_state}
           else
-            updated_room = %Room{
-              room
-              | player_ids: updated_player_ids,
-                status: :waiting
-            }
+            %Room{} =
+              updated_room = %Room{
+                room
+                | player_ids: updated_player_ids,
+                  status: :waiting
+              }
 
-            new_state = %State{
-              state
-              | rooms: Map.put(state.rooms, room_code, updated_room),
-                player_rooms: Map.delete(state.player_rooms, player_id)
-            }
+            %State{} =
+              new_state = %State{
+                state
+                | rooms: Map.put(state.rooms, room_code, updated_room),
+                  player_rooms: Map.delete(state.player_rooms, player_id)
+              }
 
             Logger.info("Player #{player_id} left room #{room_code}")
 
@@ -459,7 +466,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:list_rooms, filter}, _from, state) do
+  def handle_call({:list_rooms, filter}, _from, %State{} = state) do
     rooms =
       state.rooms
       |> Map.values()
@@ -469,7 +476,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:get_room, room_code}, _from, state) do
+  def handle_call({:get_room, room_code}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil -> {:reply, {:error, :room_not_found}, state}
       room -> {:reply, {:ok, room}, state}
@@ -477,14 +484,16 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:update_room_status, room_code, new_status}, _from, state) do
+  def handle_call({:update_room_status, room_code, new_status}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
         {:reply, {:error, :room_not_found}, state}
 
-      room ->
-        updated_room = %Room{room | status: new_status}
-        new_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+      %Room{} = room ->
+        %Room{} = updated_room = %Room{room | status: new_status}
+
+        %State{} =
+          new_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
 
         Logger.info("Room #{room_code} status updated: #{room.status} -> #{new_status}")
 
@@ -496,7 +505,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:close_room, room_code}, _from, state) do
+  def handle_call({:close_room, room_code}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
         {:reply, {:error, :room_not_found}, state}
@@ -504,16 +513,18 @@ defmodule PidroServer.Games.RoomManager do
       room ->
         # Remove room and all player mappings
         new_rooms = Map.delete(state.rooms, room_code)
+
         new_player_rooms =
           Enum.reduce(room.player_ids, state.player_rooms, fn player_id, acc ->
             Map.delete(acc, player_id)
           end)
 
-        new_state = %State{
-          state
-          | rooms: new_rooms,
-            player_rooms: new_player_rooms
-        }
+        %State{} =
+          new_state = %State{
+            state
+            | rooms: new_rooms,
+              player_rooms: new_player_rooms
+          }
 
         Logger.info("Room #{room_code} closed")
 
@@ -543,6 +554,7 @@ defmodule PidroServer.Games.RoomManager do
   defp filter_rooms(rooms, :waiting), do: Enum.filter(rooms, &(&1.status == :waiting))
   defp filter_rooms(rooms, :ready), do: Enum.filter(rooms, &(&1.status == :ready))
   defp filter_rooms(rooms, :playing), do: Enum.filter(rooms, &(&1.status == :playing))
+
   defp filter_rooms(rooms, :available) do
     Enum.filter(rooms, &(&1.status in [:waiting, :ready, :playing]))
   end
@@ -578,15 +590,17 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc false
   @spec start_game_for_room(Room.t(), State.t()) :: State.t()
-  defp start_game_for_room(room, state) do
+  defp start_game_for_room(%Room{} = room, %State{} = state) do
     Logger.info("Starting game for room #{room.code} with players: #{inspect(room.player_ids)}")
 
     case GameSupervisor.start_game(room.code) do
       {:ok, _pid} ->
         Logger.info("Game started successfully for room #{room.code}")
         # Update room status to :playing
-        updated_room = %Room{room | status: :playing}
-        new_state = %{state | rooms: Map.put(state.rooms, room.code, updated_room)}
+        %Room{} = updated_room = %Room{room | status: :playing}
+
+        %State{} =
+          new_state = %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
 
         broadcast_room(room.code, updated_room)
         broadcast_lobby(new_state)

@@ -1,4 +1,4 @@
-defmodule PidroServerWeb.Api.RoomController do
+defmodule PidroServerWeb.API.RoomController do
   @moduledoc """
   API controller for game room operations.
 
@@ -31,9 +31,9 @@ defmodule PidroServerWeb.Api.RoomController do
   use PidroServerWeb, :controller
 
   alias PidroServer.Games.RoomManager
-  alias PidroServerWeb.Api.RoomJSON
+  alias PidroServerWeb.API.RoomJSON
 
-  action_fallback PidroServerWeb.Api.FallbackController
+  action_fallback PidroServerWeb.API.FallbackController
 
   @doc """
   Lists all rooms with optional filtering.

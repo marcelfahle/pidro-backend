@@ -41,7 +41,7 @@ defmodule PidroServerWeb.Router do
   end
 
   # API v1 routes
-  scope "/api/v1", PidroServerWeb.Api do
+  scope "/api/v1", PidroServerWeb.API do
     pipe_through :api
 
     # Auth routes without authentication
@@ -55,10 +55,13 @@ defmodule PidroServerWeb.Router do
   end
 
   # API v1 authenticated routes
-  scope "/api/v1", PidroServerWeb.Api do
+  scope "/api/v1", PidroServerWeb.API do
     pipe_through :api_authenticated
 
     get "/auth/me", AuthController, :me
+
+    # User routes with authentication
+    get "/users/me/stats", UserController, :stats
 
     # Room routes with authentication
     post "/rooms", RoomController, :create
