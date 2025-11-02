@@ -17,6 +17,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
   """
 
   use PidroServerWeb, :live_view
+  alias PidroServer.Dev.BotManager
   alias PidroServer.Games.RoomManager
 
   @impl true
@@ -106,9 +107,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
       case RoomManager.create_room(game_name, metadata) do
         {:ok, room} ->
           # Start bots if requested
-          if bot_count > 0 do
-            PidroServer.Dev.BotManager.start_bots(room.code, bot_count, bot_difficulty)
-          end
+          start_bots_if_needed(room.code, bot_count, bot_difficulty)
 
           # Reset form and show success
           {:noreply,
@@ -652,6 +651,13 @@ defmodule PidroServerWeb.Dev.GameListLive do
         "N/A"
     end
   end
+
+  defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
+    strategy = String.to_existing_atom(bot_difficulty)
+    BotManager.start_bots(room_code, bot_count, strategy)
+  end
+
+  defp start_bots_if_needed(_room_code, _bot_count, _bot_difficulty), do: :ok
 
   defp handle_single_delete(socket) do
     room_code = socket.assigns.room_to_delete

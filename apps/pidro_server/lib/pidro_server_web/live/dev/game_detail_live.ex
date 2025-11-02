@@ -14,6 +14,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   use PidroServerWeb, :live_view
   require Logger
+  alias PidroServer.Dev.BotManager
   alias PidroServer.Games.{GameAdapter, RoomManager}
 
   @impl true
@@ -31,6 +32,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         # DEV-901: Fetch legal actions for initial position
         legal_actions = get_legal_actions(room_code, :all)
 
+        # DEV-1106: Initialize bot configuration
+        bot_configs = initialize_bot_configs(room_code)
+
         {:ok,
          socket
          |> assign(:room, room)
@@ -40,6 +44,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:legal_actions, legal_actions)
          |> assign(:executing_action, false)
          |> assign(:copy_feedback, false)
+         |> assign(:bot_configs, bot_configs)
          |> assign(:page_title, "Game Detail - Dev")}
 
       {:error, _reason} ->
@@ -110,51 +115,118 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
+  def handle_event("update_bot_config", params, socket) do
+    # DEV-1106: Update bot configuration in assigns
+    position = String.to_existing_atom(params["position"])
+    bot_configs = socket.assigns.bot_configs
+
+    updated_config =
+      Map.update!(bot_configs, position, fn config ->
+        config
+        |> maybe_update_type(params)
+        |> maybe_update_difficulty(params)
+        |> maybe_update_delay(params)
+      end)
+
+    {:noreply, assign(socket, :bot_configs, updated_config)}
+  end
+
+  @impl true
+  def handle_event("apply_bot_config", _params, socket) do
+    # DEV-1106: Apply bot configuration changes
+    room_code = socket.assigns.room_code
+    bot_configs = socket.assigns.bot_configs
+
+    # Process each position
+    Enum.each([:north, :south, :east, :west], fn position ->
+      config = Map.get(bot_configs, position)
+      apply_position_config(room_code, position, config)
+    end)
+
+    {:noreply, put_flash(socket, :info, "Bot configuration applied successfully")}
+  end
+
+  @impl true
+  def handle_event("toggle_bot_pause", %{"position" => position}, socket) do
+    # DEV-1106: Pause or resume a specific bot
+    position_atom = String.to_existing_atom(position)
+    room_code = socket.assigns.room_code
+    bot_configs = socket.assigns.bot_configs
+
+    config = Map.get(bot_configs, position_atom)
+
+    result =
+      if config.paused do
+        BotManager.resume_bot(room_code, position_atom)
+      else
+        BotManager.pause_bot(room_code, position_atom)
+      end
+
+    socket =
+      case result do
+        :ok ->
+          # Update the paused state
+          updated_configs =
+            Map.update!(bot_configs, position_atom, fn c ->
+              %{c | paused: !c.paused}
+            end)
+
+          socket
+          |> assign(:bot_configs, updated_configs)
+          |> put_flash(
+            :info,
+            "Bot #{position} #{if config.paused, do: "resumed", else: "paused"}"
+          )
+
+        {:error, :not_found} ->
+          put_flash(socket, :error, "Bot not found for position #{position}")
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("execute_action", %{"action" => action_json}, socket) do
     # DEV-903: Execute action implementation
-    try do
-      action = decode_action(action_json)
-      position = socket.assigns.selected_position
-      room_code = socket.assigns.room_code
+    socket = assign(socket, :executing_action, true)
+    position = socket.assigns.selected_position
+    room_code = socket.assigns.room_code
 
-      # Set executing state
-      socket = assign(socket, :executing_action, true)
+    case decode_action(action_json) do
+      {:ok, action} ->
+        # Apply the action
+        case GameAdapter.apply_action(room_code, position, action) do
+          {:ok, _new_state} ->
+            # Refetch game state and legal actions
+            game_state = get_game_state(room_code)
+            legal_actions = get_legal_actions(room_code, position)
 
-      # Apply the action
-      case GameAdapter.apply_action(room_code, position, action) do
-        {:ok, _new_state} ->
-          # Refetch game state and legal actions
-          game_state = get_game_state(room_code)
-          legal_actions = get_legal_actions(room_code, position)
+            {:noreply,
+             socket
+             |> assign(:game_state, game_state)
+             |> assign(:legal_actions, legal_actions)
+             |> assign(:executing_action, false)
+             |> put_flash(:info, "Action executed successfully: #{format_action(action)}")}
 
-          {:noreply,
-           socket
-           |> assign(:game_state, game_state)
-           |> assign(:legal_actions, legal_actions)
-           |> assign(:executing_action, false)
-           |> put_flash(:info, "Action executed successfully: #{format_action(action)}")}
+          {:error, reason} ->
+            # DEV-904: Error handling
+            error_message = format_error(reason)
+            Logger.error("Action execution failed: #{error_message}")
 
-        {:error, reason} ->
-          # DEV-904: Error handling
-          error_message = format_error(reason)
-          Logger.error("Action execution failed: #{error_message}")
+            {:noreply,
+             socket
+             |> assign(:executing_action, false)
+             |> put_flash(:error, "Action failed: #{error_message}")}
+        end
 
-          {:noreply,
-           socket
-           |> assign(:executing_action, false)
-           |> put_flash(:error, "Action failed: #{error_message}")}
-      end
-    rescue
-      e ->
+      {:error, error_message} ->
         # DEV-904: Exception handling
-        Logger.error(
-          "Exception executing action: #{Exception.message(e)}\n#{Exception.format_stacktrace()}"
-        )
+        Logger.error("Exception executing action: #{error_message}")
 
         {:noreply,
          socket
          |> assign(:executing_action, false)
-         |> put_flash(:error, "Action failed: #{Exception.message(e)}")}
+         |> put_flash(:error, "Action failed: #{error_message}")}
     end
   end
 
@@ -305,6 +377,31 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                 ]}
               >
                 God Mode (All)
+              </button>
+            </div>
+          </div>
+        </div>
+        
+    <!-- Bot Configuration - DEV-1106 -->
+        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+          <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg leading-6 font-medium text-zinc-900">Bot Configuration</h3>
+            <p class="mt-1 text-sm text-zinc-500">Configure bot players for each position</p>
+          </div>
+          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+            <div class="space-y-6">
+              <%= for position <- [:north, :south, :east, :west] do %>
+                <.render_bot_position_config position={position} config={@bot_configs[position]} />
+              <% end %>
+            </div>
+
+            <div class="mt-6 pt-6 border-t border-zinc-200">
+              <button
+                type="button"
+                phx-click="apply_bot_config"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+              >
+                Apply Changes
               </button>
             </div>
           </div>
@@ -461,6 +558,140 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     """
   end
 
+  # DEV-1106: Render bot position configuration
+  defp render_bot_position_config(assigns) do
+    ~H"""
+    <div class="bg-zinc-50 rounded-lg p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h4 class="text-sm font-semibold text-zinc-900">
+          {format_position(@position)}
+        </h4>
+        <span class={[
+          "px-2 py-1 text-xs font-medium rounded-full",
+          if(@config.type == :bot,
+            do: "bg-green-100 text-green-800",
+            else: "bg-gray-100 text-gray-800"
+          )
+        ]}>
+          <%= if @config.type == :bot do %>
+            Bot
+          <% else %>
+            Human
+          <% end %>
+        </span>
+      </div>
+
+      <div class="space-y-4">
+        <!-- Type Selection -->
+        <div>
+          <label class="block text-sm font-medium text-zinc-700 mb-2">Player Type</label>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              phx-click="update_bot_config"
+              phx-value-position={@position}
+              phx-value-type="human"
+              class={[
+                "flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                if(@config.type == :human,
+                  do: "bg-indigo-600 text-white",
+                  else: "bg-white text-zinc-700 border border-zinc-300 hover:bg-zinc-50"
+                )
+              ]}
+            >
+              Human
+            </button>
+            <button
+              type="button"
+              phx-click="update_bot_config"
+              phx-value-position={@position}
+              phx-value-type="bot"
+              class={[
+                "flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                if(@config.type == :bot,
+                  do: "bg-indigo-600 text-white",
+                  else: "bg-white text-zinc-700 border border-zinc-300 hover:bg-zinc-50"
+                )
+              ]}
+            >
+              Bot
+            </button>
+          </div>
+        </div>
+
+        <%= if @config.type == :bot do %>
+          <!-- Bot Difficulty -->
+          <div>
+            <label
+              for={"bot-difficulty-#{@position}"}
+              class="block text-sm font-medium text-zinc-700 mb-2"
+            >
+              Difficulty
+            </label>
+            <select
+              id={"bot-difficulty-#{@position}"}
+              phx-change="update_bot_config"
+              phx-value-position={@position}
+              name="difficulty"
+              class="block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+            >
+              <option value="random" selected={@config.difficulty == :random}>Random</option>
+              <option value="basic" selected={@config.difficulty == :basic}>Basic</option>
+              <option value="smart" selected={@config.difficulty == :smart}>Smart</option>
+            </select>
+          </div>
+          <!-- Bot Delay Slider -->
+          <div>
+            <label
+              for={"bot-delay-#{@position}"}
+              class="block text-sm font-medium text-zinc-700 mb-2"
+            >
+              Delay: {@config.delay_ms}ms
+            </label>
+            <input
+              id={"bot-delay-#{@position}"}
+              type="range"
+              min="0"
+              max="3000"
+              step="100"
+              value={@config.delay_ms}
+              phx-change="update_bot_config"
+              phx-value-position={@position}
+              name="delay_ms"
+              class="w-full h-2 bg-zinc-200 rounded-lg appearance-none cursor-pointer"
+            />
+            <div class="flex justify-between text-xs text-zinc-500 mt-1">
+              <span>0ms</span>
+              <span>3000ms</span>
+            </div>
+          </div>
+          <!-- Pause/Resume Button -->
+          <div>
+            <button
+              type="button"
+              phx-click="toggle_bot_pause"
+              phx-value-position={@position}
+              class={[
+                "w-full px-3 py-2 text-sm font-medium rounded-md transition-colors",
+                if(@config.paused,
+                  do: "bg-green-600 text-white hover:bg-green-700",
+                  else: "bg-yellow-600 text-white hover:bg-yellow-700"
+                )
+              ]}
+            >
+              <%= if @config.paused do %>
+                Resume Bot
+              <% else %>
+                Pause Bot
+              <% end %>
+            </button>
+          </div>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
   # DEV-902: Render action buttons grouped by type
   defp render_action_groups(assigns) do
     grouped = group_actions(assigns.legal_actions)
@@ -520,25 +751,27 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   defp format_card(rank, suit) do
-    rank_str =
-      case rank do
-        14 -> "A"
-        13 -> "K"
-        12 -> "Q"
-        11 -> "J"
-        n -> to_string(n)
-      end
+    "#{format_rank(rank)}#{format_suit_symbol(suit)}"
+  end
 
-    suit_symbol =
-      case suit do
-        :hearts -> "♥"
-        :diamonds -> "♦"
-        :clubs -> "♣"
-        :spades -> "♠"
-        _ -> to_string(suit)
-      end
+  defp format_rank(rank) do
+    case rank do
+      14 -> "A"
+      13 -> "K"
+      12 -> "Q"
+      11 -> "J"
+      n -> to_string(n)
+    end
+  end
 
-    "#{rank_str}#{suit_symbol}"
+  defp format_suit_symbol(suit) do
+    case suit do
+      :hearts -> "♥"
+      :diamonds -> "♦"
+      :clubs -> "♣"
+      :spades -> "♠"
+      _ -> to_string(suit)
+    end
   end
 
   defp format_action(action) do
@@ -585,12 +818,16 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   defp decode_action(action_json) do
     case Jason.decode(action_json) do
-      {:ok, "pass"} -> :pass
-      {:ok, ["bid", amount]} -> {:bid, amount}
-      {:ok, ["declare_trump", suit]} -> {:declare_trump, String.to_existing_atom(suit)}
-      {:ok, ["play_card", [rank, suit]]} -> {:play_card, {rank, String.to_existing_atom(suit)}}
-      {:error, _} -> raise "Invalid action format: #{action_json}"
+      {:ok, "pass"} -> {:ok, :pass}
+      {:ok, ["bid", amount]} -> {:ok, {:bid, amount}}
+      {:ok, ["declare_trump", suit]} -> {:ok, {:declare_trump, String.to_existing_atom(suit)}}
+      {:ok, ["play_card", [rank, suit]]} -> {:ok, {:play_card, {rank, String.to_existing_atom(suit)}}}
+      {:error, error} -> {:error, "Invalid action format: #{inspect(error)}"}
+      _ -> {:error, "Invalid action format: #{action_json}"}
     end
+  rescue
+    ArgumentError -> {:error, "Invalid action format: unknown atom in #{action_json}"}
+    error -> {:error, "Invalid action format: #{Exception.message(error)}"}
   end
 
   # DEV-904: Format error messages
@@ -630,6 +867,87 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       :west -> "West"
       :all -> "All Players"
       _ -> inspect(position)
+    end
+  end
+
+  # DEV-1106: Bot configuration helper functions
+
+  defp initialize_bot_configs(room_code) do
+    # Fetch current bots from BotManager
+    current_bots = BotManager.list_bots(room_code)
+
+    # Initialize config for each position
+    [:north, :south, :east, :west]
+    |> Enum.map(fn position ->
+      config =
+        case Map.get(current_bots, position) do
+          nil ->
+            # No bot exists - default to human
+            %{type: :human, difficulty: :random, delay_ms: 1000, paused: false}
+
+          bot_info ->
+            # Bot exists - populate config
+            %{
+              type: :bot,
+              difficulty: bot_info.strategy,
+              delay_ms: 1000,
+              paused: bot_info.status == :paused
+            }
+        end
+
+      {position, config}
+    end)
+    |> Map.new()
+  end
+
+  defp maybe_update_type(config, %{"type" => type}) when type in ["human", "bot"] do
+    %{config | type: String.to_existing_atom(type)}
+  end
+
+  defp maybe_update_type(config, _params), do: config
+
+  defp maybe_update_difficulty(config, %{"difficulty" => difficulty})
+       when difficulty in ["random", "basic", "smart"] do
+    %{config | difficulty: String.to_existing_atom(difficulty)}
+  end
+
+  defp maybe_update_difficulty(config, _params), do: config
+
+  defp maybe_update_delay(config, %{"delay_ms" => delay_str}) do
+    case Integer.parse(delay_str) do
+      {delay, _} when delay >= 0 and delay <= 3000 ->
+        %{config | delay_ms: delay}
+
+      _ ->
+        config
+    end
+  end
+
+  defp maybe_update_delay(config, _params), do: config
+
+  defp apply_position_config(room_code, position, config) do
+    current_bots = BotManager.list_bots(room_code)
+    bot_exists = Map.has_key?(current_bots, position)
+
+    case {config.type, bot_exists} do
+      {:bot, false} ->
+        # Start a new bot
+        BotManager.start_bot(room_code, position, config.difficulty, config.delay_ms)
+
+      {:bot, true} ->
+        # Bot exists - stop and restart with new config
+        BotManager.stop_bot(room_code, position)
+        # Small delay to ensure cleanup
+        Process.sleep(100)
+        BotManager.start_bot(room_code, position, config.difficulty, config.delay_ms)
+
+      {:human, true} ->
+        # Stop the bot
+        BotManager.stop_bot(room_code, position)
+
+      {:human, false} ->
+        # No bot exists, and user wants human - nothing to do
+        :ok
     end
   end
 end
