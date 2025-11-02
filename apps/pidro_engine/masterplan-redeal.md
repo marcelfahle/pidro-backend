@@ -712,10 +712,10 @@ end
 
 ### P2 (MEDIUM - Polish & Optimization)
 
-**Estimated effort: 6-8 hours**
+**Estimated effort: 6-8 hours** | **Status**: 🔄 IN PROGRESS (1/7 tasks complete)
 
 - [ ] **[1h]** Add test generators in `test/support/generators.ex`: `pre_dealer_selection_generator`, `dealer_with_excess_trump_generator`, etc.
-- [ ] **[1h]** Update IEx pretty_print to show `[REDEAL]`, `[ROB]`, cards_requested, killed_cards in [iex.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/iex.ex)
+- [x] **[1h]** Update IEx pretty_print to show `[REDEAL]`, `[ROB]`, cards_requested, killed_cards in [iex.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/iex.ex) - ✅ COMPLETED 2025-11-02
 - [ ] **[1h]** Update Finnish.Scorer to exclude killed cards from scoring in [scorer.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/finnish/scorer.ex)
 - [ ] **[1h]** Update hash_state and cache keys to include redeal fields in [perf.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/perf.ex)
 - [ ] **[1h]** Update PGN notation to include redeal fields in [notation.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/notation.ex)
