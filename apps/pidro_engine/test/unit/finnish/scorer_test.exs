@@ -12,10 +12,14 @@ defmodule Pidro.Finnish.ScorerTest do
         number: 1,
         leader: :north,
         plays: [
-          {:north, {14, :hearts}},  # Ace: 1 point
-          {:east, {11, :hearts}},   # Jack: 1 point
-          {:south, {10, :hearts}},  # Ten: 1 point
-          {:west, {7, :hearts}}     # Seven: 0 points
+          # Ace: 1 point
+          {:north, {14, :hearts}},
+          # Jack: 1 point
+          {:east, {11, :hearts}},
+          # Ten: 1 point
+          {:south, {10, :hearts}},
+          # Seven: 0 points
+          {:west, {7, :hearts}}
         ]
       }
 
@@ -32,17 +36,23 @@ defmodule Pidro.Finnish.ScorerTest do
         number: 1,
         leader: :north,
         plays: [
-          {:north, {5, :hearts}},   # Right 5: 5 points
-          {:east, {2, :hearts}},    # 2 of trump: 1 point (kept by player)
-          {:south, {10, :hearts}},  # Ten: 1 point (wins - highest card)
-          {:west, {4, :hearts}}     # Four: 0 points
+          # Right 5: 5 points
+          {:north, {5, :hearts}},
+          # 2 of trump: 1 point (kept by player)
+          {:east, {2, :hearts}},
+          # Ten: 1 point (wins - highest card)
+          {:south, {10, :hearts}},
+          # Four: 0 points
+          {:west, {4, :hearts}}
         ]
       }
 
       result = Scorer.score_trick(trick, :hearts)
 
-      assert result.winner == :south  # 10 beats Right 5 in trump ranking
-      assert result.winner_points == 6  # Right 5 + Ten (2 is kept by East)
+      # 10 beats Right 5 in trump ranking
+      assert result.winner == :south
+      # Right 5 + Ten (2 is kept by East)
+      assert result.winner_points == 6
       assert result.two_of_trump_player == :east
       assert result.two_of_trump_points == 1
     end
@@ -52,17 +62,22 @@ defmodule Pidro.Finnish.ScorerTest do
         number: 1,
         leader: :north,
         plays: [
-          {:north, {14, :hearts}},  # Ace: 1 point (wins)
-          {:east, {2, :hearts}},    # 2 of trump: 1 point (kept by player)
-          {:south, {3, :hearts}},   # Three: 0 points
-          {:west, {4, :hearts}}     # Four: 0 points
+          # Ace: 1 point (wins)
+          {:north, {14, :hearts}},
+          # 2 of trump: 1 point (kept by player)
+          {:east, {2, :hearts}},
+          # Three: 0 points
+          {:south, {3, :hearts}},
+          # Four: 0 points
+          {:west, {4, :hearts}}
         ]
       }
 
       result = Scorer.score_trick(trick, :hearts)
 
       assert result.winner == :north
-      assert result.winner_points == 1  # Ace (2 is kept by East)
+      # Ace (2 is kept by East)
+      assert result.winner_points == 1
       assert result.two_of_trump_player == :east
       assert result.two_of_trump_points == 1
     end
@@ -72,16 +87,20 @@ defmodule Pidro.Finnish.ScorerTest do
         number: 1,
         leader: :north,
         plays: [
-          {:north, {2, :hearts}}  # 2 of trump: 1 point (only card, so "wins")
+          # 2 of trump: 1 point (only card, so "wins")
+          {:north, {2, :hearts}}
         ]
       }
 
       result = Scorer.score_trick(trick, :hearts)
 
-      assert result.winner == :north  # Only player
-      assert result.winner_points == 0  # Winner is also 2 player, so gets 0 as winner
+      # Only player
+      assert result.winner == :north
+      # Winner is also 2 player, so gets 0 as winner
+      assert result.winner_points == 0
       assert result.two_of_trump_player == :north
-      assert result.two_of_trump_points == 1  # But keeps 1 as 2 player
+      # But keeps 1 as 2 player
+      assert result.two_of_trump_points == 1
     end
 
     test "scores trick with both 5s" do
@@ -89,17 +108,23 @@ defmodule Pidro.Finnish.ScorerTest do
         number: 1,
         leader: :south,
         plays: [
-          {:south, {5, :hearts}},    # Right 5: 5 points
-          {:west, {5, :diamonds}},   # Wrong 5: 5 points
-          {:north, {10, :hearts}},   # Ten: 1 point
-          {:east, {11, :hearts}}     # Jack: 1 point (wins - highest rank 11)
+          # Right 5: 5 points
+          {:south, {5, :hearts}},
+          # Wrong 5: 5 points
+          {:west, {5, :diamonds}},
+          # Ten: 1 point
+          {:north, {10, :hearts}},
+          # Jack: 1 point (wins - highest rank 11)
+          {:east, {11, :hearts}}
         ]
       }
 
       result = Scorer.score_trick(trick, :hearts)
 
-      assert result.winner == :east  # Jack (rank 11) beats 10, beats Right 5, beats Wrong 5
-      assert result.winner_points == 12  # Right 5 + Wrong 5 + Ten + Jack
+      # Jack (rank 11) beats 10, beats Right 5, beats Wrong 5
+      assert result.winner == :east
+      # Right 5 + Wrong 5 + Ten + Jack
+      assert result.winner_points == 12
       assert result.two_of_trump_player == nil
       assert result.two_of_trump_points == 0
     end
@@ -118,7 +143,8 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.score_trick(trick, :hearts)
 
-      assert result.winner == :south  # 8 is highest
+      # 8 is highest
+      assert result.winner == :south
       assert result.winner_points == 0
       assert result.two_of_trump_player == nil
       assert result.two_of_trump_points == 0
@@ -135,8 +161,10 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.aggregate_team_scores(tricks)
 
-      assert result.north_south == 7  # North: 5, South: 2
-      assert result.east_west == 7    # East: 7
+      # North: 5, South: 2
+      assert result.north_south == 7
+      # East: 7
+      assert result.east_west == 7
     end
 
     test "aggregates scores with 2 of trump played" do
@@ -148,8 +176,10 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.aggregate_team_scores(tricks)
 
-      assert result.north_south == 6  # North: 5, South: 1
-      assert result.east_west == 8    # East: 6+1 (2 of trump), West: 1 (2 of trump)
+      # North: 5, South: 1
+      assert result.north_south == 6
+      # East: 6+1 (2 of trump), West: 1 (2 of trump)
+      assert result.east_west == 8
     end
 
     test "handles same player winning and playing 2 of trump" do
@@ -159,7 +189,8 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.aggregate_team_scores(tricks)
 
-      assert result.north_south == 7  # 6 as winner + 1 for 2 of trump
+      # 6 as winner + 1 for 2 of trump
+      assert result.north_south == 7
       assert result.east_west == 0
     end
 
@@ -184,8 +215,10 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.apply_bid_result(state)
 
-      assert result.cumulative_scores.north_south == 24  # 15 + 9
-      assert result.cumulative_scores.east_west == 25    # 20 + 5
+      # 15 + 9
+      assert result.cumulative_scores.north_south == 24
+      # 20 + 5
+      assert result.cumulative_scores.east_west == 25
       assert length(result.events) == 2
     end
 
@@ -201,8 +234,10 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.apply_bid_result(state)
 
-      assert result.cumulative_scores.north_south == 37  # 30 + 7
-      assert result.cumulative_scores.east_west == 47    # 40 + 7
+      # 30 + 7
+      assert result.cumulative_scores.north_south == 37
+      # 40 + 7
+      assert result.cumulative_scores.east_west == 47
     end
 
     test "bidding team fails their bid" do
@@ -217,8 +252,10 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.apply_bid_result(state)
 
-      assert result.cumulative_scores.north_south == 23  # 15 + 8
-      assert result.cumulative_scores.east_west == 10    # 20 - 10
+      # 15 + 8
+      assert result.cumulative_scores.north_south == 23
+      # 20 - 10
+      assert result.cumulative_scores.east_west == 10
     end
 
     test "bidding team can go negative" do
@@ -233,8 +270,10 @@ defmodule Pidro.Finnish.ScorerTest do
 
       result = Scorer.apply_bid_result(state)
 
-      assert result.cumulative_scores.north_south == -4  # 8 - 12
-      assert result.cumulative_scores.east_west == 39    # 30 + 9
+      # 8 - 12
+      assert result.cumulative_scores.north_south == -4
+      # 30 + 9
+      assert result.cumulative_scores.east_west == 39
     end
 
     test "adds scoring events to event history" do

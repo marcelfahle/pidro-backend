@@ -296,30 +296,44 @@ defmodule Pidro.Core.CardTest do
     test "complete trump ranking order from highest to lowest" do
       # A > K > Q > J > 10 > 9 > 8 > 7 > 6 > Right5 > Wrong5 > 4 > 3 > 2
       trump_order = [
-        {14, :hearts}, # A
-        {13, :hearts}, # K
-        {12, :hearts}, # Q
-        {11, :hearts}, # J
-        {10, :hearts}, # 10
-        {9, :hearts},  # 9
-        {8, :hearts},  # 8
-        {7, :hearts},  # 7
-        {6, :hearts},  # 6
-        {5, :hearts},  # Right 5
-        {5, :diamonds}, # Wrong 5
-        {4, :hearts},  # 4
-        {3, :hearts},  # 3
-        {2, :hearts}   # 2
+        # A
+        {14, :hearts},
+        # K
+        {13, :hearts},
+        # Q
+        {12, :hearts},
+        # J
+        {11, :hearts},
+        # 10
+        {10, :hearts},
+        # 9
+        {9, :hearts},
+        # 8
+        {8, :hearts},
+        # 7
+        {7, :hearts},
+        # 6
+        {6, :hearts},
+        # Right 5
+        {5, :hearts},
+        # Wrong 5
+        {5, :diamonds},
+        # 4
+        {4, :hearts},
+        # 3
+        {3, :hearts},
+        # 2
+        {2, :hearts}
       ]
 
       # Test that each card beats all cards below it
       for {higher_card, i} <- Enum.with_index(trump_order) do
         for lower_card <- Enum.slice(trump_order, (i + 1)..-1//1) do
           assert Card.compare(higher_card, lower_card, :hearts) == :gt,
-            "Expected #{inspect(higher_card)} > #{inspect(lower_card)}"
+                 "Expected #{inspect(higher_card)} > #{inspect(lower_card)}"
 
           assert Card.compare(lower_card, higher_card, :hearts) == :lt,
-            "Expected #{inspect(lower_card)} < #{inspect(higher_card)}"
+                 "Expected #{inspect(lower_card)} < #{inspect(higher_card)}"
         end
       end
     end
@@ -477,7 +491,7 @@ defmodule Pidro.Core.CardTest do
         wrong_5_points = Card.point_value({5, wrong_5_suit}, trump_suit)
 
         assert total_points + wrong_5_points == 14,
-          "Expected 14 total points for #{trump_suit} trump, got #{total_points + wrong_5_points}"
+               "Expected 14 total points for #{trump_suit} trump, got #{total_points + wrong_5_points}"
       end
     end
 
@@ -491,12 +505,18 @@ defmodule Pidro.Core.CardTest do
       # Total: 14 points
 
       points = [
-        Card.point_value({5, :hearts}, :hearts),     # 5
-        Card.point_value({5, :diamonds}, :hearts),   # 5
-        Card.point_value({14, :hearts}, :hearts),    # 1
-        Card.point_value({11, :hearts}, :hearts),    # 1
-        Card.point_value({10, :hearts}, :hearts),    # 1
-        Card.point_value({2, :hearts}, :hearts)      # 1
+        # 5
+        Card.point_value({5, :hearts}, :hearts),
+        # 5
+        Card.point_value({5, :diamonds}, :hearts),
+        # 1
+        Card.point_value({14, :hearts}, :hearts),
+        # 1
+        Card.point_value({11, :hearts}, :hearts),
+        # 1
+        Card.point_value({10, :hearts}, :hearts),
+        # 1
+        Card.point_value({2, :hearts}, :hearts)
       ]
 
       assert Enum.sum(points) == 14
@@ -517,8 +537,9 @@ defmodule Pidro.Core.CardTest do
     test "same_color_suit is symmetric" do
       for suit <- [:hearts, :diamonds, :clubs, :spades] do
         same_color = Card.same_color_suit(suit)
+
         assert Card.same_color_suit(same_color) == suit,
-          "Expected same_color_suit(same_color_suit(#{suit})) == #{suit}"
+               "Expected same_color_suit(same_color_suit(#{suit})) == #{suit}"
       end
     end
 
@@ -537,7 +558,9 @@ defmodule Pidro.Core.CardTest do
     test "all trump cards including wrong 5 can be identified" do
       # When hearts is trump, there should be 14 trump cards
       trump_suit = :hearts
-      all_cards = for rank <- 2..14, suit <- [:hearts, :diamonds, :clubs, :spades], do: {rank, suit}
+
+      all_cards =
+        for rank <- 2..14, suit <- [:hearts, :diamonds, :clubs, :spades], do: {rank, suit}
 
       trump_cards = Enum.filter(all_cards, fn card -> Card.is_trump?(card, trump_suit) end)
 
@@ -585,10 +608,14 @@ defmodule Pidro.Core.CardTest do
       # However, Card module doesn't handle this logic, just reports values
 
       cards = [
-        {5, :hearts},    # Right 5: 5 points
-        {5, :diamonds},  # Wrong 5: 5 points
-        {14, :hearts},   # Ace: 1 point
-        {11, :hearts}    # Jack: 1 point
+        # Right 5: 5 points
+        {5, :hearts},
+        # Wrong 5: 5 points
+        {5, :diamonds},
+        # Ace: 1 point
+        {14, :hearts},
+        # Jack: 1 point
+        {11, :hearts}
       ]
 
       total = Enum.sum(Enum.map(cards, fn card -> Card.point_value(card, :hearts) end))

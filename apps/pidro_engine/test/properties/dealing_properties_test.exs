@@ -47,7 +47,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "initial deal gives exactly 9 cards to each player" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal 9 cards to each of 4 players (simulating initial deal)
@@ -70,8 +70,9 @@ defmodule Pidro.Properties.DealingPropertiesTest do
              "Player 4 should have 9 cards, got #{length(player4_hand)}"
 
       # Verify total cards dealt
-      total_dealt = length(player1_hand) + length(player2_hand) +
-                    length(player3_hand) + length(player4_hand)
+      total_dealt =
+        length(player1_hand) + length(player2_hand) +
+          length(player3_hand) + length(player4_hand)
 
       assert total_dealt == 36,
              "Total cards dealt should be 36 (9 per player × 4 players), got #{total_dealt}"
@@ -83,7 +84,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "all dealt cards are unique across all players" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal 9 cards to each of 4 players
@@ -105,17 +106,28 @@ defmodule Pidro.Properties.DealingPropertiesTest do
              "All dealt cards should be unique (no duplicates)"
 
       # No card should appear in multiple hands
-      assert MapSet.size(MapSet.intersection(MapSet.new(player1_hand), MapSet.new(player2_hand))) == 0
-      assert MapSet.size(MapSet.intersection(MapSet.new(player1_hand), MapSet.new(player3_hand))) == 0
-      assert MapSet.size(MapSet.intersection(MapSet.new(player1_hand), MapSet.new(player4_hand))) == 0
-      assert MapSet.size(MapSet.intersection(MapSet.new(player2_hand), MapSet.new(player3_hand))) == 0
-      assert MapSet.size(MapSet.intersection(MapSet.new(player2_hand), MapSet.new(player4_hand))) == 0
-      assert MapSet.size(MapSet.intersection(MapSet.new(player3_hand), MapSet.new(player4_hand))) == 0
+      assert MapSet.size(MapSet.intersection(MapSet.new(player1_hand), MapSet.new(player2_hand))) ==
+               0
+
+      assert MapSet.size(MapSet.intersection(MapSet.new(player1_hand), MapSet.new(player3_hand))) ==
+               0
+
+      assert MapSet.size(MapSet.intersection(MapSet.new(player1_hand), MapSet.new(player4_hand))) ==
+               0
+
+      assert MapSet.size(MapSet.intersection(MapSet.new(player2_hand), MapSet.new(player3_hand))) ==
+               0
+
+      assert MapSet.size(MapSet.intersection(MapSet.new(player2_hand), MapSet.new(player4_hand))) ==
+               0
+
+      assert MapSet.size(MapSet.intersection(MapSet.new(player3_hand), MapSet.new(player4_hand))) ==
+               0
     end
   end
 
   property "dealt cards plus remaining cards equals full deck" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
       original_cards = Enum.sort(deck.cards)
 
@@ -126,7 +138,9 @@ defmodule Pidro.Properties.DealingPropertiesTest do
       {player4_hand, remaining_deck} = Deck.deal_batch(deck4, 9)
 
       # Recombine all cards
-      all_cards = player1_hand ++ player2_hand ++ player3_hand ++ player4_hand ++ remaining_deck.cards
+      all_cards =
+        player1_hand ++ player2_hand ++ player3_hand ++ player4_hand ++ remaining_deck.cards
+
       recombined_sorted = Enum.sort(all_cards)
 
       assert recombined_sorted == original_cards,
@@ -142,7 +156,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "initial deal distributes cards in batches of 3" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Simulate dealing in batches of 3 to each player (3 rounds)
@@ -166,9 +180,18 @@ defmodule Pidro.Properties.DealingPropertiesTest do
 
       # Each batch should have exactly 3 cards
       batches = [
-        p1_batch1, p2_batch1, p3_batch1, p4_batch1,
-        p1_batch2, p2_batch2, p3_batch2, p4_batch2,
-        p1_batch3, p2_batch3, p3_batch3, p4_batch3
+        p1_batch1,
+        p2_batch1,
+        p3_batch1,
+        p4_batch1,
+        p1_batch2,
+        p2_batch2,
+        p3_batch2,
+        p4_batch2,
+        p1_batch3,
+        p2_batch3,
+        p3_batch3,
+        p4_batch3
       ]
 
       Enum.each(batches, fn batch ->
@@ -194,14 +217,15 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealing in batches of 3 maintains card uniqueness" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal in batches of 3 to simulate Finnish dealing pattern
-      batches = Enum.reduce(1..12, {[], deck}, fn _round, {acc, current_deck} ->
-        {batch, new_deck} = Deck.deal_batch(current_deck, 3)
-        {acc ++ [batch], new_deck}
-      end)
+      batches =
+        Enum.reduce(1..12, {[], deck}, fn _round, {acc, current_deck} ->
+          {batch, new_deck} = Deck.deal_batch(current_deck, 3)
+          {acc ++ [batch], new_deck}
+        end)
 
       {all_batches, _final_deck} = batches
 
@@ -224,14 +248,15 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "batches of 3 can be combined to form player hands of 9" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal 12 batches of 3 cards (enough for 4 players with 3 batches each)
-      {batches, remaining_deck} = Enum.reduce(1..12, {[], deck}, fn _i, {acc, d} ->
-        {batch, new_deck} = Deck.deal_batch(d, 3)
-        {acc ++ [batch], new_deck}
-      end)
+      {batches, remaining_deck} =
+        Enum.reduce(1..12, {[], deck}, fn _i, {acc, d} ->
+          {batch, new_deck} = Deck.deal_batch(d, 3)
+          {acc ++ [batch], new_deck}
+        end)
 
       # Group batches into 4 player hands (every 4th batch goes to same player)
       # This simulates dealing around the table: P1, P2, P3, P4, P1, P2, P3, P4, etc.
@@ -256,7 +281,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "after initial deal, exactly 16 cards remain in deck" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal 9 cards to each of 4 players (36 cards total)
@@ -274,7 +299,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "kitty (remaining 16 cards) contains valid unique cards" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal to 4 players
@@ -290,6 +315,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
 
       # All cards in kitty should be unique
       unique_kitty = Enum.uniq(kitty_cards)
+
       assert length(unique_kitty) == 16,
              "All 16 cards in kitty should be unique"
 
@@ -305,7 +331,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "remaining 16 cards can be further dealt" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Initial deal to 4 players
@@ -338,14 +364,15 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "dealing order is consistent (cards dealt in sequence)" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal all 52 cards one at a time to verify order
-      {all_cards, empty_deck} = Enum.reduce(1..52, {[], deck}, fn _i, {acc, d} ->
-        {[card], new_deck} = Deck.deal_batch(d, 1)
-        {acc ++ [card], new_deck}
-      end)
+      {all_cards, empty_deck} =
+        Enum.reduce(1..52, {[], deck}, fn _i, {acc, d} ->
+          {[card], new_deck} = Deck.deal_batch(d, 1)
+          {acc ++ [card], new_deck}
+        end)
 
       assert length(all_cards) == 52
       assert Deck.remaining(empty_deck) == 0
@@ -357,7 +384,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealing operation is deterministic for same deck" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       # Create two identical decks (note: in real implementation,
       # Deck.new() shuffles, so we'd need a way to create identical decks
       # for true determinism testing. This property verifies the dealing
@@ -384,7 +411,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "cannot deal 9 cards to more than 5 players from full deck" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal to 5 players (45 cards)
@@ -408,7 +435,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealing 0 cards multiple times does not affect deck" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # Deal 0 cards multiple times
@@ -432,7 +459,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "Finnish Pidro initial deal follows 3-3-3 pattern per player" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # For one player, verify they receive 3 cards, then 3 more, then 3 more
@@ -440,13 +467,16 @@ defmodule Pidro.Properties.DealingPropertiesTest do
 
       # Simulate dealing to player 1 in three rounds
       {round1, deck2} = Deck.deal_batch(deck, 3)
-      {_others1, deck3} = Deck.deal_batch(deck2, 9)  # Other 3 players get 3 each
+      # Other 3 players get 3 each
+      {_others1, deck3} = Deck.deal_batch(deck2, 9)
 
       {round2, deck4} = Deck.deal_batch(deck3, 3)
-      {_others2, deck5} = Deck.deal_batch(deck4, 9)  # Other 3 players get 3 each
+      # Other 3 players get 3 each
+      {_others2, deck5} = Deck.deal_batch(deck4, 9)
 
       {round3, deck6} = Deck.deal_batch(deck5, 3)
-      {_others3, remaining_deck} = Deck.deal_batch(deck6, 9)  # Other 3 players get 3 each
+      # Other 3 players get 3 each
+      {_others3, remaining_deck} = Deck.deal_batch(deck6, 9)
 
       # Player 1's full hand
       player1_hand = round1 ++ round2 ++ round3
@@ -462,7 +492,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "Finnish Pidro standard game setup: 4 players, 9 cards each, 16 in kitty" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
 
       # This is the canonical Finnish Pidro initial deal
@@ -487,10 +517,12 @@ defmodule Pidro.Properties.DealingPropertiesTest do
 
       # Verify no overlap between hands
       hands = [north_hand, east_hand, south_hand, west_hand]
+
       for {hand1, idx1} <- Enum.with_index(hands),
           {hand2, idx2} <- Enum.with_index(hands),
           idx1 < idx2 do
         overlap = MapSet.intersection(MapSet.new(hand1), MapSet.new(hand2))
+
         assert MapSet.size(overlap) == 0,
                "No cards should overlap between player hands"
       end

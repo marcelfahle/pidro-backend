@@ -147,6 +147,7 @@ defmodule Pidro.Core.PlayerTest do
 
     test "adds cards of different suits" do
       player = Player.new(:north, :north_south)
+
       cards = [
         {14, :hearts},
         {13, :diamonds},
@@ -165,10 +166,17 @@ defmodule Pidro.Core.PlayerTest do
 
     test "adds typical initial deal of 9 cards" do
       player = Player.new(:north, :north_south)
+
       cards = [
-        {14, :hearts}, {13, :hearts}, {12, :hearts},
-        {11, :hearts}, {10, :hearts}, {9, :hearts},
-        {8, :hearts}, {7, :hearts}, {6, :hearts}
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts},
+        {8, :hearts},
+        {7, :hearts},
+        {6, :hearts}
       ]
 
       player = Player.add_cards(player, cards)
@@ -231,9 +239,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "maintains order of remaining cards" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts},
+          {11, :hearts}
+        ])
 
       player = Player.remove_card(player, {13, :hearts})
 
@@ -242,9 +255,13 @@ defmodule Pidro.Core.PlayerTest do
 
     test "removes card from middle of hand" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts}, {13, :hearts}, {12, :hearts}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts}
+        ])
 
       player = Player.remove_card(player, {13, :hearts})
 
@@ -253,9 +270,13 @@ defmodule Pidro.Core.PlayerTest do
 
     test "removes card from beginning of hand" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts}, {13, :hearts}, {12, :hearts}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts}
+        ])
 
       player = Player.remove_card(player, {14, :hearts})
 
@@ -264,9 +285,13 @@ defmodule Pidro.Core.PlayerTest do
 
     test "removes card from end of hand" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts}, {13, :hearts}, {12, :hearts}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts}
+        ])
 
       player = Player.remove_card(player, {12, :hearts})
 
@@ -306,12 +331,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "checks all suits correctly" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {14, :diamonds},
-        {14, :clubs},
-        {14, :spades}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {14, :diamonds},
+          {14, :clubs},
+          {14, :spades}
+        ])
 
       assert Player.has_card?(player, {14, :hearts}) == true
       assert Player.has_card?(player, {14, :diamonds}) == true
@@ -333,11 +360,13 @@ defmodule Pidro.Core.PlayerTest do
   describe "trump_cards/2" do
     test "returns trump cards matching trump suit" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {10, :hearts},
-        {13, :clubs}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {10, :hearts},
+          {13, :clubs}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -349,11 +378,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns wrong 5 as trump card (Finnish Pidro rule)" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {5, :diamonds},  # Wrong 5 when hearts is trump
-        {13, :clubs}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          # Wrong 5 when hearts is trump
+          {5, :diamonds},
+          {13, :clubs}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -365,11 +397,15 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns both right 5 and wrong 5 as trump" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {5, :hearts},    # Right 5
-        {5, :diamonds},  # Wrong 5
-        {13, :clubs}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          # Right 5
+          {5, :hearts},
+          # Wrong 5
+          {5, :diamonds},
+          {13, :clubs}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -381,10 +417,12 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns empty list when no trump cards" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {13, :clubs},
-        {7, :spades}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {13, :clubs},
+          {7, :spades}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -427,15 +465,24 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns all trump cards from mixed hand" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},   # Trump
-        {13, :hearts},   # Trump
-        {10, :hearts},   # Trump
-        {5, :diamonds},  # Trump (wrong 5)
-        {7, :clubs},     # Not trump
-        {8, :spades},    # Not trump
-        {12, :diamonds}  # Not trump
-      ])
+
+      player =
+        Player.add_cards(player, [
+          # Trump
+          {14, :hearts},
+          # Trump
+          {13, :hearts},
+          # Trump
+          {10, :hearts},
+          # Trump (wrong 5)
+          {5, :diamonds},
+          # Not trump
+          {7, :clubs},
+          # Not trump
+          {8, :spades},
+          # Not trump
+          {12, :diamonds}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -448,14 +495,17 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns all trump cards when hand is all trump" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {13, :hearts},
-        {12, :hearts},
-        {11, :hearts},
-        {10, :hearts},
-        {5, :diamonds}  # Wrong 5
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          # Wrong 5
+          {5, :diamonds}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -464,10 +514,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "5 of different color is NOT trump" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {5, :clubs},   # Not trump (different color)
-        {5, :spades}   # Not trump (different color)
-      ])
+
+      player =
+        Player.add_cards(player, [
+          # Not trump (different color)
+          {5, :clubs},
+          # Not trump (different color)
+          {5, :spades}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
 
@@ -478,11 +532,13 @@ defmodule Pidro.Core.PlayerTest do
   describe "non_trump_cards/2" do
     test "returns non-trump cards" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {13, :clubs},
-        {7, :spades}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :clubs},
+          {7, :spades}
+        ])
 
       non_trumps = Player.non_trump_cards(player, :hearts)
 
@@ -494,11 +550,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "excludes wrong 5 from non-trump cards" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {5, :diamonds},  # Wrong 5 is trump, not non-trump
-        {13, :clubs}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          # Wrong 5 is trump, not non-trump
+          {5, :diamonds},
+          {13, :clubs}
+        ])
 
       non_trumps = Player.non_trump_cards(player, :hearts)
 
@@ -510,11 +569,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns empty list when all cards are trump" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},
-        {13, :hearts},
-        {5, :diamonds}  # Wrong 5 is trump
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          # Wrong 5 is trump
+          {5, :diamonds}
+        ])
 
       non_trumps = Player.non_trump_cards(player, :hearts)
 
@@ -531,11 +593,13 @@ defmodule Pidro.Core.PlayerTest do
 
     test "returns all cards when no trump cards in hand" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {13, :clubs},
-        {7, :spades},
-        {10, :diamonds}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {13, :clubs},
+          {7, :spades},
+          {10, :diamonds}
+        ])
 
       non_trumps = Player.non_trump_cards(player, :hearts)
 
@@ -577,10 +641,14 @@ defmodule Pidro.Core.PlayerTest do
 
     test "5 of different color IS non-trump" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {5, :clubs},   # Non-trump (different color)
-        {5, :spades}   # Non-trump (different color)
-      ])
+
+      player =
+        Player.add_cards(player, [
+          # Non-trump (different color)
+          {5, :clubs},
+          # Non-trump (different color)
+          {5, :spades}
+        ])
 
       non_trumps = Player.non_trump_cards(player, :hearts)
 
@@ -836,11 +904,13 @@ defmodule Pidro.Core.PlayerTest do
   describe "Finnish Pidro edge cases" do
     test "player can go cold with only non-trump cards remaining" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {13, :clubs},
-        {7, :spades},
-        {10, :diamonds}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {13, :clubs},
+          {7, :spades},
+          {10, :diamonds}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
       assert trumps == []
@@ -868,11 +938,21 @@ defmodule Pidro.Core.PlayerTest do
 
       # Initial deal: 9 cards
       initial_cards = [
-        {14, :hearts}, {13, :hearts}, {10, :hearts},  # Trump
-        {5, :diamonds},                               # Wrong 5 (trump)
-        {13, :clubs}, {7, :spades},                   # Non-trump
-        {10, :diamonds}, {8, :clubs}, {6, :spades}    # Non-trump
+        # Trump
+        {14, :hearts},
+        {13, :hearts},
+        {10, :hearts},
+        # Wrong 5 (trump)
+        {5, :diamonds},
+        # Non-trump
+        {13, :clubs},
+        {7, :spades},
+        # Non-trump
+        {10, :diamonds},
+        {8, :clubs},
+        {6, :spades}
       ]
+
       player = Player.add_cards(player, initial_cards)
       assert Player.hand_size(player) == 9
 
@@ -880,9 +960,10 @@ defmodule Pidro.Core.PlayerTest do
       non_trumps = Player.non_trump_cards(player, :hearts)
       assert length(non_trumps) == 5
 
-      player = Enum.reduce(non_trumps, player, fn card, acc ->
-        Player.remove_card(acc, card)
-      end)
+      player =
+        Enum.reduce(non_trumps, player, fn card, acc ->
+          Player.remove_card(acc, card)
+        end)
 
       assert Player.hand_size(player) == 4
 
@@ -934,13 +1015,20 @@ defmodule Pidro.Core.PlayerTest do
   describe "trump_cards/2 and non_trump_cards/2 are complementary" do
     test "union of trump and non-trump cards equals full hand" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts},   # Trump
-        {13, :hearts},   # Trump
-        {5, :diamonds},  # Trump (wrong 5)
-        {13, :clubs},    # Non-trump
-        {7, :spades}     # Non-trump
-      ])
+
+      player =
+        Player.add_cards(player, [
+          # Trump
+          {14, :hearts},
+          # Trump
+          {13, :hearts},
+          # Trump (wrong 5)
+          {5, :diamonds},
+          # Non-trump
+          {13, :clubs},
+          # Non-trump
+          {7, :spades}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
       non_trumps = Player.non_trump_cards(player, :hearts)
@@ -955,10 +1043,16 @@ defmodule Pidro.Core.PlayerTest do
 
     test "no card appears in both trump and non-trump lists" do
       player = Player.new(:north, :north_south)
-      player = Player.add_cards(player, [
-        {14, :hearts}, {13, :hearts}, {5, :diamonds},
-        {13, :clubs}, {7, :spades}, {10, :diamonds}
-      ])
+
+      player =
+        Player.add_cards(player, [
+          {14, :hearts},
+          {13, :hearts},
+          {5, :diamonds},
+          {13, :clubs},
+          {7, :spades},
+          {10, :diamonds}
+        ])
 
       trumps = Player.trump_cards(player, :hearts)
       non_trumps = Player.non_trump_cards(player, :hearts)

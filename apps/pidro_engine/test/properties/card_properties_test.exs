@@ -39,14 +39,14 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "deck always contains exactly 52 cards" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       deck = Deck.new()
       assert Deck.remaining(deck) == 52
     end
   end
 
   property "each suit contains exactly 13 ranks in a standard deck" do
-    check all suit_value <- suit(), max_runs: 100 do
+    check all(suit_value <- suit(), max_runs: 100) do
       deck = Deck.new()
       {all_cards, _} = Deck.deal_batch(deck, 52)
 
@@ -56,7 +56,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "each suit contains exactly 14 cards when including cross-color 5 as trump" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       deck = Deck.new()
       {all_cards, _} = Deck.deal_batch(deck, 52)
 
@@ -74,7 +74,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "5 of hearts is trump when hearts OR diamonds is trump" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       five_of_hearts = {5, :hearts}
 
       # 5 of hearts is trump when hearts is trump (right 5)
@@ -90,7 +90,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "5 of diamonds is trump when diamonds OR hearts is trump" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       five_of_diamonds = {5, :diamonds}
 
       # 5 of diamonds is trump when diamonds is trump (right 5)
@@ -106,7 +106,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "5 of clubs is trump when clubs OR spades is trump" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       five_of_clubs = {5, :clubs}
 
       # 5 of clubs is trump when clubs is trump (right 5)
@@ -122,7 +122,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "5 of spades is trump when spades OR clubs is trump" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       five_of_spades = {5, :spades}
 
       # 5 of spades is trump when spades is trump (right 5)
@@ -142,26 +142,40 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "trump ranking is always: A > K > Q > J > 10 > 9 > 8 > 7 > 6 > Right5 > Wrong5 > 4 > 3 > 2" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       # Define the expected order of trump cards (highest to lowest)
       # Using ranks where Ace=14, King=13, Queen=12, Jack=11
       same_color = Card.same_color_suit(trump_suit)
 
       ordered_trumps = [
-        {14, trump_suit},  # Ace
-        {13, trump_suit},  # King
-        {12, trump_suit},  # Queen
-        {11, trump_suit},  # Jack
-        {10, trump_suit},  # 10
-        {9, trump_suit},   # 9
-        {8, trump_suit},   # 8
-        {7, trump_suit},   # 7
-        {6, trump_suit},   # 6
-        {5, trump_suit},   # Right 5
-        {5, same_color},   # Wrong 5
-        {4, trump_suit},   # 4
-        {3, trump_suit},   # 3
-        {2, trump_suit}    # 2
+        # Ace
+        {14, trump_suit},
+        # King
+        {13, trump_suit},
+        # Queen
+        {12, trump_suit},
+        # Jack
+        {11, trump_suit},
+        # 10
+        {10, trump_suit},
+        # 9
+        {9, trump_suit},
+        # 8
+        {8, trump_suit},
+        # 7
+        {7, trump_suit},
+        # 6
+        {6, trump_suit},
+        # Right 5
+        {5, trump_suit},
+        # Wrong 5
+        {5, same_color},
+        # 4
+        {4, trump_suit},
+        # 3
+        {3, trump_suit},
+        # 2
+        {2, trump_suit}
       ]
 
       # Verify each card beats the one after it
@@ -178,7 +192,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "right pidro (5 of trump suit) always beats wrong pidro (5 of same-color suit)" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       right_five = {5, trump_suit}
       wrong_five = {5, Card.same_color_suit(trump_suit)}
 
@@ -191,7 +205,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "ace of trump is always the highest trump card" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       ace_of_trump = {14, trump_suit}
 
       # Generate all other trump cards
@@ -213,7 +227,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "2 of trump is always the lowest trump card" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       two_of_trump = {2, trump_suit}
 
       # Generate all other trump cards
@@ -239,14 +253,17 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "card comparison is transitive (if A > B and B > C, then A > C)" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       # Generate three distinct trump cards
       same_color = Card.same_color_suit(trump_suit)
 
       # Use cards we know have different rankings
-      card_a = {14, trump_suit}  # Ace (highest)
-      card_b = {10, trump_suit}  # 10 (middle)
-      card_c = {2, trump_suit}   # 2 (lowest)
+      # Ace (highest)
+      card_a = {14, trump_suit}
+      # 10 (middle)
+      card_b = {10, trump_suit}
+      # 2 (lowest)
+      card_c = {2, trump_suit}
 
       # Verify transitivity: A > B, B > C => A > C
       assert Card.compare(card_a, card_b, trump_suit) == :gt
@@ -254,9 +271,12 @@ defmodule Pidro.Properties.CardPropertiesTest do
       assert Card.compare(card_a, card_c, trump_suit) == :gt
 
       # Test with wrong 5 in the mix
-      card_x = {5, trump_suit}   # Right 5
-      card_y = {5, same_color}   # Wrong 5
-      card_z = {4, trump_suit}   # 4
+      # Right 5
+      card_x = {5, trump_suit}
+      # Wrong 5
+      card_y = {5, same_color}
+      # 4
+      card_z = {4, trump_suit}
 
       # Verify: Right5 > Wrong5, Wrong5 > 4 => Right5 > 4
       assert Card.compare(card_x, card_y, trump_suit) == :gt
@@ -266,9 +286,11 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "card comparison is reflexive (A == A)" do
-    check all trump_suit <- suit(),
-              rank <- StreamData.integer(2..14),
-              max_runs: 100 do
+    check all(
+            trump_suit <- suit(),
+            rank <- StreamData.integer(2..14),
+            max_runs: 100
+          ) do
       card = {rank, trump_suit}
 
       assert Card.compare(card, card, trump_suit) == :eq,
@@ -277,9 +299,11 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "card comparison is antisymmetric (if A > B, then B < A)" do
-    check all trump_suit <- suit(), max_runs: 100 do
-      card_a = {14, trump_suit}  # Ace
-      card_b = {2, trump_suit}   # 2
+    check all(trump_suit <- suit(), max_runs: 100) do
+      # Ace
+      card_a = {14, trump_suit}
+      # 2
+      card_b = {2, trump_suit}
 
       result_ab = Card.compare(card_a, card_b, trump_suit)
       result_ba = Card.compare(card_b, card_a, trump_suit)
@@ -297,7 +321,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "total points in any trump suit always equals 14" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       deck = Deck.new()
       {all_cards, _} = Deck.deal_batch(deck, 52)
 
@@ -313,7 +337,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "right 5 and wrong 5 are each worth 5 points" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       right_five = {5, trump_suit}
       wrong_five = {5, Card.same_color_suit(trump_suit)}
 
@@ -326,7 +350,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "ace, jack, 10, and 2 of trump are each worth 1 point" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       ace = {14, trump_suit}
       jack = {11, trump_suit}
       ten = {10, trump_suit}
@@ -340,7 +364,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "non-point trump cards are worth 0 points" do
-    check all trump_suit <- suit(), max_runs: 100 do
+    check all(trump_suit <- suit(), max_runs: 100) do
       # Non-point ranks: 3, 4, 6, 7, 8, 9, King (13), Queen (12)
       non_point_ranks = [3, 4, 6, 7, 8, 9, 12, 13]
 
@@ -358,7 +382,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "same_color_suit returns the correct paired suit" do
-    check all _ <- StreamData.constant(:ok), max_runs: 100 do
+    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       # Red suits pair with each other
       assert Card.same_color_suit(:hearts) == :diamonds
       assert Card.same_color_suit(:diamonds) == :hearts
@@ -370,7 +394,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "same_color_suit is its own inverse" do
-    check all suit_value <- suit(), max_runs: 100 do
+    check all(suit_value <- suit(), max_runs: 100) do
       # Note: renamed to suit_value to avoid shadowing the suit/0 function
       paired_suit = Card.same_color_suit(suit_value)
       back_to_original = Card.same_color_suit(paired_suit)
@@ -385,9 +409,11 @@ defmodule Pidro.Properties.CardPropertiesTest do
   # =============================================================================
 
   property "cards not matching trump suit or wrong 5 are not trump" do
-    check all trump_suit <- suit(),
-              rank <- StreamData.integer(2..14),
-              max_runs: 100 do
+    check all(
+            trump_suit <- suit(),
+            rank <- StreamData.integer(2..14),
+            max_runs: 100
+          ) do
       # Generate suits that are neither trump nor same-color
       other_suits =
         [:hearts, :diamonds, :clubs, :spades]
@@ -404,9 +430,11 @@ defmodule Pidro.Properties.CardPropertiesTest do
   end
 
   property "non-trump cards have 0 point value" do
-    check all trump_suit <- suit(),
-              rank <- StreamData.integer(2..14),
-              max_runs: 100 do
+    check all(
+            trump_suit <- suit(),
+            rank <- StreamData.integer(2..14),
+            max_runs: 100
+          ) do
       # Generate suits that are neither trump nor same-color
       other_suits =
         [:hearts, :diamonds, :clubs, :spades]

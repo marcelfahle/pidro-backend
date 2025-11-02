@@ -134,8 +134,8 @@ defmodule Pidro.Core.DeckTest do
 
       # At least one should be different from the original
       assert shuffled1.cards != deck.cards or
-             shuffled2.cards != deck.cards or
-             shuffled3.cards != deck.cards
+               shuffled2.cards != deck.cards or
+               shuffled3.cards != deck.cards
     end
 
     test "works with partially dealt deck" do
@@ -166,10 +166,11 @@ defmodule Pidro.Core.DeckTest do
       deck = Deck.new()
 
       # Shuffle multiple times
-      shuffled = deck
-      |> Deck.shuffle()
-      |> Deck.shuffle()
-      |> Deck.shuffle()
+      shuffled =
+        deck
+        |> Deck.shuffle()
+        |> Deck.shuffle()
+        |> Deck.shuffle()
 
       # Should still have all 52 cards
       assert Deck.remaining(shuffled) == 52
@@ -357,10 +358,11 @@ defmodule Pidro.Core.DeckTest do
       deck = Deck.new()
 
       # Deal 5 cards, 10 times
-      result = Enum.reduce(1..10, {[], deck}, fn _i, {acc, d} ->
-        {cards, remaining} = Deck.deal_batch(d, 5)
-        {acc ++ cards, remaining}
-      end)
+      result =
+        Enum.reduce(1..10, {[], deck}, fn _i, {acc, d} ->
+          {cards, remaining} = Deck.deal_batch(d, 5)
+          {acc ++ cards, remaining}
+        end)
 
       {all_dealt, final_deck} = result
 
@@ -586,8 +588,10 @@ defmodule Pidro.Core.DeckTest do
       # Each deck maintains its own state
       assert Deck.remaining(remaining1) == 42
       assert Deck.remaining(remaining2) == 32
-      assert Deck.remaining(deck1) == 52  # Original deck unchanged
-      assert Deck.remaining(deck2) == 52  # Original deck unchanged
+      # Original deck unchanged
+      assert Deck.remaining(deck1) == 52
+      # Original deck unchanged
+      assert Deck.remaining(deck2) == 52
     end
   end
 end

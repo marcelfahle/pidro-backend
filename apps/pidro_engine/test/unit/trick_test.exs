@@ -30,11 +30,12 @@ defmodule Pidro.Core.TrickTest do
         |> Trick.add_play(:south, {10, :hearts})
 
       assert length(trick.plays) == 3
+
       assert trick.plays == [
-        {:north, {14, :hearts}},
-        {:east, {13, :hearts}},
-        {:south, {10, :hearts}}
-      ]
+               {:north, {14, :hearts}},
+               {:east, {13, :hearts}},
+               {:south, {10, :hearts}}
+             ]
     end
   end
 

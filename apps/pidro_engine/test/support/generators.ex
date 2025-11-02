@@ -9,7 +9,21 @@ defmodule Pidro.Generators do
   Generates valid card ranks for Pidro.
   """
   def rank do
-    StreamData.member_of([:ace, :two, :three, :four, :five, :six, :seven, :eight, :nine, :ten, :jack, :queen, :king])
+    StreamData.member_of([
+      :ace,
+      :two,
+      :three,
+      :four,
+      :five,
+      :six,
+      :seven,
+      :eight,
+      :nine,
+      :ten,
+      :jack,
+      :queen,
+      :king
+    ])
   end
 
   @doc """
