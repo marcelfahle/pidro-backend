@@ -195,6 +195,43 @@ Phases 0-7 and 10 are complete:
 7. Run `mix credo --strict` - must pass
 8. Update `_masterplan.md` to mark phase complete
 
+### Bug Fixing Cycle (Make Dave Thomas Proud)
+
+**ALWAYS follow this order when fixing bugs:**
+
+1. **Reproduce the bug with a failing test FIRST**
+   - Write a test that demonstrates the bug
+   - Watch it fail (RED)
+   - Commit the failing test with a clear description
+   
+2. **Fix the bug**
+   - Implement the fix
+   - Watch the test pass (GREEN)
+   
+3. **Refactor if needed**
+   - Clean up the code
+   - Ensure tests still pass
+   
+4. **Validate**
+   - Run full test suite
+   - Run dialyzer
+   - Run credo
+
+**Never fix a bug without a test that proves it exists.**
+
+Example workflow:
+```bash
+# 1. Write failing test
+mix test test/unit/game/bidding_completion_test.exs
+# Commit: "test(bidding): reproduce premature phase transition bug"
+
+# 2. Fix the code
+# Commit: "fix(bidding): require 3 consecutive passes after last bid"
+
+# 3. Validate
+mix test && mix dialyzer
+```
+
 ---
 
 ## Code Style & Elixir Idioms

@@ -71,6 +71,40 @@ Players:
   ...
 ```
 
+### `show_event_log/1`
+
+Shows a chronological log of all events that have occurred in the game. Each event is color-coded by type:
+
+- **[DEALER]** - Dealer selection (cyan)
+- **[DEAL]** / **[REDEAL]** - Card dealing (green)
+- **[BID]** - Bid made (yellow)
+- **[PASS]** - Player passed (faint)
+- **[BID COMPLETE]** - Bidding finished (bright yellow)
+- **[TRUMP]** - Trump declared (magenta)
+- **[DISCARD]** - Cards discarded (faint)
+- **[ROB]** - Dealer robbed pack (cyan)
+- **[PLAY]** - Card played (blue)
+- **[TRICK]** - Trick won (bright green)
+- **[COLD]** - Player went cold (red)
+- **[SCORE]** - Hand scored (bright cyan)
+- **[WINNER]** - Game won (bright green)
+
+```elixir
+iex> state = new_game()
+iex> show_event_log(state)
+
+╔═══════════════════════════════════════════════════════════╗
+║                    EVENT LOG                        ║
+╚═══════════════════════════════════════════════════════════╝
+
+1. [DEALER] South selected as dealer (cut 10♣)
+2. [DEAL] Initial deal complete (36 cards dealt)
+
+Total Events: 2
+
+[{:dealer_selected, :south, {10, :clubs}}, {:cards_dealt, %{...}}]
+```
+
 ### `show_legal_actions/2`
 
 Shows all legal actions for a given position in the current state.
@@ -197,6 +231,7 @@ Example: `A♥[1]★` = Ace of Hearts (1 point, trump)
 - **Color-coded output**: Different colors for teams, actions, and card suits
 - **Trump indicators**: Clear visual markers for trump cards
 - **Point values**: Shows point values on scoring cards
+- **Event log**: Complete chronological history of all game events
 - **Error messages**: Clear, helpful error messages when actions fail
 - **Legal actions**: Easy way to see what moves are valid
 - **Game flow**: Step-by-step progression through game phases
@@ -205,10 +240,11 @@ Example: `A♥[1]★` = Ace of Hearts (1 point, trump)
 ## Tips
 
 1. **Check legal actions first**: Use `show_legal_actions/2` before making a move
-2. **Use tab completion**: IEx supports tab completion for function names
-3. **Save state**: Assign the result of `step/3` back to `state` to continue playing
-4. **Demo for learning**: Run `demo_game()` to see how a complete game flows
-5. **Pretty print often**: Call `pretty_print(state)` whenever you want to see the current state
+2. **View game history**: Use `show_event_log/1` to see everything that happened
+3. **Use tab completion**: IEx supports tab completion for function names
+4. **Save state**: Assign the result of `step/3` back to `state` to continue playing
+5. **Demo for learning**: Run `demo_game()` to see how a complete game flows
+6. **Pretty print often**: Call `pretty_print(state)` whenever you want to see the current state
 
 ## Finnish Pidro Rules Quick Reference
 
