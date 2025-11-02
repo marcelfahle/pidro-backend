@@ -21,14 +21,15 @@ defmodule Pidro.Game.PlayKillRuleTest do
     players =
       hands
       |> Enum.map(fn {pos, hand} ->
-        {pos, %Types.Player{
-          position: pos,
-          team: Types.position_to_team(pos),
-          hand: hand,
-          eliminated?: false,
-          revealed_cards: [],
-          tricks_won: 0
-        }}
+        {pos,
+         %Types.Player{
+           position: pos,
+           team: Types.position_to_team(pos),
+           hand: hand,
+           eliminated?: false,
+           revealed_cards: [],
+           tricks_won: 0
+         }}
       end)
       |> Map.new()
 
@@ -71,12 +72,18 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "player with exactly 6 trump cards does not kill" do
       # Player has exactly 6 trump cards
       hand = [
-        {14, :hearts}, # Ace (point card)
-        {13, :hearts}, # King (non-point)
-        {11, :hearts}, # Jack (point card)
-        {10, :hearts}, # 10 (point card)
-        {7, :hearts},  # 7 (non-point)
-        {6, :hearts}   # 6 (non-point)
+        # Ace (point card)
+        {14, :hearts},
+        # King (non-point)
+        {13, :hearts},
+        # Jack (point card)
+        {11, :hearts},
+        # 10 (point card)
+        {10, :hearts},
+        # 7 (non-point)
+        {7, :hearts},
+        # 6 (non-point)
+        {6, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -111,13 +118,20 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "player with 7 trump cards must kill 1 non-point card" do
       # Player has 7 trump cards with 1 non-point card available
       hand = [
-        {14, :hearts}, # Ace (point)
-        {13, :hearts}, # King (non-point) - will be killed
-        {11, :hearts}, # Jack (point)
-        {10, :hearts}, # 10 (point)
-        {5, :hearts},  # Right-5 (point)
-        {2, :hearts},  # 2 (point)
-        {7, :hearts}   # 7 (non-point)
+        # Ace (point)
+        {14, :hearts},
+        # King (non-point) - will be killed
+        {13, :hearts},
+        # Jack (point)
+        {11, :hearts},
+        # 10 (point)
+        {10, :hearts},
+        # Right-5 (point)
+        {5, :hearts},
+        # 2 (point)
+        {2, :hearts},
+        # 7 (non-point)
+        {7, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -145,15 +159,24 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "player with 9 trump cards must kill 3 non-point cards" do
       # Player has 9 trump cards with 3 non-point cards
       hand = [
-        {14, :hearts}, # Ace (point)
-        {13, :hearts}, # King (non-point)
-        {12, :hearts}, # Queen (non-point)
-        {11, :hearts}, # Jack (point)
-        {10, :hearts}, # 10 (point)
-        {9, :hearts},  # 9 (non-point)
-        {7, :hearts},  # 7 (non-point) - excess
-        {5, :hearts},  # Right-5 (point)
-        {2, :hearts}   # 2 (point)
+        # Ace (point)
+        {14, :hearts},
+        # King (non-point)
+        {13, :hearts},
+        # Queen (non-point)
+        {12, :hearts},
+        # Jack (point)
+        {11, :hearts},
+        # 10 (point)
+        {10, :hearts},
+        # 9 (non-point)
+        {9, :hearts},
+        # 7 (non-point) - excess
+        {7, :hearts},
+        # Right-5 (point)
+        {5, :hearts},
+        # 2 (point)
+        {2, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -178,13 +201,20 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "can only kill non-point trump cards (K, Q, 9, 8, 7, 6, 4, 3)" do
       # Player has mix of point and non-point cards
       hand = [
-        {14, :hearts}, # Ace (point) - CANNOT kill
-        {13, :hearts}, # King (non-point) - CAN kill
-        {12, :hearts}, # Queen (non-point) - CAN kill
-        {11, :hearts}, # Jack (point) - CANNOT kill
-        {10, :hearts}, # 10 (point) - CANNOT kill
-        {9, :hearts},  # 9 (non-point) - CAN kill
-        {5, :hearts}   # Right-5 (point) - CANNOT kill
+        # Ace (point) - CANNOT kill
+        {14, :hearts},
+        # King (non-point) - CAN kill
+        {13, :hearts},
+        # Queen (non-point) - CAN kill
+        {12, :hearts},
+        # Jack (point) - CANNOT kill
+        {11, :hearts},
+        # 10 (point) - CANNOT kill
+        {10, :hearts},
+        # 9 (non-point) - CAN kill
+        {9, :hearts},
+        # Right-5 (point) - CANNOT kill
+        {5, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -200,6 +230,7 @@ defmodule Pidro.Game.PlayKillRuleTest do
 
       # Verify all point cards remain in hand
       point_cards = [{14, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}]
+
       Enum.each(point_cards, fn card ->
         assert card in new_state.players[:north].hand
       end)
@@ -208,15 +239,22 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "cannot kill point cards (A, J, 10, Right-5, Wrong-5, 2)" do
       # Test with hearts as trump
       point_cards_hearts = [
-        {14, :hearts}, # Ace
-        {11, :hearts}, # Jack
-        {10, :hearts}, # 10
-        {5, :hearts},  # Right-5
-        {5, :diamonds}, # Wrong-5 (same color)
-        {2, :hearts}   # 2
+        # Ace
+        {14, :hearts},
+        # Jack
+        {11, :hearts},
+        # 10
+        {10, :hearts},
+        # Right-5
+        {5, :hearts},
+        # Wrong-5 (same color)
+        {5, :diamonds},
+        # 2
+        {2, :hearts}
       ]
 
-      non_point = {13, :hearts} # King
+      # King
+      non_point = {13, :hearts}
 
       hand = point_cards_hearts ++ [non_point]
 
@@ -236,13 +274,20 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "recognizes wrong-5 as a point card that cannot be killed" do
       # Hearts is trump, so 5 of diamonds is wrong-5 (point card)
       hand = [
-        {14, :hearts},  # Ace (point)
-        {13, :hearts},  # King (non-point) - will be killed
-        {11, :hearts},  # Jack (point)
-        {10, :hearts},  # 10 (point)
-        {5, :hearts},   # Right-5 (point)
-        {5, :diamonds}, # Wrong-5 (point)
-        {2, :hearts}    # 2 (point)
+        # Ace (point)
+        {14, :hearts},
+        # King (non-point) - will be killed
+        {13, :hearts},
+        # Jack (point)
+        {11, :hearts},
+        # 10 (point)
+        {10, :hearts},
+        # Right-5 (point)
+        {5, :hearts},
+        # Wrong-5 (point)
+        {5, :diamonds},
+        # 2 (point)
+        {2, :hearts}
       ]
 
       state = create_test_state(%{north: hand}, :hearts)
@@ -261,14 +306,22 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "player with exactly enough non-point cards to kill" do
       # 8 trump cards: 6 point cards + 2 non-point = need to kill 2, have 2 non-point
       hand = [
-        {14, :hearts},  # Point
-        {11, :hearts},  # Point
-        {10, :hearts},  # Point
-        {5, :hearts},   # Point
-        {5, :diamonds}, # Point (wrong-5)
-        {2, :hearts},   # Point
-        {13, :hearts},  # Non-point (can kill)
-        {12, :hearts}   # Non-point (can kill)
+        # Point
+        {14, :hearts},
+        # Point
+        {11, :hearts},
+        # Point
+        {10, :hearts},
+        # Point
+        {5, :hearts},
+        # Point (wrong-5)
+        {5, :diamonds},
+        # Point
+        {2, :hearts},
+        # Non-point (can kill)
+        {13, :hearts},
+        # Non-point (can kill)
+        {12, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -284,15 +337,24 @@ defmodule Pidro.Game.PlayKillRuleTest do
       # 9 trump cards: 6 point cards + 3 non-point
       # Needs to kill 3 cards, has 3 non-point cards - exactly enough
       hand = [
-        {14, :hearts},  # Point
-        {11, :hearts},  # Point
-        {10, :hearts},  # Point
-        {5, :hearts},   # Point
-        {5, :diamonds}, # Point (wrong-5)
-        {2, :hearts},   # Point
-        {13, :hearts},  # Non-point
-        {12, :hearts},  # Non-point
-        {9, :hearts}    # Non-point
+        # Point
+        {14, :hearts},
+        # Point
+        {11, :hearts},
+        # Point
+        {10, :hearts},
+        # Point
+        {5, :hearts},
+        # Point (wrong-5)
+        {5, :diamonds},
+        # Point
+        {2, :hearts},
+        # Non-point
+        {13, :hearts},
+        # Non-point
+        {12, :hearts},
+        # Non-point
+        {9, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -308,9 +370,32 @@ defmodule Pidro.Game.PlayKillRuleTest do
   describe "compute_kills/1 - killed cards storage" do
     test "killed cards stored in killed_cards map by position" do
       hands = %{
-        north: [{14, :hearts}, {13, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}, {4, :hearts}],
-        east: [{14, :diamonds}, {13, :diamonds}, {11, :diamonds}, {10, :diamonds}, {7, :diamonds}, {6, :diamonds}],
-        south: [{12, :hearts}, {9, :hearts}, {8, :hearts}, {5, :hearts}, {2, :hearts}, {3, :hearts}, {4, :hearts}],
+        north: [
+          {14, :hearts},
+          {13, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          {7, :hearts},
+          {6, :hearts},
+          {4, :hearts}
+        ],
+        east: [
+          {14, :diamonds},
+          {13, :diamonds},
+          {11, :diamonds},
+          {10, :diamonds},
+          {7, :diamonds},
+          {6, :diamonds}
+        ],
+        south: [
+          {12, :hearts},
+          {9, :hearts},
+          {8, :hearts},
+          {5, :hearts},
+          {2, :hearts},
+          {3, :hearts},
+          {4, :hearts}
+        ],
         west: [{14, :clubs}, {13, :clubs}]
       }
 
@@ -328,7 +413,14 @@ defmodule Pidro.Game.PlayKillRuleTest do
       # South has 7 hearts (trump), should kill 1
       south_killed = Map.get(new_state.killed_cards, :south, [])
       assert length(south_killed) == 1
-      assert hd(south_killed) in [{12, :hearts}, {9, :hearts}, {8, :hearts}, {3, :hearts}, {4, :hearts}]
+
+      assert hd(south_killed) in [
+               {12, :hearts},
+               {9, :hearts},
+               {8, :hearts},
+               {3, :hearts},
+               {4, :hearts}
+             ]
 
       # West has 2 clubs (not trump), no kill
       refute Map.has_key?(new_state.killed_cards, :west)
@@ -346,13 +438,20 @@ defmodule Pidro.Game.PlayKillRuleTest do
       # The code will store [] when cannot kill, but this is defensive programming
       # Let's verify the behavior when exactly enough non-point cards exist
       hand = [
-        {14, :hearts},  # Point
-        {11, :hearts},  # Point
-        {10, :hearts},  # Point
-        {5, :hearts},   # Point
-        {5, :diamonds}, # Point
-        {2, :hearts},   # Point
-        {13, :hearts}   # Non-point (7 total, 6 point + 1 non-point, need to kill 1, have 1)
+        # Point
+        {14, :hearts},
+        # Point
+        {11, :hearts},
+        # Point
+        {10, :hearts},
+        # Point
+        {5, :hearts},
+        # Point
+        {5, :diamonds},
+        # Point
+        {2, :hearts},
+        # Non-point (7 total, 6 point + 1 non-point, need to kill 1, have 1)
+        {13, :hearts}
       ]
 
       state = create_test_state(%{north: hand})
@@ -369,7 +468,8 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "cards_killed event emitted with position and cards" do
       hand = [
         {14, :hearts},
-        {13, :hearts}, # Will be killed
+        # Will be killed
+        {13, :hearts},
         {11, :hearts},
         {10, :hearts},
         {7, :hearts},
@@ -381,10 +481,11 @@ defmodule Pidro.Game.PlayKillRuleTest do
       new_state = Play.compute_kills(state)
 
       # Find the cards_killed event
-      killed_event = Enum.find(new_state.events, fn
-        {:cards_killed, _} -> true
-        _ -> false
-      end)
+      killed_event =
+        Enum.find(new_state.events, fn
+          {:cards_killed, _} -> true
+          _ -> false
+        end)
 
       assert killed_event != nil
       {:cards_killed, killed_map} = killed_event
@@ -396,9 +497,25 @@ defmodule Pidro.Game.PlayKillRuleTest do
 
     test "cards_killed event includes all positions that killed cards" do
       hands = %{
-        north: [{14, :hearts}, {13, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}, {4, :hearts}],
+        north: [
+          {14, :hearts},
+          {13, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          {7, :hearts},
+          {6, :hearts},
+          {4, :hearts}
+        ],
         east: [{14, :diamonds}],
-        south: [{12, :hearts}, {9, :hearts}, {8, :hearts}, {7, :hearts}, {6, :hearts}, {5, :hearts}, {2, :hearts}],
+        south: [
+          {12, :hearts},
+          {9, :hearts},
+          {8, :hearts},
+          {7, :hearts},
+          {6, :hearts},
+          {5, :hearts},
+          {2, :hearts}
+        ],
         west: [{14, :clubs}]
       }
 
@@ -406,10 +523,11 @@ defmodule Pidro.Game.PlayKillRuleTest do
       new_state = Play.compute_kills(state)
 
       # Find the cards_killed event
-      {:cards_killed, killed_map} = Enum.find(new_state.events, fn
-        {:cards_killed, _} -> true
-        _ -> false
-      end)
+      {:cards_killed, killed_map} =
+        Enum.find(new_state.events, fn
+          {:cards_killed, _} -> true
+          _ -> false
+        end)
 
       # North killed 1, south killed 1
       assert Map.has_key?(killed_map, :north)
@@ -424,7 +542,14 @@ defmodule Pidro.Game.PlayKillRuleTest do
 
     test "cards_killed event is empty map when no one needs to kill" do
       hands = %{
-        north: [{14, :hearts}, {13, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}],
+        north: [
+          {14, :hearts},
+          {13, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          {7, :hearts},
+          {6, :hearts}
+        ],
         east: [{14, :diamonds}],
         south: [{14, :clubs}],
         west: [{14, :spades}]
@@ -434,10 +559,11 @@ defmodule Pidro.Game.PlayKillRuleTest do
       new_state = Play.compute_kills(state)
 
       # Find the cards_killed event
-      {:cards_killed, killed_map} = Enum.find(new_state.events, fn
-        {:cards_killed, _} -> true
-        _ -> false
-      end)
+      {:cards_killed, killed_map} =
+        Enum.find(new_state.events, fn
+          {:cards_killed, _} -> true
+          _ -> false
+        end)
 
       # Should be empty map since no one had >6 trump
       assert killed_map == %{}
@@ -449,8 +575,10 @@ defmodule Pidro.Game.PlayKillRuleTest do
       # Dealer (north) has 8 trump cards after robbing
       hand = [
         {14, :hearts},
-        {13, :hearts}, # Non-point, can be killed
-        {12, :hearts}, # Non-point, can be killed
+        # Non-point, can be killed
+        {13, :hearts},
+        # Non-point, can be killed
+        {12, :hearts},
         {11, :hearts},
         {10, :hearts},
         {7, :hearts},
@@ -497,9 +625,33 @@ defmodule Pidro.Game.PlayKillRuleTest do
   describe "compute_kills/1 - multiple players" do
     test "correctly handles multiple players needing to kill" do
       hands = %{
-        north: [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}, {7, :hearts}],
-        east: [{14, :hearts}, {6, :hearts}, {5, :hearts}, {4, :hearts}, {3, :hearts}, {2, :hearts}],
-        south: [{13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}, {7, :hearts}],
+        north: [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          {9, :hearts},
+          {8, :hearts},
+          {7, :hearts}
+        ],
+        east: [
+          {14, :hearts},
+          {6, :hearts},
+          {5, :hearts},
+          {4, :hearts},
+          {3, :hearts},
+          {2, :hearts}
+        ],
+        south: [
+          {13, :hearts},
+          {12, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          {9, :hearts},
+          {8, :hearts},
+          {7, :hearts}
+        ],
         west: [{6, :hearts}, {4, :hearts}, {3, :hearts}]
       }
 
@@ -529,13 +681,20 @@ defmodule Pidro.Game.PlayKillRuleTest do
   describe "compute_kills/1 - trump suit variations" do
     test "correctly identifies trump and non-trump with diamonds as trump" do
       hand = [
-        {14, :diamonds}, # Ace of diamonds (trump, point)
-        {13, :diamonds}, # King of diamonds (trump, non-point) - can kill
-        {11, :diamonds}, # Jack of diamonds (trump, point)
-        {10, :diamonds}, # 10 of diamonds (trump, point)
-        {5, :diamonds},  # Right-5 (trump, point)
-        {5, :hearts},    # Wrong-5 (trump, point) - hearts is same color
-        {2, :diamonds}   # 2 of diamonds (trump, point)
+        # Ace of diamonds (trump, point)
+        {14, :diamonds},
+        # King of diamonds (trump, non-point) - can kill
+        {13, :diamonds},
+        # Jack of diamonds (trump, point)
+        {11, :diamonds},
+        # 10 of diamonds (trump, point)
+        {10, :diamonds},
+        # Right-5 (trump, point)
+        {5, :diamonds},
+        # Wrong-5 (trump, point) - hearts is same color
+        {5, :hearts},
+        # 2 of diamonds (trump, point)
+        {2, :diamonds}
       ]
 
       state = create_test_state(%{north: hand}, :diamonds)
@@ -551,13 +710,20 @@ defmodule Pidro.Game.PlayKillRuleTest do
 
     test "correctly identifies trump and non-trump with clubs as trump" do
       hand = [
-        {14, :clubs},   # Ace (point)
-        {13, :clubs},   # King (non-point) - can kill
-        {11, :clubs},   # Jack (point)
-        {10, :clubs},   # 10 (point)
-        {5, :clubs},    # Right-5 (point)
-        {5, :spades},   # Wrong-5 (point) - spades is same color
-        {2, :clubs}     # 2 (point)
+        # Ace (point)
+        {14, :clubs},
+        # King (non-point) - can kill
+        {13, :clubs},
+        # Jack (point)
+        {11, :clubs},
+        # 10 (point)
+        {10, :clubs},
+        # Right-5 (point)
+        {5, :clubs},
+        # Wrong-5 (point) - spades is same color
+        {5, :spades},
+        # 2 (point)
+        {2, :clubs}
       ]
 
       state = create_test_state(%{north: hand}, :clubs)
@@ -576,8 +742,17 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "player with killed cards must play top killed card on first trick" do
       # Setup state with killed cards - note: killed card is STILL in hand until played
       # (compute_kills removes it, but for this test we're simulating after redeal)
-      hand = [{14, :hearts}, {13, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}]
-      killed_cards = %{north: [{13, :hearts}]} # King was killed but still in hand
+      hand = [
+        {14, :hearts},
+        {13, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {7, :hearts},
+        {6, :hearts}
+      ]
+
+      # King was killed but still in hand
+      killed_cards = %{north: [{13, :hearts}]}
 
       hands = %{
         north: hand,
@@ -599,7 +774,15 @@ defmodule Pidro.Game.PlayKillRuleTest do
 
     test "player with killed cards can play freely after first trick starts" do
       # Setup state with killed cards, but trick already has plays
-      hand = [{14, :hearts}, {13, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}]
+      hand = [
+        {14, :hearts},
+        {13, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {7, :hearts},
+        {6, :hearts}
+      ]
+
       killed_cards = %{north: [{13, :hearts}]}
 
       hands = %{
@@ -610,14 +793,23 @@ defmodule Pidro.Game.PlayKillRuleTest do
       }
 
       state = create_test_state(hands, :hearts)
+
       trick = %Types.Trick{
         number: 1,
         leader: :east,
-        plays: [{:east, {12, :hearts}}], # East already played
+        # East already played
+        plays: [{:east, {12, :hearts}}],
         winner: nil,
         points: 0
       }
-      state = %{state | killed_cards: killed_cards, current_trick: trick, current_turn: :north, phase: :playing}
+
+      state = %{
+        state
+        | killed_cards: killed_cards,
+          current_trick: trick,
+          current_turn: :north,
+          phase: :playing
+      }
 
       # Now north can play any trump card (not just the killed card)
       {:ok, _new_state} = Play.play_card(state, :north, {14, :hearts})
@@ -625,7 +817,14 @@ defmodule Pidro.Game.PlayKillRuleTest do
 
     test "player without killed cards can play freely on first trick" do
       # Player has no killed cards
-      hand = [{14, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}, {5, :hearts}]
+      hand = [
+        {14, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {7, :hearts},
+        {6, :hearts},
+        {5, :hearts}
+      ]
 
       hands = %{
         north: hand,
@@ -649,10 +848,19 @@ defmodule Pidro.Game.PlayKillRuleTest do
         south: [{8, :hearts}],
         west: [{7, :hearts}]
       }
-      killed_cards = %{north: [{14, :hearts}]} # Only north has killed cards
+
+      # Only north has killed cards
+      killed_cards = %{north: [{14, :hearts}]}
 
       state = create_test_state(hands, :hearts)
-      state = %{state | killed_cards: killed_cards, current_trick: nil, current_turn: :east, phase: :playing}
+
+      state = %{
+        state
+        | killed_cards: killed_cards,
+          current_trick: nil,
+          current_turn: :east,
+          phase: :playing
+      }
 
       # East can play any card (not affected by north's killed cards)
       {:ok, _new_state} = Play.play_card(state, :east, {13, :hearts})
@@ -663,7 +871,8 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "killed cards are removed from player's hand" do
       hand = [
         {14, :hearts},
-        {13, :hearts}, # Will be killed
+        # Will be killed
+        {13, :hearts},
         {11, :hearts},
         {10, :hearts},
         {7, :hearts},
@@ -687,12 +896,16 @@ defmodule Pidro.Game.PlayKillRuleTest do
     test "all killed cards are removed when killing multiple" do
       hand = [
         {14, :hearts},
-        {13, :hearts}, # Non-point
-        {12, :hearts}, # Non-point
+        # Non-point
+        {13, :hearts},
+        # Non-point
+        {12, :hearts},
         {11, :hearts},
         {10, :hearts},
-        {9, :hearts},  # Non-point
-        {7, :hearts},  # Non-point
+        # Non-point
+        {9, :hearts},
+        # Non-point
+        {7, :hearts},
         {5, :hearts},
         {2, :hearts}
       ]

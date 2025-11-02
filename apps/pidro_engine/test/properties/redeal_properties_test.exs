@@ -470,6 +470,7 @@ defmodule Pidro.Properties.RedealPropertiesTest do
           if length(killed) > 0 do
             # Should have killed exactly the excess
             excess = hand_size - 6
+
             assert length(killed) == excess or length(killed) == 0,
                    "Should kill exactly #{excess} cards or 0 if cannot kill"
 
