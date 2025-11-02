@@ -30,8 +30,8 @@ defmodule PidroServer.Accounts.Auth do
   """
 
   import Ecto.Query
-  alias PidroServer.Repo
   alias PidroServer.Accounts.User
+  alias PidroServer.Repo
 
   @doc """
   Registers a new user with the given attributes.

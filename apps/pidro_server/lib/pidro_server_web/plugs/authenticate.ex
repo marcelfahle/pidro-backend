@@ -35,8 +35,8 @@ defmodule PidroServerWeb.Plugs.Authenticate do
 
   import Plug.Conn
   import Phoenix.Controller, only: [put_view: 2, render: 3]
-  alias PidroServer.Accounts.Token
   alias PidroServer.Accounts.Auth
+  alias PidroServer.Accounts.Token
 
   @doc """
   Initializes the plug options.

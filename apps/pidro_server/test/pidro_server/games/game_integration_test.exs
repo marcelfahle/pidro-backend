@@ -12,7 +12,7 @@ defmodule PidroServer.Games.GameIntegrationTest do
 
   use ExUnit.Case, async: true
 
-  alias PidroServer.Games.{GameSupervisor, GameAdapter, RoomManager}
+  alias PidroServer.Games.{GameAdapter, GameSupervisor, RoomManager}
 
   @moduletag :integration
 
@@ -198,8 +198,9 @@ defmodule PidroServer.Games.GameIntegrationTest do
 
   ## Helper Functions
 
-  defp next_position(:north), do: :east
-  defp next_position(:east), do: :south
-  defp next_position(:south), do: :west
-  defp next_position(:west), do: :north
+  # Unused but kept for potential future test expansion
+  # defp next_position(:north), do: :east
+  # defp next_position(:east), do: :south
+  # defp next_position(:south), do: :west
+  # defp next_position(:west), do: :north
 end

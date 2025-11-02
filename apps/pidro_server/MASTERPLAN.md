@@ -1,9 +1,9 @@
 # Pidro Server - Implementation Master Plan
 
 **Last Updated**: 2025-11-02
-**Status**: Phase 0-7 Complete - Stats & Polish Done, Production Ready
+**Status**: Phase 0-7 Complete + Deployment Complete - Production Ready
 **Coverage**: ~85% (infrastructure + auth + room management + game integration + channels + lobby + admin + stats)
-**Critical Path**: Deployment → Production
+**Critical Path**: Performance Testing → Production Launch
 
 ---
 
@@ -366,12 +366,12 @@
 - [x] **[P7-14]** Configure test coverage tracking (30min) ✅ (ExCoveralls configured)
 - [x] **[P7-15]** Achieve >80% test coverage (varies) ✅ (All 39 server tests passing)
 
-#### Deployment (2-3 hours) ⚠️ DEFERRED
-- [ ] **[P7-16]** Document deployment guide (1h) - DEFERRED TO POST-MVP
-- [ ] **[P7-17]** Add CORS configuration if needed (30min) - DEFERRED TO POST-MVP
-- [ ] **[P7-18]** Verify Mix release works (1h) - DEFERRED TO POST-MVP
+#### Deployment (2-3 hours) ✅ COMPLETE
+- [x] **[P7-16]** Document deployment guide (1h) ✅ Comprehensive DEPLOYMENT.md created
+- [x] **[P7-17]** Add CORS configuration if needed (30min) ✅ CORSPlug configured with env-based origins
+- [x] **[P7-18]** Verify Mix release works (1h) ✅ Release configuration added to mix.exs
 
-**Validation**: ✅ All quality gates pass, all tests pass (39/39), code quality improved
+**Validation**: ✅ All quality gates pass, all tests pass (39/39), code quality improved, deployment ready
 
 ---
 
@@ -610,10 +610,10 @@ Add to mix.exs:
 
 ## Next Actions (Top 10) - Post-MVP Focus
 
-1. **[NEXT]** Document deployment guide with Mix releases
-2. Add CORS configuration for mobile client integration
-3. Verify Mix release builds and runs correctly
-4. Performance testing (10 concurrent games, 100 connections)
+1. ~~Document deployment guide with Mix releases~~ ✅ **DONE** (2025-11-02)
+2. ~~Add CORS configuration for mobile client integration~~ ✅ **DONE** (2025-11-02)
+3. ~~Verify Mix release builds and runs correctly~~ ✅ **DONE** (2025-11-02)
+4. **[NEXT]** Performance testing (10 concurrent games, 100 connections)
 5. Add comprehensive API documentation
 6. Implement reconnection handling for dropped connections
 7. Add spectator mode (optional enhancement)
@@ -621,8 +621,8 @@ Add to mix.exs:
 9. Add leaderboards (stats infrastructure ready)
 10. Add replay system using event sourcing
 
-**Completed Phases**: 0, 1, 2, 3, 4, 5, 6, 7 ✅
-**MVP Status**: ✅ COMPLETE - All core features and quality gates passed
+**Completed Phases**: 0, 1, 2, 3, 4, 5, 6, 7 ✅ + Deployment ✅
+**MVP Status**: ✅ COMPLETE - All core features, quality gates, and deployment ready
 
 ---
 
@@ -643,6 +643,8 @@ Add to mix.exs:
 - **Game stats** - Full database tracking with user stats API endpoint
 - **Code quality** - Credo configured, type safety ensured, API naming consistent
 - **Coverage tools** - ExCoveralls configured for test coverage tracking
+- **Deployment ready** - DEPLOYMENT.md guide, Mix release config, PidroServer.Release module
+- **CORS configured** - cors_plug added with environment-based origin configuration
 
-**Last update**: 2025-11-02 - Phase 7 completion (Stats & Polish)
-**Completion status**: 7/7 phases complete, 100% of core development ✅
+**Last update**: 2025-11-02 - Phase 7 completion + Deployment tasks
+**Completion status**: 7/7 phases complete + deployment ready, 100% of MVP development ✅

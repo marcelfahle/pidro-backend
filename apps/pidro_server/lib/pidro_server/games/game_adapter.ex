@@ -32,7 +32,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
 
   require Logger
-  alias PidroServer.Games.{GameSupervisor, GameRegistry}
+  alias PidroServer.Games.{GameRegistry, GameSupervisor}
 
   @doc """
   Applies an action to a game.

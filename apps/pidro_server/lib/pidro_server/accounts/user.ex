@@ -61,13 +61,17 @@ defmodule PidroServer.Accounts.User do
     |> cast(attrs, [:username, :email, :password, :guest])
     |> validate_required([:username])
     |> validate_length(:username, min: 3)
-    |> validate_format(:email, ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "must be a valid email address")
+    |> validate_format(:email, ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+      message: "must be a valid email address"
+    )
     |> unique_constraint(:username)
     |> unique_constraint(:email)
   end
 
   @doc false
-  defp put_password_hash(%Ecto.Changeset{valid?: true, changes: %{password: password}} = changeset) do
+  defp put_password_hash(
+         %Ecto.Changeset{valid?: true, changes: %{password: password}} = changeset
+       ) do
     put_change(changeset, :password_hash, Bcrypt.hash_pwd_salt(password))
     |> delete_change(:password)
   end
