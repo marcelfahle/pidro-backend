@@ -86,3 +86,8 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Admin panel basic auth credentials (for development)
+config :pidro_server,
+  admin_username: "admin",
+  admin_password: "pidro_admin_2025"
