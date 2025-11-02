@@ -64,6 +64,17 @@ defmodule Pidro.Server do
   alias Pidro.Core.Types.GameState
   alias Pidro.Game.Engine
 
+  # Override default child_spec to use :temporary restart strategy
+  # This prevents games from being automatically restarted when they crash
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :temporary,
+      type: :worker
+    }
+  end
+
   # Client API
 
   @doc """
@@ -299,13 +310,26 @@ defmodule Pidro.Server do
           new_state = %{state | game_state: new_game_state}
           {:reply, {:ok, new_game_state}, new_state}
 
-        {:error, reason} = error ->
+        {:error, _reason} = error ->
           if telemetry? do
             duration = System.monotonic_time() - start_time
 
             emit_telemetry(
               :exception,
-              %{position: position, action: action, reason: reason, duration: duration},
+              %{position: position, action: action, reason: error, duration: duration},
+              state
+            )
+          end
+
+          {:reply, error, state}
+
+        {:error, _reason, _message} = error ->
+          if telemetry? do
+            duration = System.monotonic_time() - start_time
+
+            emit_telemetry(
+              :exception,
+              %{position: position, action: action, reason: error, duration: duration},
               state
             )
           end
