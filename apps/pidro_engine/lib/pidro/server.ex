@@ -362,11 +362,11 @@ defmodule Pidro.Server do
 
     # Only emit if telemetry is available
     if Code.ensure_loaded?(:telemetry) do
-      :telemetry.execute(
+      apply(:telemetry, :execute, [
         [:pidro, :server, :action, event_suffix],
         measurements,
         metadata
-      )
+      ])
     end
   end
 end

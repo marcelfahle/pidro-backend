@@ -119,7 +119,11 @@ defmodule Pidro.Supervisor do
     case DynamicSupervisor.start_child(Pidro.GameSupervisor, {Pidro.Server, child_opts}) do
       {:ok, _pid} = result ->
         if Code.ensure_loaded?(:telemetry) do
-          :telemetry.execute([:pidro, :supervisor, :game, :start], %{}, %{game_id: game_id})
+          apply(:telemetry, :execute, [
+            [:pidro, :supervisor, :game, :start],
+            %{},
+            %{game_id: game_id}
+          ])
         end
 
         result
@@ -149,7 +153,7 @@ defmodule Pidro.Supervisor do
     case DynamicSupervisor.terminate_child(Pidro.GameSupervisor, pid) do
       :ok ->
         if Code.ensure_loaded?(:telemetry) do
-          :telemetry.execute([:pidro, :supervisor, :game, :stop], %{}, %{})
+          apply(:telemetry, :execute, [[:pidro, :supervisor, :game, :stop], %{}, %{}])
         end
 
         :ok

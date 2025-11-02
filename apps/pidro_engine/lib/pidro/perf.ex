@@ -28,7 +28,6 @@ defmodule Pidro.Perf do
   """
 
   alias Pidro.Core.Types.GameState
-  alias Pidro.Core.Binary
 
   @doc """
   Generates a fast hash of the game state.
