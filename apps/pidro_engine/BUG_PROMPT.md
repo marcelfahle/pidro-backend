@@ -1,16 +1,23 @@
 look at spec/ masterplan.md masterplan-redeal.md and guides to how the game works.
 
-We found a bug in the game when we switch from declare_trump to redeal to play phase. In the following example we have auto_rob activated (see AUTO_DEALER_ROB.md).
+we found a bug (not sure) in the trump decleration. As you see below, player :east made the highest bid and it's correctly identified that it's :east turn to declare the trump suit.
 
-The whole iea is that when a player picks a trump suit that in all the hands (minus the dealer) all non trump cards are discarded and the hands filled up again by the dealer until everybody has 6 cards.
+But when I perform this action with {:ok, state} = step(state, :east, {:declare_trump, :clubs}), I get the following error
 
-In the current state of the game, only the dealer seems to end up with 6 cards. All other players still have the original 9 cards.
-Compare game views from the trump declaration phase:
+► East performs: Declare Clubs ♣
 
-===
+✗ Error: {:not_dealer_turn, :north, :east}
+
+\*\* (MatchError) no match of right hand side value:
+
+    {:error, {:not_dealer_turn, :north, :east}}
+
+    (stdlib 7.1) erl_eval.erl:672: :erl_eval.expr/6
+    iex:10: (file)
+
 Phase: Trump Declaration
 Hand: #1
-Dealer: East
+Dealer: North
 Turn: East
 
 Scores:
@@ -18,89 +25,37 @@ North/South: 0 this hand, 0 total
 East/West: 0 this hand, 0 total
 
 Bidding:
-Highest Bid: 6 by East
+Highest Bid: 10 by East
 History:
+East: 10
 South: PASS
 West: PASS
 North: PASS
-East: 6
 
 Players:
 
 North (North/South)
-Hand: A♦ 7♠ A♣ 5♣ 2♠ 10♠ 6♥★ K♣ 10♣
+Hand: K♥★ 7♦ 5♥★ 2♠ Q♥★ J♠ 4♥★ 7♠ 3♠
 
 East (East/West)
-Hand: 6♣ 5♦★ 7♦ J♠ 9♣ A♥★ 8♣ 7♥★ 2♣
+Hand: K♠ 2♥★ 6♣ K♣ 4♣ 5♣ 5♠ 9♠ 10♣
 
 South (North/South)
-Hand: 3♠ 3♥★ 2♥★ 4♣ 10♦ 6♠ Q♦ Q♥★ 4♠
+Hand: 5♦★ 7♥★ J♣ 6♦ 9♦ 2♦ Q♠ A♥★ 6♠
 
 West (East/West)
-Hand: K♠ A♠ J♣ 7♣ 8♥★ 6♦ 8♦ 9♦ 10♥★
+Hand: 7♣ 8♣ K♦ 2♣ 8♦ 10♥★ A♠ Q♦ 10♠
 
 :ok
-iex(20)> {:ok, state} = step(state, :east, {:declare_trump, :diamonds})
+iex(10)> {:ok, state} = step(state, :east, {:declare_trump, :clubs})
 
-► East performs: Declare Diamonds ♦
+► East performs: Declare Clubs ♣
 
-✓ Action successful!
+✗ Error: {:not_dealer_turn, :north, :east}
 
-===
+\*\* (MatchError) no match of right hand side value:
 
-and when we've declared the trump and the redeal phase ran automatically (?)
+    {:error, {:not_dealer_turn, :north, :east}}
 
-===
-Phase: Playing
-Hand: #1
-Dealer: East
-Turn: South
-
-Scores:
-North/South: 0 this hand, 0 total
-East/West: 0 this hand, 0 total
-
-Bidding:
-Highest Bid: 6 by East
-History:
-South: PASS
-West: PASS
-North: PASS
-East: 6
-
-Trump: Diamonds ♦
-
-Players:
-
-North (North/South)
-Hand: A♦[1]★ 7♠ A♣ 5♣ 2♠ 10♠ 6♥ K♣ 10♣
-
-East (East/West)
-Hand: J♦[1]★ 5♦[5]★ 5♥[5]★ A♥ 2♦[1]★ J♠
-
-South (North/South)
-Hand: 3♠ 3♥ 2♥ 4♣ 10♦[1]★ 6♠ Q♦★ Q♥ 4♠
-
-West (East/West)
-Hand: K♠ A♠ J♣ 7♣ 8♥ 6♦★ 8♦★ 9♦★ 10♥
-
-# :ok
-
-Event Log
-╔═══════════════════════════════════════════════════════════╗
-║ EVENT LOG ║
-╚═══════════════════════════════════════════════════════════╝
-
-1. [DEALER] East selected as dealer (cut Q♠)
-2. [DEAL] Initial deal complete (36 cards dealt)
-3. [PASS] South passed
-4. [PASS] West passed
-5. [PASS] North passed
-6. [BID] East bid 6
-7. [BID COMPLETE] East won with bid of 6
-8. [TRUMP] Diamonds ♦ declared as trump
-9. [ROB] East robbed pack (took 16, kept 6)
-
-took 16 in this case is def wrong, if cards were distributed to others.
-
-This seems to be a bug in the system. I'm sure we have the functionality, maybe it's just the IEx tools.
+    (stdlib 7.1) erl_eval.erl:672: :erl_eval.expr/6
+    iex:10: (file)

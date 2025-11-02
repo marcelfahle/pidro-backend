@@ -79,7 +79,7 @@ defmodule Pidro.IEx do
   @spec new_game(keyword()) :: Types.GameState.t()
   def new_game(opts \\ []) do
     state = GameState.new()
-    
+
     # Set auto_dealer_rob from opts or use default (true)
     auto_rob = Keyword.get(opts, :auto_dealer_rob, true)
     state = put_in(state.config[:auto_dealer_rob], auto_rob)

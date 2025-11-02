@@ -6,7 +6,7 @@ defmodule PidroServerWeb.LobbyLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       # Subscribe to lobby updates
-      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
     end
 
     rooms = RoomManager.list_rooms(:all)
@@ -20,21 +20,12 @@ defmodule PidroServerWeb.LobbyLive do
   end
 
   @impl true
-  def handle_info({:room_created, room}, socket) do
-    rooms = update_room_list(socket.assigns.rooms, room)
-    {:noreply, socket |> assign(:rooms, rooms) |> assign(:stats, calculate_stats(rooms))}
-  end
-
-  @impl true
-  def handle_info({:room_updated, room}, socket) do
-    rooms = update_room_list(socket.assigns.rooms, room)
-    {:noreply, socket |> assign(:rooms, rooms) |> assign(:stats, calculate_stats(rooms))}
-  end
-
-  @impl true
-  def handle_info({:room_closed, room_code}, socket) do
-    rooms = Enum.reject(socket.assigns.rooms, &(&1.code == room_code))
-    {:noreply, socket |> assign(:rooms, rooms) |> assign(:stats, calculate_stats(rooms))}
+  def handle_info({:lobby_update, _available_rooms}, socket) do
+    # RoomManager broadcasts the full list of available rooms
+    # We need all rooms (not just available), so refetch
+    rooms = RoomManager.list_rooms(:all)
+    stats = calculate_stats(rooms)
+    {:noreply, socket |> assign(:rooms, rooms) |> assign(:stats, stats)}
   end
 
   @impl true
@@ -181,13 +172,6 @@ defmodule PidroServerWeb.LobbyLive do
   end
 
   # Private functions
-
-  defp update_room_list(rooms, updated_room) do
-    case Enum.find_index(rooms, &(&1.code == updated_room.code)) do
-      nil -> [updated_room | rooms]
-      index -> List.replace_at(rooms, index, updated_room)
-    end
-  end
 
   defp calculate_stats(rooms) do
     %{
