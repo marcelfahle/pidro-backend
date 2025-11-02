@@ -13,7 +13,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
   use PidroServerWeb.ChannelCase, async: false
 
-  alias PidroServer.Games.{RoomManager, GameSupervisor}
+  alias PidroServer.Games.{RoomManager, GameSupervisor, GameAdapter}
   alias PidroServer.Accounts
   alias PidroServer.Repo
   alias PidroServerWeb.{UserSocket, GameChannel}
@@ -67,6 +67,23 @@ defmodule PidroServerWeb.GameChannelTest do
       room: room,
       sockets: sockets
     }
+  end
+
+  # Helper function to advance the game to the bidding phase
+  defp advance_game_to_bidding(room_code) do
+    {:ok, state} = GameAdapter.get_state(room_code)
+
+    case state.phase do
+      :dealer_selection ->
+        # Trigger dealer selection which should auto-advance through dealing to bidding
+        GameAdapter.apply_action(room_code, :north, :select_dealer)
+        # Give it a moment to transition
+        Process.sleep(50)
+        :ok
+
+      _ ->
+        :ok
+    end
   end
 
   describe "join/3" do
@@ -155,16 +172,19 @@ defmodule PidroServerWeb.GameChannelTest do
       room_code: room_code,
       sockets: sockets
     } do
+      # Advance game to bidding phase
+      advance_game_to_bidding(room_code)
+
       socket = sockets[user.id]
 
-      {:ok, _reply, socket} =
+      {:ok, reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
-      # Move to bidding phase first
-      ref = push(socket, "bid", %{"amount" => 8})
       # The action might succeed or fail depending on game state
       # (e.g., if we're not in bidding phase yet or not our turn)
-      assert_reply ref, _result, 1000
+      ref = push(socket, "bid", %{"amount" => 8})
+      # Just verify we get a response (ok or error)
+      assert_reply ref, _, _, 1000
     end
 
     test "player can pass on bidding", %{
@@ -172,13 +192,16 @@ defmodule PidroServerWeb.GameChannelTest do
       room_code: room_code,
       sockets: sockets
     } do
+      # Advance game to bidding phase
+      advance_game_to_bidding(room_code)
+
       socket = sockets[user.id]
 
-      {:ok, _reply, socket} =
+      {:ok, reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       ref = push(socket, "bid", %{"amount" => "pass"})
-      assert_reply ref, _result, 1000
+      assert_reply ref, _, _, 1000
     end
 
     test "handles bid as string number", %{
@@ -186,13 +209,16 @@ defmodule PidroServerWeb.GameChannelTest do
       room_code: room_code,
       sockets: sockets
     } do
+      # Advance game to bidding phase
+      advance_game_to_bidding(room_code)
+
       socket = sockets[user.id]
 
-      {:ok, _reply, socket} =
+      {:ok, reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       ref = push(socket, "bid", %{"amount" => "10"})
-      assert_reply ref, _result, 1000
+      assert_reply ref, _, _, 1000
     end
   end
 
@@ -202,13 +228,16 @@ defmodule PidroServerWeb.GameChannelTest do
       room_code: room_code,
       sockets: sockets
     } do
+      # Advance game to bidding phase
+      advance_game_to_bidding(room_code)
+
       socket = sockets[user.id]
 
       {:ok, _reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       ref = push(socket, "declare_trump", %{"suit" => "hearts"})
-      assert_reply ref, _result, 1000
+      assert_reply ref, _, _, 1000
     end
   end
 
@@ -218,6 +247,9 @@ defmodule PidroServerWeb.GameChannelTest do
       room_code: room_code,
       sockets: sockets
     } do
+      # Advance game to bidding phase
+      advance_game_to_bidding(room_code)
+
       socket = sockets[user.id]
 
       {:ok, _reply, socket} =
@@ -228,7 +260,7 @@ defmodule PidroServerWeb.GameChannelTest do
           "card" => %{"rank" => 14, "suit" => "spades"}
         })
 
-      assert_reply ref, _result, 1000
+      assert_reply ref, _, _, 1000
     end
   end
 
@@ -244,7 +276,7 @@ defmodule PidroServerWeb.GameChannelTest do
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       ref = push(socket, "ready", %{})
-      assert_reply ref, :ok, 1000
+      assert_reply ref, :ok, %{}, 1000
 
       # Should broadcast player_ready event
       assert_broadcast "player_ready", %{position: _position}, 1000

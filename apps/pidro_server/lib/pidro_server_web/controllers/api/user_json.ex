@@ -1,4 +1,4 @@
-defmodule PidroServerWeb.Api.UserJSON do
+defmodule PidroServerWeb.API.UserJSON do
   @moduledoc """
   JSON view module for rendering user data in API responses.
 

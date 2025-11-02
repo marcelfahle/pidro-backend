@@ -1,4 +1,4 @@
-defmodule PidroServerWeb.Api.RoomJSON do
+defmodule PidroServerWeb.API.RoomJSON do
   @moduledoc """
   JSON view module for rendering room data in API responses.
 

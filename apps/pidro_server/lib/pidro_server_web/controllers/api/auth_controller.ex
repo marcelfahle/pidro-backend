@@ -1,4 +1,4 @@
-defmodule PidroServerWeb.Api.AuthController do
+defmodule PidroServerWeb.API.AuthController do
   @moduledoc """
   API controller for user authentication operations.
 
@@ -16,9 +16,9 @@ defmodule PidroServerWeb.Api.AuthController do
   use PidroServerWeb, :controller
 
   alias PidroServer.Accounts.{Auth, Token}
-  alias PidroServerWeb.Api.UserJSON
+  alias PidroServerWeb.API.UserJSON
 
-  action_fallback PidroServerWeb.Api.FallbackController
+  action_fallback PidroServerWeb.API.FallbackController
 
   @doc """
   Register a new user.
@@ -75,6 +75,7 @@ defmodule PidroServerWeb.Api.AuthController do
   def register(conn, %{"user" => user_params}) do
     with {:ok, user} <- Auth.register_user(user_params) do
       token = Token.generate(user)
+
       conn
       |> put_status(:created)
       |> put_view(UserJSON)
@@ -135,6 +136,7 @@ defmodule PidroServerWeb.Api.AuthController do
   def login(conn, %{"username" => username, "password" => password}) do
     with {:ok, user} <- Auth.authenticate_user(username, password) do
       token = Token.generate(user)
+
       conn
       |> put_view(UserJSON)
       |> render(:show, %{user: user, token: token})
@@ -189,6 +191,7 @@ defmodule PidroServerWeb.Api.AuthController do
   @spec me(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def me(conn, _params) do
     user = conn.assigns[:current_user]
+
     conn
     |> put_view(UserJSON)
     |> render(:show, %{user: user})

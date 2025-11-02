@@ -48,10 +48,11 @@ defmodule PidroServerWeb.GameChannel do
   require Logger
 
   alias PidroServer.Games.{RoomManager, GameAdapter}
+  alias PidroServer.Stats
   alias PidroServerWeb.Presence
 
-  # Intercept presence_diff broadcasts to handle them explicitly
-  intercept ["presence_diff"]
+  # Intercept presence_diff and player_ready broadcasts to handle them explicitly
+  intercept ["presence_diff", "player_ready"]
 
   @doc """
   Authorizes and joins a player to the game channel.
@@ -173,6 +174,9 @@ defmodule PidroServerWeb.GameChannel do
     # Update room status to finished
     RoomManager.update_room_status(room_code, :finished)
 
+    # Save game stats
+    save_game_stats(room_code, winner, scores)
+
     # Broadcast game over to all players
     broadcast(socket, "game_over", %{winner: winner, scores: scores})
 
@@ -202,13 +206,19 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   @doc """
-  Intercepts outgoing presence messages.
+  Intercepts outgoing broadcasts.
 
-  This is required when using Presence tracking in channels.
+  This is required when using Presence tracking in channels and for
+  custom broadcast messages like player_ready.
   """
   @impl true
   def handle_out("presence_diff", msg, socket) do
     push(socket, "presence_diff", msg)
+    {:noreply, socket}
+  end
+
+  def handle_out("player_ready", msg, socket) do
+    push(socket, "player_ready", msg)
     {:noreply, socket}
   end
 
@@ -255,4 +265,58 @@ defmodule PidroServerWeb.GameChannel do
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason), do: inspect(reason)
+
+  @spec save_game_stats(String.t(), atom(), map()) :: :ok
+  defp save_game_stats(room_code, winner, scores) do
+    # Get room to extract player IDs and game start time
+    case RoomManager.get_room(room_code) do
+      {:ok, room} ->
+        # Get game state to extract bid information
+        game_state_result = GameAdapter.get_state(room_code)
+
+        bid_info =
+          case game_state_result do
+            {:ok, state} ->
+              # Extract bid and trump info from game state
+              %{
+                bid_amount: state[:bid_amount],
+                bid_team: state[:bid_team]
+              }
+
+            _ ->
+              %{bid_amount: nil, bid_team: nil}
+          end
+
+        # Calculate game duration (use current time - created_at as approximation)
+        duration_seconds =
+          DateTime.diff(DateTime.utc_now(), room.created_at, :second)
+
+        # Prepare stats attributes
+        stats_attrs = %{
+          room_code: room_code,
+          winner: winner,
+          final_scores: scores,
+          bid_amount: bid_info.bid_amount,
+          bid_team: bid_info.bid_team,
+          duration_seconds: duration_seconds,
+          completed_at: DateTime.utc_now(),
+          player_ids: room.player_ids
+        }
+
+        # Save to database
+        case Stats.save_game_result(stats_attrs) do
+          {:ok, _stats} ->
+            Logger.info("Saved game stats for room #{room_code}")
+            :ok
+
+          {:error, changeset} ->
+            Logger.error("Failed to save game stats for room #{room_code}: #{inspect(changeset)}")
+            :ok
+        end
+
+      {:error, _} ->
+        Logger.error("Could not find room #{room_code} to save stats")
+        :ok
+    end
+  end
 end
