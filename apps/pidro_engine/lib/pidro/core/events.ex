@@ -22,6 +22,7 @@ defmodule Pidro.Core.Events do
   ### Trump Declaration Phase
   - `:trump_declared` - Winning bidder declares trump suit
   - `:cards_discarded` - Player discards non-trump cards
+  - `:cards_killed` - Cards eliminated from play (hidden info auditing)
   - `:second_deal_complete` - Final deal to 6 cards, dealer robs pack
   - `:dealer_robbed_pack` - Dealer takes pack and selects final hand
 
@@ -138,8 +139,9 @@ defmodule Pidro.Core.Events do
 
   ### Discarding
   - `{:cards_discarded, position, cards}` - Removes cards from player's hand
-  - `{:second_deal_complete, hands}` - Updates hands with final cards
-  - `{:dealer_robbed_pack, position, received, kept}` - Dealer selects final hand
+  - `{:cards_killed, killed_map}` - Records cards eliminated from play
+  - `{:second_deal_complete, %{dealt: hands_map, requested: req_map}}` - Updates hands with final cards and records card requests
+  - `{:dealer_robbed_pack, dealer, took_count, kept_count}` - Dealer auditing event (counts instead of card lists)
 
   ### Playing
   - `{:card_played, position, card}` - Adds card to current trick
@@ -226,6 +228,23 @@ defmodule Pidro.Core.Events do
     %{state | players: updated_players, discarded_cards: state.discarded_cards ++ cards}
   end
 
+  def apply_event(state, {:cards_killed, killed_map}) do
+    updated_killed_cards = Map.merge(state.killed_cards, killed_map)
+    %{state | killed_cards: updated_killed_cards}
+  end
+
+  def apply_event(state, {:second_deal_complete, %{dealt: hands_map, requested: req_map}}) do
+    updated_players =
+      Enum.reduce(hands_map, state.players, fn {position, cards}, players ->
+        player = Map.get(players, position)
+        updated_player = %{player | hand: player.hand ++ cards}
+        Map.put(players, position, updated_player)
+      end)
+
+    %{state | players: updated_players, cards_requested: req_map}
+  end
+
+  # Legacy handler for backward compatibility with simpler format
   def apply_event(state, {:second_deal_complete, hands}) when is_map(hands) do
     updated_players =
       Enum.reduce(hands, state.players, fn {position, cards}, players ->
@@ -237,12 +256,10 @@ defmodule Pidro.Core.Events do
     %{state | players: updated_players}
   end
 
-  def apply_event(state, {:dealer_robbed_pack, position, _received_cards, kept_cards}) do
-    player = Map.get(state.players, position)
-    updated_player = %{player | hand: kept_cards}
-    updated_players = Map.put(state.players, position, updated_player)
-
-    %{state | players: updated_players}
+  def apply_event(state, {:dealer_robbed_pack, _dealer, _took_count, _kept_count}) do
+    # Note: We don't reconstruct exact cards from counts (hidden info)
+    # This event is just for auditing/logging
+    state
   end
 
   # Playing Phase

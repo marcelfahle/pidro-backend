@@ -1,21 +1,50 @@
 # Finnish Pidro Redeal Implementation Masterplan
 
-**Status**: Critical Implementation Gaps Identified  
-**Goal**: Implement complete Finnish redeal mechanics with dealer advantage, kill rules, and information asymmetry  
-**Analysis Date**: 2025-11-02  
+**Status**: ✅ P0 + P1 Core Implementation COMPLETED
+**Goal**: Implement complete Finnish redeal mechanics with dealer advantage, kill rules, and information asymmetry
+**Analysis Date**: 2025-11-02
+**Implementation Date**: 2025-11-02
 **Analyzed**: 30 lib/ modules, 40+ test files, comprehensive oracle consultation
 
 ---
 
-## Executive Summary
+## Implementation Progress Update (2025-11-02)
 
-The Finnish Pidro redeal functionality is **partially implemented** with **critical gaps** in:
-1. **Kill rule logic** (0% implemented)
-2. **Information tracking** (cards_requested, dealer_pool_size, killed_cards all missing)
-3. **Dealer rob gating bug** (incorrect condition in engine.ex)
-4. **Test coverage** (missing property tests, unit tests, integration tests)
+### ✅ COMPLETED (P0 + P1 Core Features)
 
-**Implementation Completion**: ~35% (basic dealer robbing exists, but missing kill rules, tracking, and proper validation)
+**P0 - Critical Bugs & Data Model (100% Complete)**:
+1. ✅ **Kill rule logic** - Fully implemented in play.ex:compute_kills/1
+2. ✅ **Information tracking** - All fields added (cards_requested, dealer_pool_size, killed_cards)
+3. ✅ **Dealer rob gating bug** - Fixed in engine.ex (dealer always robs when deck has cards)
+4. ✅ **Event system** - Updated to use counts instead of card lists (prevents info leaks)
+5. ✅ **State machine** - Relaxed to allow >6 cards for kill rule exception
+
+**P1 - Core Implementation (100% Complete)**:
+1. ✅ **Card helper functions** - is_point_card?/2, non_point_trumps/2, count_trump/2
+2. ✅ **Trump validation** - can_kill_to_six?/2, validate_kill_cards/3
+3. ✅ **Kill rule computation** - compute_kills/1 with automatic integration
+4. ✅ **Top-killed-card enforcement** - Enforced in play_card/3
+5. ✅ **Event handlers** - cards_killed event + updated second_deal_complete/dealer_robbed_pack
+
+### 🔄 PENDING (Tests & Polish)
+
+**P1 - Test Coverage**:
+- [ ] Property tests for redeal mechanics
+- [ ] Unit tests for kill rules
+- [ ] Unit tests for dealer robbing edge cases
+
+**P2 - Polish** (Optional):
+- [ ] IEx pretty_print updates
+- [ ] Integration tests
+- [ ] Performance optimizations
+
+**Implementation Completion**: ~85% (P0 + P1 core complete, tests pending)
+
+---
+
+## Executive Summary (Original Analysis)
+
+The Finnish Pidro redeal functionality was **partially implemented** with **critical gaps** that have now been addressed
 
 ---
 
@@ -653,25 +682,26 @@ end
 
 ### P0 (CRITICAL - Fix Bugs & Add Missing Data)
 
-**Estimated effort: 4-6 hours**
+**Estimated effort: 4-6 hours** | **Status**: ✅ COMPLETED
 
-- [ ] **[1h]** Add GameState fields: `cards_requested`, `dealer_pool_size`, `killed_cards` ([types.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/types.ex#L235-L316))
-- [ ] **[0.5h]** Fix dealer rob gating bug in [engine.ex:529](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/engine.ex#L529)
-- [ ] **[1h]** Add `cards_requested` tracking in [discard.ex:252](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/discard.ex#L252)
-- [ ] **[0.5h]** Add `dealer_pool_size` tracking in [discard.ex:361](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/discard.ex#L361)
-- [ ] **[0.5h]** Change event payloads to counts-only (avoid info leak) in [types.ex:180-181](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/types.ex#L180-L181)
-- [ ] **[1h]** Relax state machine transition for kill rule in [state_machine.ex:297](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/state_machine.ex#L297)
-- [ ] **[0.5h]** Add `{:cards_killed, pos, cards}` event type in [types.ex:182](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/types.ex#L182)
+- [x] **[1h]** Add GameState fields: `cards_requested`, `dealer_pool_size`, `killed_cards` ([types.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/types.ex#L235-L316))
+- [x] **[0.5h]** Fix dealer rob gating bug in [engine.ex:529](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/engine.ex#L529)
+- [x] **[1h]** Add `cards_requested` tracking in [discard.ex:252](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/discard.ex#L252)
+- [x] **[0.5h]** Add `dealer_pool_size` tracking in [discard.ex:361](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/discard.ex#L361)
+- [x] **[0.5h]** Change event payloads to counts-only (avoid info leak) in [types.ex:180-181](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/types.ex#L180-L181)
+- [x] **[1h]** Relax state machine transition for kill rule in [state_machine.ex:297](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/state_machine.ex#L297)
+- [x] **[0.5h]** Add `{:cards_killed, pos, cards}` event type in [types.ex:182](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/types.ex#L182)
 
 ### P1 (HIGH - Implement Kill Rule & Tests)
 
-**Estimated effort: 12-16 hours**
+**Estimated effort: 12-16 hours** | **Status**: ✅ Core Implementation COMPLETED (Tests Pending)
 
-- [ ] **[2h]** Implement Card helper functions: `is_point_card?/2`, `non_point_trumps/2`, `count_trump/2` in [card.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/card.ex)
-- [ ] **[2h]** Implement Trump helpers: `can_kill_to_six?/2`, `validate_kill_cards/3` in [trump.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/trump.ex)
-- [ ] **[3h]** Implement `compute_kills/1` in [play.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/play.ex)
-- [ ] **[1h]** Add top-killed-card enforcement in `play_card/3` in [play.ex:113](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/play.ex#L113)
-- [ ] **[1h]** Integrate `compute_kills` into phase transition in [engine.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/engine.ex)
+- [x] **[2h]** Implement Card helper functions: `is_point_card?/2`, `non_point_trumps/2`, `count_trump/2` in [card.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/card.ex)
+- [x] **[2h]** Implement Trump helpers: `can_kill_to_six?/2`, `validate_kill_cards/3` in [trump.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/trump.ex)
+- [x] **[3h]** Implement `compute_kills/1` in [play.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/play.ex)
+- [x] **[1h]** Add top-killed-card enforcement in `play_card/3` in [play.ex:113](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/play.ex#L113)
+- [x] **[1h]** Integrate `compute_kills` into phase transition in [engine.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/game/engine.ex)
+- [x] **[1h]** Update events.ex to handle new event types ([events.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/core/events.ex))
 - [ ] **[2h]** Fix overly strict property test in [state_machine_properties_test.exs:329](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/test/properties/state_machine_properties_test.exs#L329)
 - [ ] **[3h]** Create property test file `test/properties/redeal_properties_test.exs` with 6 properties
 - [ ] **[2h]** Create unit test file `test/unit/game/discard_redeal_test.exs` (8 test cases)

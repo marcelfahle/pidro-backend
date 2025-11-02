@@ -177,8 +177,9 @@ defmodule Pidro.Core.Types do
           | {:bidding_complete, position(), bid_amount()}
           | {:trump_declared, suit()}
           | {:cards_discarded, position(), [card()]}
-          | {:second_deal_complete, %{position() => [card()]}}
-          | {:dealer_robbed_pack, position(), [card()], [card()]}
+          | {:second_deal_complete, %{position() => non_neg_integer()}}
+          | {:dealer_robbed_pack, position(), non_neg_integer(), non_neg_integer()}
+          | {:cards_killed, %{position() => [card()]}}
           | {:card_played, position(), card()}
           | {:trick_won, position(), points :: non_neg_integer()}
           | {:player_went_cold, position(), revealed_cards :: [card()]}
@@ -279,6 +280,14 @@ defmodule Pidro.Core.Types do
 
     # Trump
     field(:trump_suit, Pidro.Core.Types.suit() | nil, default: nil)
+
+    # Re-deal tracking fields
+    field(:cards_requested, %{Pidro.Core.Types.position() => non_neg_integer()}, default: %{})
+    field(:dealer_pool_size, non_neg_integer() | nil, default: nil)
+
+    field(:killed_cards, %{Pidro.Core.Types.position() => [Pidro.Core.Types.card()]},
+      default: %{}
+    )
 
     # Play
     field(:tricks, [Pidro.Core.Types.Trick.t()], default: [])
