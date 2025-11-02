@@ -14,7 +14,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   use PidroServerWeb, :live_view
   require Logger
-  alias PidroServer.Dev.BotManager
+  alias PidroServer.Dev.{BotManager, Event, EventRecorder}
   alias PidroServer.Games.{GameAdapter, RoomManager}
 
   @impl true
@@ -24,6 +24,21 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         if connected?(socket) do
           # Subscribe to game updates for this specific room
           Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+          # Start event recorder for this game
+          case DynamicSupervisor.start_child(
+                 PidroServer.Dev.BotSupervisor,
+                 {EventRecorder, room_code: room_code}
+               ) do
+            {:ok, _pid} ->
+              Logger.debug("EventRecorder started for #{room_code}")
+
+            {:error, {:already_started, _pid}} ->
+              Logger.debug("EventRecorder already running for #{room_code}")
+
+            {:error, reason} ->
+              Logger.error("Failed to start EventRecorder: #{inspect(reason)}")
+          end
         end
 
         # Get initial game state
@@ -45,6 +60,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:executing_action, false)
          |> assign(:copy_feedback, false)
          |> assign(:bot_configs, bot_configs)
+         |> assign(:events, EventRecorder.get_events(room_code, limit: 50))
+         |> assign(:event_filter_type, nil)
+         |> assign(:event_filter_player, nil)
+         |> assign(:show_event_export, false)
          |> assign(:page_title, "Game Detail - Dev")}
 
       {:error, _reason} ->
@@ -59,11 +78,13 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_info({:state_update, new_state}, socket) do
     # DEV-901: Refetch legal actions when state updates
     legal_actions = get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
+    events = EventRecorder.get_events(socket.assigns.room_code, limit: 50)
 
     {:noreply,
      socket
      |> assign(:game_state, new_state)
-     |> assign(:legal_actions, legal_actions)}
+     |> assign(:legal_actions, legal_actions)
+     |> assign(:events, events)}
   end
 
   @impl true
@@ -228,6 +249,73 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:executing_action, false)
          |> put_flash(:error, "Action failed: #{error_message}")}
     end
+  end
+
+  @impl true
+  def handle_event("refresh_events", _params, socket) do
+    events =
+      EventRecorder.get_events(socket.assigns.room_code,
+        limit: 50,
+        type: socket.assigns.event_filter_type,
+        player: socket.assigns.event_filter_player
+      )
+
+    {:noreply, assign(socket, :events, events)}
+  end
+
+  @impl true
+  def handle_event("filter_events", %{"type" => type}, socket) do
+    type_atom = if type == "all", do: nil, else: String.to_existing_atom(type)
+
+    events =
+      EventRecorder.get_events(socket.assigns.room_code,
+        limit: 50,
+        type: type_atom,
+        player: socket.assigns.event_filter_player
+      )
+
+    {:noreply,
+     socket
+     |> assign(:event_filter_type, type_atom)
+     |> assign(:events, events)}
+  end
+
+  @impl true
+  def handle_event("filter_events_by_player", %{"player" => player}, socket) do
+    player_atom = if player == "all", do: nil, else: String.to_existing_atom(player)
+
+    events =
+      EventRecorder.get_events(socket.assigns.room_code,
+        limit: 50,
+        type: socket.assigns.event_filter_type,
+        player: player_atom
+      )
+
+    {:noreply,
+     socket
+     |> assign(:event_filter_player, player_atom)
+     |> assign(:events, events)}
+  end
+
+  @impl true
+  def handle_event("clear_events", _params, socket) do
+    EventRecorder.clear_events(socket.assigns.room_code)
+
+    {:noreply,
+     socket
+     |> assign(:events, [])
+     |> put_flash(:info, "Event log cleared")}
+  end
+
+  @impl true
+  def handle_event("toggle_export_modal", _params, socket) do
+    {:noreply, assign(socket, :show_event_export, !socket.assigns.show_event_export)}
+  end
+
+  @impl true
+  def handle_event("export_events_json", _params, socket) do
+    # This will be handled by a LiveView hook for downloading
+    {:noreply, socket}
   end
 
   @impl true
@@ -508,6 +596,156 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               <% end %>
             </div>
           </div>
+
+          <%!-- Event Log Panel (FR-7 / DEV-704) --%>
+          <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-semibold">Event Log</h2>
+              <div class="flex gap-2">
+                <button
+                  phx-click="refresh_events"
+                  class="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Refresh
+                </button>
+                <button
+                  phx-click="clear_events"
+                  data-confirm="Are you sure you want to clear the event log?"
+                  class="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  Clear
+                </button>
+                <button
+                  phx-click="toggle_export_modal"
+                  class="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+                >
+                  Export
+                </button>
+              </div>
+            </div>
+
+            <%!-- Filters --%>
+            <div class="flex gap-4 mb-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Type</label>
+                <select
+                  phx-change="filter_events"
+                  name="type"
+                  class="rounded border-gray-300"
+                >
+                  <option value="all" selected={is_nil(@event_filter_type)}>All Events</option>
+                  <option value="bid_made" selected={@event_filter_type == :bid_made}>Bids</option>
+                  <option value="bid_passed" selected={@event_filter_type == :bid_passed}>
+                    Passes
+                  </option>
+                  <option value="trump_declared" selected={@event_filter_type == :trump_declared}>
+                    Trump Declared
+                  </option>
+                  <option value="card_played" selected={@event_filter_type == :card_played}>
+                    Cards Played
+                  </option>
+                  <option value="trick_won" selected={@event_filter_type == :trick_won}>
+                    Tricks Won
+                  </option>
+                  <option value="hand_scored" selected={@event_filter_type == :hand_scored}>
+                    Hand Scored
+                  </option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Player</label>
+                <select
+                  phx-change="filter_events_by_player"
+                  name="player"
+                  class="rounded border-gray-300"
+                >
+                  <option value="all" selected={is_nil(@event_filter_player)}>All Players</option>
+                  <option value="north" selected={@event_filter_player == :north}>North</option>
+                  <option value="south" selected={@event_filter_player == :south}>South</option>
+                  <option value="east" selected={@event_filter_player == :east}>East</option>
+                  <option value="west" selected={@event_filter_player == :west}>West</option>
+                </select>
+              </div>
+            </div>
+
+            <%!-- Event List --%>
+            <div class="bg-gray-50 rounded p-4 max-h-96 overflow-y-auto font-mono text-sm">
+              <%= if Enum.empty?(@events) do %>
+                <p class="text-gray-500 italic">No events recorded yet</p>
+              <% else %>
+                <div class="space-y-1">
+                  <%= for event <- @events do %>
+                    <div class="flex gap-2">
+                      <span class="text-gray-500">[{format_event_timestamp(event)}]</span>
+                      <span class={event_type_color(event.type)}>
+                        {Event.format(event)}
+                      </span>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+
+            <div class="mt-2 text-sm text-gray-600">
+              Showing {length(@events)} events (max 50)
+            </div>
+          </div>
+
+          <%!-- Export Modal (FR-7 / DEV-705) --%>
+          <%= if @show_event_export do %>
+            <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4">
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-lg font-semibold">Export Events</h3>
+                  <button
+                    phx-click="toggle_export_modal"
+                    class="text-gray-500 hover:text-gray-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div class="space-y-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">JSON Format</label>
+                    <textarea
+                      id="export-json"
+                      readonly
+                      class="w-full h-64 font-mono text-xs border rounded p-2"
+                    >{Jason.encode!(@events |> Enum.map(&Event.to_json/1), pretty: true)}</textarea>
+                    <button
+                      id="copy-json-button"
+                      phx-hook="CopyToClipboard"
+                      data-target="export-json"
+                      class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                      Copy JSON
+                    </button>
+                  </div>
+
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Text Format</label>
+                    <textarea
+                      id="export-text"
+                      readonly
+                      class="w-full h-64 font-mono text-xs border rounded p-2"
+                    >{Enum.map_join(@events, "\n", fn event ->
+                      "[#{Calendar.strftime(event.timestamp, "%H:%M:%S")}] #{Event.format(event)}"
+                    end)}</textarea>
+                    <button
+                      id="copy-text-button"
+                      phx-hook="CopyToClipboard"
+                      data-target="export-text"
+                      class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    >
+                      Copy Text
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          <% end %>
           
     <!-- Full State JSON (collapsible) -->
           <details class="bg-white shadow overflow-hidden sm:rounded-lg">
@@ -818,12 +1056,23 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   defp decode_action(action_json) do
     case Jason.decode(action_json) do
-      {:ok, "pass"} -> {:ok, :pass}
-      {:ok, ["bid", amount]} -> {:ok, {:bid, amount}}
-      {:ok, ["declare_trump", suit]} -> {:ok, {:declare_trump, String.to_existing_atom(suit)}}
-      {:ok, ["play_card", [rank, suit]]} -> {:ok, {:play_card, {rank, String.to_existing_atom(suit)}}}
-      {:error, error} -> {:error, "Invalid action format: #{inspect(error)}"}
-      _ -> {:error, "Invalid action format: #{action_json}"}
+      {:ok, "pass"} ->
+        {:ok, :pass}
+
+      {:ok, ["bid", amount]} ->
+        {:ok, {:bid, amount}}
+
+      {:ok, ["declare_trump", suit]} ->
+        {:ok, {:declare_trump, String.to_existing_atom(suit)}}
+
+      {:ok, ["play_card", [rank, suit]]} ->
+        {:ok, {:play_card, {rank, String.to_existing_atom(suit)}}}
+
+      {:error, error} ->
+        {:error, "Invalid action format: #{inspect(error)}"}
+
+      _ ->
+        {:error, "Invalid action format: #{action_json}"}
     end
   rescue
     ArgumentError -> {:error, "Invalid action format: unknown atom in #{action_json}"}
@@ -948,6 +1197,26 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:human, false} ->
         # No bot exists, and user wants human - nothing to do
         :ok
+    end
+  end
+
+  # Event log helper functions
+
+  defp format_event_timestamp(event) do
+    event.timestamp
+    |> Calendar.strftime("%H:%M:%S")
+  end
+
+  defp event_type_color(type) do
+    case type do
+      :bid_made -> "text-blue-600"
+      :bid_passed -> "text-gray-500"
+      :trump_declared -> "text-purple-600"
+      :card_played -> "text-green-600"
+      :trick_won -> "text-yellow-600"
+      :hand_scored -> "text-orange-600"
+      :game_over -> "text-red-600"
+      _ -> "text-gray-700"
     end
   end
 end
