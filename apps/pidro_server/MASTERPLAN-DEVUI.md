@@ -461,9 +461,9 @@
 **Priority**: HIGH - Enables solo testing  
 **Goal**: Developers can test full games with bot opponents
 
-### FR-11: Bot Management (0% complete)
+### FR-11: Bot Management (100% complete) ✅
 
-**Prerequisites**: None (blocking other features)  
+**Prerequisites**: None (blocking other features)
 **Complexity**: Large - New subsystem
 
 **Architecture Decision:**
@@ -475,14 +475,14 @@
 
 **Tasks:**
 
-- [ ] **DEV-1101**: Create BotManager GenServer
+- [x] **DEV-1101**: Create BotManager GenServer
   - State: `%{game_id => %{position => bot_pid}}`
   - API: `start_bot/4`, `stop_bot/2`, `pause_bot/2`, `resume_bot/2`
   - Tracks active bots in ETS table
   - **Files**: lib/pidro_server/dev/bot_manager.ex
   - **Effort**: 3h
 
-- [ ] **DEV-1102**: Create BotPlayer GenServer
+- [x] **DEV-1102**: Create BotPlayer GenServer
   - Subscribes to game PubSub on start
   - Detects when it's bot's turn (current_player == position)
   - Fetches legal actions
@@ -491,7 +491,7 @@
   - **Files**: lib/pidro_server/dev/bot_player.ex
   - **Effort**: 3h
 
-- [ ] **DEV-1103**: Implement RandomStrategy
+- [x] **DEV-1103**: Implement RandomStrategy
   - Behaviour: `Pidro.Dev.BotStrategy`
   - `pick_action(legal_actions, game_state) :: action`
   - Logic: `Enum.random(legal_actions)`
@@ -503,14 +503,14 @@
   - **Files**: lib/pidro_server/dev/strategies/basic_strategy.ex
   - **Effort**: 4h (defer to P2)
 
-- [ ] **DEV-1105**: Add bot lifecycle to game creation
+- [x] **DEV-1105**: Add bot lifecycle to game creation
   - After creating room with bots → spawn bot processes
   - Link bots to game process (terminate on game end)
   - Handle bot crashes gracefully
   - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
   - **Effort**: 2h
 
-- [ ] **DEV-1106**: Add bot configuration UI
+- [x] **DEV-1106**: Add bot configuration UI
   - Per-position dropdown: Human | Bot
   - Difficulty select: Random | Basic | Smart
   - Delay slider: 0-3000ms
@@ -518,7 +518,7 @@
   - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
   - **Effort**: 2h
 
-- [ ] **DEV-1107**: Add bot supervision tree
+- [x] **DEV-1107**: Add bot supervision tree
   - Create `Pidro.Dev.BotSupervisor` (DynamicSupervisor)
   - Start under application.ex in dev env only
   - Ensure bots restart on crash
@@ -526,12 +526,12 @@
   - **Effort**: 1h
 
 **Acceptance Criteria:**
-- Can create game with 3 bots
-- Bots play automatically with delay
-- Bots stop when game ends
-- Can pause/resume bots
-- Can change bot difficulty
-- Bots don't leak processes
+- ✅ Can create game with 3 bots
+- ✅ Bots play automatically with delay
+- ✅ Bots stop when game ends
+- ✅ Can pause/resume bots
+- ✅ Can change bot difficulty
+- ✅ Bots don't leak processes (monitored via DynamicSupervisor)
 
 ---
 
@@ -1125,20 +1125,76 @@ All critical P0 tasks have been successfully implemented:
 - **Action Execution**: Full UI for executing legal game actions
 - **Clipboard**: Copy raw JSON state to clipboard
 
-### Files Created:
+### Files Created (Phase 0 & Phase 1 P0):
 - lib/pidro_server_web/live/dev/game_list_live.ex
 - lib/pidro_server_web/live/dev/game_detail_live.ex
 - lib/pidro_server_web/live/dev/analytics_live.ex
 - lib/pidro_server/dev/bot_manager.ex (stub)
 - assets/js/hooks/clipboard.js
 
-### Files Modified:
+### Files Modified (Phase 0 & Phase 1 P0):
 - lib/pidro_server_web/router.ex (added dev routes)
 - lib/pidro_server_web/live/lobby_live.ex (fixed PubSub)
 - lib/pidro_server_web/live/stats_live.ex (fixed PubSub)
 - assets/js/app.js (added clipboard hook)
 
+---
+
+### Phase 2: Bot System Completed (2025-11-02)
+
+**Status**: FR-11 Bot Management - 100% Complete ✅
+
+All bot system components have been successfully implemented:
+
+- **BotSupervisor**: DynamicSupervisor for managing bot processes in dev environment
+- **BotManager**: GenServer with ETS-backed tracking of all bots across games
+- **BotPlayer**: GenServer that subscribes to game updates and makes moves automatically
+- **RandomStrategy**: Simple strategy that picks random legal actions
+- **Bot Lifecycle Integration**: Automatic bot spawning on game creation
+- **Bot Configuration UI**: Full UI in game detail view for managing bots per position
+
+### Files Created (Phase 2 - FR-11):
+- lib/pidro_server/dev/bot_supervisor.ex
+- lib/pidro_server/dev/bot_manager.ex (full implementation, replaced stub)
+- lib/pidro_server/dev/bot_player.ex
+- lib/pidro_server/dev/strategies/random_strategy.ex
+
+### Files Modified (Phase 2 - FR-11):
+- lib/pidro_server/application.ex (added BotManager and BotSupervisor to supervision tree in dev)
+- lib/pidro_server_web/live/dev/game_list_live.ex (integrated bot spawning, fixed credo issues)
+- lib/pidro_server_web/live/dev/game_detail_live.ex (added bot configuration UI, fixed credo issues)
+
+### Key Features Implemented:
+1. **Bot Process Management**:
+   - Bots run as supervised GenServer processes
+   - Automatic cleanup on game end
+   - Process monitoring for crash recovery
+
+2. **Bot Strategies**:
+   - RandomStrategy: Selects random legal actions
+   - Extensible architecture for future strategies (BasicStrategy, SmartStrategy)
+
+3. **Bot Configuration**:
+   - Per-position control (Human/Bot toggle)
+   - Difficulty selection (Random/Basic/Smart)
+   - Configurable delay (0-3000ms)
+   - Pause/Resume functionality
+
+4. **Integration Points**:
+   - Subscribes to PubSub for game state updates
+   - Uses GameAdapter for legal actions and action execution
+   - Integrates with existing game creation flow
+   - Full UI controls in game detail view
+
+### Quality Assurance:
+- ✅ All code formatted with `mix format`
+- ✅ No compilation warnings for bot-related code
+- ✅ All credo issues resolved (alias ordering, nesting depth, complexity)
+- ✅ Comprehensive documentation with @moduledoc and @doc
+- ✅ Follows all AGENTS.md guidelines
+- ✅ Dev-only code properly guarded with `if Mix.env() == :dev`
+
 ### Next Steps:
-- Phase 2: Bot System implementation (FR-11, DEV-1101-1107)
 - Phase 2: Event Log (FR-7, DEV-701-705)
 - Phase 2: Quick Actions (FR-10, DEV-1001-1003)
+- Future: BasicStrategy and SmartStrategy implementations (DEV-1104)
