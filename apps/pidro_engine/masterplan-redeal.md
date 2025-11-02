@@ -1,17 +1,40 @@
 # Finnish Pidro Redeal Implementation Masterplan
 
-**Status**: ✅ P0 + P1 FULLY COMPLETED (Implementation + Tests) + P2 Partially Complete (2/7)
+**Status**: ✅ P0 + P1 FULLY COMPLETED (Implementation + Tests) + P2 Partially Complete (3/7)
 **Goal**: Implement complete Finnish redeal mechanics with dealer advantage, kill rules, and information asymmetry
 **Analysis Date**: 2025-11-02
 **Implementation Date**: 2025-11-02
 **Test Completion Date**: 2025-11-02
-**Last Update**: 2025-11-02 (Added total_available_points/1 helper for killed cards scoring)
+**Last Update**: 2025-11-02 (Added test generators for comprehensive property-based testing)
 **Analyzed**: 30 lib/ modules, 40+ test files, comprehensive oracle consultation
 **Test Stats**: 525 tests, 157 properties, 76 doctests - all passing (except 1 flaky performance test)
 
 ---
 
-## Implementation Progress Update (2025-11-02)
+## Implementation Progress Update (2025-11-02 - Latest)
+
+### ✅ COMPLETED - Test Generators (P2 Task 1/7)
+
+Added comprehensive StreamData generators to `test/support/generators.ex`:
+1. ✅ `pre_dealer_selection_generator/0` - Generates states at second_deal phase
+2. ✅ `post_dealer_rob_generator/0` - Generates states after dealer has robbed pack
+3. ✅ `post_second_deal_generator/0` - Generates states with cards_requested tracking
+4. ✅ `dealer_with_excess_trump_generator/0` - Generates dealers with 7-14 trump cards
+5. ✅ `player_with_killed_cards_generator/0` - Generates players with killed cards
+
+These generators enable comprehensive property-based testing of redeal mechanics.
+
+All generators:
+- Follow StreamData best practices using `gen all` syntax
+- Include proper documentation with parameter and return descriptions
+- Pass Credo strict linting with no issues
+- Generate valid game states for property test assertions
+
+**Validation**: ✅ All 525 tests pass, mix credo clean, mix format clean
+
+---
+
+## Implementation Progress Update (2025-11-02 - Earlier)
 
 ### ✅ COMPLETED (P0 + P1 Core Features)
 
@@ -37,11 +60,15 @@
 - [x] Unit tests for dealer robbing edge cases (41 tests, all passing)
 
 **P2 - Polish** (Optional):
-- [ ] IEx pretty_print updates
-- [ ] Integration tests
-- [ ] Performance optimizations
+- [x] Test generators for redeal states ✅ COMPLETED 2025-11-02
+- [x] IEx pretty_print updates ✅ COMPLETED 2025-11-02
+- [x] Finnish.Scorer total_available_points/1 helper ✅ COMPLETED 2025-11-02
+- [ ] Hash/cache key updates for redeal fields
+- [ ] PGN notation updates for redeal fields
+- [ ] Telemetry events for redeal phases
+- [ ] Integration tests for end-to-end redeal scenarios
 
-**Implementation Completion**: ~95% (P0 + P1 fully complete including tests, only P2 polish remaining)
+**Implementation Completion**: ~96% (P0 + P1 + 3/7 P2 tasks complete, only optional polish remaining)
 
 ---
 
@@ -713,9 +740,9 @@ end
 
 ### P2 (MEDIUM - Polish & Optimization)
 
-**Estimated effort: 6-8 hours** | **Status**: 🔄 IN PROGRESS (2/7 tasks complete)
+**Estimated effort: 6-8 hours** | **Status**: 🔄 IN PROGRESS (3/7 tasks complete)
 
-- [ ] **[1h]** Add test generators in `test/support/generators.ex`: `pre_dealer_selection_generator`, `dealer_with_excess_trump_generator`, etc.
+- [x] **[1h]** Add test generators in `test/support/generators.ex`: `pre_dealer_selection_generator`, `dealer_with_excess_trump_generator`, etc. - ✅ COMPLETED 2025-11-02
 - [x] **[1h]** Update IEx pretty_print to show `[REDEAL]`, `[ROB]`, cards_requested, killed_cards in [iex.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/iex.ex) - ✅ COMPLETED 2025-11-02
 - [x] **[1h]** Update Finnish.Scorer to add `total_available_points/1` helper that excludes killed cards (except top card) from the standard 14-point total in [scorer.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/finnish/scorer.ex) - ✅ COMPLETED 2025-11-02
 - [ ] **[1h]** Update hash_state and cache keys to include redeal fields in [perf.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_engine/lib/pidro/perf.ex)
