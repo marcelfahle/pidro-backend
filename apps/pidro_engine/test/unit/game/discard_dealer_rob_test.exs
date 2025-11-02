@@ -31,19 +31,27 @@ defmodule Pidro.Game.DiscardDealerRobTest do
   defp setup_dealer_rob_state(opts \\ []) do
     dealer = Keyword.get(opts, :dealer, :north)
     dealer_hand = Keyword.get(opts, :dealer_hand, [{14, :hearts}, {13, :hearts}])
-    remaining_deck = Keyword.get(opts, :remaining_deck, [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}])
+
+    remaining_deck =
+      Keyword.get(opts, :remaining_deck, [
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ])
 
     state = GameState.new()
     dealer_player = %{Map.get(state.players, dealer) | hand: dealer_hand}
     updated_players = Map.put(state.players, dealer, dealer_player)
 
-    %{state |
-      phase: :second_deal,
-      current_dealer: dealer,
-      current_turn: dealer,
-      trump_suit: :hearts,
-      players: updated_players,
-      deck: remaining_deck
+    %{
+      state
+      | phase: :second_deal,
+        current_dealer: dealer,
+        current_turn: dealer,
+        trump_suit: :hearts,
+        players: updated_players,
+        deck: remaining_deck
     }
   end
 
@@ -53,14 +61,23 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - pool combination" do
     test "dealer combines their hand with remaining deck cards" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
       # Dealer should have access to 2 (hand) + 4 (deck) = 6 cards total
       # Selecting all 6 should succeed
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.players[:north].hand == selected
@@ -68,13 +85,22 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "dealer can select from any card in combined pool" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
       # Dealer selects mix of cards from hand and deck
-      selected = [{14, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}, {13, :hearts}]
+      selected = [
+        {14, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts},
+        {13, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert length(new_state.players[:north].hand) == 6
@@ -82,16 +108,30 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "dealer with large pool selects best 6 cards" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
-        remaining_deck: [
-          {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts},
-          {7, :hearts}, {6, :hearts}, {5, :hearts}
-        ]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
+          remaining_deck: [
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts},
+            {7, :hearts},
+            {6, :hearts},
+            {5, :hearts}
+          ]
+        )
 
       # Dealer has 3 + 7 = 10 cards to choose from
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {5, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.dealer_pool_size == 10
@@ -107,7 +147,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "dealer must select exactly 6 cards" do
       state = setup_dealer_rob_state()
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert length(new_state.players[:north].hand) == 6
@@ -126,9 +174,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       state = setup_dealer_rob_state()
 
       selected = [
-        {14, :hearts}, {13, :hearts}, {12, :hearts},
-        {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts},
+        {8, :hearts}
       ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:invalid_card_count, 6, 7}} = result
@@ -149,12 +203,21 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - dealer_pool_size tracking" do
     test "dealer_pool_size equals hand size + remaining deck size" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}, {9, :hearts}],
-        remaining_deck: [{11, :hearts}, {10, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}, {9, :hearts}],
+          remaining_deck: [{11, :hearts}, {10, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Pool size should be 4 (hand) + 2 (deck) = 6
@@ -162,12 +225,28 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "dealer_pool_size with minimal cards" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}],
-        remaining_deck: []
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [
+            {14, :hearts},
+            {13, :hearts},
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts}
+          ],
+          remaining_deck: []
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Pool size should be 6 (hand) + 0 (deck) = 6
@@ -176,16 +255,32 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
     test "dealer_pool_size with maximum realistic cards" do
       # Dealer had 2 trump, gets 10 more from deck
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [
-          {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts},
-          {8, :hearts}, {7, :hearts}, {6, :hearts}, {5, :hearts},
-          {4, :hearts}, {3, :hearts}
-        ]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts},
+            {7, :hearts},
+            {6, :hearts},
+            {5, :hearts},
+            {4, :hearts},
+            {3, :hearts}
+          ]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {5, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Pool size should be 2 (hand) + 10 (deck) = 12
@@ -199,13 +294,22 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - card selection freedom" do
     test "dealer can discard trump cards if desired" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
-        remaining_deck: [{11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
+          remaining_deck: [{11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}]
+        )
 
       # Dealer chooses to keep middle-value trumps, discarding Ace
-      selected = [{13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}]
+      selected = [
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts},
+        {8, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.players[:north].hand == selected
@@ -213,13 +317,29 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "dealer can select all cards from deck, discarding original hand" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{7, :hearts}, {6, :hearts}],
-        remaining_deck: [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{7, :hearts}, {6, :hearts}],
+          remaining_deck: [
+            {14, :hearts},
+            {13, :hearts},
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {5, :hearts}
+          ]
+        )
 
       # Dealer discards original hand, keeps all deck cards
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {5, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.players[:north].hand == selected
@@ -228,13 +348,22 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "dealer can mix cards from hand and deck freely" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {7, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {6, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {7, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {6, :hearts}]
+        )
 
       # Dealer keeps high cards from hand, high cards from deck, discards low from both
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {7, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.players[:north].hand == selected
@@ -248,12 +377,21 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - discard pile management" do
     test "unselected cards are added to discard pile" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       initial_discard_count = length(state.discarded_cards)
 
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
@@ -263,12 +401,21 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "discarded cards are removed from game" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {7, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {6, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {7, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {6, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {7, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {7, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # {6, :hearts} should be in discard pile
@@ -277,15 +424,29 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "multiple discarded cards all added to pile" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [
-          {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts},
-          {8, :hearts}, {7, :hearts}, {6, :hearts}
-        ]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts},
+            {7, :hearts},
+            {6, :hearts}
+          ]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       initial_discard_count = length(state.discarded_cards)
 
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
@@ -304,46 +465,73 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - invalid card selection" do
     test "error when dealer selects card not in pool" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
       # Try to select a card not in dealer's pool
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {8, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {8, :hearts}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:card_not_in_hand, {8, :hearts}}} = result
     end
 
     test "error when dealer selects card from another player's hand" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
       # Add a card to another player's hand
       east_player = %{Map.get(state.players, :east) | hand: [{5, :diamonds}]}
       state = put_in(state.players[:east], east_player)
 
       # Try to select that card
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {5, :diamonds}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {5, :diamonds}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:card_not_in_hand, {5, :diamonds}}} = result
     end
 
     test "error when dealer selects already discarded card" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
       # Add a card to discard pile
       state = %{state | discarded_cards: [{8, :hearts}]}
 
       # Try to select that discarded card
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {8, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {8, :hearts}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:card_not_in_hand, {8, :hearts}}} = result
@@ -356,12 +544,21 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - event emission" do
     test "dealer_robbed_pack event is emitted" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Event should be in events list
@@ -369,36 +566,56 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "event contains dealer position, taken count, and kept count" do
-      state = setup_dealer_rob_state(
-        dealer: :south,
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
-        remaining_deck: [{11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer: :south,
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
+          remaining_deck: [{11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Event format: {:dealer_robbed_pack, dealer, taken_count, kept_count}
-      event = Enum.find(new_state.events, fn e ->
-        match?({:dealer_robbed_pack, _, _, _}, e)
-      end)
+      event =
+        Enum.find(new_state.events, fn e ->
+          match?({:dealer_robbed_pack, _, _, _}, e)
+        end)
 
       assert {:dealer_robbed_pack, :south, 3, 6} = event
     end
 
     test "event does not contain card lists (information hiding)" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Find the dealer_robbed_pack event
-      event = Enum.find(new_state.events, fn e ->
-        match?({:dealer_robbed_pack, _, _, _}, e)
-      end)
+      event =
+        Enum.find(new_state.events, fn e ->
+          match?({:dealer_robbed_pack, _, _, _}, e)
+        end)
 
       # Verify event only contains counts, not card lists
       {:dealer_robbed_pack, _position, taken_count, kept_count} = event
@@ -407,12 +624,27 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "taken count equals remaining deck size" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts}
+          ]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       {:dealer_robbed_pack, _position, taken_count, _kept_count} =
@@ -422,15 +654,29 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "kept count always equals 6" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}],
-        remaining_deck: [
-          {13, :hearts}, {12, :hearts}, {11, :hearts},
-          {10, :hearts}, {9, :hearts}, {8, :hearts}, {7, :hearts}
-        ]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}],
+          remaining_deck: [
+            {13, :hearts},
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts},
+            {7, :hearts}
+          ]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       {:dealer_robbed_pack, _position, _taken_count, kept_count} =
@@ -448,7 +694,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "phase transitions from :second_deal to :playing" do
       state = setup_dealer_rob_state()
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert state.phase == :second_deal
@@ -459,7 +713,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       state = setup_dealer_rob_state()
       state = %{state | phase: :playing}
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:invalid_phase, :second_deal, :playing}} = result
@@ -469,7 +731,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       state = setup_dealer_rob_state()
       state = %{state | phase: :bidding}
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:invalid_phase, :second_deal, :bidding}} = result
@@ -484,7 +754,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "turn advances to left of dealer (north -> east)" do
       state = setup_dealer_rob_state(dealer: :north)
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.current_turn == :east
@@ -493,7 +771,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "turn advances to left of dealer (east -> south)" do
       state = setup_dealer_rob_state(dealer: :east)
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.current_turn == :south
@@ -502,7 +788,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "turn advances to left of dealer (south -> west)" do
       state = setup_dealer_rob_state(dealer: :south)
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.current_turn == :west
@@ -511,7 +805,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "turn advances to left of dealer (west -> north)" do
       state = setup_dealer_rob_state(dealer: :west)
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.current_turn == :north
@@ -521,7 +823,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       state = setup_dealer_rob_state(dealer: :north)
       state = %{state | current_turn: :east}
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:not_dealer_turn, :north, :east}} = result
@@ -534,15 +844,28 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
   describe "dealer_rob_pack/2 - edge case: no remaining cards" do
     test "dealer with 6 cards and empty deck can rob" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [
-          {14, :hearts}, {13, :hearts}, {12, :hearts},
-          {11, :hearts}, {10, :hearts}, {9, :hearts}
-        ],
-        remaining_deck: []
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [
+            {14, :hearts},
+            {13, :hearts},
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts}
+          ],
+          remaining_deck: []
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.dealer_pool_size == 6
@@ -551,15 +874,29 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "dealer with 7 cards and empty deck selects 6" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [
-          {14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts},
-          {10, :hearts}, {9, :hearts}, {8, :hearts}
-        ],
-        remaining_deck: []
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [
+            {14, :hearts},
+            {13, :hearts},
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts}
+          ],
+          remaining_deck: []
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.dealer_pool_size == 7
@@ -568,15 +905,28 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "taken count is 0 when deck is empty" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [
-          {14, :hearts}, {13, :hearts}, {12, :hearts},
-          {11, :hearts}, {10, :hearts}, {9, :hearts}
-        ],
-        remaining_deck: []
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [
+            {14, :hearts},
+            {13, :hearts},
+            {12, :hearts},
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts}
+          ],
+          remaining_deck: []
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       {:dealer_robbed_pack, _position, taken_count, _kept_count} =
@@ -594,17 +944,32 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     test "dealer can select 6 from larger pool following kill rules" do
       # This test verifies the dealer CAN select 6 cards even if pool has >6 trump
       # The actual kill rule enforcement is handled in a separate module
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
-        remaining_deck: [
-          {11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts},
-          {7, :hearts}, {6, :hearts}, {5, :hearts}, {4, :hearts}
-        ]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}, {12, :hearts}],
+          remaining_deck: [
+            {11, :hearts},
+            {10, :hearts},
+            {9, :hearts},
+            {8, :hearts},
+            {7, :hearts},
+            {6, :hearts},
+            {5, :hearts},
+            {4, :hearts}
+          ]
+        )
 
       # Dealer has 3 + 8 = 11 trump cards to choose from
       # Dealer must select exactly 6 per rob rules
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {5, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.dealer_pool_size == 11
@@ -614,20 +979,36 @@ defmodule Pidro.Game.DiscardDealerRobTest do
 
     test "dealer with many point cards can still select any 6" do
       # Dealer has lots of point cards in pool
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {11, :hearts}, {10, :hearts}],  # A, J, 10 (point cards)
-        remaining_deck: [
-          {5, :hearts},   # Right 5 (point card)
-          {5, :diamonds}, # Wrong 5 (point card)
-          {2, :hearts},   # 2 (point card)
-          {13, :hearts},  # K (non-point)
-          {12, :hearts},  # Q (non-point)
-          {9, :hearts}    # 9 (non-point)
-        ]
-      )
+      state =
+        setup_dealer_rob_state(
+          # A, J, 10 (point cards)
+          dealer_hand: [{14, :hearts}, {11, :hearts}, {10, :hearts}],
+          remaining_deck: [
+            # Right 5 (point card)
+            {5, :hearts},
+            # Wrong 5 (point card)
+            {5, :diamonds},
+            # 2 (point card)
+            {2, :hearts},
+            # K (non-point)
+            {13, :hearts},
+            # Q (non-point)
+            {12, :hearts},
+            # 9 (non-point)
+            {9, :hearts}
+          ]
+        )
 
       # Dealer chooses all 6 point cards (allowed in rob phase)
-      selected = [{14, :hearts}, {11, :hearts}, {10, :hearts}, {5, :hearts}, {5, :diamonds}, {2, :hearts}]
+      selected = [
+        {14, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {5, :hearts},
+        {5, :diamonds},
+        {2, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert length(new_state.players[:north].hand) == 6
@@ -638,12 +1019,21 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     end
 
     test "deck is empty after dealer robs" do
-      state = setup_dealer_rob_state(
-        dealer_hand: [{14, :hearts}, {13, :hearts}],
-        remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      )
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        )
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       assert new_state.deck == []
@@ -659,7 +1049,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       state = setup_dealer_rob_state()
       state = %{state | current_dealer: nil}
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       result = Discard.dealer_rob_pack(state, selected)
 
       assert {:error, {:no_dealer, _}} = result
@@ -669,7 +1067,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       for dealer <- [:north, :east, :south, :west] do
         state = setup_dealer_rob_state(dealer: dealer)
 
-        selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+        selected = [
+          {14, :hearts},
+          {13, :hearts},
+          {12, :hearts},
+          {11, :hearts},
+          {10, :hearts},
+          {9, :hearts}
+        ]
+
         {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
         assert new_state.players[dealer].hand == selected
@@ -689,7 +1095,15 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       state = put_in(state.players[:south].hand, south_hand)
       state = put_in(state.players[:west].hand, west_hand)
 
-      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      selected = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
 
       # Dealer's hand changed
