@@ -12,6 +12,8 @@ defmodule PidroServer.Application do
       PidroServer.Repo,
       {DNSCluster, query: Application.get_env(:pidro_server, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: PidroServer.PubSub},
+      # Presence tracking for connected users
+      PidroServerWeb.Presence,
       # Games domain supervisor - manages rooms and game processes
       PidroServer.Games.Supervisor,
       # Start to serve requests, typically the last entry
