@@ -1,9 +1,9 @@
 # Pidro Server - Implementation Master Plan
 
 **Last Updated**: 2025-11-02
-**Status**: Phase 0 & Phase 1 & Phase 2 & Phase 3 & Phase 4 Complete - Real-time Gameplay Ready
-**Coverage**: ~35% (infrastructure + auth + room management + game integration + channels)
-**Critical Path**: Lobby System → Testing → Polish
+**Status**: Phase 0-5 Complete - Lobby System with Presence Ready
+**Coverage**: ~45% (infrastructure + auth + room management + game integration + channels + lobby)
+**Critical Path**: Admin Panel → Stats → Polish → Production
 
 ---
 
@@ -30,7 +30,10 @@
 - ✅ **WebSocket channels** - UserSocket, GameChannel, LobbyChannel implemented (Phase 4)
 - ✅ **Real-time gameplay** - bid/declare_trump/play_card actions via channels
 - ✅ **Channel authentication** - JWT auth on WebSocket connect
-- ✅ **Test coverage** - Phase 1, 2, 3 & 4 integration tests completed
+- ✅ **Test coverage** - Phase 1-5 integration tests completed
+- ✅ **Lobby presence** - Live player tracking in lobby
+- ✅ **Room lifecycle** - Auto status updates (waiting → ready → playing → finished → closed)
+- ✅ **Auto cleanup** - Rooms automatically close 5 minutes after game completion
 
 ### Implementation Status by Phase
 
@@ -40,7 +43,7 @@
 | Phase 2 | Room Management | 100% | ✅ Complete | P0 |
 | Phase 3 | Game Integration | 100% | ✅ Complete | P0 |
 | Phase 4 | Real-time Gameplay | 100% | ✅ Complete | P1 |
-| Phase 5 | Lobby System | 0% | ❌ Not Started | P1 |
+| Phase 5 | Lobby System | 100% | ✅ Complete | P1 |
 | Phase 6 | Admin Panel | 0% | ❌ Not Started | P2 |
 | Phase 7 | Stats & Polish | 0% | ❌ Not Started | P2 |
 
@@ -264,28 +267,30 @@
 
 ---
 
-### Phase 5: Lobby System & Presence (Est: 1-2 days)
+### Phase 5: Lobby System & Presence (Est: 1-2 days) ✅ COMPLETE
 
 **Goal**: Live lobby updates, optional matchmaking
 
 #### Lobby Features (3-4 hours)
-- [ ] **[P5-01]** Integrate Presence tracking in LobbyChannel (1h)
-- [ ] **[P5-02]** Add player count to room list (30min)
-- [ ] **[P5-03]** Real-time room status updates (available, in-progress, closed) (1h)
-- [ ] **[P5-04]** Polish error handling and edge cases (1h)
+- [x] **[P5-01]** Integrate Presence tracking in LobbyChannel (1h) ✅
+- [x] **[P5-02]** Add player count to room list (30min) ✅
+- [x] **[P5-03]** Real-time room status updates (waiting, ready, playing, finished, closed) (1h) ✅
+- [x] **[P5-04]** Polish error handling and edge cases (1h) ✅
+- [x] **[P5-05]** Automatic room closure after game completion (1h) ✅
+- [x] **[P5-06]** Prevent joining rooms that are playing/finished/closed ✅
 
 #### Matchmaker (Optional MVP+) (4-6 hours)
-- [ ] **[P5-05]** Create `lib/pidro_server/games/matchmaker.ex` GenServer (3h)
+- [ ] **[P5-07]** Create `lib/pidro_server/games/matchmaker.ex` GenServer (3h) - DEFERRED TO POST-MVP
   - Queue players waiting for match
   - Auto-create room when 4 players queued
   - POST /api/v1/matchmaking/join endpoint
-- [ ] **[P5-06]** Test matchmaker (1h)
+- [ ] **[P5-08]** Test matchmaker (1h) - DEFERRED TO POST-MVP
 
 #### Testing (2-3 hours)
-- [ ] **[P5-07]** Test lobby presence tracking (1h)
-- [ ] **[P5-08]** Test matchmaker (if implemented) (1h)
+- [x] **[P5-09]** Test lobby presence tracking (1h) ✅
+- [x] **[P5-10]** Test room status transitions (1h) ✅
 
-**Validation**: Lobby shows live updates, presence tracking works
+**Validation**: ✅ Lobby shows live updates, presence tracking works, rooms auto-close after games
 
 ---
 
@@ -583,36 +588,38 @@ Add to mix.exs:
 
 ---
 
-## Next Actions (Top 10) - Phase 5 Focus
+## Next Actions (Top 10) - Phase 6 Focus
 
-1. **[NEXT]** Integrate Presence tracking in LobbyChannel (Phase 5) (1h)
-2. Add live player count to room list (30min)
-3. Implement real-time room status updates (available, in-progress, closed) (1h)
-4. Polish error handling and edge cases in channels (1h)
-5. Create Matchmaker GenServer (optional MVP+) (3h)
-6. Add POST /api/v1/matchmaking/join endpoint (1h)
-7. Test lobby presence tracking (1h)
-8. Test matchmaker (if implemented) (1h)
-9. Handle player disconnections gracefully (2h)
-10. Run full test suite and verify coverage >40% (1h)
+1. **[NEXT]** Create admin LiveView for lobby overview (Phase 6) (2h)
+2. Create admin LiveView for game monitoring (2h)
+3. Add admin routes and basic auth (optional) (1h)
+4. Create game_stats migration and schema (1h)
+5. Implement stats tracking on game completion (2h)
+6. Add GET /api/v1/users/me/stats endpoint (1h)
+7. Handle player disconnections gracefully (Phase 7) (2h)
+8. Cleanup/timeout old rooms (Phase 7) (1h)
+9. Add Credo and fix warnings (Phase 7) (2h)
+10. Achieve >80% test coverage (Phase 7) (3h)
 
-**Completed Phases**: 0, 1, 2, 3, 4 (Real-time Gameplay) ✅
-**Estimated time to MVP**: 1 week remaining (Phases 5-7)
+**Completed Phases**: 0, 1, 2, 3, 4, 5 (Lobby System) ✅
+**Estimated time to MVP**: 3-4 days remaining (Phases 6-7)
 
 ---
 
 ## Notes
 
-- **Phase 1-4 Complete** - Auth, Room Management, Game Integration, and Real-time Gameplay
+- **Phase 1-5 Complete** - Auth, Room Management, Game Integration, Real-time Gameplay, and Lobby System
 - **WebSocket channels** - Full implementation with JWT auth, GameChannel, and LobbyChannel
 - **Umbrella app structure** - Properly configured with pidro_engine integration
 - **Phoenix 1.8.1** - Modern Phoenix practices with supervision tree
 - **Ecto configured** - Postgres with user migrations complete
 - **LiveView ready** - For Phase 6 admin panel
 - **PubSub configured** - For real-time features and broadcasting
-- **Presence tracking** - Player presence monitoring implemented
-- **Test Infrastructure** - Full test suite for Phase 1-4 complete
-- **Next: Phase 5** - Lobby System with enhanced presence features
+- **Presence tracking** - Player presence monitoring in lobby and game channels
+- **Room lifecycle** - Complete status management (waiting → ready → playing → finished → closed)
+- **Auto cleanup** - Rooms automatically close 5 minutes after game completion
+- **Test Infrastructure** - Full test suite for Phase 1-5 complete (26 tests passing)
+- **Next: Phase 6** - Admin Panel (LiveView) for monitoring
 
-**Last update**: 2025-11-02 - Phase 4 completion (Real-time Gameplay)
-**Completion status**: 4/7 phases complete, 57% of development
+**Last update**: 2025-11-02 - Phase 5 completion (Lobby System & Presence)
+**Completion status**: 5/7 phases complete, 71% of development

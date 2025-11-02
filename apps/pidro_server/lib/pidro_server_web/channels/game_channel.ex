@@ -48,8 +48,10 @@ defmodule PidroServerWeb.GameChannel do
   require Logger
 
   alias PidroServer.Games.{RoomManager, GameAdapter}
-  alias PidroServer.Accounts
   alias PidroServerWeb.Presence
+
+  # Intercept presence_diff broadcasts to handle them explicitly
+  intercept ["presence_diff"]
 
   @doc """
   Authorizes and joins a player to the game channel.
@@ -105,16 +107,17 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   @doc """
-  Handles the bid action from a player.
+  Handles game actions from players.
 
-  Players can either bid an amount (6-14) or pass.
-
-  ## Message Format
-
-      %{"amount" => 8}        # Bid 8 points
-      %{"amount" => "pass"}   # Pass on bidding
+  Supports the following actions:
+  - `"bid"` - Make a bid or pass
+  - `"declare_trump"` - Declare trump suit (after winning bid)
+  - `"play_card"` - Play a card from hand
+  - `"ready"` - Signal ready status
   """
   @impl true
+  def handle_in(event, params, socket)
+
   def handle_in("bid", %{"amount" => "pass"}, socket) do
     apply_game_action(socket, :pass)
   end
@@ -130,45 +133,17 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
-  @doc """
-  Handles the declare_trump action from the bid winner.
-
-  ## Message Format
-
-      %{"suit" => "hearts"}
-      %{"suit" => "diamonds"}
-      %{"suit" => "clubs"}
-      %{"suit" => "spades"}
-  """
-  @impl true
   def handle_in("declare_trump", %{"suit" => suit}, socket) when is_binary(suit) do
     suit_atom = String.to_atom(suit)
     apply_game_action(socket, {:declare_trump, suit_atom})
   end
 
-  @doc """
-  Handles the play_card action from a player.
-
-  ## Message Format
-
-      %{"card" => %{"rank" => 14, "suit" => "spades"}}
-
-  Rank values: 2-14 (where 14 = Ace, 13 = King, 12 = Queen, 11 = Jack)
-  """
-  @impl true
   def handle_in("play_card", %{"card" => %{"rank" => rank, "suit" => suit}}, socket) do
     suit_atom = String.to_atom(suit)
     card = {rank, suit_atom}
     apply_game_action(socket, {:play_card, card})
   end
 
-  @doc """
-  Handles the ready signal from a player.
-
-  This is optional and could be used to signal that a player is ready to start
-  or ready for the next round.
-  """
-  @impl true
   def handle_in("ready", _params, socket) do
     Logger.debug("Player #{socket.assigns.position} is ready")
     broadcast(socket, "player_ready", %{position: socket.assigns.position})
@@ -176,35 +151,43 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   @doc """
-  Handles state updates broadcast from the game engine via PubSub.
+  Handles internal messages and game events.
 
-  When the game state changes, this receives the update and broadcasts
-  it to all players in the channel.
+  Processes the following events:
+  - `:state_update` - Game state changed
+  - `:game_over` - Game completed
+  - `:close_room` - Scheduled room closure
+  - `:after_join` - Presence tracking after join
   """
   @impl true
+  def handle_info(msg, socket)
+
   def handle_info({:state_update, new_state}, socket) do
     broadcast(socket, "game_state", %{state: new_state})
     {:noreply, socket}
   end
 
-  @doc """
-  Handles game over events from the game engine.
-
-  Broadcasts the final results to all players.
-  """
-  @impl true
   def handle_info({:game_over, winner, scores}, socket) do
+    room_code = socket.assigns.room_code
+
+    # Update room status to finished
+    RoomManager.update_room_status(room_code, :finished)
+
+    # Broadcast game over to all players
     broadcast(socket, "game_over", %{winner: winner, scores: scores})
+
+    # Schedule room closure after 5 minutes
+    Process.send_after(self(), {:close_room, room_code}, :timer.minutes(5))
+
     {:noreply, socket}
   end
 
-  @doc """
-  Tracks presence after a player joins.
+  def handle_info({:close_room, room_code}, socket) do
+    Logger.info("Closing room #{room_code} after game completion")
+    RoomManager.close_room(room_code)
+    {:noreply, socket}
+  end
 
-  This is delayed until after join completes to ensure the socket
-  is fully initialized.
-  """
-  @impl true
   def handle_info(:after_join, socket) do
     user_id = socket.assigns.user_id
 
@@ -215,6 +198,17 @@ defmodule PidroServerWeb.GameChannel do
       })
 
     push(socket, "presence_state", Presence.list(socket))
+    {:noreply, socket}
+  end
+
+  @doc """
+  Intercepts outgoing presence messages.
+
+  This is required when using Presence tracking in channels.
+  """
+  @impl true
+  def handle_out("presence_diff", msg, socket) do
+    push(socket, "presence_diff", msg)
     {:noreply, socket}
   end
 

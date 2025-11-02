@@ -58,13 +58,13 @@ defmodule PidroServer.Games.RoomManager do
     - `:code` - Unique 4-character alphanumeric room code
     - `:host_id` - User ID of the room host (creator)
     - `:player_ids` - List of user IDs currently in the room
-    - `:status` - Current room status (`:waiting` or `:ready`)
+    - `:status` - Current room status (`:waiting`, `:ready`, `:playing`, `:finished`, or `:closed`)
     - `:max_players` - Maximum number of players (default: 4)
     - `:created_at` - DateTime when the room was created
     - `:metadata` - Additional room metadata (e.g., room name)
     """
 
-    @type status :: :waiting | :ready
+    @type status :: :waiting | :ready | :playing | :finished | :closed
     @type t :: %__MODULE__{
             code: String.t(),
             host_id: String.t(),
@@ -169,8 +169,7 @@ defmodule PidroServer.Games.RoomManager do
   """
   @spec join_room(String.t(), String.t()) ::
           {:ok, Room.t()}
-          | {:error,
-             :room_not_found | :room_full | :already_in_room | :already_in_this_room}
+          | {:error, :room_not_found | :room_full | :already_in_room | :already_in_this_room}
   def join_room(room_code, player_id) do
     GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id})
   end
@@ -204,7 +203,8 @@ defmodule PidroServer.Games.RoomManager do
 
   ## Parameters
 
-  - `filter` - Optional filter (`:all`, `:waiting`, or `:ready`). Defaults to `:all`.
+  - `filter` - Optional filter (`:all`, `:waiting`, `:ready`, `:playing`, `:available`). Defaults to `:all`.
+    - `:available` returns all rooms except `:finished` and `:closed` (useful for lobby)
 
   ## Returns
 
@@ -218,10 +218,10 @@ defmodule PidroServer.Games.RoomManager do
       # List only waiting rooms
       waiting_rooms = RoomManager.list_rooms(:waiting)
 
-      # List ready rooms
-      ready_rooms = RoomManager.list_rooms(:ready)
+      # List available rooms (waiting, ready, or playing)
+      available_rooms = RoomManager.list_rooms(:available)
   """
-  @spec list_rooms(:all | :waiting | :ready) :: [Room.t()]
+  @spec list_rooms(:all | :waiting | :ready | :playing | :available) :: [Room.t()]
   def list_rooms(filter \\ :all) do
     GenServer.call(__MODULE__, {:list_rooms, filter})
   end
@@ -245,6 +245,49 @@ defmodule PidroServer.Games.RoomManager do
   @spec get_room(String.t()) :: {:ok, Room.t()} | {:error, :room_not_found}
   def get_room(room_code) do
     GenServer.call(__MODULE__, {:get_room, String.upcase(room_code)})
+  end
+
+  @doc """
+  Updates the status of a room.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `status` - New status (`:waiting`, `:ready`, `:playing`, `:finished`, or `:closed`)
+
+  ## Returns
+
+  - `:ok` - Status updated successfully
+  - `{:error, :room_not_found}` - Room doesn't exist
+
+  ## Examples
+
+      :ok = RoomManager.update_room_status("A1B2", :playing)
+  """
+  @spec update_room_status(String.t(), Room.status()) :: :ok | {:error, :room_not_found}
+  def update_room_status(room_code, status) do
+    GenServer.call(__MODULE__, {:update_room_status, String.upcase(room_code), status})
+  end
+
+  @doc """
+  Closes a room and removes it from the room list.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+
+  ## Returns
+
+  - `:ok` - Room closed successfully
+  - `{:error, :room_not_found}` - Room doesn't exist
+
+  ## Examples
+
+      :ok = RoomManager.close_room("A1B2")
+  """
+  @spec close_room(String.t()) :: :ok | {:error, :room_not_found}
+  def close_room(room_code) do
+    GenServer.call(__MODULE__, {:close_room, String.upcase(room_code)})
   end
 
   ## GenServer Callbacks
@@ -305,6 +348,9 @@ defmodule PidroServer.Games.RoomManager do
         room = state.rooms[room_code]
 
         cond do
+          room.status not in [:waiting, :ready] ->
+            {:reply, {:error, :room_not_available}, state}
+
           length(room.player_ids) >= room.max_players ->
             {:reply, {:error, :room_full}, state}
 
@@ -335,11 +381,14 @@ defmodule PidroServer.Games.RoomManager do
             broadcast_lobby(new_state)
 
             # Start game if room is ready
-            if new_status == :ready do
-              start_game_for_room(updated_room)
-            end
+            final_state =
+              if new_status == :ready do
+                start_game_for_room(updated_room, new_state)
+              else
+                new_state
+              end
 
-            {:reply, {:ok, updated_room}, new_state}
+            {:reply, {:ok, updated_room}, final_state}
         end
     end
   end
@@ -427,6 +476,54 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  @impl true
+  def handle_call({:update_room_status, room_code, new_status}, _from, state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+
+      room ->
+        updated_room = %Room{room | status: new_status}
+        new_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+        Logger.info("Room #{room_code} status updated: #{room.status} -> #{new_status}")
+
+        broadcast_room(room_code, updated_room)
+        broadcast_lobby(new_state)
+
+        {:reply, :ok, new_state}
+    end
+  end
+
+  @impl true
+  def handle_call({:close_room, room_code}, _from, state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+
+      room ->
+        # Remove room and all player mappings
+        new_rooms = Map.delete(state.rooms, room_code)
+        new_player_rooms =
+          Enum.reduce(room.player_ids, state.player_rooms, fn player_id, acc ->
+            Map.delete(acc, player_id)
+          end)
+
+        new_state = %State{
+          state
+          | rooms: new_rooms,
+            player_rooms: new_player_rooms
+        }
+
+        Logger.info("Room #{room_code} closed")
+
+        broadcast_room(room_code, nil)
+        broadcast_lobby(new_state)
+
+        {:reply, :ok, new_state}
+    end
+  end
+
   ## Private Helper Functions
 
   @doc false
@@ -441,20 +538,25 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  @spec filter_rooms([Room.t()], :all | :waiting | :ready) :: [Room.t()]
+  @spec filter_rooms([Room.t()], :all | :waiting | :ready | :playing | :available) :: [Room.t()]
   defp filter_rooms(rooms, :all), do: rooms
   defp filter_rooms(rooms, :waiting), do: Enum.filter(rooms, &(&1.status == :waiting))
   defp filter_rooms(rooms, :ready), do: Enum.filter(rooms, &(&1.status == :ready))
+  defp filter_rooms(rooms, :playing), do: Enum.filter(rooms, &(&1.status == :playing))
+  defp filter_rooms(rooms, :available) do
+    Enum.filter(rooms, &(&1.status in [:waiting, :ready, :playing]))
+  end
 
   @doc false
   @spec broadcast_lobby(State.t()) :: :ok
   defp broadcast_lobby(state) do
-    waiting_rooms = filter_rooms(Map.values(state.rooms), :waiting)
+    # Broadcast available rooms (excludes finished and closed)
+    available_rooms = filter_rooms(Map.values(state.rooms), :available)
 
     Phoenix.PubSub.broadcast(
       PidroServer.PubSub,
       "lobby:updates",
-      {:lobby_update, waiting_rooms}
+      {:lobby_update, available_rooms}
     )
 
     :ok
@@ -475,18 +577,25 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  @spec start_game_for_room(Room.t()) :: :ok
-  defp start_game_for_room(room) do
+  @spec start_game_for_room(Room.t(), State.t()) :: State.t()
+  defp start_game_for_room(room, state) do
     Logger.info("Starting game for room #{room.code} with players: #{inspect(room.player_ids)}")
 
     case GameSupervisor.start_game(room.code) do
       {:ok, _pid} ->
         Logger.info("Game started successfully for room #{room.code}")
-        :ok
+        # Update room status to :playing
+        updated_room = %Room{room | status: :playing}
+        new_state = %{state | rooms: Map.put(state.rooms, room.code, updated_room)}
+
+        broadcast_room(room.code, updated_room)
+        broadcast_lobby(new_state)
+
+        new_state
 
       {:error, reason} ->
         Logger.error("Failed to start game for room #{room.code}: #{inspect(reason)}")
-        :ok
+        state
     end
   end
 end
