@@ -1,0 +1,492 @@
+defmodule PidroServer.Games.RoomManager do
+  @moduledoc """
+  GenServer for managing game rooms in the Pidro application.
+
+  The RoomManager handles the lifecycle of game rooms, including:
+  - Creating new rooms with unique codes
+  - Managing player joins and leaves
+  - Auto-starting games when rooms reach 4 players
+  - Broadcasting room and lobby updates via PubSub
+  - Tracking player-to-room mappings to prevent duplicate room membership
+
+  ## Room Lifecycle
+
+  1. **Creation**: A host creates a room with a unique 4-character alphanumeric code
+  2. **Waiting**: Room status is `:waiting` while players join (1-3 players)
+  3. **Ready**: When 4 players join, status changes to `:ready` and game auto-starts
+  4. **Closed**: Room closes when host leaves or all players leave
+
+  ## PubSub Events
+
+  The RoomManager broadcasts events on two topics:
+  - `lobby:updates` - Notifies all clients about room list changes
+  - `room:<room_code>` - Notifies players in a specific room about room changes
+
+  ## Examples
+
+      # Create a new room
+      {:ok, room} = RoomManager.create_room("user123", %{name: "Fun Game"})
+
+      # Join an existing room
+      {:ok, room} = RoomManager.join_room("ABCD", "user456")
+
+      # Leave a room
+      :ok = RoomManager.leave_room("user123")
+
+      # List all waiting rooms
+      rooms = RoomManager.list_rooms(:waiting)
+
+      # Get specific room details
+      {:ok, room} = RoomManager.get_room("ABCD")
+  """
+
+  use GenServer
+  require Logger
+
+  alias PidroServer.Games.GameSupervisor
+
+  @max_players 4
+  @room_code_length 4
+
+  # Room struct representing a game room
+  defmodule Room do
+    @moduledoc """
+    Struct representing a game room.
+
+    ## Fields
+
+    - `:code` - Unique 4-character alphanumeric room code
+    - `:host_id` - User ID of the room host (creator)
+    - `:player_ids` - List of user IDs currently in the room
+    - `:status` - Current room status (`:waiting` or `:ready`)
+    - `:max_players` - Maximum number of players (default: 4)
+    - `:created_at` - DateTime when the room was created
+    - `:metadata` - Additional room metadata (e.g., room name)
+    """
+
+    @type status :: :waiting | :ready
+    @type t :: %__MODULE__{
+            code: String.t(),
+            host_id: String.t(),
+            player_ids: [String.t()],
+            status: status(),
+            max_players: integer(),
+            created_at: DateTime.t(),
+            metadata: map()
+          }
+
+    defstruct [
+      :code,
+      :host_id,
+      :player_ids,
+      :status,
+      :max_players,
+      :created_at,
+      :metadata
+    ]
+  end
+
+  # Internal state struct
+  defmodule State do
+    @moduledoc false
+
+    @type t :: %__MODULE__{
+            rooms: %{String.t() => Room.t()},
+            player_rooms: %{String.t() => String.t()}
+          }
+
+    defstruct rooms: %{},
+              player_rooms: %{}
+  end
+
+  ## Client API
+
+  @doc """
+  Starts the RoomManager GenServer.
+
+  ## Options
+
+  Standard GenServer options can be passed.
+
+  ## Examples
+
+      {:ok, pid} = RoomManager.start_link([])
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, Keyword.merge([name: __MODULE__], opts))
+  end
+
+  @doc """
+  Creates a new game room.
+
+  The creator becomes the host of the room. A unique 4-character alphanumeric
+  room code is generated. The room starts in `:waiting` status.
+
+  ## Parameters
+
+  - `host_id` - User ID of the room creator
+  - `metadata` - Optional metadata map (e.g., `%{name: "My Game"}`)
+
+  ## Returns
+
+  - `{:ok, room}` - Successfully created room
+  - `{:error, :already_in_room}` - Host is already in another room
+
+  ## Examples
+
+      {:ok, room} = RoomManager.create_room("user123", %{name: "Fun Game"})
+      room.code #=> "A1B2"
+      room.status #=> :waiting
+  """
+  @spec create_room(String.t(), map()) :: {:ok, Room.t()} | {:error, :already_in_room}
+  def create_room(host_id, metadata \\ %{}) do
+    GenServer.call(__MODULE__, {:create_room, host_id, metadata})
+  end
+
+  @doc """
+  Joins an existing room.
+
+  A player can only be in one room at a time. When the 4th player joins,
+  the room status changes to `:ready` and a game is automatically started.
+
+  ## Parameters
+
+  - `room_code` - The unique room code (case-insensitive)
+  - `player_id` - User ID of the joining player
+
+  ## Returns
+
+  - `{:ok, room}` - Successfully joined room
+  - `{:error, :room_not_found}` - Room code doesn't exist
+  - `{:error, :room_full}` - Room already has 4 players
+  - `{:error, :already_in_room}` - Player is already in another room
+  - `{:error, :already_in_this_room}` - Player is already in this room
+
+  ## Examples
+
+      {:ok, room} = RoomManager.join_room("A1B2", "user456")
+  """
+  @spec join_room(String.t(), String.t()) ::
+          {:ok, Room.t()}
+          | {:error,
+             :room_not_found | :room_full | :already_in_room | :already_in_this_room}
+  def join_room(room_code, player_id) do
+    GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id})
+  end
+
+  @doc """
+  Removes a player from their current room.
+
+  If the player is the host, the room is closed and all players are removed.
+  If the room becomes empty, it is automatically deleted.
+
+  ## Parameters
+
+  - `player_id` - User ID of the leaving player
+
+  ## Returns
+
+  - `:ok` - Successfully left room
+  - `{:error, :not_in_room}` - Player is not in any room
+
+  ## Examples
+
+      :ok = RoomManager.leave_room("user123")
+  """
+  @spec leave_room(String.t()) :: :ok | {:error, :not_in_room}
+  def leave_room(player_id) do
+    GenServer.call(__MODULE__, {:leave_room, player_id})
+  end
+
+  @doc """
+  Lists all rooms, optionally filtered by status.
+
+  ## Parameters
+
+  - `filter` - Optional filter (`:all`, `:waiting`, or `:ready`). Defaults to `:all`.
+
+  ## Returns
+
+  List of rooms matching the filter criteria.
+
+  ## Examples
+
+      # List all rooms
+      all_rooms = RoomManager.list_rooms()
+
+      # List only waiting rooms
+      waiting_rooms = RoomManager.list_rooms(:waiting)
+
+      # List ready rooms
+      ready_rooms = RoomManager.list_rooms(:ready)
+  """
+  @spec list_rooms(:all | :waiting | :ready) :: [Room.t()]
+  def list_rooms(filter \\ :all) do
+    GenServer.call(__MODULE__, {:list_rooms, filter})
+  end
+
+  @doc """
+  Gets details of a specific room.
+
+  ## Parameters
+
+  - `room_code` - The unique room code (case-insensitive)
+
+  ## Returns
+
+  - `{:ok, room}` - Room details
+  - `{:error, :room_not_found}` - Room doesn't exist
+
+  ## Examples
+
+      {:ok, room} = RoomManager.get_room("A1B2")
+  """
+  @spec get_room(String.t()) :: {:ok, Room.t()} | {:error, :room_not_found}
+  def get_room(room_code) do
+    GenServer.call(__MODULE__, {:get_room, String.upcase(room_code)})
+  end
+
+  ## GenServer Callbacks
+
+  @impl true
+  def init(:ok) do
+    Logger.info("RoomManager started")
+    {:ok, %State{}}
+  end
+
+  @impl true
+  def handle_call({:create_room, host_id, metadata}, _from, state) do
+    cond do
+      Map.has_key?(state.player_rooms, host_id) ->
+        {:reply, {:error, :already_in_room}, state}
+
+      true ->
+        room_code = generate_room_code()
+
+        room = %Room{
+          code: room_code,
+          host_id: host_id,
+          player_ids: [host_id],
+          status: :waiting,
+          max_players: @max_players,
+          created_at: DateTime.utc_now(),
+          metadata: metadata
+        }
+
+        new_state = %State{
+          state
+          | rooms: Map.put(state.rooms, room_code, room),
+            player_rooms: Map.put(state.player_rooms, host_id, room_code)
+        }
+
+        Logger.info("Room created: #{room_code} by host: #{host_id}")
+        broadcast_lobby(new_state)
+
+        {:reply, {:ok, room}, new_state}
+    end
+  end
+
+  @impl true
+  def handle_call({:join_room, room_code, player_id}, _from, state) do
+    cond do
+      not Map.has_key?(state.rooms, room_code) ->
+        {:reply, {:error, :room_not_found}, state}
+
+      Map.has_key?(state.player_rooms, player_id) ->
+        # Check if already in this specific room
+        if state.player_rooms[player_id] == room_code do
+          {:reply, {:error, :already_in_this_room}, state}
+        else
+          {:reply, {:error, :already_in_room}, state}
+        end
+
+      true ->
+        room = state.rooms[room_code]
+
+        cond do
+          length(room.player_ids) >= room.max_players ->
+            {:reply, {:error, :room_full}, state}
+
+          true ->
+            updated_player_ids = room.player_ids ++ [player_id]
+            player_count = length(updated_player_ids)
+
+            # Auto-start game when 4th player joins
+            new_status = if player_count == @max_players, do: :ready, else: :waiting
+
+            updated_room = %Room{
+              room
+              | player_ids: updated_player_ids,
+                status: new_status
+            }
+
+            new_state = %State{
+              state
+              | rooms: Map.put(state.rooms, room_code, updated_room),
+                player_rooms: Map.put(state.player_rooms, player_id, room_code)
+            }
+
+            Logger.info(
+              "Player #{player_id} joined room #{room_code} (#{player_count}/#{@max_players})"
+            )
+
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby(new_state)
+
+            # Start game if room is ready
+            if new_status == :ready do
+              start_game_for_room(updated_room)
+            end
+
+            {:reply, {:ok, updated_room}, new_state}
+        end
+    end
+  end
+
+  @impl true
+  def handle_call({:leave_room, player_id}, _from, state) do
+    case Map.get(state.player_rooms, player_id) do
+      nil ->
+        {:reply, {:error, :not_in_room}, state}
+
+      room_code ->
+        room = state.rooms[room_code]
+
+        # If host leaves, close the room entirely
+        if room.host_id == player_id do
+          Logger.info("Host #{player_id} left room #{room_code}, closing room")
+
+          new_state = %State{
+            state
+            | rooms: Map.delete(state.rooms, room_code),
+              player_rooms: Map.drop(state.player_rooms, room.player_ids)
+          }
+
+          broadcast_room(room_code, nil)
+          broadcast_lobby(new_state)
+
+          {:reply, :ok, new_state}
+        else
+          # Remove player from room
+          updated_player_ids = List.delete(room.player_ids, player_id)
+
+          # If room becomes empty, delete it
+          if Enum.empty?(updated_player_ids) do
+            Logger.info("Room #{room_code} is now empty, deleting")
+
+            new_state = %State{
+              state
+              | rooms: Map.delete(state.rooms, room_code),
+                player_rooms: Map.delete(state.player_rooms, player_id)
+            }
+
+            broadcast_room(room_code, nil)
+            broadcast_lobby(new_state)
+
+            {:reply, :ok, new_state}
+          else
+            updated_room = %Room{
+              room
+              | player_ids: updated_player_ids,
+                status: :waiting
+            }
+
+            new_state = %State{
+              state
+              | rooms: Map.put(state.rooms, room_code, updated_room),
+                player_rooms: Map.delete(state.player_rooms, player_id)
+            }
+
+            Logger.info("Player #{player_id} left room #{room_code}")
+
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby(new_state)
+
+            {:reply, :ok, new_state}
+          end
+        end
+    end
+  end
+
+  @impl true
+  def handle_call({:list_rooms, filter}, _from, state) do
+    rooms =
+      state.rooms
+      |> Map.values()
+      |> filter_rooms(filter)
+
+    {:reply, rooms, state}
+  end
+
+  @impl true
+  def handle_call({:get_room, room_code}, _from, state) do
+    case Map.get(state.rooms, room_code) do
+      nil -> {:reply, {:error, :room_not_found}, state}
+      room -> {:reply, {:ok, room}, state}
+    end
+  end
+
+  ## Private Helper Functions
+
+  @doc false
+  @spec generate_room_code() :: String.t()
+  defp generate_room_code do
+    # Generate a 4-character alphanumeric code
+    alphabet = Enum.concat([?A..?Z, ?0..?9])
+
+    1..@room_code_length
+    |> Enum.map(fn _ -> Enum.random(alphabet) end)
+    |> List.to_string()
+  end
+
+  @doc false
+  @spec filter_rooms([Room.t()], :all | :waiting | :ready) :: [Room.t()]
+  defp filter_rooms(rooms, :all), do: rooms
+  defp filter_rooms(rooms, :waiting), do: Enum.filter(rooms, &(&1.status == :waiting))
+  defp filter_rooms(rooms, :ready), do: Enum.filter(rooms, &(&1.status == :ready))
+
+  @doc false
+  @spec broadcast_lobby(State.t()) :: :ok
+  defp broadcast_lobby(state) do
+    waiting_rooms = filter_rooms(Map.values(state.rooms), :waiting)
+
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "lobby:updates",
+      {:lobby_update, waiting_rooms}
+    )
+
+    :ok
+  end
+
+  @doc false
+  @spec broadcast_room(String.t(), Room.t() | nil) :: :ok
+  defp broadcast_room(room_code, room) do
+    event = if room, do: {:room_update, room}, else: {:room_closed}
+
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "room:#{room_code}",
+      event
+    )
+
+    :ok
+  end
+
+  @doc false
+  @spec start_game_for_room(Room.t()) :: :ok
+  defp start_game_for_room(room) do
+    Logger.info("Starting game for room #{room.code} with players: #{inspect(room.player_ids)}")
+
+    case GameSupervisor.start_game(room.code) do
+      {:ok, _pid} ->
+        Logger.info("Game started successfully for room #{room.code}")
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Failed to start game for room #{room.code}: #{inspect(reason)}")
+        :ok
+    end
+  end
+end

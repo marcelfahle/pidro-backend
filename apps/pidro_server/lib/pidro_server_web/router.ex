@@ -14,16 +14,41 @@ defmodule PidroServerWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :api_authenticated do
+    plug :accepts, ["json"]
+    plug PidroServerWeb.Plugs.Authenticate
+  end
+
   scope "/", PidroServerWeb do
     pipe_through :browser
 
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", PidroServerWeb do
-  #   pipe_through :api
-  # end
+  # API v1 routes
+  scope "/api/v1", PidroServerWeb.Api do
+    pipe_through :api
+
+    # Auth routes without authentication
+    post "/auth/register", AuthController, :register
+    post "/auth/login", AuthController, :login
+
+    # Room routes without authentication
+    get "/rooms", RoomController, :index
+    get "/rooms/:code", RoomController, :show
+  end
+
+  # API v1 authenticated routes
+  scope "/api/v1", PidroServerWeb.Api do
+    pipe_through :api_authenticated
+
+    get "/auth/me", AuthController, :me
+
+    # Room routes with authentication
+    post "/rooms", RoomController, :create
+    post "/rooms/:code/join", RoomController, :join
+    delete "/rooms/:code/leave", RoomController, :leave
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:pidro_server, :dev_routes) do

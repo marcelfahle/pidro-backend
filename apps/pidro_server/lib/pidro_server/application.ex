@@ -12,8 +12,8 @@ defmodule PidroServer.Application do
       PidroServer.Repo,
       {DNSCluster, query: Application.get_env(:pidro_server, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: PidroServer.PubSub},
-      # Start a worker by calling: PidroServer.Worker.start_link(arg)
-      # {PidroServer.Worker, arg},
+      # Games domain supervisor - manages rooms and game processes
+      PidroServer.Games.Supervisor,
       # Start to serve requests, typically the last entry
       PidroServerWeb.Endpoint
     ]
