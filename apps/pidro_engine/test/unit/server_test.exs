@@ -62,7 +62,6 @@ defmodule Pidro.ServerTest do
 
     test "updates server state after successful action" do
       {:ok, pid} = Server.start_link()
-      initial_state = Server.get_state(pid)
 
       # Find a legal action
       actions = Server.legal_actions(pid, :north)
@@ -209,8 +208,7 @@ defmodule Pidro.ServerTest do
       {:ok, pid1} = Server.start_link(game_id: "game1")
       {:ok, pid2} = Server.start_link(game_id: "game2")
 
-      # Get initial state of both
-      state1_before = Server.get_state(pid1)
+      # Get initial state of second game
       state2_before = Server.get_state(pid2)
 
       # Try to advance first game
