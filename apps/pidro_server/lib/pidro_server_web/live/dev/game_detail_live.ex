@@ -14,7 +14,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   use PidroServerWeb, :live_view
   require Logger
-  alias PidroServer.Dev.{BotManager, Event, EventRecorder}
+  alias PidroServer.Dev.{BotManager, Event, EventRecorder, GameHelpers}
   alias PidroServer.Games.{GameAdapter, RoomManager}
 
   @impl true
@@ -102,6 +102,16 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_info({:room_updated, room}, socket) do
     {:noreply, assign(socket, :room, room)}
+  end
+
+  @impl true
+  def handle_info({:auto_bid_complete, :success}, socket) do
+    {:noreply, put_flash(socket, :info, "Auto-bidding completed successfully")}
+  end
+
+  @impl true
+  def handle_info({:auto_bid_complete, {:error, reason}}, socket) do
+    {:noreply, put_flash(socket, :error, "Auto-bidding failed: #{reason}")}
   end
 
   @impl true
@@ -319,6 +329,73 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
+  def handle_event("undo_last_action", _params, socket) do
+    # DEV-1001: Undo last action
+    room_code = socket.assigns.room_code
+
+    case GameAdapter.undo(room_code) do
+      {:ok, previous_state} ->
+        # Refetch legal actions
+        legal_actions = get_legal_actions(room_code, socket.assigns.selected_position)
+
+        {:noreply,
+         socket
+         |> assign(:game_state, previous_state)
+         |> assign(:legal_actions, legal_actions)
+         |> put_flash(:info, "Action undone successfully")}
+
+      {:error, :no_history} ->
+        {:noreply, put_flash(socket, :error, "No actions to undo")}
+
+      {:error, reason} ->
+        error_message = format_error(reason)
+
+        {:noreply, put_flash(socket, :error, "Undo failed: #{error_message}")}
+    end
+  end
+
+  @impl true
+  def handle_event("auto_bid", _params, socket) do
+    # DEV-1002: Auto-complete bidding phase
+    room_code = socket.assigns.room_code
+
+    # Start auto-bidding in a separate process to avoid blocking
+    parent = self()
+
+    Task.start(fn ->
+      case GameHelpers.auto_bid(room_code, delay_ms: 500) do
+        {:ok, _final_state} ->
+          send(parent, {:auto_bid_complete, :success})
+
+        {:error, :not_in_bidding_phase} ->
+          send(parent, {:auto_bid_complete, {:error, "Game is not in bidding phase"}})
+
+        {:error, reason} ->
+          send(parent, {:auto_bid_complete, {:error, inspect(reason)}})
+      end
+    end)
+
+    {:noreply, put_flash(socket, :info, "Auto-bidding started...")}
+  end
+
+  @impl true
+  def handle_event("fast_forward", _params, socket) do
+    # DEV-1003: Fast-forward game to completion
+    room_code = socket.assigns.room_code
+
+    case GameHelpers.fast_forward(room_code, delay_ms: 100) do
+      {:ok, :started} ->
+        {:noreply,
+         put_flash(socket, :info, "Fast-forward started - bots will play automatically")}
+
+      {:error, reason} ->
+        error_message = format_error(reason)
+
+        {:noreply, put_flash(socket, :error, "Fast-forward failed: #{error_message}")}
+    end
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <div class="px-4 py-10 sm:px-6 lg:px-8">
@@ -495,10 +572,92 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </div>
         </div>
         
+    <!-- Dev Quick Actions - DEV-1001 to DEV-1003 Implementation -->
+        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+          <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg leading-6 font-medium text-zinc-900">Dev Quick Actions</h3>
+            <p class="mt-1 text-sm text-zinc-500">
+              Testing shortcuts for rapid development iteration
+            </p>
+          </div>
+          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+            <div class="flex flex-wrap gap-3">
+              <button
+                type="button"
+                phx-click="undo_last_action"
+                class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+                title="Undo the last game action"
+              >
+                <svg
+                  class="w-5 h-5 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                  />
+                </svg>
+                Undo Last Action
+              </button>
+
+              <button
+                type="button"
+                phx-click="auto_bid"
+                class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+                title="Automatically complete the bidding phase"
+              >
+                <svg
+                  class="w-5 h-5 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+                Auto-complete Bidding
+              </button>
+
+              <button
+                type="button"
+                phx-click="fast_forward"
+                class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+                title="Fast forward the game to completion"
+              >
+                <svg
+                  class="w-5 h-5 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M5 3l14 9-14 9V3z"
+                  />
+                </svg>
+                Fast Forward
+              </button>
+            </div>
+          </div>
+        </div>
+        
     <!-- Action Execution - DEV-901 to DEV-904 Implementation -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
           <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Quick Actions</h3>
+            <h3 class="text-lg leading-6 font-medium text-zinc-900">Legal Actions</h3>
             <p class="mt-1 text-sm text-zinc-500">
               <%= if @selected_position == :all do %>
                 Select a specific position to view and execute actions

@@ -378,6 +378,12 @@ defmodule Pidro.Server do
     {:reply, :ok, new_state}
   end
 
+  @impl true
+  def handle_call({:set_state, new_game_state}, _from, state) do
+    new_state = %{state | game_state: new_game_state}
+    {:reply, :ok, new_state}
+  end
+
   # Private Helpers
 
   defp emit_telemetry(event_suffix, measurements, state) do

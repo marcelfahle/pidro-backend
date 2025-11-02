@@ -32,6 +32,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
 
   require Logger
+  alias Pidro.Game.Replay
   alias PidroServer.Games.{GameRegistry, GameSupervisor}
 
   @doc """
@@ -249,6 +250,63 @@ defmodule PidroServer.Games.GameAdapter do
   @spec get_game(String.t()) :: {:ok, pid()} | {:error, :not_found}
   def get_game(room_code) do
     GameSupervisor.get_game(room_code)
+  end
+
+  @doc """
+  Undoes the last action in the game.
+
+  Reverts the game state to before the last action was applied. This uses
+  the Pidro.Game.Replay.undo/1 function to replay all events except the last one.
+
+  ## Parameters
+
+    - `room_code` - The room code
+
+  ## Returns
+
+    - `{:ok, previous_state}` on success
+    - `{:error, :not_found}` if the game doesn't exist
+    - `{:error, :no_history}` if there are no actions to undo
+
+  ## Examples
+
+      iex> GameAdapter.undo("A3F9")
+      {:ok, %{phase: :bidding, ...}}
+  """
+  @spec undo(String.t()) :: {:ok, term()} | {:error, term()}
+  def undo(room_code) do
+    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+      try do
+        # Get current state
+        current_state = Pidro.Server.get_state(pid)
+
+        # Call Replay.undo/1
+        case Replay.undo(current_state) do
+          {:ok, previous_state} ->
+            # Set the game state to the previous state
+            # We need to call GenServer.call directly since there's no set_state function
+            case GenServer.call(pid, {:set_state, previous_state}) do
+              :ok ->
+                # Broadcast the state update
+                broadcast_state_update(room_code, pid)
+                {:ok, previous_state}
+
+              error ->
+                error
+            end
+
+          {:error, _reason} = error ->
+            error
+        end
+      rescue
+        e ->
+          Logger.error(
+            "Error undoing action for game #{room_code}: #{Exception.message(e)}\n#{Exception.format_stacktrace()}"
+          )
+
+          {:error, Exception.message(e)}
+      end
+    end
   end
 
   ## Private Functions
