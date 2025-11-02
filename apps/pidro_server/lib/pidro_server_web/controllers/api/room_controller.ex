@@ -368,6 +368,80 @@ defmodule PidroServerWeb.Api.RoomController do
     end
   end
 
+  @doc """
+  Gets the current game state for a room.
+
+  Retrieves the current game state from the Pidro.Server process. This includes
+  the game phase, current turn, player hands, bids, tricks, and scores.
+
+  This endpoint is publicly accessible and does not require authentication.
+
+  Returns HTTP 200 (OK) on success.
+
+  ## Parameters
+
+    * `conn` - The Plug.Conn connection struct
+    * `params` - Request parameters, must include:
+      - `code` - The unique room code (case-insensitive)
+
+  ## Route Example
+
+      GET /api/v1/rooms/A1B2/state
+
+  ## Response Example (Success)
+
+      {
+        "data": {
+          "state": {
+            "phase": "bidding",
+            "hand_number": 1,
+            "current_turn": "north",
+            "current_dealer": "west",
+            "players": {
+              "north": {
+                "position": "north",
+                "team": "north_south",
+                "hand": [[14, "hearts"], [13, "hearts"], ...],
+                "tricks_won": 0
+              },
+              ...
+            },
+            "bids": [
+              {"position": "west", "amount": "pass"},
+              {"position": "north", "amount": 8}
+            ],
+            "tricks": [],
+            "cumulative_scores": {
+              "north_south": 0,
+              "east_west": 0
+            }
+          }
+        }
+      }
+
+  ## Response Example (Error - Game Not Started)
+
+      {
+        "errors": [
+          {
+            "code": "GAME_NOT_FOUND",
+            "title": "Game not found",
+            "detail": "No game is currently active for this room"
+          }
+        ]
+      }
+  """
+  @spec state(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def state(conn, %{"code" => code}) do
+    alias PidroServer.Games.GameAdapter
+
+    with {:ok, game_state} <- GameAdapter.get_state(code) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:state, %{state: game_state})
+    end
+  end
+
   ## Private Helper Functions
 
   @doc false

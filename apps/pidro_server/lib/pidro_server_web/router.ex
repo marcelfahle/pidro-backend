@@ -36,6 +36,7 @@ defmodule PidroServerWeb.Router do
     # Room routes without authentication
     get "/rooms", RoomController, :index
     get "/rooms/:code", RoomController, :show
+    get "/rooms/:code/state", RoomController, :state
   end
 
   # API v1 authenticated routes
