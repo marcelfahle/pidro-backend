@@ -161,6 +161,62 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :room_not_available_for_spectators}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "ROOM_NOT_AVAILABLE_FOR_SPECTATORS",
+          title: "Room not available for spectators",
+          detail: "Can only spectate games that are playing or finished"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :spectators_full}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "SPECTATORS_FULL",
+          title: "Spectators full",
+          detail: "Room has reached maximum number of spectators"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :already_spectating}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "ALREADY_SPECTATING",
+          title: "Already spectating",
+          detail: "User is already spectating a room"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :not_spectating}) do
+    conn
+    |> put_status(:not_found)
+    |> json(%{
+      errors: [
+        %{
+          code: "NOT_SPECTATING",
+          title: "Not spectating",
+          detail: "User is not spectating any room"
+        }
+      ]
+    })
+  end
+
   @doc false
   # Convert field names from underscores to human-readable format
   defp humanize_field(field) do

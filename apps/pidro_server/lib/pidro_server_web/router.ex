@@ -75,6 +75,10 @@ defmodule PidroServerWeb.Router do
     post "/rooms", RoomController, :create
     post "/rooms/:code/join", RoomController, :join
     delete "/rooms/:code/leave", RoomController, :leave
+
+    # Spectator routes with authentication
+    post "/rooms/:code/watch", RoomController, :watch
+    delete "/rooms/:code/unwatch", RoomController, :unwatch
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

@@ -58,8 +58,10 @@ defmodule PidroServer.Games.RoomManager do
     - `:code` - Unique 4-character alphanumeric room code
     - `:host_id` - User ID of the room host (creator)
     - `:player_ids` - List of user IDs currently in the room
+    - `:spectator_ids` - List of user IDs currently spectating the room
     - `:status` - Current room status (`:waiting`, `:ready`, `:playing`, `:finished`, or `:closed`)
     - `:max_players` - Maximum number of players (default: 4)
+    - `:max_spectators` - Maximum number of spectators (default: 10)
     - `:created_at` - DateTime when the room was created
     - `:metadata` - Additional room metadata (e.g., room name)
     - `:disconnected_players` - Map of disconnected players with their disconnect timestamps (%{user_id => DateTime.t()})
@@ -70,8 +72,10 @@ defmodule PidroServer.Games.RoomManager do
             code: String.t(),
             host_id: String.t(),
             player_ids: [String.t()],
+            spectator_ids: [String.t()],
             status: status(),
             max_players: integer(),
+            max_spectators: integer(),
             created_at: DateTime.t(),
             metadata: map(),
             disconnected_players: %{String.t() => DateTime.t()}
@@ -85,6 +89,8 @@ defmodule PidroServer.Games.RoomManager do
       :max_players,
       :created_at,
       :metadata,
+      spectator_ids: [],
+      max_spectators: 10,
       disconnected_players: %{}
     ]
   end
@@ -95,11 +101,13 @@ defmodule PidroServer.Games.RoomManager do
 
     @type t :: %__MODULE__{
             rooms: %{String.t() => Room.t()},
-            player_rooms: %{String.t() => String.t()}
+            player_rooms: %{String.t() => String.t()},
+            spectator_rooms: %{String.t() => String.t()}
           }
 
     defstruct rooms: %{},
-              player_rooms: %{}
+              player_rooms: %{},
+              spectator_rooms: %{}
   end
 
   ## Client API
@@ -291,6 +299,85 @@ defmodule PidroServer.Games.RoomManager do
   @spec close_room(String.t()) :: :ok | {:error, :room_not_found}
   def close_room(room_code) do
     GenServer.call(__MODULE__, {:close_room, String.upcase(room_code)})
+  end
+
+  @doc """
+  Joins a room as a spectator.
+
+  Spectators can only join rooms that are currently `:playing` or `:finished`.
+  They can watch the game but cannot participate.
+
+  ## Parameters
+
+  - `room_code` - The unique room code (case-insensitive)
+  - `spectator_id` - User ID of the spectator
+
+  ## Returns
+
+  - `{:ok, room}` - Successfully joined as spectator
+  - `{:error, :room_not_found}` - Room code doesn't exist
+  - `{:error, :room_not_available_for_spectators}` - Room is not playing or finished
+  - `{:error, :spectators_full}` - Maximum spectators reached
+  - `{:error, :already_spectating}` - User is already spectating this room
+  - `{:error, :already_in_room}` - User is a player in another room
+
+  ## Examples
+
+      {:ok, room} = RoomManager.join_spectator_room("A1B2", "user789")
+  """
+  @spec join_spectator_room(String.t(), String.t()) ::
+          {:ok, Room.t()}
+          | {:error,
+             :room_not_found
+             | :room_not_available_for_spectators
+             | :spectators_full
+             | :already_spectating
+             | :already_in_room}
+  def join_spectator_room(room_code, spectator_id) do
+    GenServer.call(__MODULE__, {:join_spectator_room, String.upcase(room_code), spectator_id})
+  end
+
+  @doc """
+  Removes a spectator from a room.
+
+  ## Parameters
+
+  - `spectator_id` - User ID of the spectator
+
+  ## Returns
+
+  - `:ok` - Successfully left room
+  - `{:error, :not_spectating}` - User is not spectating any room
+
+  ## Examples
+
+      :ok = RoomManager.leave_spectator("user789")
+  """
+  @spec leave_spectator(String.t()) :: :ok | {:error, :not_spectating}
+  def leave_spectator(spectator_id) do
+    GenServer.call(__MODULE__, {:leave_spectator, spectator_id})
+  end
+
+  @doc """
+  Checks if a user is a spectator in a specific room.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `user_id` - User ID to check
+
+  ## Returns
+
+  - `true` - User is spectating the room
+  - `false` - User is not spectating the room
+
+  ## Examples
+
+      is_spectator = RoomManager.is_spectator?("A1B2", "user789")
+  """
+  @spec is_spectator?(String.t(), String.t()) :: boolean()
+  def is_spectator?(room_code, user_id) do
+    GenServer.call(__MODULE__, {:is_spectator, String.upcase(room_code), user_id})
   end
 
   @doc """
@@ -590,7 +677,7 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       room ->
-        # Remove room and all player mappings
+        # Remove room and all player/spectator mappings
         new_rooms = Map.delete(state.rooms, room_code)
 
         new_player_rooms =
@@ -598,11 +685,17 @@ defmodule PidroServer.Games.RoomManager do
             Map.delete(acc, player_id)
           end)
 
+        new_spectator_rooms =
+          Enum.reduce(room.spectator_ids, state.spectator_rooms, fn spectator_id, acc ->
+            Map.delete(acc, spectator_id)
+          end)
+
         %State{} =
           new_state = %State{
             state
             | rooms: new_rooms,
-              player_rooms: new_player_rooms
+              player_rooms: new_player_rooms,
+              spectator_rooms: new_spectator_rooms
           }
 
         Logger.info("Room #{room_code} closed")
@@ -611,6 +704,98 @@ defmodule PidroServer.Games.RoomManager do
         broadcast_lobby(new_state)
 
         {:reply, :ok, new_state}
+    end
+  end
+
+  @impl true
+  def handle_call({:join_spectator_room, room_code, spectator_id}, _from, %State{} = state) do
+    cond do
+      not Map.has_key?(state.rooms, room_code) ->
+        {:reply, {:error, :room_not_found}, state}
+
+      Map.has_key?(state.player_rooms, spectator_id) ->
+        {:reply, {:error, :already_in_room}, state}
+
+      Map.has_key?(state.spectator_rooms, spectator_id) ->
+        # Check if already spectating this specific room
+        if state.spectator_rooms[spectator_id] == room_code do
+          {:reply, {:error, :already_spectating}, state}
+        else
+          {:reply, {:error, :already_spectating}, state}
+        end
+
+      true ->
+        %Room{} = room = state.rooms[room_code]
+
+        cond do
+          room.status not in [:playing, :finished] ->
+            {:reply, {:error, :room_not_available_for_spectators}, state}
+
+          length(room.spectator_ids) >= room.max_spectators ->
+            {:reply, {:error, :spectators_full}, state}
+
+          true ->
+            updated_spectator_ids = room.spectator_ids ++ [spectator_id]
+
+            %Room{} =
+              updated_room = %Room{room | spectator_ids: updated_spectator_ids}
+
+            %State{} =
+              new_state = %State{
+                state
+                | rooms: Map.put(state.rooms, room_code, updated_room),
+                  spectator_rooms: Map.put(state.spectator_rooms, spectator_id, room_code)
+              }
+
+            Logger.info("Spectator #{spectator_id} joined room #{room_code}")
+
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby(new_state)
+
+            {:reply, {:ok, updated_room}, new_state}
+        end
+    end
+  end
+
+  @impl true
+  def handle_call({:leave_spectator, spectator_id}, _from, %State{} = state) do
+    case Map.get(state.spectator_rooms, spectator_id) do
+      nil ->
+        {:reply, {:error, :not_spectating}, state}
+
+      room_code ->
+        %Room{} = room = state.rooms[room_code]
+
+        updated_spectator_ids = List.delete(room.spectator_ids, spectator_id)
+
+        %Room{} =
+          updated_room = %Room{room | spectator_ids: updated_spectator_ids}
+
+        %State{} =
+          new_state = %State{
+            state
+            | rooms: Map.put(state.rooms, room_code, updated_room),
+              spectator_rooms: Map.delete(state.spectator_rooms, spectator_id)
+          }
+
+        Logger.info("Spectator #{spectator_id} left room #{room_code}")
+
+        broadcast_room(room_code, updated_room)
+        broadcast_lobby(new_state)
+
+        {:reply, :ok, new_state}
+    end
+  end
+
+  @impl true
+  def handle_call({:is_spectator, room_code, user_id}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, false, state}
+
+      %Room{} = room ->
+        is_spectating = user_id in room.spectator_ids
+        {:reply, is_spectating, state}
     end
   end
 
