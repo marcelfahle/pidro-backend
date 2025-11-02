@@ -16,7 +16,8 @@ defmodule PidroServer.Performance.LoadTest do
   alias PidroServerWeb.{UserSocket, GameChannel}
 
   @moduletag :performance
-  @moduletag timeout: 300_000  # 5 minutes max
+  # 5 minutes max
+  @moduletag timeout: 300_000
 
   setup do
     # Start required processes for testing
@@ -120,13 +121,17 @@ defmodule PidroServer.Performance.LoadTest do
       duration = System.monotonic_time(:millisecond) - start_time
       avg_per_game = duration / iterations
 
-      IO.puts("\n#{iterations} games cycled in #{duration}ms (#{Float.round(avg_per_game, 2)}ms avg)")
+      IO.puts(
+        "\n#{iterations} games cycled in #{duration}ms (#{Float.round(avg_per_game, 2)}ms avg)"
+      )
+
       assert avg_per_game < 500, "Average game cycle too slow: #{avg_per_game}ms"
     end
   end
 
   describe "WebSocket Connection Performance" do
-    @tag :skip  # Skip by default as it requires actual socket connections
+    # Skip by default as it requires actual socket connections
+    @tag :skip
     test "handles 100 concurrent WebSocket connections" do
       # This test would require actual WebSocket client connections
       # For now, we test the channel join performance

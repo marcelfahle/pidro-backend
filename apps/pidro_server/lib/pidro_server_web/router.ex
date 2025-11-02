@@ -31,6 +31,14 @@ defmodule PidroServerWeb.Router do
     get "/", PageController, :home
   end
 
+  # OpenAPI documentation routes
+  scope "/api" do
+    pipe_through :api
+
+    get "/openapi", OpenApiSpex.Plug.RenderSpec, spec: PidroServerWeb.ApiSpec
+    get "/swagger", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi"
+  end
+
   # Admin panel routes (protected with basic auth)
   scope "/admin", PidroServerWeb do
     pipe_through :admin

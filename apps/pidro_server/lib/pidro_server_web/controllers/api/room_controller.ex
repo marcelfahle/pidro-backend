@@ -29,11 +29,280 @@ defmodule PidroServerWeb.API.RoomController do
   """
 
   use PidroServerWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
+  alias OpenApiSpex.Operation
   alias PidroServer.Games.RoomManager
   alias PidroServerWeb.API.RoomJSON
+  alias PidroServerWeb.Schemas.{RoomSchemas, ErrorSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
+
+  tags(["Rooms"])
+
+  # ==================== OpenAPI Operation Specs ====================
+
+  @doc false
+  def open_api_operation(:index) do
+    %Operation{
+      summary: "List all rooms",
+      description: """
+      Retrieves a list of available rooms from the RoomManager. The response can be
+      filtered using a query parameter to show only waiting or ready rooms.
+
+      This endpoint is publicly accessible and does not require authentication.
+      """,
+      operationId: "RoomController.index",
+      tags: ["Rooms"],
+      parameters: [
+        Operation.parameter(
+          :filter,
+          :query,
+          %OpenApiSpex.Schema{
+            type: :string,
+            enum: ["all", "waiting", "ready"],
+            description: "Filter rooms by status"
+          },
+          "Optional filter parameter. Defaults to 'all'.",
+          required: false
+        )
+      ],
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.RoomsResponse)
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:create) do
+    %Operation{
+      summary: "Create a new room",
+      description: """
+      Creates a new room with the authenticated user as the host. The room is created
+      in a "waiting" status and is immediately joinable by other players. The response
+      includes the newly created room's details and unique room code.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.create",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      requestBody:
+        Operation.request_body(
+          "Room creation parameters",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            properties: %{
+              room: %OpenApiSpex.Schema{
+                type: :object,
+                properties: %{
+                  name: %OpenApiSpex.Schema{
+                    type: :string,
+                    description: "Optional room name"
+                  }
+                }
+              }
+            }
+          },
+          required: false
+        ),
+      responses: %{
+        201 =>
+          Operation.response(
+            "Room created successfully",
+            "application/json",
+            RoomSchemas.RoomCreatedResponse
+          ),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        422 =>
+          Operation.response(
+            "Validation error",
+            "application/json",
+            ErrorSchemas.validation_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:show) do
+    %Operation{
+      summary: "Get room details",
+      description: """
+      Gets the current state of a room including player list, host information, and
+      room status. This endpoint is publicly accessible and does not require authentication.
+      """,
+      operationId: "RoomController.show",
+      tags: ["Rooms"],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{
+            type: :string,
+            minLength: 4,
+            maxLength: 4,
+            description: "Unique 4-character room code"
+          },
+          "The unique room code",
+          required: true
+        )
+      ],
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.RoomResponse),
+        404 =>
+          Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error())
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:join) do
+    %Operation{
+      summary: "Join a room",
+      description: """
+      Adds the authenticated player to a room. The player can only be in one room
+      at a time. When the 4th player joins, the room status automatically changes to
+      "ready" and the game starts.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.join",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{
+            type: :string,
+            minLength: 4,
+            maxLength: 4,
+            description: "Unique 4-character room code"
+          },
+          "The unique room code",
+          required: true
+        )
+      ],
+      responses: %{
+        200 =>
+          Operation.response(
+            "Successfully joined room",
+            "application/json",
+            RoomSchemas.RoomResponse
+          ),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        404 =>
+          Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),
+        422 =>
+          Operation.response(
+            "Room full or already in room",
+            "application/json",
+            ErrorSchemas.validation_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:leave) do
+    %Operation{
+      summary: "Leave a room",
+      description: """
+      Leaves the room that the player is currently in. If the player is the host,
+      the entire room is closed and all players are removed. The response indicates
+      success without returning room details.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.leave",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{
+            type: :string,
+            minLength: 4,
+            maxLength: 4,
+            description: "Unique 4-character room code"
+          },
+          "The unique room code",
+          required: true
+        )
+      ],
+      responses: %{
+        204 =>
+          Operation.response("Successfully left room", "application/json", %OpenApiSpex.Schema{
+            type: :object
+          }),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        404 =>
+          Operation.response(
+            "Room not found or not in room",
+            "application/json",
+            ErrorSchemas.not_found_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:state) do
+    %Operation{
+      summary: "Get room game state",
+      description: """
+      Retrieves the current game state from the Pidro.Server process. This includes
+      the game phase, current turn, player hands, bids, tricks, and scores.
+
+      This endpoint is publicly accessible and does not require authentication.
+      """,
+      operationId: "RoomController.state",
+      tags: ["Rooms"],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{
+            type: :string,
+            minLength: 4,
+            maxLength: 4,
+            description: "Unique 4-character room code"
+          },
+          "The unique room code",
+          required: true
+        )
+      ],
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.GameStateResponse),
+        404 =>
+          Operation.response(
+            "Room or game not found",
+            "application/json",
+            ErrorSchemas.not_found_error()
+          )
+      }
+    }
+  end
+
+  # ==================== Action Functions ====================
 
   @doc """
   Lists all rooms with optional filtering.
