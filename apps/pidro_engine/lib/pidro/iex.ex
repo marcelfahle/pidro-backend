@@ -58,6 +58,12 @@ defmodule Pidro.IEx do
   - Deck shuffled and ready
   - All players initialized
 
+  ## Options
+
+  - `:auto_dealer_rob` - Enable automatic dealer rob (default: true). When enabled,
+    the dealer's best 6 cards are selected automatically during second_deal phase.
+    Set to false for manual selection.
+
   ## Examples
 
       iex> state = Pidro.IEx.new_game()
@@ -65,10 +71,18 @@ defmodule Pidro.IEx do
       true
       iex> state.phase
       :bidding
+
+      iex> state = Pidro.IEx.new_game(auto_dealer_rob: true)
+      iex> state.config.auto_dealer_rob
+      true
   """
-  @spec new_game() :: Types.GameState.t()
-  def new_game do
+  @spec new_game(keyword()) :: Types.GameState.t()
+  def new_game(opts \\ []) do
     state = GameState.new()
+    
+    # Set auto_dealer_rob from opts or use default (true)
+    auto_rob = Keyword.get(opts, :auto_dealer_rob, true)
+    state = put_in(state.config[:auto_dealer_rob], auto_rob)
 
     # Create a shuffled deck
     deck = Deck.new()

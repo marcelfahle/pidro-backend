@@ -316,7 +316,8 @@ defmodule Pidro.Core.Types do
         winning_score: 62,
         initial_deal_count: 9,
         final_hand_size: 6,
-        allow_negative_scores: true
+        allow_negative_scores: true,
+        auto_dealer_rob: true
       }
     )
 

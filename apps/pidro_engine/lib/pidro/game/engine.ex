@@ -62,7 +62,7 @@ defmodule Pidro.Game.Engine do
   alias Pidro.Game.{Errors, StateMachine}
 
   # Phase-specific modules
-  alias Pidro.Game.{Dealing, Bidding, Trump, Discard, Play}
+  alias Pidro.Game.{Dealing, Bidding, Trump, Discard, Play, DealerRob}
   alias Pidro.Finnish.Scorer
 
   # =============================================================================
@@ -536,10 +536,27 @@ defmodule Pidro.Game.Engine do
     # Dealer ALWAYS robs when deck has cards (per specs/redeal.md)
     # Dealer combines hand + remaining deck, then selects best 6
     deck_size = length(state.deck)
+    auto_rob = Map.get(state.config, :auto_dealer_rob, false)
 
     if deck_size > 0 do
-      # Dealer must rob the pack, set turn to dealer and wait for action
-      {:ok, GameState.update(state, :current_turn, state.current_dealer)}
+      if auto_rob do
+        # Auto-select best 6 cards for dealer
+        dealer = state.current_dealer
+        dealer_player = Map.get(state.players, dealer)
+        pool = dealer_player.hand ++ state.deck
+        selected_cards = DealerRob.select_best_cards(pool, state.trump_suit)
+
+        case Discard.dealer_rob_pack(state, selected_cards) do
+          {:ok, new_state} ->
+            maybe_auto_transition(new_state)
+
+          error ->
+            error
+        end
+      else
+        # Manual mode: Dealer must rob the pack, set turn to dealer and wait for action
+        {:ok, GameState.update(state, :current_turn, state.current_dealer)}
+      end
     else
       # No cards to rob, proceed automatically with second deal
       case Discard.second_deal(state) do
