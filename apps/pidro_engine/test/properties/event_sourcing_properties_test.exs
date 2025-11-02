@@ -223,9 +223,9 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
       # Should be a string
       assert is_binary(pgn)
 
-      # Should have exactly 8 fields separated by /
+      # Should have exactly 9 fields separated by / (with redeal field)
       fields = String.split(pgn, "/")
-      assert length(fields) == 8
+      assert length(fields) == 9
 
       # Should be decodable
       assert {:ok, _decoded} = Notation.decode(pgn)

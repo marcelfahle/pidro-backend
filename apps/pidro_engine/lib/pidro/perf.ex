@@ -71,7 +71,13 @@ defmodule Pidro.Perf do
         {pos, Enum.sort(state.players[pos].hand), state.players[pos].eliminated?}
       end),
       Enum.sort(state.deck),
-      state.cumulative_scores
+      state.cumulative_scores,
+      # Redeal fields
+      state.cards_requested,
+      state.dealer_pool_size,
+      # Sort killed cards for consistent hashing
+      Enum.map(state.killed_cards, fn {pos, cards} -> {pos, Enum.sort(cards)} end)
+      |> Enum.sort()
     }
 
     :erlang.phash2(relevant_state)
@@ -147,7 +153,8 @@ defmodule Pidro.Perf do
       iex> is_tuple(key)
       true
   """
-  @spec cache_key_for_moves(GameState.t(), atom()) :: {atom(), atom() | nil, list(), atom() | nil}
+  @spec cache_key_for_moves(GameState.t(), atom()) ::
+          {atom(), atom() | nil, list(), atom() | nil, list()}
   def cache_key_for_moves(%GameState{} = state, position) do
     player = state.players[position]
     hand = Enum.sort(player.hand)
@@ -166,11 +173,15 @@ defmodule Pidro.Perf do
           nil
       end
 
+    # Include killed cards for this position (affects legal moves in playing phase)
+    killed = Map.get(state.killed_cards, position, []) |> Enum.sort()
+
     {
       state.phase,
       state.trump_suit,
       hand,
-      trick_key
+      trick_key,
+      killed
     }
   end
 
@@ -321,14 +332,26 @@ defmodule Pidro.Perf do
     :erlang.phash2({:bidding, state.current_turn, state.bids, state.highest_bid})
   end
 
+  def phase_specific_hash(%GameState{phase: :second_deal} = state) do
+    # Hash includes redeal-specific fields
+    :erlang.phash2(
+      {:second_deal, state.current_turn, state.trump_suit, state.cards_requested,
+       state.dealer_pool_size}
+    )
+  end
+
   def phase_specific_hash(%GameState{phase: :playing} = state) do
-    # Hash based on player hands and current trick
+    # Hash based on player hands, current trick, and killed cards
     hands =
       [:north, :east, :south, :west]
       |> Enum.map(&state.players[&1].hand)
       |> Enum.map(&Enum.sort/1)
 
-    :erlang.phash2({:playing, state.trump_suit, hands, state.current_trick})
+    killed_sorted =
+      Enum.map(state.killed_cards, fn {pos, cards} -> {pos, Enum.sort(cards)} end)
+      |> Enum.sort()
+
+    :erlang.phash2({:playing, state.trump_suit, hands, state.current_trick, killed_sorted})
   end
 
   def phase_specific_hash(%GameState{} = state) do

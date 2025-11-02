@@ -48,6 +48,9 @@ defmodule Pidro.Server do
   - `[:pidro, :server, :action, :stop]` - After successfully processing an action
   - `[:pidro, :server, :action, :exception]` - When action processing fails
   - `[:pidro, :server, :game, :complete]` - When a game finishes
+  - `[:pidro, :server, :redeal, :complete]` - When second_deal phase completes
+  - `[:pidro, :server, :kill_rule, :applied]` - When kill rule is applied (cards killed)
+  - `[:pidro, :server, :dealer_rob, :complete]` - When dealer robs the pack
 
   ## State Structure
 
@@ -289,55 +292,55 @@ defmodule Pidro.Server do
 
     start_time = System.monotonic_time()
 
-    result =
-      case Engine.apply_action(game_state, position, action) do
-        {:ok, new_game_state} ->
-          if telemetry? do
-            duration = System.monotonic_time() - start_time
+    case Engine.apply_action(game_state, position, action) do
+      {:ok, new_game_state} ->
+        if telemetry? do
+          duration = System.monotonic_time() - start_time
 
-            emit_telemetry(
-              :stop,
-              %{position: position, action: action, duration: duration},
-              state
-            )
+          emit_telemetry(
+            :stop,
+            %{position: position, action: action, duration: duration},
+            state
+          )
 
-            # Check if game just completed
-            if new_game_state.phase == :complete and game_state.phase != :complete do
-              emit_telemetry(:game_complete, %{winner: new_game_state.winner}, state)
-            end
+          # Check if game just completed
+          if new_game_state.phase == :complete and game_state.phase != :complete do
+            emit_telemetry(:game_complete, %{winner: new_game_state.winner}, state)
           end
 
-          new_state = %{state | game_state: new_game_state}
-          {:reply, {:ok, new_game_state}, new_state}
+          # Emit redeal-specific telemetry events
+          emit_redeal_telemetry(game_state, new_game_state, state)
+        end
 
-        {:error, _reason} = error ->
-          if telemetry? do
-            duration = System.monotonic_time() - start_time
+        new_state = %{state | game_state: new_game_state}
+        {:reply, {:ok, new_game_state}, new_state}
 
-            emit_telemetry(
-              :exception,
-              %{position: position, action: action, reason: error, duration: duration},
-              state
-            )
-          end
+      {:error, _reason} = error ->
+        if telemetry? do
+          duration = System.monotonic_time() - start_time
 
-          {:reply, error, state}
+          emit_telemetry(
+            :exception,
+            %{position: position, action: action, reason: error, duration: duration},
+            state
+          )
+        end
 
-        {:error, _reason, _message} = error ->
-          if telemetry? do
-            duration = System.monotonic_time() - start_time
+        {:reply, error, state}
 
-            emit_telemetry(
-              :exception,
-              %{position: position, action: action, reason: error, duration: duration},
-              state
-            )
-          end
+      {:error, _reason, _message} = error ->
+        if telemetry? do
+          duration = System.monotonic_time() - start_time
 
-          {:reply, error, state}
-      end
+          emit_telemetry(
+            :exception,
+            %{position: position, action: action, reason: error, duration: duration},
+            state
+          )
+        end
 
-    result
+        {:reply, error, state}
+    end
   end
 
   @impl true
@@ -391,6 +394,81 @@ defmodule Pidro.Server do
         measurements,
         metadata
       ])
+    end
+  end
+
+  defp emit_redeal_telemetry(old_state, new_state, server_state) do
+    # Emit event when second_deal phase completes with cards_requested data
+    if old_state.phase == :second_deal and new_state.phase == :playing and
+         map_size(new_state.cards_requested) > 0 do
+      metadata = %{
+        game_id: server_state.game_id,
+        phase: :second_deal,
+        hand_number: new_state.hand_number,
+        cards_requested: new_state.cards_requested,
+        dealer_pool_size: new_state.dealer_pool_size
+      }
+
+      measurements = %{
+        total_cards_dealt: Enum.sum(Map.values(new_state.cards_requested))
+      }
+
+      if Code.ensure_loaded?(:telemetry) do
+        apply(:telemetry, :execute, [
+          [:pidro, :server, :redeal, :complete],
+          measurements,
+          metadata
+        ])
+      end
+    end
+
+    # Emit event when cards are killed (entering playing phase with killed_cards)
+    if old_state.phase != :playing and new_state.phase == :playing and
+         map_size(new_state.killed_cards) > 0 do
+      metadata = %{
+        game_id: server_state.game_id,
+        phase: :playing,
+        hand_number: new_state.hand_number,
+        killed_cards_count:
+          Enum.map(new_state.killed_cards, fn {pos, cards} -> {pos, length(cards)} end)
+          |> Map.new()
+      }
+
+      measurements = %{
+        total_killed:
+          Enum.sum(Enum.map(new_state.killed_cards, fn {_pos, cards} -> length(cards) end))
+      }
+
+      if Code.ensure_loaded?(:telemetry) do
+        apply(:telemetry, :execute, [
+          [:pidro, :server, :kill_rule, :applied],
+          measurements,
+          metadata
+        ])
+      end
+    end
+
+    # Emit event when dealer robs pack (dealer_pool_size set)
+    if is_nil(old_state.dealer_pool_size) and not is_nil(new_state.dealer_pool_size) do
+      metadata = %{
+        game_id: server_state.game_id,
+        phase: new_state.phase,
+        hand_number: new_state.hand_number,
+        dealer: new_state.current_dealer,
+        pool_size: new_state.dealer_pool_size
+      }
+
+      measurements = %{
+        dealer_pool_size: new_state.dealer_pool_size
+      }
+
+      if Code.ensure_loaded?(:telemetry) do
+        apply(:telemetry, :execute, [
+          [:pidro, :server, :dealer_rob, :complete],
+          measurements,
+          metadata
+        ])
+      end
     end
   end
 end
