@@ -1,17 +1,33 @@
 # Finnish Pidro Redeal Implementation Masterplan
 
-**Status**: ✅ P0 + P1 + P2 FULLY COMPLETED (100% Implementation + Tests + Polish)
+**Status**: ✅ P0 + P1 + P2 FULLY COMPLETED + 5 Critical Trick Property Tests Added
 **Goal**: Implement complete Finnish redeal mechanics with dealer advantage, kill rules, and information asymmetry
 **Analysis Date**: 2025-11-02
 **Implementation Date**: 2025-11-02
 **Test Completion Date**: 2025-11-02
-**Last Update**: 2025-11-02 (Completed all P2 polish tasks - hash/cache, PGN notation, telemetry)
+**Last Update**: 2025-11-02 (Added 5 critical trick-taking property tests)
 **Analyzed**: 30 lib/ modules, 40+ test files, comprehensive oracle consultation
-**Test Stats**: 525 tests, 157 properties, 76 doctests - all passing (except 1 flaky performance test)
+**Test Stats**: 525 tests, 162 properties (+5 trick properties), 76 doctests - all passing (except 1 flaky performance test)
 
 ---
 
 ## Implementation Progress Update (2025-11-02 - Latest)
+
+### ✅ NEW - Trick-Taking Property Tests (2025-11-02 - Evening Session)
+
+**File Created**: `test/properties/trick_properties_test.exs` (466 lines, 5 properties)
+
+Added 5 critical property tests that were identified as missing from specs/game_properties.md:
+
+1. ✅ **"only trump cards are valid plays"** - Verifies all played cards in all tricks are trump
+2. ✅ **"highest trump card wins the trick"** - Validates winner determination logic
+3. ✅ **"player who wins trick leads next trick"** - Ensures correct play order across tricks
+4. ✅ **"when player has no trump, they go 'cold' and lay down remaining cards"** - Validates elimination mechanics
+5. ✅ **"cold player does not participate in remaining tricks"** - Ensures eliminated players don't play
+
+**Test Results**: All 5 properties pass (50 runs each)
+**Impact**: Increased total property count from 157 to 162 (+3.2%)
+**Priority**: CRITICAL (these properties verify core game correctness)
 
 ### ✅ COMPLETED - All P2 Polish Tasks (7/7)
 
