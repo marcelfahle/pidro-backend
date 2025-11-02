@@ -142,7 +142,7 @@ defmodule PidroServerWeb.LobbyLive do
                         </span>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        {length(room.players)} / 4
+                        {length(room.player_ids)} / 4
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
                         {room.host_id |> String.slice(0..7)}...
