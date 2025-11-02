@@ -6,26 +6,29 @@
 
 ## Overview
 
-The auto dealer rob feature automates the dealer's card selection during the `second_deal` phase in Finnish Pidro. When enabled, the engine automatically selects the best 6 cards from the dealer's pool (hand + remaining deck) using an intelligent scoring algorithm.
+The auto dealer rob feature automates the dealer's card selection during the `second_deal` phase in Finnish Pidro. When enabled, the engine automatically selects the best 6 cards from the dealer's pool (hand + remaining deck) using a bucket-based prioritization strategy that maximizes trump quantity.
 
 ## Implementation
 
 ### Files Added
 
-1. **`lib/pidro/game/dealer_rob.ex`** (131 lines)
-   - `select_best_cards/2` - Main selection algorithm
-   - `score_card/2` - Card scoring logic
-   - Scoring strategy: rank + point_bonus(20) + trump_bonus(10)
+1. **`lib/pidro/game/dealer_rob.ex`** (199 lines)
+   - `select_best_cards/2` - Main selection algorithm using bucket-based prioritization
+   - `categorize_cards/2` - Categorizes cards into 5 priority buckets
+   - Helper functions for card classification and ranking
+   - Strategy: Trump quantity > card quality
 
-2. **`test/unit/game/dealer_rob_test.exs`** (267 lines)
-   - 17 unit tests covering all edge cases
-   - Tests for point card prioritization, trump prioritization, wrong-5 handling
+2. **`test/unit/game/dealer_rob_test.exs`** (410 lines)
+   - 14 unit tests covering all edge cases
+   - Tests for trump quantity maximization, point card prioritization
+   - Edge cases: <6 cards, 0 trump, all point cards scenarios
    - Realistic dealer rob scenarios
 
-3. **`test/properties/dealer_rob_properties_test.exs`** (117 lines)
-   - 8 property tests (50-100 runs each)
-   - Validates determinism, monotonicity, correctness
-   - Ensures no regressions
+3. **`test/properties/dealer_rob_properties_test.exs`** (202 lines)
+   - 8 property tests (100-200 runs each)
+   - Validates trump quantity maximization invariant
+   - Tests trump point card priority
+   - Ensures determinism and correctness
 
 ### Files Modified
 
@@ -80,40 +83,50 @@ selected = DealerRob.select_best_cards(dealer_pool, trump_suit)
 
 ## Card Selection Algorithm
 
-The algorithm scores each card and selects the top 6:
+The algorithm maximizes trump quantity using a priority bucket system:
 
-```
-score = rank + point_bonus + trump_bonus
+### Priority Buckets (Highest to Lowest)
 
-where:
-- rank: 2-14 (base card rank)
-- point_bonus: +20 if card is A, J, 10, Right-5, Wrong-5, or 2
-- trump_bonus: +10 if card is trump (including wrong-5)
-```
+1. **Trump point cards**: A, J, 10, Right-5, Wrong-5, 2 (trump suit ONLY)
+2. **High trump**: K, Q of trump suit (non-point trump)
+3. **Low trump**: All other trump cards (9, 8, 7, 6, 4, 3)
+4. **High non-trump**: A, K, Q, J of non-trump suits (disguise)
+5. **Low non-trump**: Everything else
+
+### Selection Process
+
+Cards are categorized into buckets, then concatenated in priority order.
+The first 6 cards become the dealer's hand.
+
+Within each bucket, cards are sorted by rank (high to low) for determinism.
+
+### Key Principle: Trump Quantity > Card Quality
+
+**A dealer with 6 worthless trump is stronger than a dealer with 2 good trump + 4 aces.**
+
+Why? More trump = more tricks = more opportunities to win points and control the game.
 
 ### Examples
 
-| Card | Trump | Score | Breakdown |
-|------|-------|-------|-----------|
-| A♥ | Hearts | 44 | 14 + 20 + 10 |
-| 5♥ | Hearts | 35 | 5 + 20 + 10 |
-| K♥ | Hearts | 23 | 13 + 0 + 10 |
-| A♣ | Hearts | 34 | 14 + 20 + 0 |
-| 9♣ | Hearts | 9 | 9 + 0 + 0 |
+| Pool | Trump | Selection | Reasoning |
+|------|-------|-----------|-----------|
+| 2♥, 9♥, 8♥, 7♥, 6♥, 4♥, A♠, K♠ | Hearts | 2♥, 9♥, 8♥, 7♥, 6♥, 4♥ | All 6 trump (even though A♠ is a point card!) |
+| A♥, K♥, Q♥, 10♥, 9♥, 8♥, 7♥, 2♥, A♠ | Hearts | A♥, 10♥, 2♥, K♥, Q♥, 9♥ | Point cards + high trump + low trump |
+| 2♥, 9♥, A♠, K♠, A♦, K♦, A♣, K♣ | Hearts | 2♥, 9♥, A♠, K♠, A♦, K♦ | Only 2 trump available, fill with high non-trump |
 
 ## Test Results
 
 ```bash
 $ mix test test/unit/game/dealer_rob_test.exs
-............................
-23 tests, 0 failures
+................
+14 tests, 0 failures
 
 $ mix test test/properties/dealer_rob_properties_test.exs
 ........
-8 properties, 0 failures
+8 properties, 0 failures (100-200 runs each)
 
 $ mix test --exclude flaky
-541 tests, 170 properties, 83 doctests, 0 failures
+548 tests, 168 properties, 79 doctests, 0 failures
 ```
 
 ## Configuration Options
@@ -144,10 +157,13 @@ See [PLAYER_QUESTIONS.md](PLAYER_QUESTIONS.md) for community feedback request.
 
 1. **Pool size < 6**: Returns all available cards
 2. **Pool size = 6**: Returns all cards
-3. **Pool size > 6**: Selects top 6 by score
-4. **All point cards available**: Selects all point cards if ≥6 exist
-5. **Mixed trump/non-trump**: Prioritizes trump over non-trump
-6. **Wrong-5**: Correctly identified as trump point card (same-color logic)
+3. **Pool size > 6**: Selects top 6 using bucket prioritization
+4. **All 6 trump point cards available**: Selects all point cards (perfect hand!)
+5. **Pool has ≥6 trump**: Selects all 6 trump (maximizes trick participation)
+6. **Pool has <6 trump**: Selects all trump + fills with high non-trump
+7. **Pool has 0 trump**: Selects 6 highest non-trump by rank
+8. **Mixed trump/non-trump**: Always prioritizes trump quantity
+9. **Wrong-5**: Correctly identified as trump point card (same-color logic)
 
 ## Future Enhancements
 
@@ -167,7 +183,8 @@ Potential improvements (not in scope):
 
 ---
 
-**Implementation Time**: ~4 hours  
-**Tests**: 31 tests + 8 properties = 39 total  
-**Lines of Code**: ~515 lines (implementation + tests)  
+**Implementation Time**: ~5 hours (including strategy refactor)
+**Tests**: 14 unit tests + 8 properties = 22 total
+**Lines of Code**: ~611 lines (implementation + tests)
 **Coverage**: 100% of dealer rob logic
+**Strategy**: Bucket-based prioritization (trump quantity > card quality)

@@ -126,15 +126,20 @@ defmodule Pidro.Game.DealerRobTest do
 
       result = DealerRob.select_best_cards(pool, :hearts)
 
-      # All trump should be selected over non-trump
+      # All trump should be selected first
       assert Card.new(14, :hearts) in result
       assert Card.new(13, :hearts) in result
       assert Card.new(12, :hearts) in result
 
-      # Non-trump point cards (A♣, J♣, 10♣) should be selected over non-trump non-point
+      # Only 3 trump, so need 3 more cards
+      # Should select highest non-trump by rank: A♣, K♣, Q♣
       assert Card.new(14, :clubs) in result
-      assert Card.new(11, :clubs) in result
-      assert Card.new(10, :clubs) in result
+      assert Card.new(13, :clubs) in result
+      assert Card.new(12, :clubs) in result
+
+      # Should NOT select lower-ranked cards
+      refute Card.new(11, :clubs) in result
+      refute Card.new(10, :clubs) in result
     end
 
     test "handles wrong 5 as trump point card" do
@@ -252,80 +257,158 @@ defmodule Pidro.Game.DealerRobTest do
       # Total points in hand: 14 (perfect!)
       # Should NOT select K♥ (0 pts) even though it's high rank
     end
-  end
 
-  describe "score_card/2" do
-    test "scores ace of trump correctly" do
-      card = Card.new(14, :hearts)
-      score = DealerRob.score_card(card, :hearts)
+    test "prioritizes trump quantity over non-trump point cards" do
+      pool = [
+        # Point card (trump)
+        Card.new(2, :hearts),
+        # Low trump (no points)
+        Card.new(9, :hearts),
+        Card.new(8, :hearts),
+        Card.new(7, :hearts),
+        Card.new(6, :hearts),
+        Card.new(4, :hearts),
+        # Point cards (non-trump)
+        Card.new(14, :spades),
+        Card.new(13, :spades)
+      ]
 
-      # 14 (rank) + 20 (point card) + 10 (trump) = 44
-      assert score == 44
+      result = DealerRob.select_best_cards(pool, :hearts)
+
+      # Should keep ALL 6 trump cards (even low ones)
+      assert Card.new(2, :hearts) in result
+      assert Card.new(9, :hearts) in result
+      assert Card.new(8, :hearts) in result
+      assert Card.new(7, :hearts) in result
+      assert Card.new(6, :hearts) in result
+      assert Card.new(4, :hearts) in result
+
+      # Should NOT keep A♠ (even though it's a point card)
+      refute Card.new(14, :spades) in result
+      refute Card.new(13, :spades) in result
     end
 
-    test "scores right-5 correctly" do
-      card = Card.new(5, :hearts)
-      score = DealerRob.score_card(card, :hearts)
+    test "keeps 6 worthless trump over high non-trump" do
+      pool = [
+        # Low trump (6 cards)
+        Card.new(9, :hearts),
+        Card.new(8, :hearts),
+        Card.new(7, :hearts),
+        Card.new(6, :hearts),
+        Card.new(4, :hearts),
+        Card.new(3, :hearts),
+        # High trump (2 cards)
+        Card.new(13, :hearts),
+        Card.new(12, :hearts),
+        # High non-trump (4 cards)
+        Card.new(14, :clubs),
+        Card.new(14, :diamonds),
+        Card.new(13, :clubs),
+        Card.new(13, :diamonds)
+      ]
 
-      # 5 (rank) + 20 (point card) + 10 (trump) = 35
-      assert score == 35
+      result = DealerRob.select_best_cards(pool, :hearts)
+
+      # Verify ALL selected cards are trump
+      Enum.each(result, fn card ->
+        assert Card.is_trump?(card, :hearts),
+               "Expected only trump cards, but got #{inspect(card)}"
+      end)
+
+      # Should include high trump
+      assert Card.new(13, :hearts) in result
+      assert Card.new(12, :hearts) in result
+
+      # Should include some low trump
+      assert Card.new(9, :hearts) in result or Card.new(8, :hearts) in result
+
+      # Should NOT include any non-trump
+      refute Card.new(14, :clubs) in result
+      refute Card.new(14, :diamonds) in result
     end
 
-    test "scores wrong-5 correctly" do
-      # Hearts trump, so 5♦ is wrong-5 (same color = red)
-      card = Card.new(5, :diamonds)
-      score = DealerRob.score_card(card, :hearts)
+    test "all trump point cards are kept (lucky scenario)" do
+      pool = [
+        # All 6 point cards, all trump
+        Card.new(14, :hearts),
+        Card.new(11, :hearts),
+        Card.new(10, :hearts),
+        Card.new(5, :hearts),
+        Card.new(5, :diamonds),
+        Card.new(2, :hearts),
+        # Extra trump
+        Card.new(13, :hearts)
+      ]
 
-      # 5 (rank) + 20 (point card, wrong-5) + 10 (trump) = 35
-      assert score == 35
+      result = DealerRob.select_best_cards(pool, :hearts)
+
+      # Should keep exactly the 6 point cards
+      assert length(result) == 6
+
+      # All point cards should be selected
+      assert Card.new(14, :hearts) in result
+      assert Card.new(11, :hearts) in result
+      assert Card.new(10, :hearts) in result
+      assert Card.new(5, :hearts) in result
+      assert Card.new(5, :diamonds) in result
+      assert Card.new(2, :hearts) in result
+
+      # K♥ should NOT be selected (not a point card)
+      refute Card.new(13, :hearts) in result
     end
 
-    test "scores jack of trump correctly" do
-      card = Card.new(11, :hearts)
-      score = DealerRob.score_card(card, :hearts)
+    test "edge case: pool has <6 cards total" do
+      pool = [
+        Card.new(2, :hearts),
+        Card.new(9, :hearts),
+        Card.new(14, :spades)
+      ]
 
-      # 11 (rank) + 20 (point card) + 10 (trump) = 41
-      assert score == 41
+      result = DealerRob.select_best_cards(pool, :hearts)
+
+      assert length(result) == 3, "Should return all 3 available cards"
+      assert Enum.sort(result) == Enum.sort(pool)
     end
 
-    test "scores king of trump (non-point) correctly" do
-      card = Card.new(13, :hearts)
-      score = DealerRob.score_card(card, :hearts)
+    test "edge case: pool has 0 trump" do
+      pool = [
+        Card.new(14, :spades),
+        Card.new(13, :spades),
+        Card.new(14, :clubs),
+        Card.new(13, :clubs),
+        Card.new(14, :diamonds),
+        Card.new(13, :diamonds)
+      ]
 
-      # 13 (rank) + 0 (not point card) + 10 (trump) = 23
-      assert score == 23
+      result = DealerRob.select_best_cards(pool, :hearts)
+
+      # Should select 6 highest non-trump cards
+      assert length(result) == 6
+
+      # Verify no trump cards (since none available)
+      trump_count = Enum.count(result, &Card.is_trump?(&1, :hearts))
+      assert trump_count == 0, "No trump available in pool"
+
+      # Should select all 6 aces and kings
+      assert Enum.sort(result) == Enum.sort(pool)
     end
 
-    test "scores non-trump point card correctly" do
-      card = Card.new(14, :clubs)
-      score = DealerRob.score_card(card, :hearts)
+    test "edge case: pool has < 6 cards, mixed trump and non-trump" do
+      pool = [
+        Card.new(14, :hearts),
+        Card.new(14, :spades),
+        Card.new(9, :hearts),
+        Card.new(13, :clubs)
+      ]
 
-      # 14 (rank) + 20 (point card) + 0 (not trump) = 34
-      assert score == 34
-    end
+      result = DealerRob.select_best_cards(pool, :hearts)
 
-    test "scores non-trump non-point card correctly" do
-      card = Card.new(9, :clubs)
-      score = DealerRob.score_card(card, :hearts)
+      assert length(result) == 4
+      assert Enum.sort(result) == Enum.sort(pool)
 
-      # 9 (rank) + 0 (not point) + 0 (not trump) = 9
-      assert score == 9
-    end
-
-    test "scores two of trump correctly" do
-      card = Card.new(2, :hearts)
-      score = DealerRob.score_card(card, :hearts)
-
-      # 2 (rank) + 20 (point card) + 10 (trump) = 32
-      assert score == 32
-    end
-
-    test "scores ten of trump correctly" do
-      card = Card.new(10, :hearts)
-      score = DealerRob.score_card(card, :hearts)
-
-      # 10 (rank) + 20 (point card) + 10 (trump) = 40
-      assert score == 40
+      # Should have 2 trump (A♥, 9♥) + 2 non-trump
+      trump_count = Enum.count(result, &Card.is_trump?(&1, :hearts))
+      assert trump_count == 2
     end
   end
 end
