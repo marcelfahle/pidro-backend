@@ -59,8 +59,8 @@ defmodule Pidro.Game.Errors do
   additional context are represented as tuples with the error atom and
   relevant data.
   """
+  # Phase errors
   @type error ::
-          # Phase errors
           :invalid_phase
           | {:invalid_phase, expected :: Types.phase(), actual :: Types.phase()}
 
@@ -449,7 +449,7 @@ defmodule Pidro.Game.Errors do
   @spec validate_card(any()) :: result(Types.card())
   def validate_card({rank, suit} = card)
       when is_integer(rank) and rank >= 2 and rank <= 14 and
-           suit in [:hearts, :diamonds, :clubs, :spades] do
+             suit in [:hearts, :diamonds, :clubs, :spades] do
     {:ok, card}
   end
 
