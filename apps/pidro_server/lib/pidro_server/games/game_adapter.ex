@@ -70,12 +70,15 @@ defmodule PidroServer.Games.GameAdapter do
   def apply_action(room_code, position, action) do
     with {:ok, pid} <- GameRegistry.lookup(room_code) do
       try do
-        result = Pidro.Server.apply_action(pid, position, action)
+        case Pidro.Server.apply_action(pid, position, action) do
+          {:ok, _state} = result ->
+            # Broadcast state update to all subscribers
+            broadcast_state_update(room_code, pid)
+            result
 
-        # Broadcast state update to all subscribers
-        broadcast_state_update(room_code, pid)
-
-        {:ok, result}
+          {:error, _reason} = error ->
+            error
+        end
       rescue
         e ->
           Logger.error(
@@ -270,7 +273,10 @@ defmodule PidroServer.Games.GameAdapter do
       :ok
     rescue
       e ->
-        Logger.error("Error broadcasting state update for room #{room_code}: #{Exception.message(e)}")
+        Logger.error(
+          "Error broadcasting state update for room #{room_code}: #{Exception.message(e)}"
+        )
+
         {:error, Exception.message(e)}
     end
   end

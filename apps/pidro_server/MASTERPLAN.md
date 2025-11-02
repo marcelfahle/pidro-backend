@@ -1,9 +1,9 @@
 # Pidro Server - Implementation Master Plan
 
 **Last Updated**: 2025-11-02
-**Status**: Phase 0 & Phase 1 & Phase 2 Complete - Room Management Ready
-**Coverage**: ~15% (infrastructure + auth + room management)
-**Critical Path**: Game Integration → WebSocket Channels → Testing
+**Status**: Phase 0 & Phase 1 & Phase 2 & Phase 3 Complete - Game Integration Ready
+**Coverage**: ~20% (infrastructure + auth + room management + game integration)
+**Critical Path**: WebSocket Channels → Testing → Polish
 
 ---
 
@@ -22,11 +22,13 @@
 - ✅ **Auth API endpoints** (register, login, me)
 - ✅ **Room management system** complete (create, join, leave)
 - ✅ **Game supervision tree** implemented (Supervisor, DynamicSupervisor, Registry)
-- ✅ **GameAdapter** for engine integration
-- ✅ **Room API endpoints** (list, create, join, leave, get)
-- ⚠️ **WebSocket channels** - pending implementation
-- ⚠️ **Game integration** - pending wire-up
-- ⚠️ **Test coverage** - Phase 1 & 2 tests completed
+- ✅ **GameAdapter** for engine integration - fully wired to Pidro.Server
+- ✅ **Room API endpoints** (list, create, join, leave, get, state)
+- ✅ **Game integration** complete - GameAdapter wired to DynamicSupervisor
+- ✅ **PubSub broadcasting** - state updates broadcast on game actions
+- ✅ **Game state API** - GET /api/v1/rooms/:code/state endpoint
+- ⚠️ **WebSocket channels** - pending implementation (Phase 4)
+- ✅ **Test coverage** - Phase 1, 2 & 3 integration tests completed (27 tests)
 
 ### Implementation Status by Phase
 
@@ -34,7 +36,7 @@
 |-------|------|--------|--------|----------|
 | Phase 1 | Foundation | 100% | ✅ Complete | P0 |
 | Phase 2 | Room Management | 100% | ✅ Complete | P0 |
-| Phase 3 | Game Integration | 0% | ❌ Not Started | P0 |
+| Phase 3 | Game Integration | 100% | ✅ Complete | P0 |
 | Phase 4 | Real-time Gameplay | 0% | ❌ Not Started | P1 |
 | Phase 5 | Lobby System | 0% | ❌ Not Started | P1 |
 | Phase 6 | Admin Panel | 0% | ❌ Not Started | P2 |
@@ -186,29 +188,30 @@
 
 ---
 
-### Phase 3: Game Integration (Est: 1-2 days)
+### Phase 3: Game Integration (Est: 1-2 days) ✅ COMPLETE
 
 **Goal**: Wire up Pidro.Server, expose game state
 
 #### Engine Integration (3-4 hours)
-- [ ] **[P3-01]** Verify Pidro.Server from engine works standalone (30min)
-- [ ] **[P3-02]** Wire GameAdapter to start Pidro.Server via DynamicSupervisor (1h)
-- [ ] **[P3-03]** Test game state retrieval via GameAdapter (1h)
-- [ ] **[P3-04]** Add PubSub broadcasting on game state changes (1h)
+- [x] **[P3-01]** Verify Pidro.Server from engine works standalone (30min) ✅
+- [x] **[P3-02]** Wire GameAdapter to start Pidro.Server via DynamicSupervisor (1h) ✅
+- [x] **[P3-03]** Test game state retrieval via GameAdapter (1h) ✅
+- [x] **[P3-04]** Add PubSub broadcasting on game state changes (1h) ✅
   - Subscribe to Pidro.Server events
   - Broadcast to `game:{code}` topic
 
 #### State API (2-3 hours)
-- [ ] **[P3-05]** Add GET /api/v1/rooms/:code/state endpoint (optional) (1h)
-- [ ] **[P3-06]** Create game state view for JSON serialization (1h)
+- [x] **[P3-05]** Add GET /api/v1/rooms/:code/state endpoint (1h) ✅
+- [x] **[P3-06]** Create game state view for JSON serialization (1h) ✅
 
 #### Testing (2-3 hours)
-- [ ] **[P3-07]** Integration test: full game flow via GameAdapter (2h)
-  - Start game
-  - Apply actions (bid, declare_trump, play_card)
-  - Verify state changes
+- [x] **[P3-07]** Integration test: full game flow via GameAdapter (2h) ✅
+  - Start game via GameSupervisor
+  - Apply actions (select_dealer, bid, declare_trump, play_card)
+  - Verify state changes and PubSub broadcasts
+  - Test error handling and edge cases
 
-**Validation**: Game starts, state can be queried, actions can be applied
+**Validation**: ✅ Game starts, state can be queried, actions can be applied, all 11 integration tests pass
 
 ---
 
@@ -577,21 +580,21 @@ Add to mix.exs:
 
 ---
 
-## Next Actions (Top 10) - Phase 3 Focus
+## Next Actions (Top 10) - Phase 4 Focus
 
-1. **[NEXT]** Verify Pidro.Server from engine works standalone (30min)
-2. Wire GameAdapter to start Pidro.Server via DynamicSupervisor (1h)
-3. Test game state retrieval via GameAdapter (1h)
-4. Add PubSub broadcasting on game state changes (1h)
-5. Add GET /api/v1/rooms/:code/state endpoint (1h)
-6. Create game state view for JSON serialization (1h)
-7. Integration test: full game flow via GameAdapter (2h)
-8. Create UserSocket for WebSocket connections (Phase 4) (1h)
-9. Create GameChannel with bid/play_card handlers (Phase 4) (4h)
-10. Run full test suite and verify coverage >15% (1h)
+1. **[NEXT]** Create UserSocket for WebSocket connections (Phase 4) (1h)
+2. Implement JWT authentication on WebSocket connect (30min)
+3. Create GameChannel with action handlers (4h)
+4. Add bid/declare_trump/play_card event handlers (2h)
+5. Implement state synchronization and broadcasts (2h)
+6. Create LobbyChannel for room list updates (2h)
+7. Add Presence tracking for online players (1h)
+8. Integration test: 4 players complete game via channels (2h)
+9. Test channel authentication and error handling (1h)
+10. Run full test suite and verify coverage >25% (1h)
 
-**Completed Phases**: 0, 1, 2 (Room Management) ✅
-**Estimated time to MVP**: 2-3 weeks remaining (Phases 3-7)
+**Completed Phases**: 0, 1, 2, 3 (Game Integration) ✅
+**Estimated time to MVP**: 1-2 weeks remaining (Phases 4-7)
 
 ---
 
@@ -606,5 +609,5 @@ Add to mix.exs:
 - **Test Infrastructure** - Full test suite for Phase 1 & 2 complete
 - **Next: Phase 3** - Wire Pidro.Server game logic and add game state API
 
-**Last update**: 2025-11-02 - Phase 2 completion marking
-**Completion status**: 2/7 phases complete, 28% of development
+**Last update**: 2025-11-02 - Phase 3 completion (Game Integration)
+**Completion status**: 3/7 phases complete, 43% of development
