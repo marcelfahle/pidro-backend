@@ -16,6 +16,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   require Logger
   alias PidroServer.Dev.{BotManager, Event, EventRecorder, GameHelpers}
   alias PidroServer.Games.{GameAdapter, RoomManager}
+  alias PidroServerWeb.CardComponents
 
   @impl true
   def mount(%{"code" => room_code}, _session, socket) do
@@ -258,6 +259,46 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          socket
          |> assign(:executing_action, false)
          |> put_flash(:error, "Action failed: #{error_message}")}
+    end
+  end
+
+  @impl true
+  def handle_event("play_card", %{"card" => card_string}, socket) do
+    # DEV-1505: Handle card click from card table
+    position = socket.assigns.selected_position
+    room_code = socket.assigns.room_code
+
+    # Don't allow actions in god mode
+    if position == :all do
+      {:noreply, put_flash(socket, :error, "Select a specific position to play cards")}
+    else
+      # Decode card from string format "rank:suit"
+      card = PidroServerWeb.CardHelpers.decode_card(card_string)
+      action = {:play_card, card}
+
+      socket = assign(socket, :executing_action, true)
+
+      case GameAdapter.apply_action(room_code, position, action) do
+        {:ok, _new_state} ->
+          game_state = get_game_state(room_code)
+          legal_actions = get_legal_actions(room_code, position)
+
+          {:noreply,
+           socket
+           |> assign(:game_state, game_state)
+           |> assign(:legal_actions, legal_actions)
+           |> assign(:executing_action, false)
+           |> put_flash(:info, "Played #{PidroServerWeb.CardHelpers.format_card(card)}")}
+
+        {:error, reason} ->
+          error_message = format_error(reason)
+          Logger.error("Card play failed: #{error_message}")
+
+          {:noreply,
+           socket
+           |> assign(:executing_action, false)
+           |> put_flash(:error, "Cannot play card: #{error_message}")}
+      end
     end
   end
 
@@ -652,6 +693,47 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             </div>
           </div>
         </div>
+        
+    <!-- Card Table UI - DEV-1505: Visual Card Table Integration -->
+        <%= if @game_state do %>
+          <%= cond do %>
+            <% @game_state.phase == :bidding -> %>
+              <div class="mb-8">
+                <CardComponents.bidding_panel
+                  current_bid={get_current_bid(@game_state)}
+                  bidder={get_current_bidder(@game_state)}
+                  legal_actions={@legal_actions}
+                  bid_history={get_bid_history(@game_state)}
+                />
+              </div>
+            <% @game_state.phase == :trump_selection -> %>
+              <div class="mb-8">
+                <CardComponents.trump_selection_panel
+                  legal_actions={@legal_actions}
+                  hand={get_selected_hand(@game_state, @selected_position)}
+                />
+              </div>
+            <% @game_state.phase == :playing -> %>
+              <div class="mb-8">
+                <CardComponents.card_table
+                  game_state={@game_state}
+                  selected_position={@selected_position}
+                  god_mode={@selected_position == :all}
+                  legal_actions={@legal_actions}
+                />
+              </div>
+            <% true -> %>
+              <%!-- Other phases like dealer_selection, hand_scoring, etc. --%>
+              <div class="mb-8 bg-white shadow overflow-hidden sm:rounded-lg p-6">
+                <p class="text-sm text-gray-600">
+                  Phase: <span class="font-semibold">{@game_state.phase}</span>
+                </p>
+                <p class="text-xs text-gray-500 mt-2">
+                  Visual card table available during playing phase
+                </p>
+              </div>
+          <% end %>
+        <% end %>
         
     <!-- Action Execution - DEV-901 to DEV-904 Implementation -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
@@ -1298,5 +1380,30 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       :game_over -> "text-red-600"
       _ -> "text-gray-700"
     end
+  end
+
+  # DEV-1505 & DEV-1506: Helper functions for card table and phase displays
+
+  defp get_current_bid(state) do
+    get_in(state, [:winning_bid, :amount])
+  end
+
+  defp get_current_bidder(state) do
+    case get_in(state, [:winning_bid, :team]) do
+      :north_south -> :north
+      :east_west -> :east
+      team -> team
+    end
+  end
+
+  defp get_bid_history(state) do
+    # Extract bid history from game state if available
+    Map.get(state, :bid_history, [])
+  end
+
+  defp get_selected_hand(_state, :all), do: []
+
+  defp get_selected_hand(state, position) when is_atom(position) do
+    get_in(state, [:players, position, :hand]) || []
   end
 end
