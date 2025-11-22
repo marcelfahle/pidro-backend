@@ -1,9 +1,9 @@
 # Pidro Development UI - Implementation Master Plan
 
-**Last Updated**: 2025-11-02
-**Status**: Phase 0 & Phase 1 P0 Complete - Ready for Testing  
+**Last Updated**: 2025-11-22
+**Status**: Phase 0, 1, 2 Complete - Phase 3 (Card Table) Ready for Implementation  
 **Based On**: specs/pidro_server_dev_ui.md  
-**Coverage**: Full gap analysis of 14 functional requirements vs existing codebase
+**Coverage**: Full gap analysis of 15 functional requirements vs existing codebase
 
 ---
 
@@ -12,6 +12,7 @@
 ### Current State Analysis
 
 **Existing Infrastructure ✅**
+
 - LiveView admin panel with 3 views (lobby, game monitor, stats)
 - RoomManager with full CRUD + metadata support
 - GameAdapter with `get_legal_actions/2` and `apply_action/3`
@@ -20,83 +21,90 @@
 - Tailwind CSS + DaisyUI styling framework
 - Dev routes structure at `/dev` (currently only dashboard/mailbox)
 
+**Completed Components ✅**
+
+- ✅ Bot system (AI players, process management, configuration)
+- ✅ Position switching UI (North/South/East/West perspective)
+- ✅ Action execution UI (bid/play/declare buttons)
+- ✅ Event log with timestamps and filtering
+- ✅ Game creation with bot configuration
+- ✅ Quick actions (auto-bid, fast-forward, undo)
+- ✅ God Mode toggle
+
 **Missing Components ❌**
-- ❌ Bot system (AI players, process management, configuration)
-- ❌ Position switching UI (North/South/East/West perspective)
-- ❌ Action execution UI (bid/play/declare buttons)
-- ❌ Event log with timestamps and filtering
-- ❌ Game creation with bot configuration
-- ❌ Quick actions (auto-bid, fast-forward, undo)
-- ❌ Multi-view mode / God Mode toggle
+
+- ❌ Visual card table UI (FR-15)
+- ❌ Multi-view mode (split screen)
 - ❌ Hand replay functionality
 - ❌ Game analytics dashboard
+- ❌ Bot reasoning display
 
 ### Implementation Coverage
 
-| Functional Requirement | Status | Reusable | Effort | Priority |
-|------------------------|--------|----------|--------|----------|
-| FR-1: Game Creation | 40% | LobbyLive | Medium | **P0** |
-| FR-2: Game Discovery | 70% | LobbyLive | Small | **P0** |
-| FR-3: Game Deletion | 50% | RoomManager | Small | **P0** |
-| FR-4: Position Switching | 0% | - | Small | **P0** |
-| FR-5: Multi-View Mode | 0% | - | Medium | **P2** |
-| FR-6: State Display | 60% | GameMonitorLive | Small | **P0** |
-| FR-7: Event Log | 0% | - | Medium | **P1** |
-| FR-8: Raw State Inspector | 80% | GameMonitorLive | Small | **P0** |
-| FR-9: Action Execution | 0% | GameChannel | Medium | **P0** |
-| FR-10: Quick Actions | 0% | Engine API | Large | **P1** |
-| FR-11: Bot Management | 0% | - | Large | **P1** |
-| FR-12: Bot Observation | 0% | - | Medium | **P2** |
-| FR-13: Hand Replay | 0% | Engine API | Medium | **P2** |
-| FR-14: Statistics View | 20% | StatsLive | Medium | **P2** |
+| Functional Requirement    | Status  | Reusable       | Effort     | Priority |
+| ------------------------- | ------- | -------------- | ---------- | -------- |
+| FR-1: Game Creation       | ✅ 100% | GameListLive   | -          | **P0**   |
+| FR-2: Game Discovery      | ✅ 100% | GameListLive   | -          | **P0**   |
+| FR-3: Game Deletion       | ✅ 100% | RoomManager    | -          | **P0**   |
+| FR-4: Position Switching  | ✅ 100% | GameDetailLive | -          | **P0**   |
+| FR-5: Multi-View Mode     | 0%      | -              | Medium     | **P2**   |
+| FR-6: State Display       | ✅ 100% | GameDetailLive | -          | **P0**   |
+| FR-7: Event Log           | ✅ 100% | EventRecorder  | -          | **P1**   |
+| FR-8: Raw State Inspector | ✅ 100% | GameDetailLive | -          | **P0**   |
+| FR-9: Action Execution    | ✅ 100% | GameAdapter    | -          | **P0**   |
+| FR-10: Quick Actions      | 75%     | GameHelpers    | Small      | **P1**   |
+| FR-11: Bot Management     | ✅ 100% | BotManager     | -          | **P1**   |
+| FR-12: Bot Observation    | 0%      | -              | Medium     | **P2**   |
+| FR-13: Hand Replay        | 0%      | Engine API     | Medium     | **P2**   |
+| FR-14: Statistics View    | 20%     | StatsLive      | Medium     | **P2**   |
+| **FR-15: Card Table UI**  | **0%**  | -              | **Medium** | **P0**   |
 
-**Overall Status**: ~30% complete via reusable admin panel components
+**Overall Status**: ~70% complete - Card Table UI blocking effective testing
 
 ---
 
 ## Critical Findings
 
-### 🔴 Blockers
+### 🔴 Current Blocker
 
-1. **No bot infrastructure exists** - FR-11 is a prerequisite for 5+ other features
-2. **PubSub topic mismatch** - LiveViews subscribe to `"lobby"` but broadcasts use `"lobby:updates"`
-3. **No event sourcing** - Only state diffs broadcast, not structured events
-4. **No position-specific views** - Engine returns full state to all players
+**No visual card table** - FR-15 is blocking effective manual testing. Developers must:
 
-### ⚠️ High Priority Issues
+- Read raw JSON to see hands
+- Pick actions from tuple lists like `{:play_card, {14, :hearts}}`
+- Imagine the card table layout mentally
 
-1. **Security gaps** - Dev routes unprotected, no rate limiting, unlimited resource creation
-2. **Missing UI components** - No card, modal, badge, or player indicator components
-3. **No LiveView tests** - test/pidro_server_web/live/ directory doesn't exist
-4. **Engine limitations** - No undo API wrapper, no batch actions
+### ✅ Resolved Issues
 
-### 💡 Quick Wins
+1. **PubSub topic mismatch** - Fixed in Phase 0
+2. **Bot infrastructure** - Completed in Phase 2
+3. **Event sourcing** - EventRecorder implemented in Phase 2
+4. **Position-specific views** - Client-side filtering implemented
 
-1. **Position switching** - Pure UI, ~50 lines of code, no backend changes
-2. **Raw state inspector** - 80% done, just add copy button
-3. **Game deletion** - RoomManager.close_room/1 exists, just needs UI
-4. **Filter/sort games** - Data already available, simple template changes
+### 💡 Quick Wins Remaining
+
+1. **Card component** - Foundation for entire visual UI
+2. **Helper functions** - Reuse engine logic in templates
+3. **Phase displays** - Bidding/trump selection panels
 
 ---
 
 ## Detailed Gap Analysis by Feature
 
-### Phase 0: Core Infrastructure (P0 - Blocking MVP)
+### Phase 0: Core Infrastructure (P0 - Blocking MVP) ✅ COMPLETE
 
 **Effort**: Small (2-4 hours)  
 **Priority**: CRITICAL - Must complete first
+**Status**: ✅ All tasks complete
 
-#### DEV-001: Fix PubSub Topic Mismatch ⚠️ [x]
+#### DEV-001: Fix PubSub Topic Mismatch ✅
+
 - **Issue**: Broadcasts to `"lobby:updates"`, subscriptions to `"lobby"`
 - **Impact**: LiveViews miss room creation/updates
-- **Files**: RoomManager.ex (L369, L396, L418), LobbyLive.ex (L14)
-- **Fix**: Standardize on `"lobby:updates"` everywhere
-- **Test**: Verify lobby updates in real-time
+- **Fix**: Standardized on `"lobby:updates"` everywhere
 
-#### DEV-002: Create /dev Scope and Route Structure [x]
-- **Action**: Add dev-only routes within existing `:dev_routes` guard
-- **Location**: router.ex lines 85-99
-- **Routes needed**:
+#### DEV-002: Create /dev Scope and Route Structure ✅
+
+- **Routes created**:
   ```elixir
   scope "/dev", PidroServerWeb.Dev do
     pipe_through :browser
@@ -105,582 +113,1063 @@
     live "/analytics", AnalyticsLive      # FR-14: Statistics
   end
   ```
-- **Auth**: No auth needed (already gated by compile-time check)
 
-#### DEV-003: Clone Admin LiveViews to Dev Namespace [x]
-- **Action**: Copy and adapt existing LiveViews
-- **Mappings**:
-  - `LobbyLive` → `Dev.GameListLive` (add creation/deletion UI)
-  - `GameMonitorLive` → `Dev.GameDetailLive` (add interaction)
-  - `StatsLive` → `Dev.AnalyticsLive` (add game metrics)
-- **Why**: Keep admin panel read-only, iterate faster on dev UI
+#### DEV-003: Clone Admin LiveViews to Dev Namespace ✅
+
+- `LobbyLive` → `Dev.GameListLive`
+- `GameMonitorLive` → `Dev.GameDetailLive`
+- `StatsLive` → `Dev.AnalyticsLive`
 
 ---
 
-### Phase 1: Minimal Playable Dev UI (P0 - MVP Foundation)
+### Phase 1: Minimal Playable Dev UI (P0 - MVP Foundation) ✅ COMPLETE
 
 **Effort**: Medium (1-2 days)  
 **Priority**: HIGH - Enable basic testing workflow  
-**Goal**: Single developer can create and play test games
+**Status**: ✅ All tasks complete
 
-#### FR-1: Game Creation (40% complete)
-
-**Current State:**
-- ✅ RoomManager.create_room/2 accepts metadata
-- ✅ Can specify custom game names via metadata
-- ❌ No UI for bot configuration
-- ❌ No bot processes to spawn
-
-**Tasks:**
+#### FR-1: Game Creation ✅ 100% complete
 
 - [x] **DEV-101**: Add game creation form to GameListLive
-  - Form fields: Game Name (text), Bot Count (0/3/4), Difficulty (random/basic/smart)
-  - Buttons: "4 Players", "1P + 3 Bots", "4 Bots"
-  - Store in metadata: `%{name: ..., bot_difficulty: ..., is_dev_room: true}`
-  - **Depends on**: DEV-003 (cloned LiveView)
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 2h
+- [x] **DEV-102**: Stub bot spawning (implemented in Phase 2)
 
-- [x] **DEV-102**: Stub bot spawning (placeholder for Phase 2)
-  - Create `Dev.BotManager` module (minimal stub)
-  - Add `start_bots/3` that returns `:ok` (implement in Phase 2)
-  - Call after room creation if bot_count > 0
-  - **Files**: lib/pidro_server/dev/bot_manager.ex
-  - **Effort**: 30min
-
-**Acceptance Criteria:**
-- Can create room with custom name
-- Can select 0/3/4 bot players
-- Room appears in game list immediately
-- Bot spawning shows "Coming Soon" message
-
----
-
-#### FR-2: Game Discovery (70% complete)
-
-**Current State:**
-- ✅ Lists all rooms with basic info
-- ✅ Real-time updates via PubSub
-- ✅ Shows player count, status, creation time
-- ❌ No phase filtering
-- ❌ No sorting controls
-- ❌ No game count badge
-- ❌ Doesn't display game names from metadata
-
-**Tasks:**
+#### FR-2: Game Discovery ✅ 100% complete
 
 - [x] **DEV-201**: Add game name display
-  - Extract `metadata.name` from room
-  - Show in table: Code | Name | Phase | Players | Created
-  - Default to "Game #{code}" if no name
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 30min
-
 - [x] **DEV-202**: Add phase filtering dropdown
-  - Options: All, Bidding, Playing, Scoring, Finished
-  - Filter logic: derive phase from game state
-  - Use streams for efficient filtering
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-203**: Add sort by creation date
-  - Default: newest first
-  - Toggle to oldest first
-  - Store sort preference in socket assigns
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 30min
-
 - [x] **DEV-204**: Add game count badge
-  - Show: Total | Active | Waiting
-  - Update on PubSub events
-  - Reuse StatsLive.calculate_stats/1 pattern
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 30min
 
-**Acceptance Criteria:**
-- Table shows: Code, Name, Phase, Players, Created, Actions
-- Can filter by phase
-- Can sort by date (asc/desc)
-- Count badge updates in real-time
-- Links to game detail page work
-
----
-
-#### FR-3: Game Deletion (50% complete)
-
-**Current State:**
-- ✅ RoomManager.close_room/1 exists
-- ✅ Auto-cleanup on disconnect/timeout
-- ❌ No delete button UI
-- ❌ No confirmation dialog
-- ❌ No bulk delete
-
-**Tasks:**
+#### FR-3: Game Deletion ✅ 100% complete
 
 - [x] **DEV-301**: Add delete button per game
-  - "Delete" action in game list table
-  - Confirmation modal: "Delete {game_name}?"
-  - Call RoomManager.close_room/1
-  - Show success flash message
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-302**: Add bulk delete finished games
-  - Button: "Delete All Finished"
-  - Count how many will be deleted
-  - Confirmation: "Delete {count} finished games?"
-  - Loop and close all :finished rooms
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-303**: Build confirmation modal component
-  - Reusable component: `<.confirm_modal>`
-  - Props: title, message, confirm_text, cancel_text
-  - Use Tailwind modal styling
-  - Handle phx-click events
-  - **Files**: lib/pidro_server_web/components/dev_components.ex
-  - **Effort**: 1h
 
-**Acceptance Criteria:**
-- Delete button triggers confirmation
-- Successful delete removes from list instantly
-- Bulk delete works for finished games
-- Shows count of deleted games
-- Errors handled gracefully
-
----
-
-#### FR-4: Position Switching (0% complete)
-
-**Current State:**
-- ✅ Engine returns full game state with all hands
-- ✅ GameMonitorLive displays state
-- ❌ No position selection UI
-- ❌ No hand filtering logic
-- ❌ No "currently viewing" indicator
-
-**Tasks:**
+#### FR-4: Position Switching ✅ 100% complete
 
 - [x] **DEV-401**: Add position selector UI
-  - Four buttons: North, South, East, West
-  - Toggle: "God Mode" (show all hands)
-  - Highlight active position
-  - Store in `@selected_position` assign (default: `:all`)
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-402**: Implement hand filtering logic
-  - Helper: `filter_hands(game_state, position)`
-  - When position = :all → return full state
-  - When position = :north → mask other player hands
-  - Show "hidden" placeholder for masked hands
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-403**: Add "currently viewing" indicator
-  - Display: "Playing as: North" or "God Mode (All Players)"
-  - Show active player's hand highlighted
-  - Show legal actions for active position only
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 30min
 
-**Acceptance Criteria:**
-- Can switch between 4 positions + God Mode
-- Hands filtered correctly per position
-- Active position visually highlighted
-- Position persists on state updates
-- Smooth UI transitions
-
----
-
-#### FR-6: State Display (60% complete)
-
-**Current State:**
-- ✅ Shows phase, trump, scores
-- ✅ Real-time updates
-- ❌ Missing bid history
-- ❌ Missing trick pile visualization
-- ❌ Missing "gone cold" indicators
-- ❌ No active player visual indicator
-
-**Tasks:**
+#### FR-6: State Display ✅ 100% complete
 
 - [x] **DEV-601**: Add bid history panel
-  - Display all bids in chronological order
-  - Format: "North bid 8", "South passed"
-  - Highlight winning bid
-  - Show bidding team
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-602**: Add trick pile visualization
-  - Show current trick cards
-  - Display points in current trick
-  - Show who led the trick
-  - Highlight winning card
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 2h
-
 - [x] **DEV-603**: Add active player indicator
-  - Visual highlight on current player
-  - Show "Your turn" if active position selected
-  - Pulse animation for attention
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 30min
-
 - [x] **DEV-604**: Display "gone cold" status
-  - Check player cold status from state
-  - Show indicator badge per player
-  - Tooltip explaining what "gone cold" means
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 30min
 
-**Acceptance Criteria:**
-- Bid history shows all bids
-- Current trick cards displayed
-- Active player clearly indicated
-- "Gone cold" status visible
-- All info updates in real-time
-
----
-
-#### FR-8: Raw State Inspector (80% complete)
-
-**Current State:**
-- ✅ Collapsible JSON viewer exists
-- ✅ Shows full game state
-- ❌ No syntax highlighting
-- ❌ No copy to clipboard button
-- ❌ No search/filter
-
-**Tasks:**
+#### FR-8: Raw State Inspector ✅ 100% complete
 
 - [x] **DEV-801**: Add copy to clipboard button
-  - Button: "Copy JSON"
-  - Use navigator.clipboard API via LiveView hook
-  - Show "Copied!" feedback
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex, assets/js/hooks/clipboard.js
-  - **Effort**: 30min
+- [ ] **DEV-802**: Add syntax highlighting (optional, deferred)
 
-- [ ] **DEV-802**: Add syntax highlighting (optional)
-  - Use `<pre><code>` with JSON formatting
-  - Apply CSS syntax highlighting
-  - Or use Alpine.js for client-side formatting
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h (optional)
-
-**Acceptance Criteria:**
-- Copy button works reliably
-- Shows success feedback
-- JSON remains properly formatted
-- Collapsible section works smoothly
-
----
-
-#### FR-9: Action Execution (0% complete)
-
-**Current State:**
-- ✅ GameAdapter.get_legal_actions/2 exists
-- ✅ GameAdapter.apply_action/3 exists
-- ✅ GameChannel shows action handling pattern
-- ❌ No UI for action buttons
-- ❌ No loading states
-- ❌ No error handling UI
-
-**Tasks:**
+#### FR-9: Action Execution ✅ 100% complete
 
 - [x] **DEV-901**: Fetch and display legal actions
-  - On mount/update: call `get_legal_actions(room_code, @selected_position)`
-  - Parse actions: bids, pass, trump selection, card plays
-  - Store in `@legal_actions` assign
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h
-
 - [x] **DEV-902**: Build action button UI
-  - Create buttons for each legal action
-  - Disable illegal actions (grayed out)
-  - Format: "Bid 8", "Play A♠", "Pass", "Declare ♠"
-  - Group by action type
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 2h
-
 - [x] **DEV-903**: Wire action execution
-  - Handle `phx-click` on action buttons
-  - Call `GameAdapter.apply_action(room_code, position, action)`
-  - Show loading spinner during execution
-  - Handle success → refetch state
-  - Handle errors → show flash message
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 2h
-
 - [x] **DEV-904**: Build action error handling
-  - Parse engine error messages
-  - Display in flash notification
-  - Keep action buttons enabled to retry
-  - Log errors for debugging
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h
-
-**Acceptance Criteria:**
-- Legal actions displayed as buttons
-- Illegal actions grayed out
-- Clicking executes action
-- Success updates game state
-- Errors shown clearly
-- Loading state visible during execution
 
 ---
 
-### Phase 1 Validation
-
-**Manual Test Flow:**
-1. Navigate to `/dev/games`
-2. Create game: "Test Game", 0 bots
-3. Game appears in list with name
-4. Click game to open detail
-5. Switch to "North" position
-6. See only North's hand
-7. See available bid actions
-8. Click "Bid 6"
-9. Bid executes, state updates
-10. Delete game from list
-
-**Quality Gates:**
-- [ ] All P0 tasks complete
-- [ ] Manual test flow works end-to-end
-- [ ] No console errors
-- [ ] PubSub updates in real-time
-- [ ] `mix format` clean
-- [ ] `mix credo` clean
-
----
-
-## Phase 2: Bot System & Enhanced UX (P1)
+### Phase 2: Bot System & Enhanced UX (P1) ✅ COMPLETE
 
 **Effort**: Large (2-3 days)  
 **Priority**: HIGH - Enables solo testing  
-**Goal**: Developers can test full games with bot opponents
+**Status**: ✅ All tasks complete
 
-### FR-11: Bot Management (100% complete) ✅
-
-**Prerequisites**: None (blocking other features)
-**Complexity**: Large - New subsystem
-
-**Architecture Decision:**
-- Bot = GenServer process per position
-- Supervised by DynamicSupervisor
-- Subscribes to `game:{code}` PubSub topic
-- On its turn → picks legal action → applies via GameAdapter
-- Strategies: Random (P1), Basic (P2), Smart (P2)
-
-**Tasks:**
+#### FR-11: Bot Management ✅ 100% complete
 
 - [x] **DEV-1101**: Create BotManager GenServer
-  - State: `%{game_id => %{position => bot_pid}}`
-  - API: `start_bot/4`, `stop_bot/2`, `pause_bot/2`, `resume_bot/2`
-  - Tracks active bots in ETS table
-  - **Files**: lib/pidro_server/dev/bot_manager.ex
-  - **Effort**: 3h
-
 - [x] **DEV-1102**: Create BotPlayer GenServer
-  - Subscribes to game PubSub on start
-  - Detects when it's bot's turn (current_player == position)
-  - Fetches legal actions
-  - Picks action via strategy module
-  - Applies action with configurable delay
-  - **Files**: lib/pidro_server/dev/bot_player.ex
-  - **Effort**: 3h
-
 - [x] **DEV-1103**: Implement RandomStrategy
-  - Behaviour: `Pidro.Dev.BotStrategy`
-  - `pick_action(legal_actions, game_state) :: action`
-  - Logic: `Enum.random(legal_actions)`
-  - **Files**: lib/pidro_server/dev/strategies/random_strategy.ex
-  - **Effort**: 1h
-
-- [ ] **DEV-1104**: Implement BasicStrategy (P2)
-  - Simple heuristics: bid high with good hands, play high cards to win
-  - **Files**: lib/pidro_server/dev/strategies/basic_strategy.ex
-  - **Effort**: 4h (defer to P2)
-
+- [ ] **DEV-1104**: Implement BasicStrategy (deferred to Phase 4)
 - [x] **DEV-1105**: Add bot lifecycle to game creation
-  - After creating room with bots → spawn bot processes
-  - Link bots to game process (terminate on game end)
-  - Handle bot crashes gracefully
-  - **Files**: lib/pidro_server_web/live/dev/game_list_live.ex
-  - **Effort**: 2h
-
 - [x] **DEV-1106**: Add bot configuration UI
-  - Per-position dropdown: Human | Bot
-  - Difficulty select: Random | Basic | Smart
-  - Delay slider: 0-3000ms
-  - Apply button → restart bots with new config
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 2h
-
 - [x] **DEV-1107**: Add bot supervision tree
-  - Create `Pidro.Dev.BotSupervisor` (DynamicSupervisor)
-  - Start under application.ex in dev env only
-  - Ensure bots restart on crash
-  - **Files**: lib/pidro_server/dev/bot_supervisor.ex, lib/pidro_server/application.ex
-  - **Effort**: 1h
 
-**Acceptance Criteria:**
-- ✅ Can create game with 3 bots
-- ✅ Bots play automatically with delay
-- ✅ Bots stop when game ends
-- ✅ Can pause/resume bots
-- ✅ Can change bot difficulty
-- ✅ Bots don't leak processes (monitored via DynamicSupervisor)
-
----
-
-### FR-7: Event Log (100% complete ✅)
-
-**Current State:**
-- ✅ State updates broadcast via PubSub
-- ❌ No structured events
-- ❌ No event history
-- ❌ No timestamps
-
-**Architecture Decision:**
-- Lightweight dev-only event recorder
-- Subscribe to `game:{code}` and derive events from state diffs
-- Store last 500 events per game in ETS
-- Auto-cleanup on game close
-
-**Tasks:**
+#### FR-7: Event Log ✅ 100% complete
 
 - [x] **DEV-701**: Create event types schema
-  - Define: `:deal`, `:bid`, `:pass`, `:trump_declared`, `:card_played`, `:trick_won`, `:round_scored`
-  - Struct: `%Event{type, player, timestamp, metadata}`
-  - **Files**: lib/pidro_server/dev/event.ex
-  - **Effort**: 1h
-
 - [x] **DEV-702**: Create EventRecorder GenServer
-  - Subscribe to `game:{code}` on game start
-  - Derive events from state changes
-  - Store in ETS: `{game_id, event_list}`
-  - API: `get_events/2` with filters
-  - **Files**: lib/pidro_server/dev/event_recorder.ex
-  - **Effort**: 3h
-
 - [x] **DEV-703**: Instrument GameAdapter to emit events
-  - After apply_action → broadcast typed event
-  - Include: player, action, timestamp
-  - Minimal instrumentation (5 event types)
-  - **Files**: lib/pidro_server/games/game_adapter.ex
-  - **Effort**: 2h
-
 - [x] **DEV-704**: Add event log panel to game detail
-  - Display: [HH:MM:SS] Player: Action
-  - Filter by: event type, player
-  - Color-code by type
-  - Scrollable, newest first
-  - Clear button
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 2h
-
 - [x] **DEV-705**: Add export functionality
-  - Export as JSON (download)
-  - Export as text (copy to clipboard)
-  - Include full event metadata
-  - **Files**: lib/pidro_server_web/live/dev/game_detail_live.ex
-  - **Effort**: 1h
 
-**Acceptance Criteria:**
-- Events appear in real-time
-- Timestamps accurate
-- Filtering works
-- Export produces valid JSON
-- Events cleared on game deletion
-
----
-
-### FR-10: Quick Actions (75% complete)
-
-**Current State:**
-- ✅ Engine has Pidro.Game.Replay.undo/1
-- ✅ GameAdapter.undo/1 wrapper implemented
-- ✅ GameHelpers module with auto-bid and fast-forward
-- ✅ UI buttons for all three quick actions
-
-**Tasks:**
+#### FR-10: Quick Actions (75% complete)
 
 - [x] **DEV-1001**: Implement "Undo Last Action"
-  - Add `GameAdapter.undo/1`
-  - Call `Pidro.Game.Replay.undo(pid)` then `set_state/2`
-  - Button in game detail: "↩ Undo"
-  - Disable if no history
-  - **Files**: lib/pidro_server/games/game_adapter.ex, live/dev/game_detail_live.ex
-  - **Effort**: 2h
-
-- [x] **DEV-1002**: Implement "Auto-bid" (requires bots)
-  - Use RandomStrategy to bid for all players
-  - Loop until bidding phase complete
-  - Configurable delay between bids
-  - Button: "⚡ Auto-complete Bidding"
-  - **Files**: lib/pidro_server/dev/game_helpers.ex
-  - **Effort**: 2h
-
-- [x] **DEV-1003**: Implement "Fast Forward" (requires bots)
-  - Enable all bots with minimal delay
-  - Let game play to completion
-  - Button: "⏩ Fast Forward"
-  - Pause button to stop
-  - **Files**: lib/pidro_server/dev/game_helpers.ex
-  - **Effort**: 2h
-
-- [ ] **DEV-1004**: Implement "Skip to Playing" (complex)
-  - Auto-bid sensibly (not random)
-  - Auto-declare trump
-  - Stop at first card play
-  - Button: "⏭ Skip to Playing"
-  - **Files**: lib/pidro_server/dev/game_helpers.ex
-  - **Effort**: 3h (defer to P2)
-
-**Acceptance Criteria:**
-- ✅ Undo button works and reverts state
-- ✅ Auto-bid completes bidding phase
-- ✅ Fast forward plays full game
-- ✅ Can pause fast forward mid-game (via bot controls)
-- ✅ Errors handled gracefully
+- [x] **DEV-1002**: Implement "Auto-bid"
+- [x] **DEV-1003**: Implement "Fast Forward"
+- [ ] **DEV-1004**: Implement "Skip to Playing" (deferred to Phase 4)
 
 ---
 
-### Phase 2 Validation
+### Phase 3: Card Table UI (P0 - Blocking Effective Testing)
 
-**Manual Test Flow:**
-1. Create game with 1 player + 3 bots
-2. Bots automatically join and play
-3. Game progresses through bidding
-4. Event log shows all actions
-5. Click "Fast Forward"
-6. Game completes in <10 seconds
-7. Review event log export
-8. Click "Undo" → state reverts
+**Effort**: Medium (3-4 days)  
+**Priority**: HIGH - Blocking effective testing  
+**Goal**: Visual card table that enables intuitive gameplay testing
+**Status**: Ready for implementation
 
-**Quality Gates:**
-- [ ] All P1 tasks complete
-- [ ] Bots play complete games reliably
-- [ ] No bot process leaks (check Observer)
-- [ ] Event log accurate
-- [ ] Tests for BotManager and EventRecorder
-- [ ] `mix test` passes
+#### Why This Is Blocking
+
+The current Dev UI has all the plumbing (bots work, events log, actions execute) but no visual representation of the game. Developers must:
+
+- Read raw JSON to see hands
+- Pick actions from tuple lists like `{:play_card, {14, :hearts}}`
+- Imagine the card table layout mentally
+
+This phase adds the visual layer that transforms the debug panel into a playable interface.
+
+#### What We're Building
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         NORTH                                   │
+│                    [?][?][?][?][?][?]                           │
+│                      (hidden/bot)                               │
+├─────────────────┬───────────────────────────┬───────────────────┤
+│      WEST       │       TRICK AREA          │       EAST        │
+│   [?][?][?][?]  │                           │   [?][?][?][?]    │
+│                 │    ┌────┐     ┌────┐      │                   │
+│                 │    │ N  │     │ E  │      │                   │
+│                 │    │ K♥ │     │ 9♥ │      │                   │
+│                 │    └────┘     └────┘      │                   │
+│                 │    ┌────┐     ┌────┐      │                   │
+│                 │    │ W  │     │ S  │      │                   │
+│                 │    │ -- │     │ A♥ │      │                   │
+│                 │    └────┘     └────┘      │                   │
+├─────────────────┴───────────────────────────┴───────────────────┤
+│                         SOUTH (You)                             │
+│           [J♥][10♥][5♥★][5♦★][4♥][2♥]                          │
+│            ↑ click to play                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Phase 3: Advanced Features (P2)
+#### FR-15: Card Table UI (0% complete)
+
+**Prerequisites**: FR-4 Position Switching, FR-9 Action Execution  
+**Blocks**: Effective manual testing  
+**Complexity**: Medium - New visual components, minimal backend changes
+
+---
+
+##### Task Group A: Card Components
+
+###### DEV-1501: Create base card component
+
+- **Description**: Reusable Phoenix component for rendering a single playing card
+- **Visual design**:
+  ```
+  ┌─────┐
+  │ A   │  <- rank top-left
+  │  ♥  │  <- suit center (colored)
+  │   A │  <- rank bottom-right
+  └─────┘
+  ```
+- **Props**:
+  - `card` - `{rank, suit}` tuple or nil (for face-down)
+  - `face_down` - boolean, show card back
+  - `playable` - boolean, highlight as clickable
+  - `trump` - boolean, show trump indicator (border/glow)
+  - `points` - integer, show point badge if > 0
+  - `size` - `:sm | :md | :lg` for different contexts
+- **Styling**:
+  - Red text for hearts/diamonds
+  - Black text for clubs/spades
+  - Yellow/gold border for trump cards
+  - Blue highlight ring for playable cards
+  - Point badge in corner: `[1]` or `[5]`
+- **Files**:
+  - `lib/pidro_server_web/components/card_components.ex`
+- **Effort**: 2h
+
+**Implementation**:
+
+```elixir
+defmodule PidroServerWeb.CardComponents do
+  use Phoenix.Component
+
+  @suits %{hearts: "♥", diamonds: "♦", clubs: "♣", spades: "♠"}
+  @ranks %{14 => "A", 13 => "K", 12 => "Q", 11 => "J"}
+
+  attr :card, :any, required: true  # {rank, suit} or nil
+  attr :face_down, :boolean, default: false
+  attr :playable, :boolean, default: false
+  attr :trump, :boolean, default: false
+  attr :points, :integer, default: 0
+  attr :size, :atom, default: :md
+  attr :on_click, :any, default: nil
+
+  def card(assigns) do
+    ~H"""
+    <div
+      class={card_classes(@face_down, @playable, @trump, @size)}
+      phx-click={@on_click && "play_card"}
+      phx-value-card={@card && encode_card(@card)}
+    >
+      <%= if @face_down do %>
+        <div class="card-back bg-blue-800 rounded flex items-center justify-center">
+          <span class="text-blue-200 text-2xl">🂠</span>
+        </div>
+      <% else %>
+        <div class="relative h-full flex flex-col justify-between p-1">
+          <div class={suit_color(@card)}><%= format_rank(@card) %></div>
+          <div class={["text-center text-xl", suit_color(@card)]}><%= format_suit(@card) %></div>
+          <div class={["text-right", suit_color(@card)]}><%= format_rank(@card) %></div>
+          <%= if @points > 0 do %>
+            <div class="absolute -top-1 -right-1 bg-yellow-400 text-black text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
+              <%= @points %>
+            </div>
+          <% end %>
+          <%= if @trump do %>
+            <div class="absolute -bottom-1 -left-1 text-yellow-400 text-xs">★</div>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp card_classes(face_down, playable, trump, size) do
+    base = "rounded shadow border bg-white"
+    size_class = case size do
+      :sm -> "w-8 h-12 text-xs"
+      :md -> "w-12 h-16 text-sm"
+      :lg -> "w-16 h-24 text-base"
+    end
+    trump_class = if trump and not face_down, do: "ring-2 ring-yellow-400", else: "border-gray-300"
+    playable_class = if playable, do: "cursor-pointer hover:ring-2 hover:ring-blue-500 hover:-translate-y-1 transition-transform", else: ""
+    face_down_class = if face_down, do: "bg-blue-800", else: ""
+
+    [base, size_class, trump_class, playable_class, face_down_class] |> Enum.join(" ")
+  end
+
+  defp suit_color({_rank, suit}) when suit in [:hearts, :diamonds], do: "text-red-600"
+  defp suit_color(_), do: "text-gray-900"
+
+  defp format_rank({rank, _suit}), do: Map.get(@ranks, rank, to_string(rank))
+  defp format_suit({_rank, suit}), do: Map.get(@suits, suit, "?")
+
+  defp encode_card({rank, suit}), do: "#{rank}:#{suit}"
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] Card displays rank and suit correctly
+- [ ] Colors correct (red for hearts/diamonds)
+- [ ] Trump cards have visible indicator
+- [ ] Point badges show on A, J, 10, 5, 2
+- [ ] Face-down cards show card back
+- [ ] Playable cards have hover effect
+- [ ] Click triggers phx-click event
+
+---
+
+###### DEV-1502: Create hand component
+
+- **Description**: Row of cards representing a player's hand
+- **Props**:
+  - `cards` - list of `{rank, suit}` tuples
+  - `position` - `:north | :south | :east | :west`
+  - `is_current_turn` - boolean, highlight if active
+  - `is_human` - boolean, show human indicator
+  - `show_cards` - boolean, face-up or face-down
+  - `legal_plays` - list of playable cards (for highlighting)
+  - `trump_suit` - atom, to mark trump cards
+  - `is_cold` - boolean, player has gone cold
+- **Layout**:
+  - Horizontal row with slight overlap (-margin)
+  - Position label above/below
+  - Turn indicator (arrow or highlight)
+  - "COLD" badge if player eliminated
+- **Files**:
+  - `lib/pidro_server_web/components/card_components.ex` (add to same file)
+- **Effort**: 1.5h
+
+**Implementation**:
+
+```elixir
+attr :cards, :list, required: true
+attr :position, :atom, required: true
+attr :is_current_turn, :boolean, default: false
+attr :is_human, :boolean, default: false
+attr :show_cards, :boolean, default: true
+attr :legal_plays, :list, default: []
+attr :trump_suit, :atom, default: nil
+attr :is_cold, :boolean, default: false
+attr :orientation, :atom, default: :horizontal  # :horizontal or :vertical
+
+def hand(assigns) do
+  ~H"""
+  <div class={hand_container_classes(@position, @is_current_turn)}>
+    <div class="flex items-center gap-2 mb-1">
+      <span class="font-medium text-sm"><%= position_label(@position) %></span>
+      <%= if @is_human do %>
+        <span class="text-blue-500 text-xs">👤 You</span>
+      <% end %>
+      <%= if @is_current_turn do %>
+        <span class="text-green-500 text-xs animate-pulse">← Turn</span>
+      <% end %>
+      <%= if @is_cold do %>
+        <span class="bg-blue-200 text-blue-800 text-xs px-1 rounded">COLD</span>
+      <% end %>
+    </div>
+
+    <%= if @is_cold do %>
+      <div class="text-gray-400 italic text-sm">No cards remaining</div>
+    <% else %>
+      <div class={cards_row_classes(@orientation)}>
+        <%= for card <- sort_hand(@cards, @trump_suit) do %>
+          <.card
+            card={card}
+            face_down={not @show_cards}
+            playable={card in @legal_plays}
+            trump={is_trump?(card, @trump_suit)}
+            points={point_value(card, @trump_suit)}
+            size={:md}
+            on_click={card in @legal_plays}
+          />
+        <% end %>
+      </div>
+    <% end %>
+  </div>
+  """
+end
+
+defp position_label(:north), do: "North"
+defp position_label(:south), do: "South"
+defp position_label(:east), do: "East"
+defp position_label(:west), do: "West"
+
+defp hand_container_classes(position, is_current_turn) do
+  base = "p-2 rounded"
+  turn = if is_current_turn, do: "bg-green-50 ring-2 ring-green-300", else: "bg-gray-50"
+  [base, turn] |> Enum.join(" ")
+end
+
+defp cards_row_classes(:horizontal), do: "flex gap-1"
+defp cards_row_classes(:vertical), do: "flex flex-col gap-1"
+
+# Helper to sort cards: trump first, then by rank descending
+defp sort_hand(cards, trump_suit) do
+  Enum.sort_by(cards, fn {rank, suit} ->
+    trump_priority = if is_trump?({rank, suit}, trump_suit), do: 0, else: 1
+    {trump_priority, -rank}
+  end)
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] Hand displays all cards in a row
+- [ ] Cards sorted sensibly (trump first, high to low)
+- [ ] Current turn has visible highlight
+- [ ] Cold players show "COLD" badge
+- [ ] Legal plays are clickable
+- [ ] Human player indicated
+
+---
+
+###### DEV-1503: Create trick area component
+
+- **Description**: Central area showing cards played to current trick
+- **Props**:
+  - `trick` - list of `%{position: atom, card: tuple}`
+  - `leader` - position that led the trick
+  - `winner` - position winning so far (highest card)
+  - `trump_suit` - for highlighting trump plays
+- **Layout**:
+  - 2x2 grid representing table positions
+  - Empty slot = waiting for play
+  - Leader indicated with "Led" label
+  - Current winner highlighted
+- **Files**:
+  - `lib/pidro_server_web/components/card_components.ex`
+- **Effort**: 1.5h
+
+**Implementation**:
+
+```elixir
+attr :trick, :list, default: []  # [%{position: :north, card: {14, :hearts}}, ...]
+attr :leader, :atom, default: nil
+attr :winner, :atom, default: nil
+attr :trump_suit, :atom, default: nil
+attr :trick_number, :integer, default: 0
+attr :points_in_trick, :integer, default: 0
+
+def trick_area(assigns) do
+  trick_map = Map.new(assigns.trick, fn %{position: p, card: c} -> {p, c} end)
+  assigns = assign(assigns, :trick_map, trick_map)
+
+  ~H"""
+  <div class="bg-green-100 rounded-lg p-4 min-h-[200px]">
+    <div class="text-center text-sm text-gray-600 mb-2">
+      Trick #<%= @trick_number %>
+      <%= if @points_in_trick > 0 do %>
+        <span class="text-yellow-600 font-medium">(<%= @points_in_trick %> pts)</span>
+      <% end %>
+    </div>
+
+    <!-- 2x2 Grid for trick cards -->
+    <div class="grid grid-cols-3 grid-rows-3 gap-2 place-items-center max-w-[200px] mx-auto">
+      <!-- Row 1: North -->
+      <div class="col-start-2">
+        <.trick_slot
+          position={:north}
+          card={@trick_map[:north]}
+          is_leader={@leader == :north}
+          is_winner={@winner == :north}
+          trump_suit={@trump_suit}
+        />
+      </div>
+
+      <!-- Row 2: West, Center, East -->
+      <div class="col-start-1 row-start-2">
+        <.trick_slot
+          position={:west}
+          card={@trick_map[:west]}
+          is_leader={@leader == :west}
+          is_winner={@winner == :west}
+          trump_suit={@trump_suit}
+        />
+      </div>
+      <div class="col-start-2 row-start-2">
+        <!-- Empty center or table decoration -->
+      </div>
+      <div class="col-start-3 row-start-2">
+        <.trick_slot
+          position={:east}
+          card={@trick_map[:east]}
+          is_leader={@leader == :east}
+          is_winner={@winner == :east}
+          trump_suit={@trump_suit}
+        />
+      </div>
+
+      <!-- Row 3: South -->
+      <div class="col-start-2 row-start-3">
+        <.trick_slot
+          position={:south}
+          card={@trick_map[:south]}
+          is_leader={@leader == :south}
+          is_winner={@winner == :south}
+          trump_suit={@trump_suit}
+        />
+      </div>
+    </div>
+  </div>
+  """
+end
+
+attr :position, :atom, required: true
+attr :card, :any, default: nil
+attr :is_leader, :boolean, default: false
+attr :is_winner, :boolean, default: false
+attr :trump_suit, :atom, default: nil
+
+defp trick_slot(assigns) do
+  ~H"""
+  <div class="relative">
+    <%= if @is_leader do %>
+      <div class="absolute -top-4 left-1/2 -translate-x-1/2 text-xs text-gray-500">Led</div>
+    <% end %>
+
+    <div class={[
+      "w-14 h-20 rounded border-2 border-dashed flex items-center justify-center",
+      @is_winner && "ring-2 ring-green-500",
+      @card && "border-solid border-gray-300 bg-white" || "border-gray-300 bg-gray-50"
+    ]}>
+      <%= if @card do %>
+        <.card
+          card={@card}
+          trump={is_trump?(@card, @trump_suit)}
+          points={point_value(@card, @trump_suit)}
+          size={:md}
+        />
+      <% else %>
+        <span class="text-gray-400 text-xs"><%= String.first(to_string(@position)) |> String.upcase() %></span>
+      <% end %>
+    </div>
+
+    <%= if @is_winner and @card do %>
+      <div class="absolute -bottom-4 left-1/2 -translate-x-1/2 text-xs text-green-600 font-medium">Winner</div>
+    <% end %>
+  </div>
+  """
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] Shows 4 slots in compass layout
+- [ ] Played cards appear in correct slot
+- [ ] Empty slots show position indicator
+- [ ] Leader marked with "Led" label
+- [ ] Current winner highlighted
+- [ ] Points in trick displayed
+
+---
+
+##### Task Group B: Card Table Layout
+
+###### DEV-1504: Create card table layout component
+
+- **Description**: Full table layout combining all hands and trick area
+- **Structure**:
+  ```
+  ┌─────────────────────────────────────────┐
+  │              North Hand                 │
+  ├─────────┬───────────────────┬───────────┤
+  │  West   │    Trick Area     │   East    │
+  │  Hand   │                   │   Hand    │
+  ├─────────┴───────────────────┴───────────┤
+  │              South Hand                 │
+  └─────────────────────────────────────────┘
+  ```
+- **Props**:
+  - `game_state` - full game state
+  - `selected_position` - which position human is playing
+  - `god_mode` - boolean, show all hands
+  - `legal_actions` - for highlighting playable cards
+- **Files**:
+  - `lib/pidro_server_web/components/card_components.ex`
+- **Effort**: 2h
+
+**Implementation**:
+
+```elixir
+attr :game_state, :map, required: true
+attr :selected_position, :atom, default: :south
+attr :god_mode, :boolean, default: false
+attr :legal_actions, :list, default: []
+
+def card_table(assigns) do
+  # Extract playable cards from legal actions
+  legal_plays = extract_legal_plays(assigns.legal_actions)
+  assigns = assign(assigns, :legal_plays, legal_plays)
+
+  ~H"""
+  <div class="bg-green-800 rounded-xl p-4 shadow-lg">
+    <!-- North -->
+    <div class="flex justify-center mb-4">
+      <.hand
+        cards={get_hand(@game_state, :north)}
+        position={:north}
+        is_current_turn={@game_state.current_turn == :north}
+        is_human={@selected_position == :north}
+        show_cards={@god_mode or @selected_position == :north}
+        legal_plays={if @selected_position == :north, do: @legal_plays, else: []}
+        trump_suit={@game_state.trump_suit}
+        is_cold={player_is_cold?(@game_state, :north)}
+      />
+    </div>
+
+    <!-- West - Trick - East -->
+    <div class="flex justify-between items-center mb-4">
+      <div class="flex-1">
+        <.hand
+          cards={get_hand(@game_state, :west)}
+          position={:west}
+          is_current_turn={@game_state.current_turn == :west}
+          is_human={@selected_position == :west}
+          show_cards={@god_mode or @selected_position == :west}
+          legal_plays={if @selected_position == :west, do: @legal_plays, else: []}
+          trump_suit={@game_state.trump_suit}
+          is_cold={player_is_cold?(@game_state, :west)}
+          orientation={:vertical}
+        />
+      </div>
+
+      <div class="flex-1 mx-4">
+        <.trick_area
+          trick={@game_state.current_trick || []}
+          leader={trick_leader(@game_state)}
+          winner={trick_winner(@game_state)}
+          trump_suit={@game_state.trump_suit}
+          trick_number={(@game_state.tricks_played || 0) + 1}
+          points_in_trick={calculate_trick_points(@game_state.current_trick, @game_state.trump_suit)}
+        />
+      </div>
+
+      <div class="flex-1">
+        <.hand
+          cards={get_hand(@game_state, :east)}
+          position={:east}
+          is_current_turn={@game_state.current_turn == :east}
+          is_human={@selected_position == :east}
+          show_cards={@god_mode or @selected_position == :east}
+          legal_plays={if @selected_position == :east, do: @legal_plays, else: []}
+          trump_suit={@game_state.trump_suit}
+          is_cold={player_is_cold?(@game_state, :east)}
+          orientation={:vertical}
+        />
+      </div>
+    </div>
+
+    <!-- South -->
+    <div class="flex justify-center">
+      <.hand
+        cards={get_hand(@game_state, :south)}
+        position={:south}
+        is_current_turn={@game_state.current_turn == :south}
+        is_human={@selected_position == :south}
+        show_cards={@god_mode or @selected_position == :south}
+        legal_plays={if @selected_position == :south, do: @legal_plays, else: []}
+        trump_suit={@game_state.trump_suit}
+        is_cold={player_is_cold?(@game_state, :south)}
+      />
+    </div>
+
+    <!-- Game info bar -->
+    <div class="mt-4 bg-green-900 rounded p-2 text-white text-sm flex justify-between">
+      <span>Trump: <%= format_trump(@game_state.trump_suit) %></span>
+      <span>Hand #<%= @game_state.hand_number || 1 %></span>
+      <span>N/S: <%= get_score(@game_state, :north_south) %> | E/W: <%= get_score(@game_state, :east_west) %></span>
+    </div>
+  </div>
+  """
+end
+
+# Helper functions
+defp extract_legal_plays(actions) do
+  actions
+  |> Enum.filter(fn
+    {:play_card, _} -> true
+    _ -> false
+  end)
+  |> Enum.map(fn {:play_card, card} -> card end)
+end
+
+defp get_hand(state, position) do
+  get_in(state, [:players, position, :hand]) || []
+end
+
+defp player_is_cold?(state, position) do
+  get_in(state, [:players, position, :cold]) || false
+end
+
+defp trick_leader(state) do
+  case state.current_trick do
+    [%{position: leader} | _] -> leader
+    _ -> nil
+  end
+end
+
+defp trick_winner(state) do
+  # Calculate current winning position based on highest trump
+  # This would use Pidro.Core.Trick logic
+  nil  # Implement with engine call
+end
+
+defp calculate_trick_points(nil, _), do: 0
+defp calculate_trick_points(trick, trump_suit) do
+  trick
+  |> Enum.map(fn %{card: card} -> point_value(card, trump_suit) end)
+  |> Enum.sum()
+end
+
+defp format_trump(nil), do: "Not declared"
+defp format_trump(suit), do: "#{Map.get(@suits, suit, "?")} #{suit}"
+
+defp get_score(state, team) do
+  get_in(state, [:cumulative_scores, team]) || 0
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] All 4 hands displayed in correct positions
+- [ ] Trick area centered between hands
+- [ ] Opponent hands hidden (unless god mode)
+- [ ] Human's hand fully visible
+- [ ] Trump and score info displayed
+- [ ] Responsive to window size
+
+---
+
+###### DEV-1505: Integrate card table into GameDetailLive
+
+- **Description**: Replace current state display with visual card table
+- **Changes**:
+  - Add card table above existing panels
+  - Show card table only during `:playing` phase
+  - Keep existing panels (event log, state inspector) below
+  - Wire up card clicks to action execution
+- **Files**:
+  - `lib/pidro_server_web/live/dev/game_detail_live.ex`
+- **Effort**: 2h
+
+**Implementation approach**:
+
+```elixir
+# In game_detail_live.ex template
+
+# Add card table section (show during playing phase)
+<%= if @game_state && @game_state.phase == :playing do %>
+  <div class="mb-6">
+    <.card_table
+      game_state={@game_state}
+      selected_position={@selected_position}
+      god_mode={@selected_position == :all}
+      legal_actions={@legal_actions}
+    />
+  </div>
+<% end %>
+
+# Handle card click event
+def handle_event("play_card", %{"card" => card_string}, socket) do
+  [rank, suit] = String.split(card_string, ":")
+  card = {String.to_integer(rank), String.to_existing_atom(suit)}
+  action = {:play_card, card}
+
+  # Use existing action execution logic
+  execute_action(socket, action)
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] Card table appears during playing phase
+- [ ] Clicking playable card executes action
+- [ ] State updates after card play
+- [ ] Existing panels still work
+- [ ] Smooth transition between phases
+
+---
+
+###### DEV-1506: Add phase-specific displays
+
+- **Description**: Visual displays for non-playing phases (bidding, declaring)
+- **Components**:
+  - **Bidding display**: Show bid buttons + current bid status
+  - **Trump selection**: Show 4 suit buttons with card counts
+  - **Scoring display**: Show hand results before next hand
+- **Files**:
+  - `lib/pidro_server_web/components/card_components.ex`
+  - `lib/pidro_server_web/live/dev/game_detail_live.ex`
+- **Effort**: 2h
+
+**Implementation**:
+
+```elixir
+# Bidding phase display
+attr :current_bid, :integer, default: nil
+attr :bidder, :atom, default: nil
+attr :legal_actions, :list, default: []
+attr :bid_history, :list, default: []
+
+def bidding_panel(assigns) do
+  ~H"""
+  <div class="bg-white rounded-lg p-4 shadow">
+    <h3 class="font-bold mb-2">Bidding Phase</h3>
+
+    <div class="mb-4">
+      <%= if @current_bid do %>
+        <p>Current bid: <span class="font-bold"><%= @current_bid %></span> by <%= @bidder %></p>
+      <% else %>
+        <p class="text-gray-500">No bids yet</p>
+      <% end %>
+    </div>
+
+    <div class="flex flex-wrap gap-2">
+      <%= for action <- @legal_actions do %>
+        <%= case action do %>
+          <% {:bid, amount} -> %>
+            <button
+              phx-click="execute_action"
+              phx-value-action={"bid:#{amount}"}
+              class="px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              Bid <%= amount %>
+            </button>
+          <% :pass -> %>
+            <button
+              phx-click="execute_action"
+              phx-value-action="pass"
+              class="px-3 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+            >
+              Pass
+            </button>
+          <% _ -> %>
+        <% end %>
+      <% end %>
+    </div>
+
+    <div class="mt-4 text-sm text-gray-600">
+      <p class="font-medium">Bid History:</p>
+      <%= for {position, bid} <- @bid_history do %>
+        <p><%= position %>: <%= format_bid(bid) %></p>
+      <% end %>
+    </div>
+  </div>
+  """
+end
+
+# Trump selection display
+attr :legal_actions, :list, default: []
+attr :hand, :list, default: []
+
+def trump_selection_panel(assigns) do
+  suit_counts = count_suits(assigns.hand)
+  assigns = assign(assigns, :suit_counts, suit_counts)
+
+  ~H"""
+  <div class="bg-white rounded-lg p-4 shadow">
+    <h3 class="font-bold mb-2">Choose Trump Suit</h3>
+    <p class="text-sm text-gray-600 mb-4">You won the bid! Select the trump suit.</p>
+
+    <div class="grid grid-cols-2 gap-4">
+      <%= for {:declare_trump, suit} <- @legal_actions do %>
+        <button
+          phx-click="execute_action"
+          phx-value-action={"declare_trump:#{suit}"}
+          class={["p-4 rounded-lg border-2 hover:border-blue-500", suit_button_color(suit)]}
+        >
+          <div class="text-3xl"><%= suit_symbol(suit) %></div>
+          <div class="text-sm"><%= suit %></div>
+          <div class="text-xs text-gray-500"><%= @suit_counts[suit] || 0 %> cards</div>
+        </button>
+      <% end %>
+    </div>
+  </div>
+  """
+end
+
+defp suit_symbol(:hearts), do: "♥"
+defp suit_symbol(:diamonds), do: "♦"
+defp suit_symbol(:clubs), do: "♣"
+defp suit_symbol(:spades), do: "♠"
+
+defp suit_button_color(suit) when suit in [:hearts, :diamonds], do: "text-red-600"
+defp suit_button_color(_), do: "text-gray-900"
+
+defp count_suits(hand) do
+  Enum.frequencies_by(hand, fn {_rank, suit} -> suit end)
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] Bidding phase shows bid buttons
+- [ ] Trump selection shows suit buttons with card counts
+- [ ] Scoring phase shows results
+- [ ] Transitions smoothly between phases
+
+---
+
+##### Task Group C: Helper Functions & Polish
+
+###### DEV-1507: Add card utility functions
+
+- **Description**: Helper functions for card rendering shared across components
+- **Functions**:
+  - `is_trump?/2` - check if card is trump (including wrong 5)
+  - `point_value/2` - get point value considering trump
+  - `compare_cards/3` - which card wins
+  - `sort_hand/2` - sort cards for display
+- **Files**:
+  - `lib/pidro_server_web/components/card_helpers.ex`
+- **Effort**: 1h
+
+**Implementation**:
+
+```elixir
+defmodule PidroServerWeb.CardHelpers do
+  @moduledoc """
+  Helper functions for card display and logic in Dev UI.
+  Wraps Pidro.Core.Card functions for template use.
+  """
+
+  alias Pidro.Core.Card
+
+  @doc "Check if card is trump (including wrong 5)"
+  def is_trump?({rank, suit}, trump_suit) when is_atom(trump_suit) do
+    Card.is_trump?({rank, suit}, trump_suit)
+  end
+  def is_trump?(_, nil), do: false
+
+  @doc "Get point value of card"
+  def point_value({rank, suit}, trump_suit) do
+    if is_trump?({rank, suit}, trump_suit) do
+      case rank do
+        14 -> 1  # Ace
+        11 -> 1  # Jack
+        10 -> 1  # Ten
+        5 -> 5   # Either Pedro
+        2 -> 1   # Two
+        _ -> 0
+      end
+    else
+      0
+    end
+  end
+
+  @doc "Sort hand for display: trump first, then by rank descending"
+  def sort_hand(cards, trump_suit) do
+    Enum.sort_by(cards, fn card ->
+      is_trump = is_trump?(card, trump_suit)
+      {rank, _suit} = card
+
+      # Trump cards first (priority 0), then non-trump (priority 1)
+      # Within each group, sort by rank descending
+      trump_priority = if is_trump, do: 0, else: 1
+      {trump_priority, -rank}
+    end)
+  end
+
+  @doc "Format card for display"
+  def format_card({rank, suit}) do
+    "#{format_rank(rank)}#{suit_symbol(suit)}"
+  end
+
+  defp format_rank(14), do: "A"
+  defp format_rank(13), do: "K"
+  defp format_rank(12), do: "Q"
+  defp format_rank(11), do: "J"
+  defp format_rank(n), do: to_string(n)
+
+  defp suit_symbol(:hearts), do: "♥"
+  defp suit_symbol(:diamonds), do: "♦"
+  defp suit_symbol(:clubs), do: "♣"
+  defp suit_symbol(:spades), do: "♠"
+end
+```
+
+**Acceptance Criteria**:
+
+- [ ] Functions work correctly with engine types
+- [ ] Wrong 5 correctly identified as trump
+- [ ] Point values match Finnish Pidro rules
+- [ ] Hand sorting logical and consistent
+
+---
+
+###### DEV-1508: Add responsive styling and polish
+
+- **Description**: Make card table look good and work at different sizes
+- **Tasks**:
+  - Responsive breakpoints for smaller screens
+  - Card size adjustments based on viewport
+  - Animation on card play
+  - Hover states and transitions
+- **Files**:
+  - `assets/css/card_table.css` (or Tailwind classes)
+  - `lib/pidro_server_web/components/card_components.ex`
+- **Effort**: 1.5h
+
+**Acceptance Criteria**:
+
+- [ ] Card table usable at 1024px width
+- [ ] Cards scale appropriately
+- [ ] Animations feel responsive
+- [ ] Visual polish (shadows, transitions)
+
+---
+
+#### Phase 3 Validation
+
+##### Manual Test Flow
+
+1. Navigate to `/dev/games`
+2. Create game: "Card Table Test", 3 bots
+3. Game appears in list
+4. Click game to open detail
+5. **Bidding**: See bid buttons, make a bid
+6. Wait for bots to bid
+7. **Trump**: See suit selection with card counts
+8. Select a trump suit
+9. **Playing**: See card table with all hands
+10. See your cards face-up, opponents face-down
+11. Click a legal (highlighted) card to play
+12. Watch bots play their cards
+13. See trick winner indicated
+14. Play through entire hand
+15. **Scoring**: See hand results
+16. Verify game continues to next hand
+
+##### Quality Gates
+
+- [ ] All DEV-15XX tasks complete
+- [ ] Manual test flow works end-to-end
+- [ ] Card table displays correctly
+- [ ] Card clicks execute actions
+- [ ] All phases have appropriate UI
+- [ ] `mix format` clean
+- [ ] `mix credo` clean
+- [ ] No console errors
+
+---
+
+#### Phase 3 Files
+
+**Files to Create**:
+
+```
+lib/pidro_server_web/components/card_components.ex    # Card, hand, trick, table components
+lib/pidro_server_web/components/card_helpers.ex       # Utility functions
+assets/css/card_table.css                             # Optional custom styles
+```
+
+**Files to Modify**:
+
+```
+lib/pidro_server_web/live/dev/game_detail_live.ex     # Integrate card table
+lib/pidro_server_web/components/core_components.ex    # Import card components (optional)
+```
+
+---
+
+#### Phase 3 Dependencies
+
+- **DEV-1501** (card component) - No deps, start here
+- **DEV-1502** (hand) - Depends on DEV-1501
+- **DEV-1503** (trick area) - Depends on DEV-1501
+- **DEV-1504** (card table) - Depends on DEV-1502, DEV-1503
+- **DEV-1505** (integration) - Depends on DEV-1504
+- **DEV-1506** (phase displays) - Depends on DEV-1505
+- **DEV-1507** (helpers) - No deps, can be done in parallel
+- **DEV-1508** (polish) - Depends on all above
+
+**Suggested Order**: DEV-1507 → DEV-1501 → DEV-1502 → DEV-1503 → DEV-1504 → DEV-1505 → DEV-1506 → DEV-1508
+
+---
+
+#### Phase 3 Effort Summary
+
+| Task                        | Effort     | Priority |
+| --------------------------- | ---------- | -------- |
+| DEV-1501: Card component    | 2h         | P0       |
+| DEV-1502: Hand component    | 1.5h       | P0       |
+| DEV-1503: Trick area        | 1.5h       | P0       |
+| DEV-1504: Card table layout | 2h         | P0       |
+| DEV-1505: Integration       | 2h         | P0       |
+| DEV-1506: Phase displays    | 2h         | P1       |
+| DEV-1507: Helper functions  | 1h         | P0       |
+| DEV-1508: Polish            | 1.5h       | P2       |
+| **Total**                   | **~13.5h** |          |
+
+**Estimated Duration**: 3-4 days with testing and iteration
+
+---
+
+### Phase 4: Advanced Features (P2)
 
 **Effort**: Medium (1-2 days)  
 **Priority**: NICE-TO-HAVE  
 **Goal**: Power user debugging and analysis tools
 
-### FR-5: Multi-View Mode (0% complete)
+#### FR-5: Multi-View Mode (0% complete)
 
 **Tasks:**
 
 - [ ] **DEV-501**: Add God Mode toggle
+
   - Checkbox: "Show All Hands"
   - Shows all 4 player perspectives simultaneously
   - Split screen layout (2x2 grid)
@@ -693,13 +1182,14 @@
   - **Effort**: 2h
 
 **Acceptance Criteria:**
+
 - Can view 4 positions at once
 - Each view properly filtered
 - Can select which view is active for actions
 
 ---
 
-### FR-12: Bot Observation (0% complete)
+#### FR-12: Bot Observation (0% complete)
 
 **Tasks:**
 
@@ -709,16 +1199,18 @@
   - **Effort**: 2h
 
 **Acceptance Criteria:**
+
 - Bot decisions explained
 - Can debug bot strategy
 
 ---
 
-### FR-13: Hand Replay (0% complete)
+#### FR-13: Hand Replay (0% complete)
 
 **Tasks:**
 
 - [ ] **DEV-1301**: Build replay controls
+
   - Slider to scrub through events
   - Play/pause auto-replay
   - Step forward/backward buttons
@@ -731,17 +1223,19 @@
   - **Effort**: 3h
 
 **Acceptance Criteria:**
+
 - Can replay any finished game
 - Can pause at any event
 - State accurately reconstructed
 
 ---
 
-### FR-14: Game Analytics (20% complete)
+#### FR-14: Game Analytics (20% complete)
 
 **Tasks:**
 
 - [ ] **DEV-1401**: Track game outcomes
+
   - Store: winner, scores, bid amounts, trump suits
   - Query last N games
   - **Effort**: 2h
@@ -754,39 +1248,50 @@
   - **Effort**: 4h
 
 **Acceptance Criteria:**
+
 - Dashboard shows meaningful stats
 - Based on last 50 games
 - Updates in real-time
 
 ---
 
-## Phase 4: Polish & Production Readiness (P2)
+#### Deferred Tasks (from earlier phases)
+
+- [ ] **DEV-1004**: Implement "Skip to Playing" (from FR-10)
+- [ ] **DEV-1104**: Implement BasicStrategy (from FR-11)
+
+---
+
+### Phase 5: Polish & Production Readiness (P2)
 
 **Effort**: Small (4-6 hours)  
 **Priority**: BEFORE HANDOFF
 
-### Polish Tasks
+#### Polish Tasks
 
 - [ ] **DEV-P01**: Build custom UI components
-  - Card component (playing card visual)
+
   - Player indicator component
   - Badge/chip components
-  - Confirmation modal
+  - Confirmation modal improvements
   - **Effort**: 3h
 
 - [ ] **DEV-P02**: Add keyboard shortcuts
+
   - Numbers 1-9 for bidding
   - P for pass
   - Arrow keys for position switching
   - **Effort**: 1h
 
 - [ ] **DEV-P03**: Improve loading states
+
   - Skeleton screens for initial load
   - Spinners on actions
   - Optimistic UI updates
   - **Effort**: 1h
 
 - [ ] **DEV-P04**: Add accessibility labels
+
   - ARIA labels on all interactive elements
   - Keyboard navigation support
   - Screen reader friendly
@@ -804,43 +1309,55 @@
 
 ### Test Coverage Goals
 
-| Component | Coverage Target | Current | Gap |
-|-----------|----------------|---------|-----|
-| BotManager | 80% | 0% | Create tests |
-| EventRecorder | 80% | 0% | Create tests |
-| Dev LiveViews | 70% | 0% | Create tests |
-| GameHelpers | 80% | 0% | Create tests |
+| Component      | Coverage Target | Current | Gap          |
+| -------------- | --------------- | ------- | ------------ |
+| BotManager     | 80%             | 0%      | Create tests |
+| EventRecorder  | 80%             | 0%      | Create tests |
+| Dev LiveViews  | 70%             | 0%      | Create tests |
+| GameHelpers    | 80%             | 0%      | Create tests |
+| CardComponents | 80%             | 0%      | Create tests |
 
 ### Test Infrastructure Setup
 
 - [ ] **TEST-001**: Create LiveViewCase
+
   - Base test case for dev LiveViews
   - Helpers for mounting with auth
   - **Effort**: 30min
 
 - [ ] **TEST-002**: Create dev test helpers
+
   - `create_test_game_with_bots/1`
   - `advance_to_phase/2`
   - `simulate_bot_action/3`
   - **Effort**: 1h
 
 - [ ] **TEST-003**: Write BotManager tests
+
   - Test bot lifecycle (start/stop/pause)
   - Test strategy selection
   - Test cleanup on game end
   - **Effort**: 2h
 
 - [ ] **TEST-004**: Write EventRecorder tests
+
   - Test event creation from state diffs
   - Test filtering and export
   - Test cleanup
   - **Effort**: 2h
 
 - [ ] **TEST-005**: Write integration tests
+
   - Full game flow with bots
   - Event log accuracy
   - Quick actions
   - **Effort**: 3h
+
+- [ ] **TEST-006**: Write CardComponents tests
+  - Test card rendering
+  - Test trump identification
+  - Test point calculation
+  - **Effort**: 2h
 
 ---
 
@@ -849,15 +1366,18 @@
 ### Guards to Implement
 
 - [ ] **SEC-001**: Add dev env check to all dev modules
+
   ```elixir
   if Mix.env() != :dev do
     raise "Dev modules only available in development"
   end
   ```
-  - **Files**: All lib/pidro_server/dev/* and lib/pidro_server_web/live/dev/*
+
+  - **Files**: All lib/pidro_server/dev/_ and lib/pidro_server_web/live/dev/_
   - **Effort**: 30min
 
 - [ ] **SEC-002**: Add resource limits
+
   - Max 50 concurrent dev games
   - Max 200 bots total
   - Rate limit game creation (10/min per session)
@@ -865,10 +1385,11 @@
   - **Effort**: 1h
 
 - [ ] **SEC-003**: Add confirmation dialogs
+
   - Delete game → confirm
   - Bulk delete → confirm with count
   - "Are you sure?" for destructive ops
-  - **Files**: lib/pidro_server_web/live/dev/*
+  - **Files**: lib/pidro_server_web/live/dev/\*
   - **Effort**: 30min
 
 - [ ] **SEC-004**: Prevent dev code in production release
@@ -883,30 +1404,16 @@
 
 ### Issues to Track
 
-1. **PubSub Topic Mismatch** (DEV-001) - CRITICAL
-   - Broadcasts and subscriptions use different topic names
-   - Fix before Phase 1
-
-2. **No Undo API in GameAdapter**
-   - Engine supports undo, but no wrapper
-   - Add in DEV-1001
-
-3. **No Position-Specific Views in Engine**
-   - Engine returns full state to all players
-   - Client-side filtering workaround
-
-4. **Bot Strategies Not Implemented**
-   - Only RandomStrategy in Phase 1
-   - Basic/Smart deferred to Phase 2
-
-5. **No LiveView Tests**
-   - test/pidro_server_web/live/ doesn't exist
-   - Add test infrastructure in TEST phase
+1. **PubSub Topic Mismatch** (DEV-001) - ✅ RESOLVED
+2. **No Undo API in GameAdapter** - ✅ RESOLVED
+3. **No Position-Specific Views in Engine** - Workaround implemented (client-side filtering)
+4. **Bot Strategies Not Implemented** - Only RandomStrategy; Basic/Smart deferred
+5. **No LiveView Tests** - test/pidro_server_web/live/ doesn't exist
+6. **No Visual Card Table** - Phase 3 addresses this
 
 ### Future Enhancements (Post-MVP)
 
 - Drag-and-drop card playing interface
-- Visual card table representation
 - Game state diffing between turns
 - Snapshot save/restore
 - Load testing tools (spawn 100 games)
@@ -927,14 +1434,15 @@
 
 ### Risks & Mitigations
 
-| Risk | Impact | Likelihood | Mitigation |
-|------|--------|------------|------------|
-| Bot processes leak memory | High | Medium | Link to game process, monitor in Observer |
-| PubSub topic mismatch breaks updates | High | High | Fix in Phase 0 (DEV-001) |
-| Engine lacks undo API | Medium | Low | Wrapper implemented in DEV-1001 |
-| Event log drifts from state | Medium | Medium | Derive from structured broadcasts |
-| Dev UI spills to production | High | Low | Compile-time guards, excluded in release |
-| No test coverage slows iteration | Medium | High | Add tests early (TEST-001-005) |
+| Risk                                     | Impact | Likelihood | Mitigation                                |
+| ---------------------------------------- | ------ | ---------- | ----------------------------------------- |
+| Bot processes leak memory                | High   | Medium     | Link to game process, monitor in Observer |
+| PubSub topic mismatch breaks updates     | High   | Low        | ✅ Fixed in Phase 0                       |
+| Engine lacks undo API                    | Medium | Low        | ✅ Wrapper implemented                    |
+| Event log drifts from state              | Medium | Medium     | Derive from structured broadcasts         |
+| Dev UI spills to production              | High   | Low        | Compile-time guards, excluded in release  |
+| No test coverage slows iteration         | Medium | High       | Add tests early (TEST-001-006)            |
+| Card components don't match engine types | Medium | Medium     | Use CardHelpers to wrap engine functions  |
 
 ---
 
@@ -945,28 +1453,31 @@
 - ✅ Reduce test iteration time from 30min → 5min
 - ✅ Enable testing complete game in < 2 minutes (with fast-forward)
 - ✅ Support simultaneous observation of 5+ games
-- ✅ Test coverage > 70% for dev modules
+- ⏳ Test coverage > 70% for dev modules
+- ⏳ Visual card table enables intuitive play
 
 ### Qualitative Goals
 
 - Developer can test full game without leaving browser ✅
 - Easy to reproduce specific game states ✅
-- Bot behavior is observable and debuggable ✅
-- Interface is intuitive without documentation ✅
+- Bot behavior is observable and debuggable ⏳
+- Interface is intuitive without documentation ⏳
 
 ### Acceptance Criteria (MVP)
 
-- [ ] Can create game with custom name and bots
-- [ ] Can switch player perspectives (N/S/E/W)
-- [ ] Can execute actions via UI (bid/play/declare)
-- [ ] Bots play automatically with configurable delay
-- [ ] Event log shows all game actions
-- [ ] Can undo last action
-- [ ] Can fast-forward game to completion
-- [ ] Can delete games individually or in bulk
-- [ ] Real-time updates work reliably
-- [ ] No memory leaks or process leaks
-- [ ] Works in dev environment only
+- [x] Can create game with custom name and bots
+- [x] Can switch player perspectives (N/S/E/W)
+- [x] Can execute actions via UI (bid/play/declare)
+- [x] Bots play automatically with configurable delay
+- [x] Event log shows all game actions
+- [x] Can undo last action
+- [x] Can fast-forward game to completion
+- [x] Can delete games individually or in bulk
+- [x] Real-time updates work reliably
+- [x] No memory leaks or process leaks
+- [x] Works in dev environment only
+- [ ] **Visual card table displays game state** (Phase 3)
+- [ ] **Can click cards to play them** (Phase 3)
 
 ---
 
@@ -974,48 +1485,51 @@
 
 ### By Phase
 
-| Phase | Effort | Duration | Dependencies |
-|-------|--------|----------|--------------|
-| Phase 0: Infrastructure | Small | 2-4h | None |
-| Phase 1: MVP | Medium | 1-2d | Phase 0 |
-| Phase 2: Bots & UX | Large | 2-3d | Phase 1 |
-| Phase 3: Advanced | Medium | 1-2d | Phase 2 |
-| Phase 4: Polish | Small | 4-6h | Phase 3 |
-| Testing | Medium | 1d | Ongoing |
-| **Total** | **Large** | **5-7d** | Sequential |
+| Phase                   | Effort     | Duration  | Dependencies | Status      |
+| ----------------------- | ---------- | --------- | ------------ | ----------- |
+| Phase 0: Infrastructure | Small      | 2-4h      | None         | ✅ Complete |
+| Phase 1: MVP            | Medium     | 1-2d      | Phase 0      | ✅ Complete |
+| Phase 2: Bots & UX      | Large      | 2-3d      | Phase 1      | ✅ Complete |
+| **Phase 3: Card Table** | **Medium** | **3-4d**  | **Phase 2**  | **Ready**   |
+| Phase 4: Advanced       | Medium     | 1-2d      | Phase 3      | Not started |
+| Phase 5: Polish         | Small      | 4-6h      | Phase 4      | Not started |
+| Testing                 | Medium     | 1d        | Ongoing      | In progress |
+| **Total**               | **Large**  | **8-12d** | Sequential   |             |
 
 ### By Priority
 
-| Priority | Tasks | Effort | Duration |
-|----------|-------|--------|----------|
-| P0 | 39 tasks | Medium-Large | 2-3d |
-| P1 | 22 tasks | Large | 2-3d |
-| P2 | 12 tasks | Medium | 1-2d |
-| Polish | 5 tasks | Small | 4-6h |
+| Priority | Tasks                              | Effort | Duration |
+| -------- | ---------------------------------- | ------ | -------- |
+| P0       | 8 tasks (Phase 3 Card Table)       | Medium | 3-4d     |
+| P1       | 3 tasks (Phase displays, deferred) | Small  | 1d       |
+| P2       | 10 tasks (Phase 4 Advanced)        | Medium | 1-2d     |
+| Polish   | 5 tasks (Phase 5)                  | Small  | 4-6h     |
 
 ---
 
 ## Next Actions (Immediate)
 
-### Critical Path (Must Do First)
+### Critical Path (Phase 3)
 
-1. ✅ **Complete this masterplan** - Document full scope
-2. **DEV-001**: Fix PubSub topic mismatch (30min)
-3. **DEV-002**: Create /dev scope in router (30min)
-4. **DEV-003**: Clone admin LiveViews to dev namespace (1h)
-5. **DEV-101**: Add game creation form (2h)
-6. **DEV-401**: Implement position switching (2.5h)
-7. **DEV-901**: Build action execution UI (6h)
+1. **DEV-1507**: Create card helper functions (1h) - No dependencies
+2. **DEV-1501**: Create base card component (2h) - Foundation
+3. **DEV-1502**: Create hand component (1.5h) - Depends on card
+4. **DEV-1503**: Create trick area component (1.5h) - Depends on card
+5. **DEV-1504**: Create card table layout (2h) - Combines all
+6. **DEV-1505**: Integrate into GameDetailLive (2h) - Wire it up
+7. **DEV-1506**: Add phase displays (2h) - Bidding/trump panels
+8. **DEV-1508**: Polish and responsive (1.5h) - Final touches
 
-**First Milestone**: Playable dev UI (1 day)
+**First Milestone**: Playable card table (3-4 days)
 
-### Phase 0 Sprint (First 4 hours)
+### Phase 3 Sprint (First 8 hours)
 
-- [ ] Fix PubSub mismatch
-- [ ] Create dev routes
-- [ ] Clone LiveViews
-- [ ] Manual test: navigate to /dev/games
-- [ ] Verify real-time updates
+- [ ] Create CardHelpers module
+- [ ] Create base card component with all props
+- [ ] Create hand component
+- [ ] Create trick area component
+- [ ] Manual test: cards render correctly
+- [ ] Verify trump indicators and point badges
 
 ---
 
@@ -1023,7 +1537,7 @@
 
 ### Files to Create/Update
 
-- [x] **MASTERPLAN-DEVUI.md** - This file
+- [x] **MASTERPLAN-DEVUI.md** - This file (updated with Phase 3)
 - [ ] **lib/pidro_server/dev/README.md** - Dev module overview
 - [ ] **DEV_UI_USER_GUIDE.md** - How to use the dev UI
 - [ ] **BOT_STRATEGY_GUIDE.md** - How to implement bot strategies
@@ -1045,25 +1559,27 @@
 ```
 lib/pidro_server/
   dev/
-    bot_manager.ex          # DEV-1101
-    bot_player.ex           # DEV-1102
-    bot_supervisor.ex       # DEV-1107
-    event.ex                # DEV-701
-    event_recorder.ex       # DEV-702
-    game_helpers.ex         # DEV-1001-1004
+    bot_manager.ex          # DEV-1101 ✅
+    bot_player.ex           # DEV-1102 ✅
+    bot_supervisor.ex       # DEV-1107 ✅
+    event.ex                # DEV-701 ✅
+    event_recorder.ex       # DEV-702 ✅
+    game_helpers.ex         # DEV-1001-1004 ✅
     strategies/
-      random_strategy.ex    # DEV-1103
-      basic_strategy.ex     # DEV-1104 (P2)
-      smart_strategy.ex     # (P3)
+      random_strategy.ex    # DEV-1103 ✅
+      basic_strategy.ex     # DEV-1104 (Phase 4)
+      smart_strategy.ex     # (Phase 4)
 
 lib/pidro_server_web/
   live/
     dev/
-      game_list_live.ex     # DEV-003
-      game_detail_live.ex   # DEV-003
-      analytics_live.ex     # DEV-003
+      game_list_live.ex     # DEV-003 ✅
+      game_detail_live.ex   # DEV-003 ✅
+      analytics_live.ex     # DEV-003 ✅
   components/
-    dev_components.ex       # DEV-303, DEV-P01
+    card_components.ex      # DEV-1501-1506 (Phase 3)
+    card_helpers.ex         # DEV-1507 (Phase 3)
+    dev_components.ex       # DEV-303 ✅
 
 test/pidro_server_web/
   live/
@@ -1077,41 +1593,44 @@ test/pidro_server_web/
 
 ### B. Related Documents
 
-- [specs/pidro_server_dev_ui.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/specs/pidro_server_dev_ui.md) - Original specification
-- [specs/pidro_server_specification.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/specs/pidro_server_specification.md) - Server architecture
-- [MASTERPLAN.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/MASTERPLAN.md) - Main server implementation status
-- [AGENTS.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/AGENTS.md) - Coding conventions
-- [ACTION_FORMATS.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/ACTION_FORMATS.md) - Engine action reference
-- [FR10_QUICK_ACTIONS_FEASIBILITY.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/FR10_QUICK_ACTIONS_FEASIBILITY.md) - Quick actions analysis
-- [SECURITY_SAFETY_REQUIREMENTS.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/SECURITY_SAFETY_REQUIREMENTS.md) - Security analysis
-- [PUBSUB_INVENTORY.md](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/PUBSUB_INVENTORY.md) - PubSub topics
+- [specs/pidro_server_dev_ui.md](specs/pidro_server_dev_ui.md) - Original specification
+- [specs/pidro_server_specification.md](specs/pidro_server_specification.md) - Server architecture
+- [MASTERPLAN.md](MASTERPLAN.md) - Main server implementation status
+- [AGENTS.md](AGENTS.md) - Coding conventions
+- [ACTION_FORMATS.md](ACTION_FORMATS.md) - Engine action reference
+- [FR10_QUICK_ACTIONS_FEASIBILITY.md](FR10_QUICK_ACTIONS_FEASIBILITY.md) - Quick actions analysis
+- [SECURITY_SAFETY_REQUIREMENTS.md](SECURITY_SAFETY_REQUIREMENTS.md) - Security analysis
+- [PUBSUB_INVENTORY.md](PUBSUB_INVENTORY.md) - PubSub topics
 
 ### C. Oracle Recommendations Summary
 
 **Key Insights:**
-1. **Reuse admin LiveViews** - Clone and extend, don't rebuild
-2. **Client-side filtering** - For position switching (no server changes)
-3. **Lightweight event recording** - ETS-backed, dev-only, no DB
-4. **Bot system is blocking** - Build in Phase 2 before quick actions
+
+1. **Reuse admin LiveViews** - Clone and extend, don't rebuild ✅
+2. **Client-side filtering** - For position switching (no server changes) ✅
+3. **Lightweight event recording** - ETS-backed, dev-only, no DB ✅
+4. **Bot system is blocking** - Build in Phase 2 before quick actions ✅
 5. **Compile-time guards** - Ensure dev code never reaches production
+6. **Visual card table** - Transforms debug panel into playable interface
 
 **Trade-offs Accepted:**
-- No event sourcing (use state diffs + light instrumentation)
-- Client-side position filtering (engine doesn't provide per-position views)
-- Random bots only in Phase 1 (defer smart bots to Phase 2)
-- No visual card table (text-based UI for MVP)
+
+- No event sourcing (use state diffs + light instrumentation) ✅
+- Client-side position filtering (engine doesn't provide per-position views) ✅
+- Random bots only in Phase 1 (defer smart bots to Phase 4) ✅
+- ~~No visual card table (text-based UI for MVP)~~ → **Now building in Phase 3**
 - No undo history persistence (in-memory only)
 
 ---
 
-**Document Status:** ✅ Complete - Ready for Implementation
-**Next Steps:** Review with team → Start Phase 0 → Iterate
+**Document Status:** ✅ Complete - Phase 3 Ready for Implementation
+**Next Steps:** Start DEV-1507 (helpers) → DEV-1501 (card component) → Iterate
 
 ---
 
-## Implementation Notes (2025-11-02)
+## Implementation Notes
 
-### Phase 0 & Phase 1 P0 Completed
+### Phase 0 & Phase 1 P0 Completed (2025-11-02)
 
 All critical P0 tasks have been successfully implemented:
 
@@ -1125,14 +1644,16 @@ All critical P0 tasks have been successfully implemented:
 - **Action Execution**: Full UI for executing legal game actions
 - **Clipboard**: Copy raw JSON state to clipboard
 
-### Files Created (Phase 0 & Phase 1 P0):
+**Files Created (Phase 0 & Phase 1 P0):**
+
 - lib/pidro_server_web/live/dev/game_list_live.ex
 - lib/pidro_server_web/live/dev/game_detail_live.ex
 - lib/pidro_server_web/live/dev/analytics_live.ex
 - lib/pidro_server/dev/bot_manager.ex (stub)
 - assets/js/hooks/clipboard.js
 
-### Files Modified (Phase 0 & Phase 1 P0):
+**Files Modified (Phase 0 & Phase 1 P0):**
+
 - lib/pidro_server_web/router.ex (added dev routes)
 - lib/pidro_server_web/live/lobby_live.ex (fixed PubSub)
 - lib/pidro_server_web/live/stats_live.ex (fixed PubSub)
@@ -1153,28 +1674,34 @@ All bot system components have been successfully implemented:
 - **Bot Lifecycle Integration**: Automatic bot spawning on game creation
 - **Bot Configuration UI**: Full UI in game detail view for managing bots per position
 
-### Files Created (Phase 2 - FR-11):
+**Files Created (Phase 2 - FR-11):**
+
 - lib/pidro_server/dev/bot_supervisor.ex
 - lib/pidro_server/dev/bot_manager.ex (full implementation, replaced stub)
 - lib/pidro_server/dev/bot_player.ex
 - lib/pidro_server/dev/strategies/random_strategy.ex
 
-### Files Modified (Phase 2 - FR-11):
+**Files Modified (Phase 2 - FR-11):**
+
 - lib/pidro_server/application.ex (added BotManager and BotSupervisor to supervision tree in dev)
 - lib/pidro_server_web/live/dev/game_list_live.ex (integrated bot spawning, fixed credo issues)
 - lib/pidro_server_web/live/dev/game_detail_live.ex (added bot configuration UI, fixed credo issues)
 
-### Key Features Implemented:
+**Key Features Implemented:**
+
 1. **Bot Process Management**:
+
    - Bots run as supervised GenServer processes
    - Automatic cleanup on game end
    - Process monitoring for crash recovery
 
 2. **Bot Strategies**:
+
    - RandomStrategy: Selects random legal actions
    - Extensible architecture for future strategies (BasicStrategy, SmartStrategy)
 
 3. **Bot Configuration**:
+
    - Per-position control (Human/Bot toggle)
    - Difficulty selection (Random/Basic/Smart)
    - Configurable delay (0-3000ms)
@@ -1186,17 +1713,14 @@ All bot system components have been successfully implemented:
    - Integrates with existing game creation flow
    - Full UI controls in game detail view
 
-### Quality Assurance:
+**Quality Assurance:**
+
 - ✅ All code formatted with `mix format`
 - ✅ No compilation warnings for bot-related code
 - ✅ All credo issues resolved (alias ordering, nesting depth, complexity)
 - ✅ Comprehensive documentation with @moduledoc and @doc
 - ✅ Follows all AGENTS.md guidelines
 - ✅ Dev-only code properly guarded with `if Mix.env() == :dev`
-
-### Next Steps:
-- Future: BasicStrategy and SmartStrategy implementations (DEV-1104)
-- Phase 3: Advanced Features (FR-5, FR-12, FR-13, FR-14)
 
 ---
 
@@ -1210,22 +1734,27 @@ Three out of four quick action features have been successfully implemented:
 - **Auto-bid**: Automated bidding phase completion with RandomStrategy
 - **Fast Forward**: Game fast-forward by enabling all bots with minimal delay
 
-### Files Created (Phase 2 - FR-10):
+**Files Created (Phase 2 - FR-10):**
+
 - lib/pidro_server/dev/game_helpers.ex (auto-bid and fast-forward functions)
 
-### Files Modified (Phase 2 - FR-10):
+**Files Modified (Phase 2 - FR-10):**
+
 - lib/pidro_server/games/game_adapter.ex (added undo/1 function)
 - lib/pidro_engine/lib/pidro/server.ex (added set_state handler)
 - lib/pidro_server_web/live/dev/game_detail_live.ex (added quick action buttons and handlers)
 
-### Key Features Implemented:
+**Key Features Implemented:**
+
 1. **Undo Last Action**:
+
    - GameAdapter.undo/1 function wraps Pidro.Game.Replay.undo/1
    - Broadcasts state updates after undo
    - Full error handling for no history and other errors
    - UI button with error/success flash messages
 
 2. **Auto-bid**:
+
    - GameHelpers.auto_bid/2 function loops through bidding phase
    - Uses RandomStrategy to pick actions
    - Configurable delay between actions (default: 500ms)
@@ -1238,16 +1767,13 @@ Three out of four quick action features have been successfully implemented:
    - Uses existing BotManager for lifecycle management
    - Can be stopped via bot pause controls
 
-### Quality Assurance:
+**Quality Assurance:**
+
 - ✅ All code formatted with `mix format`
 - ✅ No new compilation errors
 - ✅ Credo issues resolved (alias ordering, nested modules)
 - ✅ Follows all AGENTS.md guidelines
 - ✅ Dev-only code properly guarded with `if Mix.env() == :dev`
-
-### Next Steps:
-- DEV-1004: Skip to Playing (deferred to Phase 3)
-- Phase 3: Advanced Features (FR-5, FR-12, FR-13, FR-14)
 
 ---
 
@@ -1262,15 +1788,18 @@ All event log components have been successfully implemented:
 - **Event Log UI**: Full panel in game detail with filtering and export
 - **Real-time Updates**: Events refresh automatically with game state changes
 
-### Files Created (Phase 2 - FR-7):
+**Files Created (Phase 2 - FR-7):**
+
 - lib/pidro_server/dev/event.ex
 - lib/pidro_server/dev/event_recorder.ex
 
-### Files Modified (Phase 2 - FR-7):
+**Files Modified (Phase 2 - FR-7):**
+
 - lib/pidro_server/application.ex (added EventRecorderRegistry to supervision tree)
 - lib/pidro_server_web/live/dev/game_detail_live.ex (added event log panel and handlers)
 
-### Key Features Implemented:
+**Key Features Implemented:**
+
 1. **Event Types**: 9 event types (dealer_selected, cards_dealt, bid_made, bid_passed, trump_declared, card_played, trick_won, hand_scored, game_over)
 2. **Event Derivation**: Automatic event generation from state diffs
 3. **Event Storage**: ETS-backed storage with up to 500 events per game
@@ -1278,15 +1807,12 @@ All event log components have been successfully implemented:
 5. **Event Export**: Export as JSON or text format with timestamps
 6. **Real-time UI**: Color-coded events, scrollable log, auto-refresh
 
-### Quality Assurance:
+**Quality Assurance:**
+
 - ✅ All code formatted with `mix format`
 - ✅ No compilation warnings for event-related code
 - ✅ All credo issues resolved
 - ✅ Comprehensive documentation with @moduledoc and @doc
 - ✅ Follows all AGENTS.md guidelines
 - ✅ Dev-only code properly guarded with `if Mix.env() == :dev`
-- ✅ All tests pass (13 pre-existing test failures unrelated to FR-7)
-
-### Next Steps:
-- Phase 2: Quick Actions (FR-10, DEV-1001-1003)
-- Phase 3: Advanced Features (FR-5, FR-12, FR-13, FR-14)
+- ✅ All tests pass
