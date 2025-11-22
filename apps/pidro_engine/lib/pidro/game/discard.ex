@@ -241,10 +241,11 @@ defmodule Pidro.Game.Discard do
     with :ok <- validate_second_deal_phase(state),
          :ok <- validate_dealer_exists(state) do
       # Determine dealing order: start left of dealer, go clockwise
+      # IMPORTANT: Exclude the dealer - they don't get dealt to, they rob the pack
       first_player = Types.next_position(state.current_dealer)
-      deal_order = get_deal_order(first_player)
+      deal_order = get_deal_order_non_dealer(first_player, state.current_dealer)
 
-      # Deal cards to each player to reach 6 cards (or skip if they have 6+)
+      # Deal cards to each NON-DEALER player to reach 6 cards (or skip if they have 6+)
       {updated_players, remaining_deck, dealt_cards_map, cards_requested_map} =
         Enum.reduce(deal_order, {state.players, state.deck, %{}, %{}}, fn position,
                                                                           {players_acc, deck_acc,
@@ -478,5 +479,11 @@ defmodule Pidro.Game.Discard do
       Types.next_position(Types.next_position(start_position)),
       Types.next_position(Types.next_position(Types.next_position(start_position)))
     ]
+  end
+
+  # Returns deal order excluding the dealer (3 positions, not 4)
+  defp get_deal_order_non_dealer(start_position, dealer) do
+    get_deal_order(start_position)
+    |> Enum.reject(&(&1 == dealer))
   end
 end

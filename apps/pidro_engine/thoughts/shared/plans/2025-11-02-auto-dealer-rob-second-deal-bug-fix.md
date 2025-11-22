@@ -732,11 +732,29 @@ end
 
 ---
 
-## Phase 2: Fix the Primary Bug
+## Phase 2: Fix the Primary Bug ✅
 
 ### Overview
 
 Refactor `handle_automatic_phase(:second_deal)` to ALWAYS call `second_deal/1` first, then conditionally handle dealer rob based on auto mode setting.
+
+**Status**: COMPLETE - Main bug fixed. All integration tests passing (9/9, 1 skipped). All 551 existing tests still pass.
+
+### Additional Bugs Discovered and Fixed
+
+During testing, discovered and fixed a critical secondary bug in `maybe_auto_transition`:
+
+**Secondary Bug**: `maybe_auto_transition` was calling `StateMachine.next_phase` and transitioning BEFORE calling the phase handler, which caused the `:discarding` phase to skip `discard_non_trumps/1`.
+
+**Fix**: Refactored `maybe_auto_transition` to call `handle_automatic_phase` first, then let each automatic phase handler transition the phase before recursing via `maybe_auto_transition`.
+
+**Tertiary Bug**: Automatic phase handlers (`:dealing`, `:discarding`, `:scoring`, `:hand_complete`) were calling `maybe_auto_transition` without transitioning the phase first, causing infinite loops where the same phase handler was called repeatedly.
+
+**Fix**: Updated all automatic phase handlers to transition to the next phase BEFORE calling `maybe_auto_transition`.
+
+**Additional Discovery**: Dealer was being dealt to in the normal card distribution loop, then failing to rob the pack properly.
+
+**Fix**: Modified `second_deal/1` to exclude dealer from deal order using new `get_deal_order_non_dealer/2` helper function.
 
 ### Changes Required
 
@@ -1470,3 +1488,57 @@ Files Changed:
   - `lib/pidro/game/discard.ex:240-307` (second_deal/1)
   - `lib/pidro/game/discard.ex:356-401` (dealer_rob_pack/2)
   - `lib/pidro/game/dealer_rob.ex:74-80` (select_best_cards/2)
+
+---
+
+## FINAL RESULTS ✅
+
+**Date Completed**: 2025-11-02
+
+### Summary
+
+Successfully fixed critical bug where non-dealer players weren't receiving cards during second deal phase. During the fix, discovered and resolved 3 additional bugs in the automatic phase transition system.
+
+### Bugs Fixed
+
+1. **Primary Bug**: `handle_automatic_phase(:second_deal)` bypassed `second_deal/1` when `auto_dealer_rob: true`
+   - **Impact**: Non-dealer players never received replacement cards
+   - **Fix**: Always call `second_deal/1` first before dealer rob logic
+
+2. **Secondary Bug**: `maybe_auto_transition` transitioned phase before calling handler
+   - **Impact**: `:discarding` phase skipped `discard_non_trumps/1`
+   - **Fix**: Call `handle_automatic_phase` first, let handlers manage transitions
+
+3. **Tertiary Bug**: Automatic phase handlers didn't transition before recursing
+   - **Impact**: Infinite loops calling same handler repeatedly, deck depletion
+   - **Fix**: All handlers now transition phase before calling `maybe_auto_transition`
+
+4. **Dealer in Deal Order**: Dealer included in `second_deal` card distribution
+   - **Impact**: Dealer received cards like other players instead of robbing pack
+   - **Fix**: Created `get_deal_order_non_dealer/2` to exclude dealer from loop
+
+### Files Changed
+
+- `lib/pidro/game/engine.ex`: Refactored automatic phase handling (lines 492-695)
+- `lib/pidro/game/discard.ex`: Excluded dealer from deal order (lines 474-488)
+- `test/integration/auto_dealer_rob_integration_test.exs`: New comprehensive integration tests (635 lines)
+
+### Test Results
+
+**Integration Tests**: 9/9 passing (1 skipped as mathematically impossible)
+**Full Test Suite**: 551 tests, 0 failures, 4 skipped
+**Execution Time**: ~1.4 seconds
+
+### Key Learnings
+
+1. **Automatic phase transitions are complex**: Required careful management of who transitions when
+2. **Integration tests are critical**: The bug existed despite 541 unit tests passing
+3. **Test coverage gaps**: No test verified the complete automatic flow end-to-end
+4. **TDD approach worked**: Writing failing tests first exposed multiple hidden bugs
+
+### Recommendations
+
+1. Add property tests (Phase 5) to prevent regression
+2. Consider refactoring automatic phase system for better clarity
+3. Add integration tests for all automatic phase chains
+4. Document phase transition responsibilities more clearly

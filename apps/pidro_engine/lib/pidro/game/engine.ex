@@ -62,7 +62,7 @@ defmodule Pidro.Game.Engine do
   alias Pidro.Game.{Errors, StateMachine}
 
   # Phase-specific modules
-  alias Pidro.Game.{Dealing, Bidding, Trump, Discard, Play}
+  alias Pidro.Game.{Dealing, Bidding, Trump, Discard, Play, DealerRob}
   alias Pidro.Finnish.Scorer
 
   # =============================================================================
@@ -490,20 +490,9 @@ defmodule Pidro.Game.Engine do
   # Also handles automatic phase operations (dealing, discarding, second_deal, scoring)
   @spec maybe_auto_transition(Types.GameState.t()) :: {:ok, Types.GameState.t()}
   defp maybe_auto_transition(%Types.GameState{} = state) do
-    if can_auto_transition?(state) do
-      case StateMachine.next_phase(state.phase, state) do
-        {:error, _reason} ->
-          {:ok, state}
-
-        next_phase when is_atom(next_phase) ->
-          # Transition to next phase
-          new_state = %{state | phase: next_phase}
-          # Handle automatic phase operations
-          handle_automatic_phase(new_state)
-      end
-    else
-      {:ok, state}
-    end
+    # Always handle automatic operations for automatic phases
+    # Each handler decides whether to transition and recurse
+    handle_automatic_phase(state)
   end
 
   # Handles automatic operations for phases that don't require player input
@@ -512,8 +501,10 @@ defmodule Pidro.Game.Engine do
     # Automatically deal initial cards
     case Dealing.deal_initial(state) do
       {:ok, new_state} ->
-        # After dealing, auto-transition to bidding
-        maybe_auto_transition(new_state)
+        # Transition to bidding phase
+        transitioned_state = %{new_state | phase: :bidding}
+        # Then check if we can auto-transition from bidding (we can't - bidding is manual)
+        maybe_auto_transition(transitioned_state)
 
       error ->
         error
@@ -524,8 +515,10 @@ defmodule Pidro.Game.Engine do
     # Automatically discard all non-trump cards
     case Discard.discard_non_trumps(state) do
       {:ok, new_state} ->
-        # After discarding, auto-transition to second_deal
-        maybe_auto_transition(new_state)
+        # Transition to second_deal phase
+        transitioned_state = %{new_state | phase: :second_deal}
+        # Then handle the second_deal phase
+        maybe_auto_transition(transitioned_state)
 
       error ->
         error
@@ -533,23 +526,59 @@ defmodule Pidro.Game.Engine do
   end
 
   defp handle_automatic_phase(%Types.GameState{phase: :second_deal} = state) do
-    # Dealer ALWAYS robs when deck has cards (per specs/redeal.md)
-    # Dealer combines hand + remaining deck, then selects best 6
-    deck_size = length(state.deck)
+    # CRITICAL: Must ALWAYS call second_deal/1 first to distribute cards to non-dealers
+    #
+    # Historical bug: Previously, when auto_dealer_rob: true, code jumped directly
+    # to dealer_rob_pack/2, which only updates the dealer's hand. This left non-dealer
+    # players with their post-discard trump-only hands (0-9 cards instead of 6).
+    #
+    # Fix: Always call second_deal/1 first. It handles:
+    # 1. Dealing cards to non-dealers to reach 6 cards each
+    # 2. Determining if dealer needs to rob (checks remaining deck)
+    # 3. Staying in :second_deal phase if rob needed, or transitioning to :playing if not
+    #
+    # Then, based on the resulting phase and auto_rob config, either:
+    # - Auto-select best cards for dealer (auto mode)
+    # - Wait for dealer to manually select (manual mode)
+    # - Transition to playing (if no rob needed)
 
-    if deck_size > 0 do
-      # Dealer must rob the pack, set turn to dealer and wait for action
-      {:ok, GameState.update(state, :current_turn, state.current_dealer)}
-    else
-      # No cards to rob, proceed automatically with second deal
-      case Discard.second_deal(state) do
-        {:ok, new_state} ->
-          # After second deal, auto-transition to playing
+    case Discard.second_deal(state) do
+      {:ok, new_state} ->
+        # STEP 2: Check if dealer needs to rob the pack
+        # second_deal/1 returns phase: :second_deal if dealer needs to rob (deck has cards)
+        # or phase: :playing if dealer doesn't need to rob (deck empty or dealer has 6 cards)
+
+        if new_state.phase == :second_deal do
+          # Dealer needs to rob - check if auto mode is enabled
+          auto_rob = Map.get(new_state.config, :auto_dealer_rob, false)
+
+          if auto_rob do
+            # Auto mode: automatically select best 6 cards for dealer
+            dealer = new_state.current_dealer
+            dealer_player = Map.get(new_state.players, dealer)
+            pool = dealer_player.hand ++ new_state.deck
+            selected_cards = DealerRob.select_best_cards(pool, new_state.trump_suit)
+
+            case Discard.dealer_rob_pack(new_state, selected_cards) do
+              {:ok, final_state} ->
+                maybe_auto_transition(final_state)
+
+              error ->
+                error
+            end
+          else
+            # Manual mode: second_deal already set turn to dealer, just return state
+            # Dealer will manually select cards via dealer_rob action
+            {:ok, new_state}
+          end
+        else
+          # second_deal already transitioned to :playing phase (no rob needed)
+          # This happens when deck is empty or dealer already has 6 cards
           maybe_auto_transition(new_state)
+        end
 
-        error ->
-          error
-      end
+      error ->
+        error
     end
   end
 
@@ -557,6 +586,8 @@ defmodule Pidro.Game.Engine do
     # Compute kills at the start of the playing phase
     # This determines which players have been eliminated in this round
     kill_state = Play.compute_kills(state)
+    # Playing phase doesn't auto-transition - it waits for player actions
+    # So just return the state with kills computed
     {:ok, kill_state}
   end
 
@@ -599,7 +630,8 @@ defmodule Pidro.Game.Engine do
       end
     else
       # Game not over, transition to hand_complete
-      maybe_auto_transition(scored_state)
+      transitioned_state = %{scored_state | phase: :hand_complete}
+      maybe_auto_transition(transitioned_state)
     end
   end
 
@@ -635,16 +667,30 @@ defmodule Pidro.Game.Engine do
         final_state = GameState.update(reset_state, :players, reset_players)
 
         # Transition to dealer_selection for new hand
-        maybe_auto_transition(final_state)
+        transitioned_state = %{final_state | phase: :dealer_selection}
+        maybe_auto_transition(transitioned_state)
 
       error ->
         error
     end
   end
 
-  # Non-automatic phases just return the state as-is
+  # Non-automatic phases: check if we can transition to next phase
   defp handle_automatic_phase(%Types.GameState{} = state) do
-    {:ok, state}
+    if can_auto_transition?(state) do
+      case StateMachine.next_phase(state.phase, state) do
+        {:error, _reason} ->
+          {:ok, state}
+
+        next_phase when is_atom(next_phase) ->
+          # Transition to next phase and call maybe_auto_transition to handle it
+          # This ensures automatic phases (like :dealing after :dealer_selection) get handled
+          new_state = %{state | phase: next_phase}
+          maybe_auto_transition(new_state)
+      end
+    else
+      {:ok, state}
+    end
   end
 
   # Checks if the current phase should automatically transition
