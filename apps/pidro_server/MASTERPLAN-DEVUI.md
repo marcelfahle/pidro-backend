@@ -1,7 +1,7 @@
 # Pidro Development UI - Implementation Master Plan
 
 **Last Updated**: 2025-11-22
-**Status**: Phase 0, 1, 2, 3, FR-5, FR-12 Complete - Card Table UI, Split View & Bot Observation Fully Implemented
+**Status**: Phase 0, 1, 2, 3, FR-5, FR-12, FR-13 Complete - Card Table UI, Split View, Bot Observation & Hand Replay Fully Implemented
 **Based On**: specs/pidro_server_dev_ui.md
 **Coverage**: Full gap analysis of 15 functional requirements vs existing codebase
 
@@ -30,12 +30,12 @@
 - ✅ Game creation with bot configuration
 - ✅ Quick actions (auto-bid, fast-forward, undo)
 - ✅ God Mode toggle
+- ✅ Hand replay functionality (step through, scrub, auto-play)
+- ✅ Bot reasoning display
 
 **Missing Components ❌**
 
-- ❌ Hand replay functionality
 - ❌ Game analytics dashboard
-- ❌ Bot reasoning display
 
 ### Implementation Coverage
 
@@ -53,11 +53,11 @@
 | FR-10: Quick Actions      | 75%     | GameHelpers    | Small      | **P1**   |
 | FR-11: Bot Management     | ✅ 100% | BotManager     | -          | **P1**   |
 | FR-12: Bot Observation    | ✅ 100% | BotPlayer      | -          | **P2**   |
-| FR-13: Hand Replay        | 0%      | Engine API     | Medium     | **P2**   |
+| **FR-13: Hand Replay**    | **✅ 100%** | **ReplayController** | **-** | **P2** |
 | FR-14: Statistics View    | 20%     | StatsLive      | Medium     | **P2**   |
 | **FR-15: Card Table UI**  | **✅ 100%** | **CardComponents** | **-** | **P0** |
 
-**Overall Status**: ~95% complete - Phase 3 Card Table UI, FR-5 Split View, and FR-12 Bot Observation successfully implemented
+**Overall Status**: ~97% complete - Phase 3 Card Table UI, FR-5 Split View, FR-12 Bot Observation, and FR-13 Hand Replay successfully implemented
 
 ---
 
@@ -1227,28 +1227,49 @@ lib/pidro_server_web/components/core_components.ex    # Import card components (
 
 ---
 
-#### FR-13: Hand Replay (0% complete)
+#### FR-13: Hand Replay (✅ 100% complete)
 
 **Tasks:**
 
-- [ ] **DEV-1301**: Build replay controls
+- [x] **DEV-1301**: Build replay controls
 
   - Slider to scrub through events
   - Play/pause auto-replay
   - Step forward/backward buttons
   - **Effort**: 4h
+  - **Status**: ✅ Complete (2025-11-22)
 
-- [ ] **DEV-1302**: Rebuild state from events
-  - Use EventRecorder history
+- [x] **DEV-1302**: Rebuild state from events
+  - Use engine's event sourcing (Pidro.Game.Replay)
   - Replay actions to reconstruct state
   - Display at any point in time
   - **Effort**: 3h
+  - **Status**: ✅ Complete (2025-11-22)
 
 **Acceptance Criteria:**
 
-- Can replay any finished game
-- Can pause at any event
-- State accurately reconstructed
+- ✅ Can replay any game by scrubbing through events
+- ✅ Can pause at any event
+- ✅ State accurately reconstructed using engine's replay system
+- ✅ Step forward/backward navigation
+- ✅ Auto-play with configurable speed (0.5x - 4x)
+- ✅ Jump to specific phases
+- ✅ Event descriptions displayed
+
+**Implementation Notes (2025-11-22):**
+
+- Created ReplayController module that wraps Pidro.Game.Replay
+- Uses engine's event sourcing to reconstruct state at any event index
+- Integrated into GameDetailLive with full UI controls:
+  - Range slider for scrubbing through events
+  - Play/pause button with auto-advance
+  - Step forward/backward buttons
+  - Speed control (0.5x, 1x, 2x, 4x)
+  - Jump to phase dropdown
+  - Real-time event descriptions
+- Replay mode preserves live state and can be toggled on/off
+- Files created: lib/pidro_server/dev/replay_controller.ex
+- Files modified: lib/pidro_server_web/live/dev/game_detail_live.ex (+250 lines)
 
 ---
 

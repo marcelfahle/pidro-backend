@@ -14,7 +14,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   use PidroServerWeb, :live_view
   require Logger
-  alias PidroServer.Dev.{BotManager, Event, EventRecorder, GameHelpers}
+  alias PidroServer.Dev.{BotManager, Event, EventRecorder, GameHelpers, ReplayController}
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.CardComponents
 
@@ -51,6 +51,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         # DEV-1106: Initialize bot configuration
         bot_configs = initialize_bot_configs(room_code)
 
+        # DEV-1301: Initialize replay state
+        {:ok, event_count} = ReplayController.get_event_count(room_code)
+
         {:ok,
          socket
          |> assign(:room, room)
@@ -67,6 +70,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:event_filter_player, nil)
          |> assign(:show_bot_reasoning, true)
          |> assign(:show_event_export, false)
+         |> assign(:replay_mode, false)
+         |> assign(:replay_index, event_count - 1)
+         |> assign(:replay_total_events, event_count)
+         |> assign(:replay_playing, false)
+         |> assign(:replay_speed, 1000)
          |> assign(:page_title, "Game Detail - Dev")}
 
       {:error, _reason} ->
@@ -462,6 +470,183 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     end
   end
 
+  # DEV-1301: Replay Controls Event Handlers
+
+  @impl true
+  def handle_event("toggle_replay_mode", _params, socket) do
+    new_mode = !socket.assigns.replay_mode
+
+    socket =
+      if new_mode do
+        # Entering replay mode - preserve current state
+        socket
+        |> assign(:replay_mode, true)
+        |> put_flash(:info, "Replay mode activated")
+      else
+        # Exiting replay mode - restore live state
+        game_state = get_game_state(socket.assigns.room_code)
+
+        legal_actions =
+          get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
+
+        socket
+        |> assign(:replay_mode, false)
+        |> assign(:replay_playing, false)
+        |> assign(:game_state, game_state)
+        |> assign(:legal_actions, legal_actions)
+        |> put_flash(:info, "Replay mode deactivated")
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("replay_step_backward", _params, socket) do
+    if socket.assigns.replay_mode do
+      case ReplayController.step_backward(socket.assigns.room_code, socket.assigns.replay_index) do
+        {:ok, state, new_index} ->
+          {:noreply,
+           socket
+           |> assign(:game_state, state)
+           |> assign(:replay_index, new_index)
+           |> assign(:legal_actions, [])}
+
+        {:error, :at_start} ->
+          {:noreply, put_flash(socket, :info, "Already at the start")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Step backward failed: #{inspect(reason)}")}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("replay_step_forward", _params, socket) do
+    if socket.assigns.replay_mode do
+      case ReplayController.step_forward(socket.assigns.room_code, socket.assigns.replay_index) do
+        {:ok, state, new_index} ->
+          {:noreply,
+           socket
+           |> assign(:game_state, state)
+           |> assign(:replay_index, new_index)
+           |> assign(:legal_actions, [])}
+
+        {:error, :at_end} ->
+          {:noreply, put_flash(socket, :info, "Already at the end")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Step forward failed: #{inspect(reason)}")}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("replay_jump_to", %{"index" => index_str}, socket) do
+    if socket.assigns.replay_mode do
+      index = String.to_integer(index_str)
+
+      case ReplayController.get_state_at_event(socket.assigns.room_code, index) do
+        {:ok, state} ->
+          {:noreply,
+           socket
+           |> assign(:game_state, state)
+           |> assign(:replay_index, index)
+           |> assign(:legal_actions, [])}
+
+        {:error, :invalid_index} ->
+          {:noreply, put_flash(socket, :error, "Invalid event index")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Jump failed: #{inspect(reason)}")}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("replay_jump_to_phase", %{"phase" => phase}, socket) do
+    if socket.assigns.replay_mode do
+      phase_atom = String.to_existing_atom(phase)
+
+      case ReplayController.jump_to_phase(socket.assigns.room_code, phase_atom) do
+        {:ok, state, index} ->
+          {:noreply,
+           socket
+           |> assign(:game_state, state)
+           |> assign(:replay_index, index)
+           |> assign(:legal_actions, [])
+           |> put_flash(:info, "Jumped to #{format_phase(phase_atom)} phase")}
+
+        {:error, :phase_not_found} ->
+          {:noreply, put_flash(socket, :error, "Phase not reached yet")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Jump to phase failed: #{inspect(reason)}")}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("replay_toggle_play", _params, socket) do
+    if socket.assigns.replay_mode do
+      new_playing = !socket.assigns.replay_playing
+
+      socket =
+        if new_playing do
+          # Start auto-play
+          send(self(), :replay_tick)
+          assign(socket, :replay_playing, true)
+        else
+          # Stop auto-play
+          assign(socket, :replay_playing, false)
+        end
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("replay_set_speed", %{"speed" => speed_str}, socket) do
+    speed = String.to_integer(speed_str)
+    {:noreply, assign(socket, :replay_speed, speed)}
+  end
+
+  @impl true
+  def handle_info(:replay_tick, socket) do
+    if socket.assigns.replay_playing && socket.assigns.replay_mode do
+      case ReplayController.step_forward(socket.assigns.room_code, socket.assigns.replay_index) do
+        {:ok, state, new_index} ->
+          # Schedule next tick
+          Process.send_after(self(), :replay_tick, socket.assigns.replay_speed)
+
+          {:noreply,
+           socket
+           |> assign(:game_state, state)
+           |> assign(:replay_index, new_index)
+           |> assign(:legal_actions, [])}
+
+        {:error, :at_end} ->
+          # Stop playing when we reach the end
+          {:noreply, assign(socket, :replay_playing, false)}
+
+        {:error, _reason} ->
+          # Stop on error
+          {:noreply, assign(socket, :replay_playing, false)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -761,6 +946,180 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             </div>
           </div>
         </div>
+        
+    <!-- DEV-1301: Hand Replay Controls -->
+        <%= if @replay_total_events > 0 do %>
+          <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+            <div class="px-4 py-5 sm:px-6 flex justify-between items-center">
+              <div>
+                <h3 class="text-lg leading-6 font-medium text-zinc-900">Hand Replay</h3>
+                <p class="mt-1 text-sm text-zinc-500">
+                  Step through game history event by event
+                </p>
+              </div>
+              <button
+                type="button"
+                phx-click="toggle_replay_mode"
+                class={[
+                  "px-4 py-2 text-sm font-medium rounded-md transition-all shadow-sm",
+                  if(@replay_mode,
+                    do: "bg-amber-600 text-white ring-2 ring-amber-300",
+                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                  )
+                ]}
+              >
+                <%= if @replay_mode do %>
+                  <svg
+                    class="w-5 h-5 inline mr-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                  Exit Replay
+                <% else %>
+                  <svg
+                    class="w-5 h-5 inline mr-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"
+                    />
+                  </svg>
+                  Enter Replay Mode
+                <% end %>
+              </button>
+            </div>
+            <%= if @replay_mode do %>
+              <div class="border-t border-zinc-200 px-4 py-5 sm:p-6 bg-amber-50">
+                <!-- Event Progress Bar -->
+                <div class="mb-4">
+                  <div class="flex justify-between text-sm text-zinc-700 mb-2">
+                    <span>Event {@replay_index + 1} of {@replay_total_events}</span>
+                    <%= if @replay_index >= 0 && @replay_index < @replay_total_events do %>
+                      <%= case ReplayController.get_event_info(@room_code, @replay_index) do %>
+                        <% {:ok, event_info} -> %>
+                          <span class="text-zinc-600 italic">{event_info.description}</span>
+                        <% _ -> %>
+                          <span></span>
+                      <% end %>
+                    <% end %>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max={@replay_total_events - 1}
+                    value={@replay_index}
+                    phx-change="replay_jump_to"
+                    name="index"
+                    class="w-full h-2 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                  />
+                </div>
+                <!-- Playback Controls -->
+                <div class="flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      phx-click="replay_step_backward"
+                      class="px-3 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
+                      disabled={@replay_index <= 0}
+                    >
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M15 19l-7-7 7-7"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="replay_toggle_play"
+                      class={[
+                        "px-4 py-2 shadow-sm text-sm font-medium rounded-md text-white transition-colors",
+                        if(@replay_playing,
+                          do: "bg-red-600 hover:bg-red-700",
+                          else: "bg-green-600 hover:bg-green-700"
+                        )
+                      ]}
+                    >
+                      <%= if @replay_playing do %>
+                        <svg class="w-5 h-5 inline" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                        </svg>
+                        Pause
+                      <% else %>
+                        <svg class="w-5 h-5 inline" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                        Play
+                      <% end %>
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="replay_step_forward"
+                      class="px-3 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
+                      disabled={@replay_index >= @replay_total_events - 1}
+                    >
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <label class="text-sm text-zinc-700">Speed:</label>
+                    <select
+                      name="speed"
+                      phx-change="replay_set_speed"
+                      class="px-2 py-1 text-sm border border-zinc-300 rounded-md bg-white"
+                    >
+                      <option value="2000" selected={@replay_speed == 2000}>0.5x</option>
+                      <option value="1000" selected={@replay_speed == 1000}>1x</option>
+                      <option value="500" selected={@replay_speed == 500}>2x</option>
+                      <option value="250" selected={@replay_speed == 250}>4x</option>
+                    </select>
+                  </div>
+                  <!-- Jump to Phase -->
+                  <div class="flex items-center gap-2">
+                    <label class="text-sm text-zinc-700">Jump to:</label>
+                    <select
+                      phx-change="replay_jump_to_phase"
+                      name="phase"
+                      class="px-2 py-1 text-sm border border-zinc-300 rounded-md bg-white"
+                    >
+                      <option value="">Select phase...</option>
+                      <option value="dealer_selection">Dealer Selection</option>
+                      <option value="dealing">Dealing</option>
+                      <option value="bidding">Bidding</option>
+                      <option value="declaring">Trump Declaration</option>
+                      <option value="discarding">Discarding</option>
+                      <option value="second_deal">Second Deal</option>
+                      <option value="playing">Playing</option>
+                      <option value="scoring">Scoring</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
         
     <!-- Card Table UI - DEV-1505 & DEV-502: Visual Card Table Integration with Split View -->
         <%= if @game_state do %>
@@ -1599,6 +1958,22 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       events
     else
       Enum.reject(events, &(&1.type == :bot_reasoning))
+    end
+  end
+
+  # DEV-1301: Format phase names for display
+  defp format_phase(phase) do
+    case phase do
+      :dealer_selection -> "Dealer Selection"
+      :dealing -> "Dealing"
+      :bidding -> "Bidding"
+      :declaring -> "Trump Declaration"
+      :discarding -> "Discarding"
+      :second_deal -> "Second Deal"
+      :playing -> "Playing"
+      :scoring -> "Scoring"
+      :complete -> "Complete"
+      _ -> phase |> to_string() |> String.capitalize()
     end
   end
 end
