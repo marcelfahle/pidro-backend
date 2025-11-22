@@ -1,8 +1,8 @@
 # Pidro Development UI - Implementation Master Plan
 
 **Last Updated**: 2025-11-22
-**Status**: Phase 0, 1, 2, 3 Complete - Card Table UI Fully Implemented  
-**Based On**: specs/pidro_server_dev_ui.md  
+**Status**: Phase 0, 1, 2, 3, FR-5 Complete - Card Table UI & Split View Fully Implemented
+**Based On**: specs/pidro_server_dev_ui.md
 **Coverage**: Full gap analysis of 15 functional requirements vs existing codebase
 
 ---
@@ -33,8 +33,6 @@
 
 **Missing Components ❌**
 
-- ❌ Visual card table UI (FR-15)
-- ❌ Multi-view mode (split screen)
 - ❌ Hand replay functionality
 - ❌ Game analytics dashboard
 - ❌ Bot reasoning display
@@ -47,7 +45,7 @@
 | FR-2: Game Discovery      | ✅ 100% | GameListLive   | -          | **P0**   |
 | FR-3: Game Deletion       | ✅ 100% | RoomManager    | -          | **P0**   |
 | FR-4: Position Switching  | ✅ 100% | GameDetailLive | -          | **P0**   |
-| FR-5: Multi-View Mode     | 0%      | -              | Medium     | **P2**   |
+| FR-5: Multi-View Mode     | ✅ 100% | GameDetailLive | -          | **P2**   |
 | FR-6: State Display       | ✅ 100% | GameDetailLive | -          | **P0**   |
 | FR-7: Event Log           | ✅ 100% | EventRecorder  | -          | **P1**   |
 | FR-8: Raw State Inspector | ✅ 100% | GameDetailLive | -          | **P0**   |
@@ -59,7 +57,7 @@
 | FR-14: Statistics View    | 20%     | StatsLive      | Medium     | **P2**   |
 | **FR-15: Card Table UI**  | **✅ 100%** | **CardComponents** | **-** | **P0** |
 
-**Overall Status**: ~90% complete - Phase 3 Card Table UI successfully implemented
+**Overall Status**: ~93% complete - Phase 3 Card Table UI & FR-5 Split View successfully implemented
 
 ---
 
@@ -1160,32 +1158,45 @@ lib/pidro_server_web/components/core_components.ex    # Import card components (
 
 ### Phase 4: Advanced Features (P2)
 
-**Effort**: Medium (1-2 days)  
-**Priority**: NICE-TO-HAVE  
+**Effort**: Medium (1-2 days)
+**Priority**: NICE-TO-HAVE
 **Goal**: Power user debugging and analysis tools
 
-#### FR-5: Multi-View Mode (0% complete)
+#### FR-5: Multi-View Mode (✅ 100% complete)
 
 **Tasks:**
 
-- [ ] **DEV-501**: Add God Mode toggle
+- [x] **DEV-501**: Add God Mode toggle
 
   - Checkbox: "Show All Hands"
   - Shows all 4 player perspectives simultaneously
   - Split screen layout (2x2 grid)
   - **Effort**: 2h
+  - **Status**: ✅ Complete (2025-11-22)
 
-- [ ] **DEV-502**: Implement split view layout
+- [x] **DEV-502**: Implement split view layout
   - CSS grid: 4 quadrants
   - Each shows filtered state for one position
   - Highlight active view
   - **Effort**: 2h
+  - **Status**: ✅ Complete (2025-11-22)
 
 **Acceptance Criteria:**
 
-- Can view 4 positions at once
-- Each view properly filtered
-- Can select which view is active for actions
+- [x] Can view 4 positions at once
+- [x] Each view properly filtered
+- [x] Can select which view is active for actions
+
+**Implementation Notes (2025-11-22):**
+
+- Added `view_mode` assign (:single | :split) to GameDetailLive
+- Created `toggle_view_mode` event handler to switch between modes
+- Implemented split view layout with 2x2 grid showing all 4 positions
+- Each quadrant displays: position name, card count, hand (with small cards), turn indicator, and legal actions count
+- Active position highlighted with indigo border and ring
+- Split view only available during :playing phase
+- Added `render_position_view/1` component for individual quadrant rendering
+- Fully integrated with existing God Mode functionality
 
 ---
 

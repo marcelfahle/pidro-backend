@@ -57,6 +57,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:room_code, room_code)
          |> assign(:game_state, game_state)
          |> assign(:selected_position, :all)
+         |> assign(:view_mode, :single)
          |> assign(:legal_actions, legal_actions)
          |> assign(:executing_action, false)
          |> assign(:copy_feedback, false)
@@ -144,6 +145,18 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
      socket
      |> assign(:selected_position, position_atom)
      |> assign(:legal_actions, legal_actions)}
+  end
+
+  @impl true
+  def handle_event("toggle_view_mode", _params, socket) do
+    # DEV-502: Toggle between single and split view
+    new_mode =
+      case socket.assigns.view_mode do
+        :single -> :split
+        :split -> :single
+      end
+
+    {:noreply, assign(socket, :view_mode, new_mode)}
   end
 
   @impl true
@@ -486,14 +499,51 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </div>
         </div>
         
-    <!-- Position Selector - DEV-401 -->
+    <!-- Position Selector - DEV-401 & DEV-502 -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Position Filter</h3>
-            <p class="mt-1 text-sm text-zinc-500">Select a position to view and execute actions</p>
+          <div class="px-4 py-5 sm:px-6 flex justify-between items-start">
+            <div>
+              <h3 class="text-lg leading-6 font-medium text-zinc-900">Position Filter & View Mode</h3>
+              <p class="mt-1 text-sm text-zinc-500">Select a position to view and execute actions</p>
+            </div>
+            <%!-- DEV-502: Split View Toggle --%>
+            <button
+              type="button"
+              phx-click="toggle_view_mode"
+              class={[
+                "px-4 py-2 text-sm font-medium rounded-md transition-all shadow-sm",
+                if(@view_mode == :split,
+                  do: "bg-purple-600 text-white ring-2 ring-purple-300",
+                  else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                )
+              ]}
+              title="Toggle split screen view (4 quadrants)"
+            >
+              <%= if @view_mode == :split do %>
+                <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
+                  />
+                </svg>
+                Split View Active
+              <% else %>
+                <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5z"
+                  />
+                </svg>
+                Enable Split View
+              <% end %>
+            </button>
           </div>
           <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <div class="mb-4">
+            <div class="mb-4 flex justify-between items-center">
               <div class={[
                 "inline-flex items-center px-3 py-1 rounded-md text-sm font-medium",
                 if(@selected_position == :all,
@@ -507,6 +557,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                   Playing as: {format_position(@selected_position)}
                 <% end %>
               </div>
+              <%= if @view_mode == :split do %>
+                <div class="text-xs text-purple-600 font-medium">
+                  Split view: {format_position(@selected_position)} highlighted
+                </div>
+              <% end %>
             </div>
 
             <div class="flex flex-wrap gap-2">
@@ -694,44 +749,69 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </div>
         </div>
         
-    <!-- Card Table UI - DEV-1505: Visual Card Table Integration -->
+    <!-- Card Table UI - DEV-1505 & DEV-502: Visual Card Table Integration with Split View -->
         <%= if @game_state do %>
-          <%= cond do %>
-            <% @game_state.phase == :bidding -> %>
-              <div class="mb-8">
-                <CardComponents.bidding_panel
-                  current_bid={get_current_bid(@game_state)}
-                  bidder={get_current_bidder(@game_state)}
-                  legal_actions={@legal_actions}
-                  bid_history={get_bid_history(@game_state)}
-                />
+          <%= if @view_mode == :split && @game_state.phase == :playing do %>
+            <%!-- DEV-502: Split View Layout (2x2 Grid) --%>
+            <div class="mb-8">
+              <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg shadow-lg">
+                <div class="text-center mb-3">
+                  <h3 class="text-lg font-semibold text-purple-900">Split View Mode</h3>
+                  <p class="text-sm text-purple-700">
+                    Viewing all 4 player perspectives simultaneously
+                  </p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                  <%= for position <- [:north, :south, :east, :west] do %>
+                    <.render_position_view
+                      position={position}
+                      game_state={@game_state}
+                      selected_position={@selected_position}
+                      room_code={@room_code}
+                    />
+                  <% end %>
+                </div>
               </div>
-            <% @game_state.phase == :trump_selection -> %>
-              <div class="mb-8">
-                <CardComponents.trump_selection_panel
-                  legal_actions={@legal_actions}
-                  hand={get_selected_hand(@game_state, @selected_position)}
-                />
-              </div>
-            <% @game_state.phase == :playing -> %>
-              <div class="mb-8">
-                <CardComponents.card_table
-                  game_state={@game_state}
-                  selected_position={@selected_position}
-                  god_mode={@selected_position == :all}
-                  legal_actions={@legal_actions}
-                />
-              </div>
-            <% true -> %>
-              <%!-- Other phases like dealer_selection, hand_scoring, etc. --%>
-              <div class="mb-8 bg-white shadow overflow-hidden sm:rounded-lg p-6">
-                <p class="text-sm text-gray-600">
-                  Phase: <span class="font-semibold">{@game_state.phase}</span>
-                </p>
-                <p class="text-xs text-gray-500 mt-2">
-                  Visual card table available during playing phase
-                </p>
-              </div>
+            </div>
+          <% else %>
+            <%!-- Single View Layout --%>
+            <%= cond do %>
+              <% @game_state.phase == :bidding -> %>
+                <div class="mb-8">
+                  <CardComponents.bidding_panel
+                    current_bid={get_current_bid(@game_state)}
+                    bidder={get_current_bidder(@game_state)}
+                    legal_actions={@legal_actions}
+                    bid_history={get_bid_history(@game_state)}
+                  />
+                </div>
+              <% @game_state.phase == :trump_selection -> %>
+                <div class="mb-8">
+                  <CardComponents.trump_selection_panel
+                    legal_actions={@legal_actions}
+                    hand={get_selected_hand(@game_state, @selected_position)}
+                  />
+                </div>
+              <% @game_state.phase == :playing -> %>
+                <div class="mb-8">
+                  <CardComponents.card_table
+                    game_state={@game_state}
+                    selected_position={@selected_position}
+                    god_mode={@selected_position == :all}
+                    legal_actions={@legal_actions}
+                  />
+                </div>
+              <% true -> %>
+                <%!-- Other phases like dealer_selection, hand_scoring, etc. --%>
+                <div class="mb-8 bg-white shadow overflow-hidden sm:rounded-lg p-6">
+                  <p class="text-sm text-gray-600">
+                    Phase: <span class="font-semibold">{@game_state.phase}</span>
+                  </p>
+                  <p class="text-xs text-gray-500 mt-2">
+                    Visual card table available during playing phase
+                  </p>
+                </div>
+            <% end %>
           <% end %>
         <% end %>
         
@@ -1031,6 +1111,79 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             Live updates enabled
           </span>
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  # DEV-502: Render individual position view quadrant for split view
+  defp render_position_view(assigns) do
+    position = assigns.position
+    is_active = assigns.selected_position == position
+    legal_actions = if is_active, do: get_legal_actions(assigns.room_code, position), else: []
+
+    assigns =
+      assigns
+      |> assign(:is_active, is_active)
+      |> assign(:position_legal_actions, legal_actions)
+
+    ~H"""
+    <div class={[
+      "bg-white rounded-lg shadow-md border-2 transition-all",
+      if(@is_active, do: "border-indigo-500 ring-2 ring-indigo-300", else: "border-gray-200")
+    ]}>
+      <%!-- Position Header --%>
+      <div class={[
+        "px-3 py-2 rounded-t-lg border-b flex justify-between items-center",
+        if(@is_active, do: "bg-indigo-50 border-indigo-200", else: "bg-gray-50 border-gray-200")
+      ]}>
+        <div class="flex items-center gap-2">
+          <span class={[
+            "font-semibold text-sm",
+            if(@is_active, do: "text-indigo-900", else: "text-gray-700")
+          ]}>
+            {format_position(@position)}
+          </span>
+          <%= if @is_active do %>
+            <span class="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded">Active</span>
+          <% end %>
+          <%= if @game_state.current_turn == @position do %>
+            <span class="text-xs bg-green-500 text-white px-2 py-0.5 rounded animate-pulse">
+              Turn
+            </span>
+          <% end %>
+        </div>
+        <%!-- Card count --%>
+        <span class="text-xs text-gray-600">
+          {length(get_selected_hand(@game_state, @position))} cards
+        </span>
+      </div>
+      <%!-- Position Content --%>
+      <div class="p-3">
+        <%!-- Hand Display (Compact) --%>
+        <div class="mb-2">
+          <div class="text-xs font-medium text-gray-500 mb-1">Hand:</div>
+          <div class="flex flex-wrap gap-1">
+            <%= for card <- get_selected_hand(@game_state, @position) |> Enum.take(12) do %>
+              <div class="inline-block">
+                <CardComponents.card card={card} size={:sm} face_down={false} />
+              </div>
+            <% end %>
+            <%= if length(get_selected_hand(@game_state, @position)) > 12 do %>
+              <span class="text-xs text-gray-500 self-center">
+                +{length(get_selected_hand(@game_state, @position)) - 12} more
+              </span>
+            <% end %>
+          </div>
+        </div>
+        <%!-- Legal Actions Count --%>
+        <%= if @is_active && @position_legal_actions != [] do %>
+          <div class="mt-2 text-xs">
+            <span class="text-green-600 font-medium">
+              {length(@position_legal_actions)} legal actions
+            </span>
+          </div>
+        <% end %>
       </div>
     </div>
     """
