@@ -186,6 +186,14 @@ if Mix.env() == :dev do
     end
 
     @impl true
+    def handle_info({:bot_reasoning, event}, state) do
+      # Bot reasoning event received directly from BotPlayer
+      add_event(state.room_code, event)
+
+      {:noreply, state}
+    end
+
+    @impl true
     def handle_info(_msg, state) do
       {:noreply, state}
     end

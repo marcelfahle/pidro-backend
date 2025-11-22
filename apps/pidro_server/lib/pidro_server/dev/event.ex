@@ -18,6 +18,7 @@ if Mix.env() == :dev do
     - `:trick_won` - A trick was won by a player
     - `:hand_scored` - Hand completed and scored
     - `:game_over` - Game completed with winner
+    - `:bot_reasoning` - Bot decision-making reasoning (dev/debug)
 
     ## Example
 
@@ -40,6 +41,7 @@ if Mix.env() == :dev do
             | :trick_won
             | :hand_scored
             | :game_over
+            | :bot_reasoning
 
     @type position :: :north | :south | :east | :west
 
@@ -133,6 +135,14 @@ if Mix.env() == :dev do
       "Game over! #{format_team(winner)} wins #{scores[winner]}-#{scores[other_team(winner)]}"
     end
 
+    def format(%__MODULE__{
+          type: :bot_reasoning,
+          player: player,
+          metadata: %{action: action, reasoning: reasoning}
+        }) do
+      "#{format_player(player)} (Bot) chose '#{format_action(action)}' - #{reasoning}"
+    end
+
     # Fallback for unknown event types
     def format(%__MODULE__{type: type, player: nil}) do
       "#{type}"
@@ -187,5 +197,11 @@ if Mix.env() == :dev do
 
     defp other_team(:north_south), do: :east_west
     defp other_team(:east_west), do: :north_south
+
+    defp format_action(:pass), do: "Pass"
+    defp format_action({:bid, amount}), do: "Bid #{amount}"
+    defp format_action({:play_card, card}), do: "Play #{format_card(card)}"
+    defp format_action({:declare_trump, suit}), do: "Declare #{format_suit(suit)} as trump"
+    defp format_action(action), do: inspect(action)
   end
 end

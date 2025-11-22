@@ -65,6 +65,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:events, EventRecorder.get_events(room_code, limit: 50))
          |> assign(:event_filter_type, nil)
          |> assign(:event_filter_player, nil)
+         |> assign(:show_bot_reasoning, true)
          |> assign(:show_event_export, false)
          |> assign(:page_title, "Game Detail - Dev")}
 
@@ -369,6 +370,18 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
      socket
      |> assign(:events, [])
      |> put_flash(:info, "Event log cleared")}
+  end
+
+  @impl true
+  def handle_event("toggle_bot_reasoning", _params, socket) do
+    # Toggle bot reasoning visibility and refresh events
+    new_value = !socket.assigns.show_bot_reasoning
+    events = get_filtered_events(socket.assigns, new_value)
+
+    {:noreply,
+     socket
+     |> assign(:show_bot_reasoning, new_value)
+     |> assign(:events, events)}
   end
 
   @impl true
@@ -945,7 +958,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             </div>
 
             <%!-- Filters --%>
-            <div class="flex gap-4 mb-4">
+            <div class="flex gap-4 mb-4 items-end">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Type</label>
                 <select
@@ -986,6 +999,18 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                   <option value="east" selected={@event_filter_player == :east}>East</option>
                   <option value="west" selected={@event_filter_player == :west}>West</option>
                 </select>
+              </div>
+
+              <div class="flex items-center">
+                <label class="inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    phx-click="toggle_bot_reasoning"
+                    checked={@show_bot_reasoning}
+                    class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                  />
+                  <span class="ml-2 text-sm text-gray-700">Show Bot Reasoning</span>
+                </label>
               </div>
             </div>
 
@@ -1531,6 +1556,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       :trick_won -> "text-yellow-600"
       :hand_scored -> "text-orange-600"
       :game_over -> "text-red-600"
+      :bot_reasoning -> "text-indigo-600 italic"
       _ -> "text-gray-700"
     end
   end
@@ -1558,5 +1584,21 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   defp get_selected_hand(state, position) when is_atom(position) do
     get_in(state, [:players, position, :hand]) || []
+  end
+
+  # Helper function to get filtered events
+  defp get_filtered_events(assigns, show_bot_reasoning) do
+    events =
+      EventRecorder.get_events(assigns.room_code,
+        limit: 50,
+        type: assigns.event_filter_type,
+        player: assigns.event_filter_player
+      )
+
+    if show_bot_reasoning do
+      events
+    else
+      Enum.reject(events, &(&1.type == :bot_reasoning))
+    end
   end
 end

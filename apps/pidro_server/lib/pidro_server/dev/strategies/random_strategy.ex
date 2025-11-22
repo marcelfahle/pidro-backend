@@ -32,9 +32,8 @@ if Mix.env() == :dev do
     Selects a random action from the list of legal actions.
 
     Given a list of legal actions available to a bot player and the current game state,
-    this function returns a randomly selected action. The game_state parameter is
-    provided for API consistency with other strategies that may require it, but is
-    not used by this implementation.
+    this function returns a tuple containing the randomly selected action and reasoning
+    explaining the choice.
 
     ## Parameters
 
@@ -46,31 +45,36 @@ if Mix.env() == :dev do
 
     ## Returns
 
-      An action randomly selected from `legal_actions`. The return type depends
-      on the phase and available actions:
-      - A tuple like `{:bid, 6}` during bidding
-      - A tuple like `{:play_card, {14, :spades}}` during play
-      - A tuple like `{:declare_trump, :spades}` for trump declaration
-      - An atom like `:pass` when passing is an option
+      A tuple `{:ok, action, reasoning}` where:
+      - `action` - The randomly selected action from `legal_actions`
+      - `reasoning` - A string explaining why this action was chosen
 
     ## Examples
 
         iex> legal_actions = [{:bid, 6}, {:bid, 7}, :pass]
-        iex> action = PidroServer.Dev.Strategies.RandomStrategy.pick_action(legal_actions, %{})
+        iex> {:ok, action, reasoning} = PidroServer.Dev.Strategies.RandomStrategy.pick_action(legal_actions, %{})
         iex> action in legal_actions
+        true
+        iex> is_binary(reasoning)
         true
 
         iex> legal_actions = [{:play_card, {14, :spades}}]
-        iex> PidroServer.Dev.Strategies.RandomStrategy.pick_action(legal_actions, %{})
+        iex> {:ok, action, _reasoning} = PidroServer.Dev.Strategies.RandomStrategy.pick_action(legal_actions, %{})
+        iex> action
         {:play_card, {14, :spades}}
 
     ## Raises
 
       - `Enum.EmptyError` if `legal_actions` is empty
     """
-    @spec pick_action(list(), map()) :: term()
+    @spec pick_action(list(), map()) :: {:ok, term(), String.t()}
     def pick_action(legal_actions, _game_state) do
-      Enum.random(legal_actions)
+      action = Enum.random(legal_actions)
+
+      reasoning =
+        "Randomly selected from #{length(legal_actions)} legal action#{if length(legal_actions) == 1, do: "", else: "s"}"
+
+      {:ok, action, reasoning}
     end
   end
 end

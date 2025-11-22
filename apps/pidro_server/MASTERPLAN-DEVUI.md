@@ -1,7 +1,7 @@
 # Pidro Development UI - Implementation Master Plan
 
 **Last Updated**: 2025-11-22
-**Status**: Phase 0, 1, 2, 3, FR-5 Complete - Card Table UI & Split View Fully Implemented
+**Status**: Phase 0, 1, 2, 3, FR-5, FR-12 Complete - Card Table UI, Split View & Bot Observation Fully Implemented
 **Based On**: specs/pidro_server_dev_ui.md
 **Coverage**: Full gap analysis of 15 functional requirements vs existing codebase
 
@@ -52,12 +52,12 @@
 | FR-9: Action Execution    | ✅ 100% | GameAdapter    | -          | **P0**   |
 | FR-10: Quick Actions      | 75%     | GameHelpers    | Small      | **P1**   |
 | FR-11: Bot Management     | ✅ 100% | BotManager     | -          | **P1**   |
-| FR-12: Bot Observation    | 0%      | -              | Medium     | **P2**   |
+| FR-12: Bot Observation    | ✅ 100% | BotPlayer      | -          | **P2**   |
 | FR-13: Hand Replay        | 0%      | Engine API     | Medium     | **P2**   |
 | FR-14: Statistics View    | 20%     | StatsLive      | Medium     | **P2**   |
 | **FR-15: Card Table UI**  | **✅ 100%** | **CardComponents** | **-** | **P0** |
 
-**Overall Status**: ~93% complete - Phase 3 Card Table UI & FR-5 Split View successfully implemented
+**Overall Status**: ~95% complete - Phase 3 Card Table UI, FR-5 Split View, and FR-12 Bot Observation successfully implemented
 
 ---
 
@@ -1200,19 +1200,30 @@ lib/pidro_server_web/components/core_components.ex    # Import card components (
 
 ---
 
-#### FR-12: Bot Observation (0% complete)
+#### FR-12: Bot Observation (✅ 100% complete)
 
 **Tasks:**
 
-- [ ] **DEV-1201**: Show bot reasoning in event log
+- [x] **DEV-1201**: Show bot reasoning in event log
   - Log: "Bot chose 'Bid 8' because: has A♠, K♠, 5♠"
   - Display internal scoring for debug
   - **Effort**: 2h
+  - **Status**: ✅ Complete (2025-11-22)
 
 **Acceptance Criteria:**
 
-- Bot decisions explained
-- Can debug bot strategy
+- ✅ Bot decisions explained
+- ✅ Can debug bot strategy
+
+**Implementation Notes (2025-11-22):**
+
+- Added `:bot_reasoning` event type to Event module
+- Updated RandomStrategy to return `{:ok, action, reasoning}` tuple
+- Modified BotPlayer to emit bot reasoning events via EventRecorder
+- Added "Show Bot Reasoning" toggle in event log UI
+- Bot reasoning events displayed with distinct formatting (indigo italic text)
+- Backward compatible with legacy strategies that don't return reasoning
+- Files modified: event.ex, random_strategy.ex, bot_player.ex, event_recorder.ex, game_detail_live.ex
 
 ---
 
@@ -1827,6 +1838,35 @@ All event log components have been successfully implemented:
 - ✅ Follows all AGENTS.md guidelines
 - ✅ Dev-only code properly guarded with `if Mix.env() == :dev`
 - ✅ All tests pass
+
+---
+
+### Phase 4: Bot Observation (FR-12) Completed (2025-11-22)
+
+**Status**: ✅ DEV-1201 Complete
+
+Successfully implemented bot reasoning display in event log:
+
+- **New Event Type**: Added `:bot_reasoning` event type to Event module
+- **Strategy Updates**: Modified RandomStrategy to return reasoning with actions
+- **Event Emission**: BotPlayer now emits reasoning events when bots make decisions
+- **UI Toggle**: Added "Show Bot Reasoning" checkbox to filter bot reasoning events
+- **Visual Distinction**: Bot reasoning events displayed in indigo italic text
+- **Backward Compatibility**: Supports legacy strategies that don't return reasoning
+
+**Files Modified:**
+- lib/pidro_server/dev/event.ex (+29 lines)
+- lib/pidro_server/dev/strategies/random_strategy.ex (+10 lines, updated docs)
+- lib/pidro_server/dev/bot_player.ex (+43 lines, reasoning emission logic)
+- lib/pidro_server/dev/event_recorder.ex (+4 lines, bot_reasoning handler)
+- lib/pidro_server_web/live/dev/game_detail_live.ex (+34 lines, toggle UI)
+
+**Quality Assurance:**
+- ✅ Tests passing (same 5 pre-existing failures)
+- ✅ Code formatted with `mix format`
+- ✅ Minor credo warnings (acceptable complexity)
+- ✅ No compilation errors
+- ✅ Follows AGENTS.md conventions
 
 ---
 

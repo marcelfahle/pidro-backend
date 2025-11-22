@@ -67,6 +67,7 @@ if Mix.env() == :dev do
 
     use GenServer
     require Logger
+    alias PidroServer.Dev.Event
     alias PidroServer.Dev.Strategies.RandomStrategy
     alias PidroServer.Games.GameAdapter
 
@@ -302,24 +303,56 @@ if Mix.env() == :dev do
     defp execute_move(state) do
       case GameAdapter.get_legal_actions(state.room_code, state.position) do
         {:ok, legal_actions} when legal_actions != [] ->
-          # Use the strategy to pick an action
-          action = state.strategy.pick_action(legal_actions, get_game_state(state.room_code))
+          # Use the strategy to pick an action (now returns {:ok, action, reasoning})
+          game_state = get_game_state(state.room_code)
 
-          Logger.debug(
-            "BotPlayer (#{state.room_code}/#{state.position}) executing action: #{inspect(action)}"
-          )
-
-          # Apply the action
-          case GameAdapter.apply_action(state.room_code, state.position, action) do
-            {:ok, _new_state} ->
+          case state.strategy.pick_action(legal_actions, game_state) do
+            {:ok, action, reasoning} ->
               Logger.debug(
-                "BotPlayer (#{state.room_code}/#{state.position}) successfully executed action"
+                "BotPlayer (#{state.room_code}/#{state.position}) executing action: #{inspect(action)} - #{reasoning}"
               )
 
-            {:error, reason} ->
-              Logger.warning(
-                "BotPlayer (#{state.room_code}/#{state.position}) failed to execute action: #{inspect(reason)}"
+              # Emit bot reasoning event
+              event =
+                Event.new(:bot_reasoning, state.position, %{
+                  action: action,
+                  reasoning: reasoning,
+                  alternatives_count: length(legal_actions)
+                })
+
+              emit_bot_reasoning_event(state.room_code, event)
+
+              # Apply the action
+              case GameAdapter.apply_action(state.room_code, state.position, action) do
+                {:ok, _new_state} ->
+                  Logger.debug(
+                    "BotPlayer (#{state.room_code}/#{state.position}) successfully executed action"
+                  )
+
+                {:error, reason} ->
+                  Logger.warning(
+                    "BotPlayer (#{state.room_code}/#{state.position}) failed to execute action: #{inspect(reason)}"
+                  )
+              end
+
+            # Fallback for old strategies that don't return reasoning
+            action when not is_tuple(action) or elem(action, 0) != :ok ->
+              Logger.debug(
+                "BotPlayer (#{state.room_code}/#{state.position}) executing action: #{inspect(action)} (legacy strategy)"
               )
+
+              # Apply the action
+              case GameAdapter.apply_action(state.room_code, state.position, action) do
+                {:ok, _new_state} ->
+                  Logger.debug(
+                    "BotPlayer (#{state.room_code}/#{state.position}) successfully executed action"
+                  )
+
+                {:error, reason} ->
+                  Logger.warning(
+                    "BotPlayer (#{state.room_code}/#{state.position}) failed to execute action: #{inspect(reason)}"
+                  )
+              end
           end
 
         {:ok, []} ->
@@ -340,6 +373,21 @@ if Mix.env() == :dev do
       case GameAdapter.get_state(room_code) do
         {:ok, state} -> state
         {:error, _} -> %{}
+      end
+    end
+
+    @doc false
+    defp emit_bot_reasoning_event(room_code, event) do
+      # Try to record the event via EventRecorder
+      case Registry.lookup(PidroServer.Dev.EventRecorderRegistry, room_code) do
+        [{pid, _}] when is_pid(pid) ->
+          # Send the event directly to the EventRecorder
+          send(pid, {:bot_reasoning, event})
+          :ok
+
+        [] ->
+          # EventRecorder not running - skip logging
+          :ok
       end
     end
   end
