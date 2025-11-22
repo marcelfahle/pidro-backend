@@ -182,11 +182,28 @@ if Mix.env() == :dev do
 
     @impl true
     def init(opts) do
+      # Convert keyword list to map if needed (for child spec compatibility)
+      opts = if is_list(opts), do: Map.new(opts), else: opts
+
       room_code = Map.fetch!(opts, :room_code)
       position = Map.fetch!(opts, :position)
       strategy = Map.get(opts, :strategy, @default_strategy)
       delay_ms = Map.get(opts, :delay_ms, @default_delay_ms)
       paused? = Map.get(opts, :paused?, false)
+
+      # Create a bot user ID based on room and position
+      bot_user_id = "bot_#{room_code}_#{position}"
+
+      # Join the room as a player
+      case PidroServer.Games.RoomManager.join_room(room_code, bot_user_id) do
+        {:ok, _room} ->
+          Logger.info("Bot #{bot_user_id} joined room #{room_code}")
+
+        {:error, reason} ->
+          Logger.warning(
+            "Bot #{bot_user_id} could not join room #{room_code}: #{inspect(reason)}"
+          )
+      end
 
       # Subscribe to game updates
       :ok = GameAdapter.subscribe(room_code)
@@ -198,6 +215,7 @@ if Mix.env() == :dev do
       state = %{
         room_code: room_code,
         position: position,
+        user_id: bot_user_id,
         strategy: strategy,
         delay_ms: delay_ms,
         paused?: paused?
@@ -258,6 +276,9 @@ if Mix.env() == :dev do
     @impl true
     def handle_cast(:stop, state) do
       Logger.info("BotPlayer stopping for room #{state.room_code}, position #{state.position}")
+
+      # Leave the room
+      PidroServer.Games.RoomManager.leave_room(state.user_id)
 
       GameAdapter.unsubscribe(state.room_code)
       {:stop, :normal, state}

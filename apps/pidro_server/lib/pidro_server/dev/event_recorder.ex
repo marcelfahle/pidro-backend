@@ -82,16 +82,23 @@ if Mix.env() == :dev do
       type_filter = Keyword.get(opts, :type)
       player_filter = Keyword.get(opts, :player)
 
-      case :ets.lookup(@table_name, room_code) do
-        [{^room_code, events}] ->
-          events
-          |> filter_by_type(type_filter)
-          |> filter_by_player(player_filter)
-          |> Enum.drop(offset)
-          |> Enum.take(limit)
-
-        [] ->
+      # Check if table exists first
+      case :ets.whereis(@table_name) do
+        :undefined ->
           []
+
+        _table ->
+          case :ets.lookup(@table_name, room_code) do
+            [{^room_code, events}] ->
+              events
+              |> filter_by_type(type_filter)
+              |> filter_by_player(player_filter)
+              |> Enum.drop(offset)
+              |> Enum.take(limit)
+
+            [] ->
+              []
+          end
       end
     end
 
@@ -100,9 +107,15 @@ if Mix.env() == :dev do
     """
     @spec count_events(String.t()) :: non_neg_integer()
     def count_events(room_code) do
-      case :ets.lookup(@table_name, room_code) do
-        [{^room_code, events}] -> length(events)
-        [] -> 0
+      case :ets.whereis(@table_name) do
+        :undefined ->
+          0
+
+        _table ->
+          case :ets.lookup(@table_name, room_code) do
+            [{^room_code, events}] -> length(events)
+            [] -> 0
+          end
       end
     end
 
@@ -111,8 +124,14 @@ if Mix.env() == :dev do
     """
     @spec clear_events(String.t()) :: :ok
     def clear_events(room_code) do
-      :ets.delete(@table_name, room_code)
-      :ok
+      case :ets.whereis(@table_name) do
+        :undefined ->
+          :ok
+
+        _table ->
+          :ets.delete(@table_name, room_code)
+          :ok
+      end
     end
 
     # Server Callbacks

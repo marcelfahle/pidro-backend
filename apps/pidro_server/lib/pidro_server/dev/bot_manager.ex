@@ -314,8 +314,9 @@ if Mix.env() == :dev do
               # Track in ETS
               :ets.insert(@table_name, {{room_code, position}, pid})
 
-              # Track in GenServer state
-              new_bots = add_bot_to_state(state.bots, room_code, position, pid)
+              # Track in GenServer state with full bot info
+              bot_info = %{pid: pid, strategy: strategy, delay_ms: delay_ms, paused: false}
+              new_bots = add_bot_to_state(state.bots, room_code, position, bot_info)
               new_monitors = Map.put(state.monitors, ref, {room_code, position, pid})
 
               Logger.info(
@@ -366,7 +367,16 @@ if Mix.env() == :dev do
         [{_key, pid}] ->
           # Send pause message to bot
           send(pid, :pause)
-          {:reply, :ok, state}
+
+          # Update paused flag in state
+          new_bots =
+            Map.update(state.bots, room_code, %{}, fn positions ->
+              Map.update(positions, position, %{}, fn bot_info ->
+                %{bot_info | paused: true}
+              end)
+            end)
+
+          {:reply, :ok, %{state | bots: new_bots}}
 
         [] ->
           {:reply, {:error, :not_found}, state}
@@ -379,7 +389,16 @@ if Mix.env() == :dev do
         [{_key, pid}] ->
           # Send resume message to bot
           send(pid, :resume)
-          {:reply, :ok, state}
+
+          # Update paused flag in state
+          new_bots =
+            Map.update(state.bots, room_code, %{}, fn positions ->
+              Map.update(positions, position, %{}, fn bot_info ->
+                %{bot_info | paused: false}
+              end)
+            end)
+
+          {:reply, :ok, %{state | bots: new_bots}}
 
         [] ->
           {:reply, {:error, :not_found}, state}
@@ -390,14 +409,13 @@ if Mix.env() == :dev do
     def handle_call({:list_bots, room_code}, _from, state) do
       positions = Map.get(state.bots, room_code, %{})
 
-      # For each bot, get its info
-      # Note: In Phase 2, BotPlayer will provide status info
+      # Return bot info with status (paused flag is tracked in state)
       bots =
-        Enum.reduce(positions, %{}, fn {position, pid}, acc ->
+        Enum.reduce(positions, %{}, fn {position, bot_info}, acc ->
           Map.put(acc, position, %{
-            pid: pid,
-            strategy: :unknown,
-            status: :running
+            pid: bot_info.pid,
+            strategy: bot_info.strategy,
+            status: if(bot_info.paused, do: :paused, else: :running)
           })
         end)
 
@@ -442,9 +460,9 @@ if Mix.env() == :dev do
 
     ## Private Functions
 
-    defp add_bot_to_state(bots, room_code, position, pid) do
-      Map.update(bots, room_code, %{position => pid}, fn positions ->
-        Map.put(positions, position, pid)
+    defp add_bot_to_state(bots, room_code, position, bot_info) do
+      Map.update(bots, room_code, %{position => bot_info}, fn positions ->
+        Map.put(positions, position, bot_info)
       end)
     end
   end

@@ -37,6 +37,10 @@ defmodule PidroServerWeb.Dev.GameListLive do
      |> assign(:bot_count, 0)
      |> assign(:bot_difficulty, "random")
      |> assign(:show_create_form, false)
+     |> assign(:show_confirm_modal, false)
+     |> assign(:confirm_action, nil)
+     |> assign(:confirm_message, "")
+     |> assign(:room_to_delete, nil)
      |> assign(:page_title, "Development Games")
      |> assign_rooms_and_stats(rooms)}
   end
@@ -107,19 +111,41 @@ defmodule PidroServerWeb.Dev.GameListLive do
       case RoomManager.create_room(game_name, metadata) do
         {:ok, room} ->
           # Start bots if requested
-          start_bots_if_needed(room.code, bot_count, bot_difficulty)
+          bot_result = start_bots_if_needed(room.code, bot_count, bot_difficulty)
 
           # Reset form and show success
-          {:noreply,
-           socket
-           |> assign(:game_name, "")
-           |> assign(:bot_count, 0)
-           |> assign(:bot_difficulty, "random")
-           |> assign(:show_create_form, false)
-           |> put_flash(
-             :info,
-             "Game '#{game_name}' created successfully! Room code: #{room.code}"
-           )}
+          socket =
+            socket
+            |> assign(:game_name, "")
+            |> assign(:bot_count, 0)
+            |> assign(:bot_difficulty, "random")
+            |> assign(:show_create_form, false)
+
+          socket =
+            case bot_result do
+              {:error, :bot_manager_not_running} ->
+                put_flash(
+                  socket,
+                  :warning,
+                  "Game '#{game_name}' created (#{room.code}), but bots could not be started. Restart the server to enable bots."
+                )
+
+              {:error, _reason} ->
+                put_flash(
+                  socket,
+                  :warning,
+                  "Game '#{game_name}' created (#{room.code}), but failed to start bots. Check logs for details."
+                )
+
+              _ ->
+                put_flash(
+                  socket,
+                  :info,
+                  "Game '#{game_name}' created successfully! Room code: #{room.code}"
+                )
+            end
+
+          {:noreply, socket}
 
         {:error, :already_in_room} ->
           {:noreply,
@@ -455,7 +481,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap">
                         <div class="text-sm text-zinc-900">
-                          {get_in(room, [:metadata, :name]) || "Game #{room.code}"}
+                          {room.metadata[:name] || "Game #{room.code}"}
                         </div>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap">
@@ -654,7 +680,25 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
     strategy = String.to_existing_atom(bot_difficulty)
-    BotManager.start_bots(room_code, bot_count, strategy)
+
+    try do
+      BotManager.start_bots(room_code, bot_count, strategy)
+    catch
+      :exit, {:noproc, _} ->
+        require Logger
+
+        Logger.error(
+          "BotManager is not running. Cannot start bots for room #{room_code}. " <>
+            "Make sure the application is running in dev mode and has been recompiled."
+        )
+
+        {:error, :bot_manager_not_running}
+
+      :exit, reason ->
+        require Logger
+        Logger.error("Failed to start bots: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   defp start_bots_if_needed(_room_code, _bot_count, _bot_difficulty), do: :ok

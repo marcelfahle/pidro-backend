@@ -433,7 +433,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               </div>
               <div>
                 <dt class="text-sm font-medium text-zinc-500">Players</dt>
-                <dd class="mt-1 text-sm text-zinc-900">{length(@room.players)} / 4</dd>
+                <dd class="mt-1 text-sm text-zinc-900">{length(@room.player_ids)} / 4</dd>
               </div>
               <div>
                 <dt class="text-sm font-medium text-zinc-500">Host</dt>
@@ -547,30 +547,29 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </div>
         </div>
         
-    <!-- Bot Configuration - DEV-1106 -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Bot Configuration</h3>
-            <p class="mt-1 text-sm text-zinc-500">Configure bot players for each position</p>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <div class="space-y-6">
+    <!-- Bot Configuration - DEV-1106 (Compact) -->
+        <details class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+          <summary class="px-4 py-3 cursor-pointer hover:bg-zinc-50 flex justify-between items-center">
+            <div>
+              <h3 class="text-sm font-medium text-zinc-900">Bot Configuration</h3>
+              <p class="text-xs text-zinc-500">Configure bot players</p>
+            </div>
+          </summary>
+          <div class="border-t border-zinc-200 px-4 py-4">
+            <div class="grid grid-cols-2 gap-3 mb-3">
               <%= for position <- [:north, :south, :east, :west] do %>
                 <.render_bot_position_config position={position} config={@bot_configs[position]} />
               <% end %>
             </div>
-
-            <div class="mt-6 pt-6 border-t border-zinc-200">
-              <button
-                type="button"
-                phx-click="apply_bot_config"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
-              >
-                Apply Changes
-              </button>
-            </div>
+            <button
+              type="button"
+              phx-click="apply_bot_config"
+              class="w-full px-3 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+            >
+              Apply Changes
+            </button>
           </div>
-        </div>
+        </details>
         
     <!-- Dev Quick Actions - DEV-1001 to DEV-1003 Implementation -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
@@ -704,9 +703,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
               <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
                 <div>
-                  <dt class="text-sm font-medium text-zinc-500">Current Player</dt>
+                  <dt class="text-sm font-medium text-zinc-500">Current Turn</dt>
                   <dd class="mt-1 text-sm text-zinc-900">
-                    {inspect(@game_state.current_player)}
+                    {inspect(@game_state.current_turn)}
                   </dd>
                 </div>
                 <%= if Map.has_key?(@game_state, :dealer) do %>
@@ -912,27 +911,27 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               <div class="flex items-center justify-between">
                 <div>
                   <h3 class="text-lg leading-6 font-medium text-zinc-900 inline">
-                    Full Game State (JSON)
+                    Full Game State (Raw)
                   </h3>
                 </div>
                 <button
                   id="copy-game-state"
                   type="button"
                   phx-hook="Clipboard"
-                  data-clipboard-text={Jason.encode!(@game_state, pretty: true)}
+                  data-clipboard-text={inspect(@game_state, pretty: true)}
                   class="px-3 py-1 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
                   onclick="event.stopPropagation()"
                 >
                   <%= if @copy_feedback do %>
                     <span>Copied!</span>
                   <% else %>
-                    <span>Copy JSON</span>
+                    <span>Copy State</span>
                   <% end %>
                 </button>
               </div>
             </summary>
             <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-              <pre class="text-xs bg-zinc-50 p-4 rounded overflow-auto"><%= Jason.encode!(@game_state, pretty: true) %></pre>
+              <pre class="text-xs bg-zinc-50 p-4 rounded overflow-auto"><%= inspect(@game_state, pretty: true, limit: :infinity) %></pre>
             </div>
           </details>
         <% else %>
@@ -958,133 +957,46 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   # DEV-1106: Render bot position configuration
   defp render_bot_position_config(assigns) do
     ~H"""
-    <div class="bg-zinc-50 rounded-lg p-4">
-      <div class="flex items-center justify-between mb-4">
-        <h4 class="text-sm font-semibold text-zinc-900">
-          {format_position(@position)}
-        </h4>
-        <span class={[
-          "px-2 py-1 text-xs font-medium rounded-full",
-          if(@config.type == :bot,
-            do: "bg-green-100 text-green-800",
-            else: "bg-gray-100 text-gray-800"
-          )
-        ]}>
-          <%= if @config.type == :bot do %>
-            Bot
-          <% else %>
-            Human
-          <% end %>
-        </span>
+    <div class="bg-zinc-50 rounded p-2 text-xs">
+      <div class="font-semibold text-zinc-900 mb-1">{format_position(@position)}</div>
+      <div class="flex gap-1 mb-1">
+        <button
+          type="button"
+          phx-click="update_bot_config"
+          phx-value-position={@position}
+          phx-value-type="human"
+          class={[
+            "flex-1 px-2 py-1 rounded",
+            if(@config.type == :human, do: "bg-indigo-600 text-white", else: "bg-white text-zinc-700")
+          ]}
+        >
+          Human
+        </button>
+        <button
+          type="button"
+          phx-click="update_bot_config"
+          phx-value-position={@position}
+          phx-value-type="bot"
+          class={[
+            "flex-1 px-2 py-1 rounded",
+            if(@config.type == :bot, do: "bg-indigo-600 text-white", else: "bg-white text-zinc-700")
+          ]}
+        >
+          Bot
+        </button>
       </div>
-
-      <div class="space-y-4">
-        <!-- Type Selection -->
-        <div>
-          <label class="block text-sm font-medium text-zinc-700 mb-2">Player Type</label>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              phx-click="update_bot_config"
-              phx-value-position={@position}
-              phx-value-type="human"
-              class={[
-                "flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors",
-                if(@config.type == :human,
-                  do: "bg-indigo-600 text-white",
-                  else: "bg-white text-zinc-700 border border-zinc-300 hover:bg-zinc-50"
-                )
-              ]}
-            >
-              Human
-            </button>
-            <button
-              type="button"
-              phx-click="update_bot_config"
-              phx-value-position={@position}
-              phx-value-type="bot"
-              class={[
-                "flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors",
-                if(@config.type == :bot,
-                  do: "bg-indigo-600 text-white",
-                  else: "bg-white text-zinc-700 border border-zinc-300 hover:bg-zinc-50"
-                )
-              ]}
-            >
-              Bot
-            </button>
-          </div>
-        </div>
-
-        <%= if @config.type == :bot do %>
-          <!-- Bot Difficulty -->
-          <div>
-            <label
-              for={"bot-difficulty-#{@position}"}
-              class="block text-sm font-medium text-zinc-700 mb-2"
-            >
-              Difficulty
-            </label>
-            <select
-              id={"bot-difficulty-#{@position}"}
-              phx-change="update_bot_config"
-              phx-value-position={@position}
-              name="difficulty"
-              class="block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            >
-              <option value="random" selected={@config.difficulty == :random}>Random</option>
-              <option value="basic" selected={@config.difficulty == :basic}>Basic</option>
-              <option value="smart" selected={@config.difficulty == :smart}>Smart</option>
-            </select>
-          </div>
-          <!-- Bot Delay Slider -->
-          <div>
-            <label
-              for={"bot-delay-#{@position}"}
-              class="block text-sm font-medium text-zinc-700 mb-2"
-            >
-              Delay: {@config.delay_ms}ms
-            </label>
-            <input
-              id={"bot-delay-#{@position}"}
-              type="range"
-              min="0"
-              max="3000"
-              step="100"
-              value={@config.delay_ms}
-              phx-change="update_bot_config"
-              phx-value-position={@position}
-              name="delay_ms"
-              class="w-full h-2 bg-zinc-200 rounded-lg appearance-none cursor-pointer"
-            />
-            <div class="flex justify-between text-xs text-zinc-500 mt-1">
-              <span>0ms</span>
-              <span>3000ms</span>
-            </div>
-          </div>
-          <!-- Pause/Resume Button -->
-          <div>
-            <button
-              type="button"
-              phx-click="toggle_bot_pause"
-              phx-value-position={@position}
-              class={[
-                "w-full px-3 py-2 text-sm font-medium rounded-md transition-colors",
-                if(@config.paused,
-                  do: "bg-green-600 text-white hover:bg-green-700",
-                  else: "bg-yellow-600 text-white hover:bg-yellow-700"
-                )
-              ]}
-            >
-              <%= if @config.paused do %>
-                Resume Bot
-              <% else %>
-                Pause Bot
-              <% end %>
-            </button>
-          </div>
-        <% end %>
-      </div>
+      <%= if @config.type == :bot do %>
+        <select
+          phx-change="update_bot_config"
+          phx-value-position={@position}
+          name="difficulty"
+          class="w-full rounded border-zinc-300 text-xs"
+        >
+          <option value="random" selected={@config.difficulty == :random}>Random</option>
+          <option value="basic" selected={@config.difficulty == :basic}>Basic</option>
+          <option value="smart" selected={@config.difficulty == :smart}>Smart</option>
+        </select>
+      <% end %>
     </div>
     """
   end
@@ -1209,14 +1121,20 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   # Encode/decode actions for phx-click
-  defp encode_action(action) do
-    Jason.encode!(action)
-  end
+  defp encode_action(:pass), do: Jason.encode!("pass")
+  defp encode_action(:select_dealer), do: Jason.encode!("select_dealer")
+  defp encode_action({:bid, amount}), do: Jason.encode!(["bid", amount])
+  defp encode_action({:declare_trump, suit}), do: Jason.encode!(["declare_trump", suit])
+  defp encode_action({:play_card, {rank, suit}}), do: Jason.encode!(["play_card", [rank, suit]])
+  defp encode_action(action), do: Jason.encode!(action)
 
   defp decode_action(action_json) do
     case Jason.decode(action_json) do
       {:ok, "pass"} ->
         {:ok, :pass}
+
+      {:ok, "select_dealer"} ->
+        {:ok, :select_dealer}
 
       {:ok, ["bid", amount]} ->
         {:ok, {:bid, amount}}
@@ -1337,17 +1255,20 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     current_bots = BotManager.list_bots(room_code)
     bot_exists = Map.has_key?(current_bots, position)
 
+    # Default :unknown strategy to :random
+    difficulty = if config.difficulty == :unknown, do: :random, else: config.difficulty
+
     case {config.type, bot_exists} do
       {:bot, false} ->
         # Start a new bot
-        BotManager.start_bot(room_code, position, config.difficulty, config.delay_ms)
+        BotManager.start_bot(room_code, position, difficulty, config.delay_ms)
 
       {:bot, true} ->
         # Bot exists - stop and restart with new config
         BotManager.stop_bot(room_code, position)
         # Small delay to ensure cleanup
         Process.sleep(100)
-        BotManager.start_bot(room_code, position, config.difficulty, config.delay_ms)
+        BotManager.start_bot(room_code, position, difficulty, config.delay_ms)
 
       {:human, true} ->
         # Stop the bot
