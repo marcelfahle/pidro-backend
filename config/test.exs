@@ -33,5 +33,6 @@ config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 
 # Enable helpful, but potentially expensive runtime checks
-config :phoenix_live_view,
-  enable_expensive_runtime_checks: true
+config :pidro_server, PidroServer.Games.RoomManager,
+  grace_period_ms: 200
+

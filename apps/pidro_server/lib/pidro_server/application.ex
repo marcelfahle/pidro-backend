@@ -37,9 +37,7 @@ defmodule PidroServer.Application do
         # Bot supervisor for development testing
         PidroServer.Dev.BotSupervisor,
         # Bot manager for tracking bots across games
-        PidroServer.Dev.BotManager,
-        # Event recorder registry for dev UI event logs
-        {Registry, keys: :unique, name: PidroServer.Dev.EventRecorderRegistry}
+        PidroServer.Dev.BotManager
       ]
     else
       []

@@ -16,9 +16,9 @@
 # General application configuration
 import Config
 
-config :pidro_server,
-  ecto_repos: [PidroServer.Repo],
-  generators: [timestamp_type: :utc_datetime]
+config :pidro_server, PidroServer.Games.RoomManager,
+  grace_period_ms: 120_000
+
 
 # Configures the endpoint
 config :pidro_server, PidroServerWeb.Endpoint,
