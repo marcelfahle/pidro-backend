@@ -20,6 +20,12 @@ defmodule PidroServerWeb.GameChannelTest do
   @moduletag :channel
 
   setup do
+    # Trap exits to handle channel shutdowns gracefully
+    Process.flag(:trap_exit, true)
+
+    # Reset RoomManager state
+    RoomManager.reset_for_test()
+
     # Create 4 test users
     users =
       Enum.map(1..4, fn i ->
@@ -136,7 +142,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert {:error, %{reason: reason}} =
                subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
-      assert reason == "Not a player in this room"
+      assert reason == "not authorized to join this room"
     end
 
     test "rejects join for invalid room code", %{user1: user, sockets: sockets} do
@@ -145,7 +151,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert {:error, %{reason: reason}} =
                subscribe_and_join(socket, GameChannel, "game:XXXX", %{})
 
-      assert reason == "Room not found"
+      assert reason == "room not found"
     end
   end
 
@@ -448,7 +454,8 @@ defmodule PidroServerWeb.GameChannelTest do
     end
 
     test "reconnection after grace period fails", %{
-      user1: user,
+      user1: _user1,
+      user2: user,
       room_code: room_code,
       sockets: sockets
     } do
@@ -462,8 +469,8 @@ defmodule PidroServerWeb.GameChannelTest do
       :ok = RoomManager.handle_player_disconnect(room_code, user.id)
 
       # Manually expire grace period by updating disconnect time in the past
-      {:ok, room} = RoomManager.get_room(room_code)
-      past_time = DateTime.add(DateTime.utc_now(), -130, :second)
+      {:ok, _room} = RoomManager.get_room(room_code)
+      _past_time = DateTime.add(DateTime.utc_now(), -130, :second)
 
       # We need to update the room state directly (this is a test helper scenario)
       # In real scenario, we'd wait 120+ seconds
@@ -478,7 +485,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert {:error, %{reason: reason}} =
                subscribe_and_join(new_socket, GameChannel, "game:#{room_code}", %{})
 
-      assert reason =~ "Not a player"
+      assert reason =~ "not authorized"
     end
 
     test "multiple players can reconnect independently", %{
@@ -544,14 +551,12 @@ defmodule PidroServerWeb.GameChannelTest do
       # Give it time to process
       Process.sleep(100)
 
-      # Player should be removed from room (since leave_room is called in terminate)
-      # Note: In actual implementation with reconnection, this would mark as disconnected
-      # But current terminate calls leave_room which removes the player
       {:ok, room} = RoomManager.get_room(room_code)
 
-      # The current implementation calls leave_room, so player is removed
-      # If we change to handle_player_disconnect, this test would change
-      refute to_string(user.id) in Enum.map(room.player_ids, &to_string/1)
+      # Player should still be in player_ids (grace period)
+      assert to_string(user.id) in Enum.map(room.player_ids, &to_string/1)
+      # Player should be in disconnected_players
+      assert Map.has_key?(room.disconnected_players, user.id)
     end
 
     test "terminate broadcasts disconnect to other players", %{
@@ -573,9 +578,10 @@ defmodule PidroServerWeb.GameChannelTest do
       close(socket2)
 
       # Socket1 should receive disconnect broadcast
-      assert_broadcast "player_disconnected", %{user_id: user_id, reason: reason}, 1000
+      assert_broadcast "player_disconnected", %{user_id: user_id, reason: reason, grace_period: grace_period}, 1000
       assert to_string(user_id) == to_string(user2.id)
       assert reason in ["left", "connection_lost", "error"]
+      assert grace_period == true
     end
 
     test "handles normal leave reason", %{

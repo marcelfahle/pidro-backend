@@ -96,11 +96,13 @@ defmodule PidroServerWeb.LobbyChannelTest do
       # Create a room
       {:ok, room} = RoomManager.create_room(other_user.id, %{name: "New Room"})
 
-      # Should receive lobby_update broadcast
-      assert_broadcast "lobby_update", %{rooms: rooms}, 1000
+      # Should receive lobby_update push AND room_created push
+      assert_push "lobby_update", %{rooms: rooms}, 1000
       assert is_list(rooms)
-      # Find our created room
       assert Enum.any?(rooms, fn r -> r.code == room.code end)
+
+      assert_push "room_created", %{room: created_room}, 1000
+      assert created_room.code == room.code
     end
 
     test "broadcasts when player joins room", %{socket: socket, user: user} do
@@ -119,8 +121,11 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
       {:ok, _updated_room} = RoomManager.join_room(room.code, other_user.id)
 
-      # Should receive lobby_update broadcast
-      assert_broadcast "lobby_update", %{rooms: _rooms}, 1000
+      # Should receive lobby_update and room_updated pushes
+      assert_push "lobby_update", %{rooms: _rooms}, 1000
+      assert_push "room_updated", %{room: updated_room}, 1000
+      assert updated_room.code == room.code
+      assert updated_room.player_count == 2
     end
 
     test "broadcasts when room becomes ready (4 players)", %{socket: socket, user: user} do
@@ -145,8 +150,9 @@ defmodule PidroServerWeb.LobbyChannelTest do
       # Join all 3 players
       Enum.each(other_users, fn u ->
         RoomManager.join_room(room.code, u.id)
-        # Each join should broadcast lobby_update
-        assert_broadcast "lobby_update", %{rooms: _}, 1000
+        # Each join should broadcast lobby_update and room_updated
+        assert_push "lobby_update", %{rooms: _}, 1000
+        assert_push "room_updated", %{room: _}, 1000
       end)
     end
 
@@ -159,10 +165,13 @@ defmodule PidroServerWeb.LobbyChannelTest do
       # Host leaves (this should close the room)
       :ok = RoomManager.leave_room(user.id)
 
-      # Should receive lobby_update broadcast
-      assert_broadcast "lobby_update", %{rooms: rooms}, 1000
+      # Should receive lobby_update and room_closed
+      assert_push "lobby_update", %{rooms: rooms}, 1000
       # Room should not be in the list anymore
       refute Enum.any?(rooms, fn r -> r.code == room.code end)
+
+      assert_push "room_closed", %{room_code: code}, 1000
+      assert code == room.code
     end
   end
 
@@ -196,10 +205,12 @@ defmodule PidroServerWeb.LobbyChannelTest do
       # First user creates a room
       {:ok, room} = RoomManager.create_room(hd(users).id, %{name: "Shared Room"})
 
-      # All sockets should receive the broadcast
+      # All sockets should receive the push messages
       Enum.each(sockets, fn _socket ->
-        assert_broadcast "lobby_update", %{rooms: rooms}, 1000
+        assert_push "lobby_update", %{rooms: rooms}, 1000
         assert Enum.any?(rooms, fn r -> r.code == room.code end)
+        assert_push "room_created", %{room: created}, 1000
+        assert created.code == room.code
       end)
     end
   end

@@ -333,10 +333,10 @@ defmodule PidroServerWeb.UserSocketTest do
       assert Map.has_key?(socket.assigns, :connected_at)
     end
 
-    test "user_id is an integer", %{token: token} do
+    test "user_id is a binary", %{token: token} do
       {:ok, socket} = connect(UserSocket, %{"token" => token})
 
-      assert is_integer(socket.assigns.user_id)
+      assert is_binary(socket.assigns.user_id)
     end
 
     test "session_id is a string", %{token: token} do

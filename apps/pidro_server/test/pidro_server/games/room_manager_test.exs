@@ -195,8 +195,8 @@ defmodule PidroServer.Games.RoomManagerTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
       first_disconnect_time = DateTime.utc_now()
 
-      # Wait a bit
-      Process.sleep(100)
+      # Wait a bit (less than grace period of 50ms)
+      Process.sleep(10)
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
 
@@ -268,8 +268,7 @@ defmodule PidroServer.Games.RoomManagerTest do
   end
 
   describe "disconnect timeout and grace period" do
-    # Note: These tests use shorter sleep times than production (120 seconds)
-    # to keep tests fast. We test the logic, not the exact timeout duration.
+    # Tests use configured grace period (50ms in test.exs)
 
     test "player remains in room during grace period" do
       {:ok, room} = RoomManager.create_room("user1", %{})
@@ -277,15 +276,14 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
-      # Wait a short time (much less than grace period)
-      Process.sleep(100)
+      # Wait a very short time (less than 50ms)
+      Process.sleep(10)
 
       {:ok, updated_room} = RoomManager.get_room(room.code)
       assert "user2" in updated_room.player_ids
       assert Map.has_key?(updated_room.disconnected_players, "user2")
     end
 
-    @tag timeout: 130_000
     test "player is removed after grace period expires" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _} = RoomManager.join_room(room.code, "user2")
@@ -297,8 +295,8 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert Map.has_key?(disconnected_room.disconnected_players, "user2")
       assert "user2" in disconnected_room.player_ids
 
-      # Wait for grace period (120 seconds) plus buffer
-      Process.sleep(121_000)
+      # Wait for grace period (50ms) plus buffer
+      Process.sleep(100)
 
       # Use retry pattern to wait for GenServer to process the timeout message
       # Wait up to 1 second for the player to be removed
@@ -307,7 +305,7 @@ defmodule PidroServer.Games.RoomManagerTest do
           {:ok, current_room} = RoomManager.get_room(room.code)
 
           if "user2" in current_room.player_ids do
-            Process.sleep(100)
+            Process.sleep(50)
             {:cont, nil}
           else
             {:halt, {:ok, current_room}}
@@ -320,7 +318,6 @@ defmodule PidroServer.Games.RoomManagerTest do
       refute Map.has_key?(final_room.disconnected_players, "user2")
     end
 
-    @tag timeout: 130_000
     test "reconnecting cancels timeout removal" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _} = RoomManager.join_room(room.code, "user2")
@@ -328,13 +325,13 @@ defmodule PidroServer.Games.RoomManagerTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
       # Wait a bit
-      Process.sleep(1000)
+      Process.sleep(10)
 
       # Reconnect before grace period
       {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user2")
 
-      # Wait past when timeout would have fired
-      Process.sleep(120_000)
+      # Wait past when timeout would have fired (50ms)
+      Process.sleep(100)
 
       # Player should still be in room
       {:ok, final_room} = RoomManager.get_room(room.code)
@@ -342,7 +339,6 @@ defmodule PidroServer.Games.RoomManagerTest do
       refute Map.has_key?(final_room.disconnected_players, "user2")
     end
 
-    @tag timeout: 130_000
     test "multiple disconnected players removed after grace period" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _} = RoomManager.join_room(room.code, "user2")
@@ -351,11 +347,11 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       # Disconnect players at slightly different times
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
-      Process.sleep(500)
+      Process.sleep(10)
       :ok = RoomManager.handle_player_disconnect(room.code, "user3")
 
       # Wait for grace period
-      Process.sleep(121_000)
+      Process.sleep(100)
 
       # Use retry pattern to wait for GenServer to process the timeout messages
       # Wait up to 1 second for both players to be removed
@@ -364,7 +360,7 @@ defmodule PidroServer.Games.RoomManagerTest do
           {:ok, current_room} = RoomManager.get_room(room.code)
 
           if "user2" in current_room.player_ids or "user3" in current_room.player_ids do
-            Process.sleep(100)
+            Process.sleep(50)
             {:cont, nil}
           else
             {:halt, {:ok, current_room}}
@@ -379,7 +375,6 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert "user4" in final_room.player_ids
     end
 
-    @tag timeout: 130_000
     test "grace period check handles room that no longer exists" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _} = RoomManager.join_room(room.code, "user2")
@@ -390,7 +385,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       :ok = RoomManager.leave_room("user1")
 
       # Wait for grace period - should not crash
-      Process.sleep(121_000)
+      Process.sleep(100)
 
       # Room should still not exist
       assert {:error, :room_not_found} = RoomManager.get_room(room.code)
@@ -552,6 +547,94 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, final_room} = RoomManager.get_room(room.code)
       assert "user1" in final_room.player_ids
       refute Map.has_key?(final_room.disconnected_players, "user1")
+    end
+  end
+
+  describe "last_activity tracking" do
+    test "initializes last_activity on room creation" do
+      {:ok, room} = RoomManager.create_room("user1", %{name: "Test Room"})
+      assert room.last_activity != nil
+      assert DateTime.diff(DateTime.utc_now(), room.last_activity, :second) < 2
+    end
+
+    test "updates last_activity on player join" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      original_activity = room.last_activity
+
+      Process.sleep(100)
+      {:ok, updated_room} = RoomManager.join_room(room.code, "user2")
+
+      assert DateTime.compare(updated_room.last_activity, original_activity) == :gt
+    end
+
+    test "updates last_activity on player disconnect" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _} = RoomManager.join_room(room.code, "user2")
+      {:ok, room_before} = RoomManager.get_room(room.code)
+      
+      Process.sleep(100)
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+      assert DateTime.compare(updated_room.last_activity, room_before.last_activity) == :gt
+    end
+  end
+
+  describe "abandoned room cleanup" do
+    test "removes abandoned room (inactive + all players disconnected)" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      
+      # Disconnect the only player
+      :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+      
+      # Verify room still exists
+      assert {:ok, _} = RoomManager.get_room(room.code)
+      
+      # Set activity to > 5 minutes ago
+      old_time = DateTime.utc_now() |> DateTime.add(-301, :second) # 5 mins + 1 sec
+      :ok = RoomManager.set_last_activity_for_test(room.code, old_time)
+      
+      # Trigger cleanup manually
+      send(RoomManager, :cleanup_abandoned_rooms)
+      
+      # Allow message processing
+      Process.sleep(50)
+      
+      # Room should be gone
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
+
+    test "does not remove room with active players even if idle" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      
+      # Set activity to old
+      old_time = DateTime.utc_now() |> DateTime.add(-301, :second)
+      :ok = RoomManager.set_last_activity_for_test(room.code, old_time)
+      
+      # Trigger cleanup
+      send(RoomManager, :cleanup_abandoned_rooms)
+      Process.sleep(50)
+      
+      # Room should still exist because user1 is active
+      assert {:ok, _} = RoomManager.get_room(room.code)
+    end
+    
+    test "does not remove room with active spectators even if idle" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _} = RoomManager.join_room(room.code, "user2")
+      {:ok, _} = RoomManager.join_room(room.code, "user3")
+      {:ok, _} = RoomManager.join_room(room.code, "user4")
+      # Room is now :ready -> :playing.
+      
+      {:ok, _} = RoomManager.join_spectator_room(room.code, "spectator1")
+      
+      old_time = DateTime.utc_now() |> DateTime.add(-301, :second)
+      :ok = RoomManager.set_last_activity_for_test(room.code, old_time)
+      
+      send(RoomManager, :cleanup_abandoned_rooms)
+      Process.sleep(50)
+      
+      assert {:ok, _} = RoomManager.get_room(room.code)
     end
   end
 end
