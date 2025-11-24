@@ -78,7 +78,8 @@ defmodule PidroServer.Games.RoomManager do
             max_spectators: integer(),
             created_at: DateTime.t(),
             metadata: map(),
-            disconnected_players: %{String.t() => DateTime.t()}
+            disconnected_players: %{String.t() => DateTime.t()},
+            last_activity: DateTime.t()
           }
 
     defstruct [
@@ -89,6 +90,7 @@ defmodule PidroServer.Games.RoomManager do
       :max_players,
       :created_at,
       :metadata,
+      :last_activity,
       spectator_ids: [],
       max_spectators: 10,
       disconnected_players: %{}
@@ -456,11 +458,18 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, :reset_for_test)
   end
 
+  if Mix.env() == :test do
+    def set_last_activity_for_test(room_code, datetime) do
+      GenServer.call(__MODULE__, {:set_last_activity_for_test, room_code, datetime})
+    end
+  end
+
   ## GenServer Callbacks
 
   @impl true
   def init(:ok) do
     Logger.info("RoomManager started")
+    schedule_cleanup()
     {:ok, %State{}}
   end
 
@@ -472,6 +481,7 @@ defmodule PidroServer.Games.RoomManager do
 
       true ->
         room_code = generate_room_code()
+        now = DateTime.utc_now()
 
         room = %Room{
           code: room_code,
@@ -479,7 +489,8 @@ defmodule PidroServer.Games.RoomManager do
           player_ids: [host_id],
           status: :waiting,
           max_players: @max_players,
-          created_at: DateTime.utc_now(),
+          created_at: now,
+          last_activity: now,
           metadata: metadata
         }
 
@@ -491,7 +502,7 @@ defmodule PidroServer.Games.RoomManager do
           }
 
         Logger.info("Room created: #{room_code} by host: #{host_id}")
-        broadcast_lobby(new_state)
+        broadcast_lobby_event({:room_created, room})
 
         {:reply, {:ok, room}, new_state}
     end
@@ -532,7 +543,8 @@ defmodule PidroServer.Games.RoomManager do
               updated_room = %Room{
                 room
                 | player_ids: updated_player_ids,
-                  status: new_status
+                  status: new_status,
+                  last_activity: DateTime.utc_now()
               }
 
             %State{} =
@@ -547,7 +559,7 @@ defmodule PidroServer.Games.RoomManager do
             )
 
             broadcast_room(room_code, updated_room)
-            broadcast_lobby(new_state)
+            broadcast_lobby_event({:room_updated, updated_room})
 
             # Start game if room is ready
             final_state =
@@ -575,34 +587,20 @@ defmodule PidroServer.Games.RoomManager do
         if room.host_id == player_id do
           Logger.info("Host #{player_id} left room #{room_code}, closing room")
 
-          %State{} =
-            new_state = %State{
-              state
-              | rooms: Map.delete(state.rooms, room_code),
-                player_rooms: Map.drop(state.player_rooms, room.player_ids)
-            }
-
-          broadcast_room(room_code, nil)
-          broadcast_lobby(new_state)
+          new_state = remove_room(state, room_code)
 
           {:reply, :ok, new_state}
         else
           # Remove player from room
+          Logger.info("Attempting to remove player #{inspect(player_id)} from #{inspect(room.player_ids)}")
           updated_player_ids = List.delete(room.player_ids, player_id)
+          Logger.info("Updated player list: #{inspect(updated_player_ids)}")
 
           # If room becomes empty, delete it
           if Enum.empty?(updated_player_ids) do
             Logger.info("Room #{room_code} is now empty, deleting")
 
-            %State{} =
-              new_state = %State{
-                state
-                | rooms: Map.delete(state.rooms, room_code),
-                  player_rooms: Map.delete(state.player_rooms, player_id)
-              }
-
-            broadcast_room(room_code, nil)
-            broadcast_lobby(new_state)
+            new_state = remove_room(state, room_code)
 
             {:reply, :ok, new_state}
           else
@@ -610,7 +608,8 @@ defmodule PidroServer.Games.RoomManager do
               updated_room = %Room{
                 room
                 | player_ids: updated_player_ids,
-                  status: :waiting
+                  status: :waiting,
+                  last_activity: DateTime.utc_now()
               }
 
             %State{} =
@@ -623,7 +622,7 @@ defmodule PidroServer.Games.RoomManager do
             Logger.info("Player #{player_id} left room #{room_code}")
 
             broadcast_room(room_code, updated_room)
-            broadcast_lobby(new_state)
+            broadcast_lobby_event({:room_updated, updated_room})
 
             {:reply, :ok, new_state}
           end
@@ -656,7 +655,7 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        %Room{} = updated_room = %Room{room | status: new_status}
+        %Room{} = updated_room = %Room{room | status: new_status, last_activity: DateTime.utc_now()}
 
         %State{} =
           new_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
@@ -664,7 +663,7 @@ defmodule PidroServer.Games.RoomManager do
         Logger.info("Room #{room_code} status updated: #{room.status} -> #{new_status}")
 
         broadcast_room(room_code, updated_room)
-        broadcast_lobby(new_state)
+        broadcast_lobby_event({:room_updated, updated_room})
 
         {:reply, :ok, new_state}
     end
@@ -676,33 +675,9 @@ defmodule PidroServer.Games.RoomManager do
       nil ->
         {:reply, {:error, :room_not_found}, state}
 
-      room ->
-        # Remove room and all player/spectator mappings
-        new_rooms = Map.delete(state.rooms, room_code)
-
-        new_player_rooms =
-          Enum.reduce(room.player_ids, state.player_rooms, fn player_id, acc ->
-            Map.delete(acc, player_id)
-          end)
-
-        new_spectator_rooms =
-          Enum.reduce(room.spectator_ids, state.spectator_rooms, fn spectator_id, acc ->
-            Map.delete(acc, spectator_id)
-          end)
-
-        %State{} =
-          new_state = %State{
-            state
-            | rooms: new_rooms,
-              player_rooms: new_player_rooms,
-              spectator_rooms: new_spectator_rooms
-          }
-
+      _room ->
         Logger.info("Room #{room_code} closed")
-
-        broadcast_room(room_code, nil)
-        broadcast_lobby(new_state)
-
+        new_state = remove_room(state, room_code)
         {:reply, :ok, new_state}
     end
   end
@@ -738,7 +713,11 @@ defmodule PidroServer.Games.RoomManager do
             updated_spectator_ids = room.spectator_ids ++ [spectator_id]
 
             %Room{} =
-              updated_room = %Room{room | spectator_ids: updated_spectator_ids}
+              updated_room = %Room{
+                room
+                | spectator_ids: updated_spectator_ids,
+                  last_activity: DateTime.utc_now()
+              }
 
             %State{} =
               new_state = %State{
@@ -750,7 +729,7 @@ defmodule PidroServer.Games.RoomManager do
             Logger.info("Spectator #{spectator_id} joined room #{room_code}")
 
             broadcast_room(room_code, updated_room)
-            broadcast_lobby(new_state)
+            broadcast_lobby_event({:room_updated, updated_room})
 
             {:reply, {:ok, updated_room}, new_state}
         end
@@ -769,7 +748,11 @@ defmodule PidroServer.Games.RoomManager do
         updated_spectator_ids = List.delete(room.spectator_ids, spectator_id)
 
         %Room{} =
-          updated_room = %Room{room | spectator_ids: updated_spectator_ids}
+          updated_room = %Room{
+            room
+            | spectator_ids: updated_spectator_ids,
+              last_activity: DateTime.utc_now()
+          }
 
         %State{} =
           new_state = %State{
@@ -781,7 +764,7 @@ defmodule PidroServer.Games.RoomManager do
         Logger.info("Spectator #{spectator_id} left room #{room_code}")
 
         broadcast_room(room_code, updated_room)
-        broadcast_lobby(new_state)
+        broadcast_lobby_event({:room_updated, updated_room})
 
         {:reply, :ok, new_state}
     end
@@ -812,7 +795,8 @@ defmodule PidroServer.Games.RoomManager do
             updated_room = %Room{
               room
               | disconnected_players:
-                  Map.put(room.disconnected_players, user_id, DateTime.utc_now())
+                  Map.put(room.disconnected_players, user_id, DateTime.utc_now()),
+                last_activity: DateTime.utc_now()
             }
 
           %State{} =
@@ -824,9 +808,11 @@ defmodule PidroServer.Games.RoomManager do
 
           # Broadcast room update
           broadcast_room(room_code, updated_room)
+          broadcast_lobby_event({:room_updated, updated_room})
 
-          # Schedule cleanup check after grace period (2 minutes = 120,000 milliseconds)
-          Process.send_after(self(), {:check_disconnect_timeout, room_code, user_id}, 120_000)
+          # Schedule cleanup check after grace period
+          grace_period = get_grace_period_ms()
+          Process.send_after(self(), {:check_disconnect_timeout, room_code, user_id}, grace_period)
 
           {:reply, :ok, updated_state}
         else
@@ -846,14 +832,15 @@ defmodule PidroServer.Games.RoomManager do
         if Map.has_key?(room.disconnected_players, user_id) do
           # Check if grace period hasn't expired
           disconnect_time = Map.get(room.disconnected_players, user_id)
-          grace_period_seconds = 120
+          grace_period_ms = get_grace_period_ms()
 
-          if DateTime.diff(DateTime.utc_now(), disconnect_time) <= grace_period_seconds do
+          if DateTime.diff(DateTime.utc_now(), disconnect_time, :millisecond) <= grace_period_ms do
             # Remove from disconnected list
             %Room{} =
               updated_room = %Room{
                 room
-                | disconnected_players: Map.delete(room.disconnected_players, user_id)
+                | disconnected_players: Map.delete(room.disconnected_players, user_id),
+                  last_activity: DateTime.utc_now()
               }
 
             %State{} =
@@ -866,6 +853,7 @@ defmodule PidroServer.Games.RoomManager do
 
             # Broadcast reconnection
             broadcast_room(room_code, updated_room)
+            broadcast_lobby_event({:room_updated, updated_room})
 
             {:reply, {:ok, updated_room}, updated_state}
           else
@@ -877,10 +865,46 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  if Mix.env() == :test do
+    @impl true
+    def handle_call({:set_last_activity_for_test, room_code, datetime}, _from, %State{} = state) do
+      case Map.get(state.rooms, room_code) do
+        nil ->
+          {:reply, {:error, :room_not_found}, state}
+
+        %Room{} = room ->
+          updated_room = %Room{room | last_activity: datetime}
+          updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+          {:reply, :ok, updated_state}
+      end
+    end
+  end
+
   @impl true
   def handle_call(:reset_for_test, _from, _state) do
     Logger.info("RoomManager state reset for testing")
     {:reply, :ok, %State{}}
+  end
+
+  @impl true
+  def handle_info(:cleanup_abandoned_rooms, state) do
+    now = DateTime.utc_now()
+    grace_period_minutes = 5
+
+    # Check based on internal state only (no Presence dependency)
+    # Abandoned = :waiting status + inactive for 5 mins + NO active players/spectators
+    updated_state =
+      state.rooms
+      |> Enum.filter(fn {_code, room} ->
+        is_abandoned?(room, now, grace_period_minutes)
+      end)
+      |> Enum.reduce(state, fn {code, _room}, acc_state ->
+        Logger.info("Removing abandoned room #{code}")
+        remove_room(acc_state, code)
+      end)
+
+    schedule_cleanup()
+    {:noreply, updated_state}
   end
 
   @impl true
@@ -899,7 +923,9 @@ defmodule PidroServer.Games.RoomManager do
 
           disconnect_time ->
             # Check if grace period expired
-            if DateTime.diff(DateTime.utc_now(), disconnect_time) >= 120 do
+            grace_period_ms = get_grace_period_ms()
+
+            if DateTime.diff(DateTime.utc_now(), disconnect_time, :millisecond) >= grace_period_ms do
               Logger.info(
                 "Player #{user_id} grace period expired for room #{room_code}, removing from room"
               )
@@ -927,6 +953,7 @@ defmodule PidroServer.Games.RoomManager do
               # Broadcast player removed
               broadcast_room(room_code, updated_room)
               broadcast_lobby(updated_state)
+              broadcast_lobby_event({:room_updated, updated_room})
 
               {:noreply, updated_state}
             else
@@ -938,6 +965,79 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   ## Private Helper Functions
+
+  @doc false
+  defp get_grace_period_ms do
+    Application.get_env(:pidro_server, PidroServer.Games.RoomManager)[:grace_period_ms] || 120_000
+  end
+
+  @doc false
+  @spec remove_room(State.t(), String.t()) :: State.t()
+  defp remove_room(%State{} = state, room_code) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        state
+
+      room ->
+        # Remove room and all player/spectator mappings
+        new_rooms = Map.delete(state.rooms, room_code)
+
+        new_player_rooms =
+          Enum.reduce(room.player_ids, state.player_rooms, fn player_id, acc ->
+            Map.delete(acc, player_id)
+          end)
+
+        new_spectator_rooms =
+          Enum.reduce(room.spectator_ids, state.spectator_rooms, fn spectator_id, acc ->
+            Map.delete(acc, spectator_id)
+          end)
+
+        %State{} =
+          new_state = %State{
+            state
+            | rooms: new_rooms,
+              player_rooms: new_player_rooms,
+              spectator_rooms: new_spectator_rooms
+          }
+
+        broadcast_room(room_code, nil)
+        broadcast_lobby_event({:room_closed, room_code})
+
+        new_state
+    end
+  end
+
+  @doc false
+  @spec broadcast_lobby_event(any()) :: :ok
+  defp broadcast_lobby_event(event) do
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "lobby:updates",
+      event
+    )
+  end
+
+  @doc false
+  @spec schedule_cleanup() :: reference()
+  defp schedule_cleanup do
+    Process.send_after(self(), :cleanup_abandoned_rooms, :timer.minutes(1))
+  end
+
+  defp is_abandoned?(room, now, grace_period_minutes) do
+    # Check if room is idle
+    grace_period_seconds = grace_period_minutes * 60
+    is_idle = DateTime.diff(now, room.last_activity, :second) > grace_period_seconds
+
+    # Check if room is effectively empty (all players disconnected or room empty)
+    # Note: disconnected players are in the player_ids list, so we filter them out
+    active_player_count =
+      room.player_ids
+      |> Enum.count(fn id -> !Map.has_key?(room.disconnected_players, id) end)
+
+    active_spectator_count = length(room.spectator_ids)
+
+    room.status == :waiting && is_idle && active_player_count == 0 && active_spectator_count == 0
+  end
 
   @doc false
   @spec generate_room_code() :: String.t()
@@ -1005,7 +1105,7 @@ defmodule PidroServer.Games.RoomManager do
           new_state = %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
 
         broadcast_room(room.code, updated_room)
-        broadcast_lobby(new_state)
+        broadcast_lobby_event({:room_updated, updated_room})
 
         new_state
 
