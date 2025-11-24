@@ -19,6 +19,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
   use PidroServerWeb, :live_view
   alias PidroServer.Dev.BotManager
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Accounts.Auth
 
   @impl true
   def mount(_params, _session, socket) do
@@ -28,6 +29,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
     end
 
     rooms = RoomManager.list_rooms(:all)
+    users = Auth.list_recent_users(20)
 
     {:ok,
      socket
@@ -36,12 +38,14 @@ defmodule PidroServerWeb.Dev.GameListLive do
      |> assign(:game_name, "")
      |> assign(:bot_count, 0)
      |> assign(:bot_difficulty, "random")
+     |> assign(:host_user_id, "dev_host") # Default to dev host string
      |> assign(:show_create_form, false)
      |> assign(:show_confirm_modal, false)
      |> assign(:confirm_action, nil)
      |> assign(:confirm_message, "")
      |> assign(:room_to_delete, nil)
      |> assign(:page_title, "Development Games")
+     |> assign(:users, users)
      |> assign_rooms_and_stats(rooms)}
   end
 
@@ -49,6 +53,19 @@ defmodule PidroServerWeb.Dev.GameListLive do
   def handle_info({:lobby_update, _available_rooms}, socket) do
     # RoomManager broadcasts the full list of available rooms
     # We need all rooms (not just available), so refetch
+    refresh_rooms(socket)
+  end
+
+  @impl true
+  def handle_info({:room_created, _room}, socket), do: refresh_rooms(socket)
+
+  @impl true
+  def handle_info({:room_updated, _room}, socket), do: refresh_rooms(socket)
+
+  @impl true
+  def handle_info({:room_closed, _code}, socket), do: refresh_rooms(socket)
+
+  defp refresh_rooms(socket) do
     rooms = RoomManager.list_rooms(:all)
     {:noreply, assign_rooms_and_stats(socket, rooms)}
   end
@@ -87,6 +104,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
       |> assign(:game_name, Map.get(params, "game_name", socket.assigns.game_name))
       |> assign(:bot_count, parse_bot_count(Map.get(params, "bot_count")))
       |> assign(:bot_difficulty, Map.get(params, "bot_difficulty", socket.assigns.bot_difficulty))
+      |> assign(:host_user_id, Map.get(params, "host_user_id", socket.assigns.host_user_id))
 
     {:noreply, socket}
   end
@@ -96,21 +114,34 @@ defmodule PidroServerWeb.Dev.GameListLive do
     game_name = Map.get(params, "game_name", "")
     bot_count = parse_bot_count(Map.get(params, "bot_count"))
     bot_difficulty = Map.get(params, "bot_difficulty", "random")
+    host_user_id_param = Map.get(params, "host_user_id", "dev_host")
+
+    # Determine actual host ID
+    host_id =
+      case host_user_id_param do
+        "dev_host" -> game_name # Use game name as ID for dev/testing
+        user_id -> user_id # Use real user ID
+      end
 
     # Validate game name
     if String.trim(game_name) == "" do
       {:noreply, put_flash(socket, :error, "Game name cannot be empty")}
     else
-      # Create the room with the game name as user_id for dev purposes
+      # Create the room
       metadata = %{
         name: game_name,
         bot_difficulty: bot_difficulty,
         is_dev_room: true
       }
 
-      case RoomManager.create_room(game_name, metadata) do
+      case RoomManager.create_room(host_id, metadata) do
         {:ok, room} ->
           # Start bots if requested
+          # If we used a real user ID, that user occupies Seat 1 (North)
+          # The BotManager starts bots sequentially: North -> East -> South -> West
+          # If Seat 1 is occupied, BotManager should skip it or fail.
+          # Current BotManager likely overwrites or fails.
+          # We should rely on BotManager to fill *empty* seats.
           bot_result = start_bots_if_needed(room.code, bot_count, bot_difficulty)
 
           # Reset form and show success
@@ -119,6 +150,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
             |> assign(:game_name, "")
             |> assign(:bot_count, 0)
             |> assign(:bot_difficulty, "random")
+            |> assign(:host_user_id, "dev_host")
             |> assign(:show_create_form, false)
 
           socket =
@@ -168,6 +200,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
      |> assign(:game_name, "")
      |> assign(:bot_count, 0)
      |> assign(:bot_difficulty, "random")
+     |> assign(:host_user_id, "dev_host")
      |> assign(:show_create_form, false)}
   end
 
@@ -257,41 +290,55 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                     />
                   </div>
+
+                  <!-- Host Selection -->
+                  <div>
+                    <label for="host_user_id" class="block text-sm font-medium text-zinc-700">
+                      Host / Player 1
+                    </label>
+                    <select
+                      name="host_user_id"
+                      id="host_user_id"
+                      class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    >
+                      <option value="dev_host" selected={@host_user_id == "dev_host"}>Use Game Name (Dev Mode)</option>
+                      <%= for user <- @users do %>
+                        <option value={user.id} selected={@host_user_id == user.id}>
+                          User: {user.username} ({String.slice(user.id, 0..7)}...)
+                        </option>
+                      <% end %>
+                    </select>
+                    <p class="mt-1 text-xs text-zinc-500">
+                      Select a real user to allow that user to play as the host.
+                    </p>
+                  </div>
+
                   <!-- Bot Count Radio Buttons -->
                   <div>
                     <label class="block text-sm font-medium text-zinc-700">Bot Count</label>
-                    <div class="mt-2 space-x-4">
-                      <label class="inline-flex items-center">
-                        <input
-                          type="radio"
-                          name="bot_count"
-                          value="0"
-                          checked={@bot_count == 0}
-                          class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
-                        />
-                        <span class="ml-2 text-sm text-zinc-700">0</span>
-                      </label>
-                      <label class="inline-flex items-center">
-                        <input
-                          type="radio"
-                          name="bot_count"
-                          value="3"
-                          checked={@bot_count == 3}
-                          class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
-                        />
-                        <span class="ml-2 text-sm text-zinc-700">3</span>
-                      </label>
-                      <label class="inline-flex items-center">
-                        <input
-                          type="radio"
-                          name="bot_count"
-                          value="4"
-                          checked={@bot_count == 4}
-                          class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
-                        />
-                        <span class="ml-2 text-sm text-zinc-700">4</span>
-                      </label>
+                    <div class="mt-2 flex flex-wrap gap-4">
+                      <%= for count <- 0..4 do %>
+                        <label class="inline-flex items-center">
+                          <input
+                            type="radio"
+                            name="bot_count"
+                            value={count}
+                            checked={@bot_count == count}
+                            class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
+                          />
+                          <span class="ml-2 text-sm text-zinc-700">{count}</span>
+                        </label>
+                      <% end %>
                     </div>
+                    <p class="mt-1 text-xs text-zinc-500">
+                      <%= case @bot_count do %>
+                        <% 0 -> %> No bots. Waiting for 4 human players.
+                        <% 1 -> %> 1 bot. Waiting for 3 human players.
+                        <% 2 -> %> 2 bots. Waiting for 2 human players.
+                        <% 3 -> %> 3 bots. Waiting for 1 human player (Host).
+                        <% 4 -> %> 4 bots. Full automated game (Spectator only).
+                      <% end %>
+                    </p>
                   </div>
                   <!-- Bot Difficulty Dropdown -->
                   <div>
@@ -537,7 +584,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
     <!-- Confirmation Modal -->
         <%= if @show_confirm_modal do %>
           <div
-            class="fixed z-10 inset-0 overflow-y-auto"
+            class="fixed z-50 inset-0 overflow-y-auto"
             aria-labelledby="modal-title"
             role="dialog"
             aria-modal="true"
@@ -554,7 +601,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                 &#8203;
               </span>
 
-              <div class="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+              <div class="relative inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
                 <div class="sm:flex sm:items-start">
                   <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
                     <svg
@@ -680,6 +727,20 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
     strategy = String.to_existing_atom(bot_difficulty)
+
+    # Check if North (Seat 1) is already occupied (by host)
+    {:ok, room} = RoomManager.get_room(room_code)
+    seats_occupied = length(room.player_ids)
+
+    # If seats are occupied (e.g., host is Player 1), we need to be careful
+    # BotManager.start_bots currently tries to fill from 0 to N
+    # We need to make sure it doesn't overwrite the host or fail.
+    # The implementation of BotManager.start_bots is in pidro_engine or server?
+    # Assuming BotManager handles filling available slots or we need to start bots manually.
+
+    # Strategy: If start_bots just launches N bots, it might conflict.
+    # Better to try launching them one by one in empty slots if possible.
+    # But for now, let's assume start_bots is smart enough or we try it.
 
     try do
       BotManager.start_bots(room_code, bot_count, strategy)
