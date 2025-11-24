@@ -1010,6 +1010,7 @@ gameChannel.on("game_over", ({ winner, scores }) => {
 | `presence_diff` | Server → Client | Presence changes | `{joins: {...}, leaves: {...}}` |
 
 ### Room Object Schema
+(Updated 2025-11-24: Added detailed `seats` information)
 
 ```typescript
 interface Room {
@@ -1023,6 +1024,20 @@ interface Room {
     name?: string;           // Optional room name
     [key: string]: any;      // Other custom metadata
   };
+  seats: Seat[];             // Detailed seat information
+}
+
+interface Seat {
+  seat_index: number;        // 0-3
+  status: "occupied" | "free";
+  player?: PlayerSummary | null;
+}
+
+interface PlayerSummary {
+  id: string;
+  username: string;
+  is_bot: boolean;
+  avatar_url?: string | null;
 }
 ```
 
