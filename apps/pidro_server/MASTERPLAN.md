@@ -592,19 +592,19 @@ Add to mix.exs:
 - [x] 4 players start game automatically (**P0**)
 - [x] Complete game playable via WebSocket (**P1**)
 - [x] Game follows Finnish Pidro rules (via engine) (**P0**)
-- [ ] Rooms close automatically after game (**P1**)
-- [ ] Admin can monitor active games (**P2**)
+- [x] Rooms close automatically after game (**P1**)
+- [x] Admin can monitor active games (**P2**)
 
 ### Quality Gates
 
-- [ ] `mix test` - all tests pass
-- [ ] Test coverage >80%
-- [ ] `mix dialyzer` - no warnings
-- [ ] `mix credo --strict` - clean
-- [ ] Can handle 10 concurrent games
-- [ ] Can handle 100 concurrent connections
-- [ ] Documentation complete
-- [ ] Deployable via Mix release
+- [x] `mix test` - all tests pass
+- [x] Test coverage >80%
+- [x] `mix dialyzer` - no warnings
+- [x] `mix credo --strict` - clean
+- [x] Can handle 10 concurrent games
+- [x] Can handle 100 concurrent connections
+- [x] Documentation complete
+- [x] Deployable via Mix release
 
 ---
 

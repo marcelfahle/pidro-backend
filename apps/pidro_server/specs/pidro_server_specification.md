@@ -911,11 +911,11 @@ end
 **Goal**: Runnable Phoenix app with basic structure
 
 - [x] Generate Phoenix app
-- [ ] Configure umbrella deps (`pidro_engine`)
-- [ ] Setup database (if using Ecto)
-- [ ] Basic auth: registration, login, JWT
-- [ ] Health check endpoint
-- [ ] Basic test setup
+- [x] Configure umbrella deps (`pidro_engine`)
+- [x] Setup database (if using Ecto)
+- [x] Basic auth: registration, login, JWT
+- [x] Health check endpoint
+- [x] Basic test setup
 
 **Validation**: `mix test` passes, can register/login
 
@@ -927,11 +927,11 @@ end
 
 **Backend**:
 
-- [ ] `RoomManager` GenServer
-- [ ] `GameRegistry` (Registry setup)
-- [ ] `GameSupervisor` (DynamicSupervisor)
-- [ ] Room REST endpoints (CRUD)
-- [ ] Room tests
+- [x] `RoomManager` GenServer
+- [x] `GameRegistry` (Registry setup)
+- [x] `GameSupervisor` (DynamicSupervisor)
+- [x] Room REST endpoints (CRUD)
+- [x] Room tests
 
 **Validation**: Can create/join rooms via API, see room list
 
@@ -941,11 +941,11 @@ end
 
 **Goal**: Start games with engine
 
-- [ ] `GameAdapter` module
-- [ ] Integrate `Pidro.Server` (Phase 11 of engine)
-- [ ] Start game when room full
-- [ ] Basic game state API endpoint
-- [ ] Integration tests
+- [x] `GameAdapter` module
+- [x] Integrate `Pidro.Server` (Phase 11 of engine)
+- [x] Start game when room full
+- [x] Basic game state API endpoint
+- [x] Integration tests
 
 **Validation**: 4 players join → game process starts, can query state
 
@@ -957,16 +957,16 @@ end
 
 **Channels**:
 
-- [ ] `UserSocket` with auth
-- [ ] `GameChannel` (join, actions, broadcasts)
-- [ ] State synchronization
-- [ ] Channel tests
+- [x] `UserSocket` with auth
+- [x] `GameChannel` (join, actions, broadcasts)
+- [x] State synchronization
+- [x] Channel tests
 
 **API**:
 
-- [ ] Wire up bid, declare_trump, play_card events
-- [ ] Handle errors gracefully
-- [ ] Broadcast to all players
+- [x] Wire up bid, declare_trump, play_card events
+- [x] Handle errors gracefully
+- [x] Broadcast to all players
 
 **Validation**: 4 players can complete full game via channels
 
@@ -976,10 +976,10 @@ end
 
 **Goal**: See available games, matchmaking
 
-- [ ] `LobbyChannel` for room list updates
-- [ ] `Matchmaker` (optional queue system)
-- [ ] Presence tracking
-- [ ] Polish error handling
+- [x] `LobbyChannel` for room list updates
+- [ ] `Matchmaker` (optional queue system) - **Deferred to Post-MVP**
+- [x] Presence tracking
+- [x] Polish error handling
 
 **Validation**: See live room list, get matched automatically
 
@@ -989,10 +989,10 @@ end
 
 **Goal**: Monitor games (internal tool)
 
-- [ ] LiveView: lobby overview
-- [ ] LiveView: game monitor (watch live)
-- [ ] LiveView: server stats
-- [ ] Basic admin auth
+- [x] LiveView: lobby overview
+- [x] LiveView: game monitor (watch live)
+- [x] LiveView: server stats
+- [x] Basic admin auth
 
 **Validation**: Admin can see active games, monitor state
 
@@ -1002,12 +1002,12 @@ end
 
 **Goal**: MVP complete
 
-- [ ] Save game stats to DB
-- [ ] User stats endpoint
-- [ ] Handle disconnections gracefully
-- [ ] Cleanup/timeout old rooms
-- [ ] Documentation
-- [ ] Deployment guide
+- [x] Save game stats to DB
+- [x] User stats endpoint
+- [x] Handle disconnections gracefully
+- [x] Cleanup/timeout old rooms
+- [x] Documentation
+- [x] Deployment guide
 
 **Validation**: Production-ready multiplayer server
 
@@ -1137,13 +1137,15 @@ apps/pidro_server/
 ## Future Enhancements (Post-MVP)
 
 - [ ] Matchmaking with ELO/ranking
-- [ ] Reconnection handling (rejoin game after disconnect)
-- [ ] Spectator mode
+- [ ] Reconnection handling (rejoin game after disconnect) - **Completed in MVP**
+- [ ] Spectator mode - **Completed in MVP**
 - [ ] Chat system
 - [ ] Friends list
 - [ ] Tournaments
-- [ ] Replay system (using event sourcing from engine)
-- [ ] Leaderboards
+- [ ] **Replay System / Historical Game View** (using event sourcing)
+  - Requires schema update to persist full event log
+  - Enables "Watch Replay" feature
+- [ ] Leaderboards (UI implementation - backend ready)
 - [ ] Push notifications (mobile)
 - [ ] Horizontal scaling (distributed Elixir)
 
