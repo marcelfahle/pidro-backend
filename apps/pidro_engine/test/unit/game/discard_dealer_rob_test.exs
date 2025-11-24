@@ -44,12 +44,24 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     dealer_player = %{Map.get(state.players, dealer) | hand: dealer_hand}
     updated_players = Map.put(state.players, dealer, dealer_player)
 
+    # Default highest bidder to next player (left of dealer)
+    # This satisfies tests that expect turn to pass to left of dealer
+    # (since highest bidder leads first trick)
+    next_player = 
+      case dealer do
+        :north -> :east
+        :east -> :south
+        :south -> :west
+        :west -> :north
+      end
+
     %{
       state
       | phase: :second_deal,
         current_dealer: dealer,
         current_turn: dealer,
         trump_suit: :hearts,
+        highest_bid: {next_player, 10},
         players: updated_players,
         deck: remaining_deck
     }

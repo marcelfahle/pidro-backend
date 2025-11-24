@@ -583,55 +583,51 @@ defmodule Pidro.Game.Engine do
   end
 
   defp handle_automatic_phase(%Types.GameState{phase: :playing} = state) do
-    # Compute kills at the start of the playing phase
+    # Compute kills at the start of (and during) the playing phase
     # This determines which players have been eliminated in this round
     kill_state = Play.compute_kills(state)
-    # Playing phase doesn't auto-transition - it waits for player actions
-    # So just return the state with kills computed
-    {:ok, kill_state}
+
+    # After computing kills, check if we can auto-transition to scoring
+    if can_auto_transition?(kill_state) do
+      case StateMachine.next_phase(kill_state.phase, kill_state) do
+        {:error, _reason} ->
+          # If StateMachine can't determine a next phase, just stay in playing
+          {:ok, kill_state}
+
+        next_phase when is_atom(next_phase) ->
+          # Transition to next phase and let maybe_auto_transition/1
+          # handle any further automatic work (e.g., scoring)
+          new_state = %{kill_state | phase: next_phase}
+          maybe_auto_transition(new_state)
+      end
+    else
+      # Hands not empty / not ready to score yet: stay in playing with kills applied
+      {:ok, kill_state}
+    end
   end
 
   defp handle_automatic_phase(%Types.GameState{phase: :scoring} = state) do
     # Automatically score the hand using Finnish Pidro rules
-    # Score all tricks
-    scored_tricks =
-      Enum.map(state.tricks, fn trick ->
-        Scorer.score_trick(trick, state.trump_suit)
-      end)
+    scored_state = score_hand(state)
 
-    # Aggregate team scores
-    hand_points = Scorer.aggregate_team_scores(scored_tricks)
+    case Scorer.determine_winner(scored_state) do
+      {:ok, winner} ->
+        # Get winning team's score
+        winning_score = Map.get(scored_state.cumulative_scores, winner, 0)
 
-    # Update hand_points in state
-    state_with_points = GameState.update(state, :hand_points, hand_points)
+        # Game over, set winner and transition to complete
+        final_state =
+          scored_state
+          |> GameState.update(:winner, winner)
+          |> GameState.update(:phase, :complete)
+          |> record_event({:game_won, winner, winning_score})
 
-    # Apply bid result to cumulative scores
-    scored_state = Scorer.apply_bid_result(state_with_points)
+        {:ok, final_state}
 
-    # Check if game is over
-    if Scorer.game_over?(scored_state) do
-      case Scorer.determine_winner(scored_state) do
-        {:ok, winner} ->
-          # Get winning team's score
-          winning_score = Map.get(scored_state.cumulative_scores, winner, 0)
-
-          # Game over, set winner and transition to complete
-          final_state =
-            scored_state
-            |> GameState.update(:winner, winner)
-            |> GameState.update(:phase, :complete)
-            |> record_event({:game_won, winner, winning_score})
-
-          {:ok, final_state}
-
-        {:error, _} ->
-          # Shouldn't happen, but handle gracefully
-          maybe_auto_transition(scored_state)
-      end
-    else
-      # Game not over, transition to hand_complete
-      transitioned_state = %{scored_state | phase: :hand_complete}
-      maybe_auto_transition(transitioned_state)
+      {:error, :game_not_over} ->
+        # Game not over, transition to hand_complete
+        transitioned_state = %{scored_state | phase: :hand_complete}
+        maybe_auto_transition(transitioned_state)
     end
   end
 
@@ -639,9 +635,13 @@ defmodule Pidro.Game.Engine do
     # Rotate dealer and prepare for next hand
     case Dealing.rotate_dealer(state) do
       {:ok, new_state} ->
+        # Create new shuffled deck for the new hand
+        new_deck = Pidro.Core.Deck.new()
+
         # Reset hand-specific state for new hand
         reset_state =
           new_state
+          |> GameState.update(:deck, new_deck.cards)
           |> GameState.update(:highest_bid, nil)
           |> GameState.update(:bidding_team, nil)
           |> GameState.update(:trump_suit, nil)
@@ -651,10 +651,14 @@ defmodule Pidro.Game.Engine do
           |> GameState.update(:trick_number, 0)
           |> GameState.update(:hand_points, %{north_south: 0, east_west: 0})
           |> GameState.update(:discarded_cards, [])
+          |> GameState.update(:killed_cards, %{})
+          |> GameState.update(:cards_requested, %{})
+          |> GameState.update(:dealer_pool_size, nil)
 
         # Reset player hands and elimination status
+        # Iterate over new_state.players to ensure any changes from rotate_dealer are preserved
         reset_players =
-          Enum.reduce(state.players, state.players, fn {pos, player}, acc ->
+          Enum.reduce(new_state.players, new_state.players, fn {pos, player}, acc ->
             Map.put(acc, pos, %{
               player
               | hand: [],
@@ -741,6 +745,17 @@ defmodule Pidro.Game.Engine do
   # =============================================================================
   # Private Helpers
   # =============================================================================
+
+  # Scores the hand: calculates trick points, updates hand scores, and applies bid results
+  @spec score_hand(Types.GameState.t()) :: Types.GameState.t()
+  defp score_hand(%Types.GameState{} = state) do
+    scored_tricks = Enum.map(state.tricks, &Scorer.score_trick(&1, state.trump_suit))
+    hand_points = Scorer.aggregate_team_scores(scored_tricks)
+
+    state
+    |> GameState.update(:hand_points, hand_points)
+    |> Scorer.apply_bid_result()
+  end
 
   # Checks if a player is eliminated
   @spec player_eliminated?(Types.GameState.t(), Types.position()) :: boolean()

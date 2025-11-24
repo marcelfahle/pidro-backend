@@ -16,7 +16,7 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
 
   1. All players end with exactly 6 cards (or > 6 if kill rule applies)
   2. Phase transitions to :playing after complete flow
-  3. Turn is set correctly to player left of dealer
+  3. Turn is set correctly to the highest bidder (first trick leader)
   4. Deck is empty after dealer robs
   5. All events are recorded properly
   6. Edge cases: kill rule, empty deck, manual mode
@@ -144,8 +144,8 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
       # Execute trump declaration
       {:ok, state} = Engine.apply_action(state, :east, {:declare_trump, :diamonds})
 
-      # CRITICAL ASSERTION: All players should have exactly 6 cards
-      # This test WILL FAIL due to the bug
+      # CRITICAL ASSERTION: All players must have exactly 6 cards after redeal.
+      # This guards against regressions where second_deal is skipped for non-dealers.
       Enum.each(state.players, fn {position, player} ->
         assert length(player.hand) == 6,
                """
@@ -164,12 +164,12 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
              "Expected phase to be :playing but got #{state.phase}"
     end
 
-    test "turn is set to player left of dealer after redeal", %{state: state} do
+    test "turn is set to highest bidder (first trick leader) after redeal", %{state: state} do
       {:ok, state} = Engine.apply_action(state, :east, {:declare_trump, :diamonds})
 
-      # Dealer is east, so next player is south
-      assert state.current_turn == :south,
-             "Expected turn to be :south (left of dealer :east) but got #{state.current_turn}"
+      # Highest bidder is East (from setup), so East leads
+      assert state.current_turn == :east,
+             "Expected turn to be :east (highest bidder) but got #{state.current_turn}"
     end
 
     test "deck is empty after complete redeal flow", %{state: state} do
@@ -436,39 +436,13 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
             position: :south,
             team: :north_south,
             hand: [
-              # 6 trump diamonds (can't use hearts - only 5♥ is trump as wrong-5)
-              # Using lower diamonds that north/east don't have
-              # Actually wait - north has 6 high, east has 6 low... let me use clubs/spades
-              # Actually, I'll give south the remaining diamonds + wrong-5
-              # North: A,K,Q,J,10,9 (6 high diamonds)
-              # East: 8,7,6,5,4,3 (6 low diamonds)
-              # South: 2 diamond + 5♥ wrong-5 = only 2 trump!
-              # This won't work. Let me give south 6 lower diamonds
-              # Actually east already has all the low ones.
-              # Solution: redistribute the diamonds
-              # North gets: 14,13,12 (3 diamonds)
-              # East gets: 11,10,9 (3 diamonds)
-              # South gets: 8,7,6 (3 diamonds)
-              # West gets: 5,4,3,2 (4 diamonds) + 5♥ wrong-5 + 2♥ (6 total)
-              # Wait, this is getting complex. Let me use a mix with wrong-5
+              # This edge case was reconsidered during implementation:
+              # It is impossible for all 4 players to have 6 trump cards each
+              # because there are only 14 trump cards total in the deck.
+              # So we just setup a standard hand here.
               {2, :diamonds},
               # wrong-5 for diamonds is 5♥
               {5, :hearts},
-              # Need 4 more diamonds - but they're taken by north/east
-              # Let's give south some clubs as "placeholder trump" - NO that won't work
-              # Actually, the deck is empty so there are only 36 cards total
-              # 14 diamonds + 1 wrong-5 (5♥) = 15 trump max
-              # We need 24 cards to be trump for all 4 players to have 6
-              # That's impossible! Let me reconsider...
-              #
-              # Actually, all of suit hearts (except 5♥) can't be trump
-              # So the MAXIMUM trump cards = 14 diamonds
-              # We can't have all 4 players with 6 trump each (24 cards) if only 14 exist!
-              #
-              # Let's change the scenario: give some players < 6 trump
-              # Then second_deal will give them cards from... wait, deck is empty!
-              #
-              # This edge case is fundamentally flawed. Let me skip it.
               {14, :clubs},
               {13, :clubs},
               {12, :clubs},

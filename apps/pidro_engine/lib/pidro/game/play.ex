@@ -185,7 +185,6 @@ defmodule Pidro.Game.Play do
     with :ok <- validate_playing_phase(state),
          :ok <- validate_trump_declared(state),
          {:ok, card} <- Errors.validate_card(card),
-         :ok <- validate_killed_card_rule(state, position, card),
          :ok <- validate_play(state, position, card),
          {:ok, state} <- remove_card_from_hand(state, position, card),
          {:ok, state} <- add_card_to_trick(state, position, card),
@@ -255,30 +254,6 @@ defmodule Pidro.Game.Play do
       :ok
     else
       {:error, {:cannot_play_non_trump, card, trump_suit}}
-    end
-  end
-
-  # Validates killed card rule: if player has killed cards, they must play top one first
-  @spec validate_killed_card_rule(game_state(), position(), card()) :: :ok | {:error, error()}
-  defp validate_killed_card_rule(state, position, card) do
-    # Check if this is the first play of the current trick
-    trick = state.current_trick
-    first_play? = trick == nil or Enum.empty?(trick.plays)
-
-    # Get killed cards for this player
-    player_killed = Map.get(state.killed_cards, position, [])
-
-    # If first play and player has killed cards, enforce playing top killed card
-    if first_play? and length(player_killed) > 0 do
-      top_killed_card = hd(player_killed)
-
-      if card == top_killed_card do
-        :ok
-      else
-        {:error, {:must_play_top_killed_card_first, top_killed_card}}
-      end
-    else
-      :ok
     end
   end
 
@@ -646,17 +621,19 @@ defmodule Pidro.Game.Play do
   # Checks if current trick is complete (all active players have played)
   @spec trick_complete?(game_state()) :: boolean()
   defp trick_complete?(state) do
-    active_player_count = count_active_players(state)
-    play_count = length(state.current_trick.plays)
-    play_count >= active_player_count
+    played_positions =
+      state.current_trick.plays
+      |> Enum.map(fn {pos, _} -> pos end)
+
+    active_positions =
+      state.players
+      |> Enum.filter(fn {_pos, player} -> not player.eliminated? end)
+      |> Enum.map(fn {pos, _} -> pos end)
+
+    # Check if all active positions are in played positions
+    Enum.all?(active_positions, fn pos -> pos in played_positions end)
   end
 
-  # Counts non-eliminated players
-  @spec count_active_players(game_state()) :: non_neg_integer()
-  defp count_active_players(state) do
-    state.players
-    |> Enum.count(fn {_pos, player} -> not player.eliminated? end)
-  end
 
   # Finds next non-eliminated player clockwise from current turn
   @spec find_next_active_player(game_state()) :: position()
@@ -713,7 +690,30 @@ defmodule Pidro.Game.Play do
   # Sets the leader for the next trick
   @spec set_next_trick_leader(game_state(), position()) :: {:ok, game_state()}
   defp set_next_trick_leader(state, leader) do
-    updated_state = GameState.update(state, :current_turn, leader)
+    players = state.players
+
+    next_leader =
+      case players[leader] do
+        # Winner is still active – they lead next trick as usual
+        %Player{eliminated?: false} ->
+          leader
+
+        # Winner went cold – choose next active clockwise from them
+        _ ->
+          leader
+          |> Stream.iterate(&Types.next_position/1)
+          |> Stream.drop(1)
+          # Limit the stream to avoid infinite loops if everyone is cold
+          |> Stream.take(4) 
+          |> Enum.find(fn pos ->
+            case players[pos] do
+              %Player{eliminated?: false} -> true
+              _ -> false
+            end
+          end)
+      end
+
+    updated_state = GameState.update(state, :current_turn, next_leader)
     {:ok, updated_state}
   end
 

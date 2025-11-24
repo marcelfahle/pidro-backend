@@ -305,35 +305,35 @@ defmodule Pidro.Finnish.Scorer do
     bidding_points = Map.get(state.hand_points, bidding_team, 0)
     defending_points = Map.get(state.hand_points, defending_team, 0)
 
-    # Calculate new scores
+    old_scores = state.cumulative_scores
+
     {new_bidding_score, new_defending_score} =
       if bidding_points >= bid_amount do
         # Bidding team made their bid - both teams get their points
         {
-          state.cumulative_scores[bidding_team] + bidding_points,
-          state.cumulative_scores[defending_team] + defending_points
+          old_scores[bidding_team] + bidding_points,
+          old_scores[defending_team] + defending_points
         }
       else
         # Bidding team failed - they lose bid amount, defenders get their points
         {
-          state.cumulative_scores[bidding_team] - bid_amount,
-          state.cumulative_scores[defending_team] + defending_points
+          old_scores[bidding_team] - bid_amount,
+          old_scores[defending_team] + defending_points
         }
       end
 
     # Update cumulative scores
     new_cumulative_scores =
-      state.cumulative_scores
+      old_scores
       |> Map.put(bidding_team, new_bidding_score)
       |> Map.put(defending_team, new_defending_score)
 
     # Create scoring events
-    bidding_event =
-      {:hand_scored, bidding_team, new_bidding_score - state.cumulative_scores[bidding_team]}
+    bidding_delta = new_bidding_score - old_scores[bidding_team]
+    defending_delta = new_defending_score - old_scores[defending_team]
 
-    defending_event =
-      {:hand_scored, defending_team,
-       new_defending_score - state.cumulative_scores[defending_team]}
+    bidding_event = {:hand_scored, bidding_team, bidding_delta}
+    defending_event = {:hand_scored, defending_team, defending_delta}
 
     # Update state
     state

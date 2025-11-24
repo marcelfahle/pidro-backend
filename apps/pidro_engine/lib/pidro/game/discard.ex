@@ -296,11 +296,13 @@ defmodule Pidro.Game.Discard do
         {:ok, final_state}
       else
         # No cards left for dealer to rob, or dealer already has 6 cards
-        # Transition to playing phase
+        # Transition directly to playing phase; highest bidder leads the first trick
+        leader = bidding_winner(updated_state)
+
         final_state =
           updated_state
           |> GameState.update(:phase, :playing)
-          |> GameState.update(:current_turn, Types.next_position(state.current_dealer))
+          |> GameState.update(:current_turn, leader)
 
         {:ok, final_state}
       end
@@ -332,7 +334,7 @@ defmodule Pidro.Game.Discard do
   - Records `{:dealer_robbed_pack, position, taken_count, kept_count}` event
   - Stores `dealer_pool_size` in game state (total cards before selection)
   - Transitions `phase` to `:playing`
-  - Sets `current_turn` to player left of dealer (to start first trick)
+  - Sets `current_turn` to the highest bidder (to lead the first trick)
 
   ## Validation
   - Game must be in `:second_deal` phase
@@ -347,6 +349,8 @@ defmodule Pidro.Game.Discard do
       iex> state = put_in(state.deck, [{11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}])
       iex> # Dealer takes remaining cards and selects 6 to keep
       iex> selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
+      # Mock highest bid for example context
+      iex> state = %{state | highest_bid: {:north, 10}}
       iex> {:ok, state} = Discard.dealer_rob_pack(state, selected)
       iex> length(state.players[:north].hand)
       6
@@ -382,6 +386,8 @@ defmodule Pidro.Game.Discard do
           # Record dealer robbed pack event (emit counts only for hidden info protection)
           event = {:dealer_robbed_pack, dealer, length(remaining_cards), length(selected_cards)}
 
+          leader = bidding_winner(state)
+
           # Update game state
           updated_state =
             state
@@ -391,7 +397,7 @@ defmodule Pidro.Game.Discard do
             |> GameState.update(:dealer_pool_size, dealer_pool_size)
             |> GameState.update(:events, state.events ++ [event])
             |> GameState.update(:phase, :playing)
-            |> GameState.update(:current_turn, Types.next_position(dealer))
+            |> GameState.update(:current_turn, leader)
 
           {:ok, updated_state}
 
@@ -480,6 +486,10 @@ defmodule Pidro.Game.Discard do
       Types.next_position(Types.next_position(Types.next_position(start_position)))
     ]
   end
+
+  # Helper to get the bidding winner (highest bidder)
+  @spec bidding_winner(game_state()) :: position()
+  defp bidding_winner(%Types.GameState{highest_bid: {position, _amount}}), do: position
 
   # Returns deal order excluding the dealer (3 positions, not 4)
   defp get_deal_order_non_dealer(start_position, dealer) do
