@@ -14,7 +14,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   use PidroServerWeb, :live_view
   require Logger
-  alias PidroServer.Dev.{BotManager, Event, EventRecorder, GameHelpers, ReplayController}
+  alias PidroServer.Dev.{BotManager, Event, GameHelpers, ReplayController}
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.CardComponents
 
@@ -25,21 +25,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         if connected?(socket) do
           # Subscribe to game updates for this specific room
           Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
-
-          # Start event recorder for this game
-          case DynamicSupervisor.start_child(
-                 PidroServer.Dev.BotSupervisor,
-                 {EventRecorder, room_code: room_code}
-               ) do
-            {:ok, _pid} ->
-              Logger.debug("EventRecorder started for #{room_code}")
-
-            {:error, {:already_started, _pid}} ->
-              Logger.debug("EventRecorder already running for #{room_code}")
-
-            {:error, reason} ->
-              Logger.error("Failed to start EventRecorder: #{inspect(reason)}")
-          end
         end
 
         # Get initial game state
@@ -53,6 +38,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
         # DEV-1301: Initialize replay state
         {:ok, event_count} = ReplayController.get_event_count(room_code)
+        
+        events = process_events(game_state.events)
 
         {:ok,
          socket
@@ -65,7 +52,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:executing_action, false)
          |> assign(:copy_feedback, false)
          |> assign(:bot_configs, bot_configs)
-         |> assign(:events, EventRecorder.get_events(room_code, limit: 50))
+         |> assign(:events, events)
          |> assign(:event_filter_type, nil)
          |> assign(:event_filter_player, nil)
          |> assign(:show_bot_reasoning, true)
@@ -75,6 +62,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:replay_total_events, event_count)
          |> assign(:replay_playing, false)
          |> assign(:replay_speed, 1000)
+         |> assign(:selected_hand_cards, [])
          |> assign(:page_title, "Game Detail - Dev")}
 
       {:error, _reason} ->
@@ -89,7 +77,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_info({:state_update, new_state}, socket) do
     # DEV-901: Refetch legal actions when state updates
     legal_actions = get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
-    events = EventRecorder.get_events(socket.assigns.room_code, limit: 50)
+    events = process_events(new_state.events)
 
     {:noreply,
      socket
@@ -123,6 +111,33 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_info({:auto_bid_complete, {:error, reason}}, socket) do
     {:noreply, put_flash(socket, :error, "Auto-bidding failed: #{reason}")}
+  end
+
+  @impl true
+  def handle_info(:replay_tick, socket) do
+    if socket.assigns.replay_playing && socket.assigns.replay_mode do
+      case ReplayController.step_forward(socket.assigns.room_code, socket.assigns.replay_index) do
+        {:ok, state, new_index} ->
+          # Schedule next tick
+          Process.send_after(self(), :replay_tick, socket.assigns.replay_speed)
+
+          {:noreply,
+           socket
+           |> assign(:game_state, state)
+           |> assign(:replay_index, new_index)
+           |> assign(:legal_actions, [])}
+
+        {:error, :at_end} ->
+          # Stop playing when we reach the end
+          {:noreply, assign(socket, :replay_playing, false)}
+
+        {:error, _reason} ->
+          # Stop on error
+          {:noreply, assign(socket, :replay_playing, false)}
+      end
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -243,11 +258,64 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_event("execute_action", %{"action" => action_json}, socket) do
     # DEV-903: Execute action implementation
     socket = assign(socket, :executing_action, true)
-    position = socket.assigns.selected_position
     room_code = socket.assigns.room_code
 
     case decode_action(action_json) do
+      {:ok, {:select_hand, :choose_6_cards}} ->
+        # Intercept placeholder action and perform auto-selection
+        # This handles cases where user clicks the button instead of using the card table
+        game_state = socket.assigns.game_state
+        dealer = game_state.current_dealer
+        
+        if game_state.current_turn == dealer do
+          dealer_player = Map.get(game_state.players, dealer)
+          pool = dealer_player.hand ++ game_state.deck
+          trump_suit = game_state.trump_suit
+          
+          # Use DealerRob logic to select best cards
+          selected_cards = Pidro.Game.DealerRob.select_best_cards(pool, trump_suit)
+          
+          # Construct actual action with selected cards
+          action = {:select_hand, selected_cards}
+          
+          case GameAdapter.apply_action(room_code, dealer, action) do
+            {:ok, _new_state} ->
+              # Refetch game state and legal actions
+              game_state = get_game_state(room_code)
+              legal_actions = get_legal_actions(room_code, socket.assigns.selected_position)
+
+              {:noreply,
+               socket
+               |> assign(:game_state, game_state)
+               |> assign(:legal_actions, legal_actions)
+               |> assign(:executing_action, false)
+               |> put_flash(:info, "Auto-selected best hand for dealer")}
+
+            {:error, reason} ->
+              error_message = format_error(reason)
+              Logger.error("Auto-select hand failed: #{error_message}")
+
+              {:noreply,
+               socket
+               |> assign(:executing_action, false)
+               |> put_flash(:error, "Auto-selection failed: #{error_message}")}
+          end
+        else
+           {:noreply,
+            socket
+            |> assign(:executing_action, false)
+            |> put_flash(:error, "Not dealer's turn to select hand")}
+        end
+
       {:ok, action} ->
+        # Special handling for select_dealer in God Mode
+        position =
+          if action == :select_dealer && socket.assigns.selected_position == :all do
+            :north
+          else
+            socket.assigns.selected_position
+          end
+
         # Apply the action
         case GameAdapter.apply_action(room_code, position, action) do
           {:ok, _new_state} ->
@@ -289,6 +357,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     # DEV-1505: Handle card click from card table
     position = socket.assigns.selected_position
     room_code = socket.assigns.room_code
+    game_state = socket.assigns.game_state
 
     # Don't allow actions in god mode
     if position == :all do
@@ -296,8 +365,73 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     else
       # Decode card from string format "rank:suit"
       card = PidroServerWeb.CardHelpers.decode_card(card_string)
-      action = {:play_card, card}
 
+      # Check if we are in second_deal phase and dealer needs to rob
+      # Check if we are allowed to execute actions for this position
+      is_hand_selection =
+        game_state.phase == :second_deal and
+        game_state.current_dealer == position and
+        Enum.any?(socket.assigns.legal_actions, fn
+          {:select_hand, _} -> true
+          _ -> false
+        end)
+
+      if is_hand_selection do
+        # Toggle card selection
+        selected = socket.assigns.selected_hand_cards
+        new_selected = 
+          if card in selected do
+            List.delete(selected, card)
+          else
+            if length(selected) < 6 do
+              [card | selected]
+            else
+              selected
+            end
+          end
+        
+        {:noreply, assign(socket, :selected_hand_cards, new_selected)}
+      else
+        # Normal play card action
+        action = {:play_card, card}
+        socket = assign(socket, :executing_action, true)
+
+        case GameAdapter.apply_action(room_code, position, action) do
+          {:ok, _new_state} ->
+            game_state = get_game_state(room_code)
+            legal_actions = get_legal_actions(room_code, position)
+
+            {:noreply,
+             socket
+             |> assign(:game_state, game_state)
+             |> assign(:legal_actions, legal_actions)
+             |> assign(:executing_action, false)
+             |> put_flash(:info, "Played #{PidroServerWeb.CardHelpers.format_card(card)}")}
+
+          {:error, reason} ->
+            error_message = format_error(reason)
+            Logger.error("Card play failed: #{error_message}")
+
+            {:noreply,
+             socket
+             |> assign(:executing_action, false)
+             |> put_flash(:error, "Cannot play card: #{error_message}")}
+        end
+      end
+    end
+  end
+
+  @impl true
+  def handle_event("submit_hand_selection", _params, socket) do
+    selected_cards = socket.assigns.selected_hand_cards
+    position = socket.assigns.selected_position
+    room_code = socket.assigns.room_code
+
+    if length(selected_cards) != 6 do
+      {:noreply, put_flash(socket, :error, "You must select exactly 6 cards")}
+    else
+      # Construct the action for dealer robbing the pack
+      action = {:select_hand, selected_cards}
       socket = assign(socket, :executing_action, true)
 
       case GameAdapter.apply_action(room_code, position, action) do
@@ -310,28 +444,25 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
            |> assign(:game_state, game_state)
            |> assign(:legal_actions, legal_actions)
            |> assign(:executing_action, false)
-           |> put_flash(:info, "Played #{PidroServerWeb.CardHelpers.format_card(card)}")}
+           |> assign(:selected_hand_cards, [])
+           |> put_flash(:info, "Hand selected successfully")}
 
         {:error, reason} ->
           error_message = format_error(reason)
-          Logger.error("Card play failed: #{error_message}")
+          Logger.error("Hand selection failed: #{error_message}")
 
           {:noreply,
            socket
            |> assign(:executing_action, false)
-           |> put_flash(:error, "Cannot play card: #{error_message}")}
+           |> put_flash(:error, "Failed to select hand: #{error_message}")}
       end
     end
   end
 
   @impl true
   def handle_event("refresh_events", _params, socket) do
-    events =
-      EventRecorder.get_events(socket.assigns.room_code,
-        limit: 50,
-        type: socket.assigns.event_filter_type,
-        player: socket.assigns.event_filter_player
-      )
+    # Re-process events from game state
+    events = process_events(socket.assigns.game_state.events, socket.assigns)
 
     {:noreply, assign(socket, :events, events)}
   end
@@ -339,13 +470,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_event("filter_events", %{"type" => type}, socket) do
     type_atom = if type == "all", do: nil, else: String.to_existing_atom(type)
-
-    events =
-      EventRecorder.get_events(socket.assigns.room_code,
-        limit: 50,
-        type: type_atom,
-        player: socket.assigns.event_filter_player
-      )
+    
+    new_assigns = assign(socket.assigns, :event_filter_type, type_atom)
+    events = process_events(socket.assigns.game_state.events, new_assigns)
 
     {:noreply,
      socket
@@ -357,12 +484,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_event("filter_events_by_player", %{"player" => player}, socket) do
     player_atom = if player == "all", do: nil, else: String.to_existing_atom(player)
 
-    events =
-      EventRecorder.get_events(socket.assigns.room_code,
-        limit: 50,
-        type: socket.assigns.event_filter_type,
-        player: player_atom
-      )
+    new_assigns = assign(socket.assigns, :event_filter_player, player_atom)
+    events = process_events(socket.assigns.game_state.events, new_assigns)
 
     {:noreply,
      socket
@@ -372,19 +495,17 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   @impl true
   def handle_event("clear_events", _params, socket) do
-    EventRecorder.clear_events(socket.assigns.room_code)
-
-    {:noreply,
-     socket
-     |> assign(:events, [])
-     |> put_flash(:info, "Event log cleared")}
+    # Cannot clear immutable event history, just clear local view or notify user
+    {:noreply, put_flash(socket, :info, "Event history is immutable in GameState")}
   end
 
   @impl true
   def handle_event("toggle_bot_reasoning", _params, socket) do
     # Toggle bot reasoning visibility and refresh events
     new_value = !socket.assigns.show_bot_reasoning
-    events = get_filtered_events(socket.assigns, new_value)
+    
+    new_assigns = assign(socket.assigns, :show_bot_reasoning, new_value)
+    events = process_events(socket.assigns.game_state.events, new_assigns)
 
     {:noreply,
      socket
@@ -426,6 +547,40 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         error_message = format_error(reason)
 
         {:noreply, put_flash(socket, :error, "Undo failed: #{error_message}")}
+    end
+  end
+
+  @impl true
+  def handle_event("play_again", _params, socket) do
+    room_code = socket.assigns.room_code
+
+    # 1. Stop the current game process
+    case PidroServer.Games.GameSupervisor.stop_game(room_code) do
+      result when result in [:ok, {:error, :game_not_found}] ->
+        # 2. Start a new game process
+        case PidroServer.Games.GameSupervisor.start_game(room_code) do
+          {:ok, _pid} ->
+            # 3. Ensure RoomManager knows we are playing again
+            PidroServer.Games.RoomManager.update_room_status(room_code, :playing)
+
+            # 4. Refresh state
+            game_state = get_game_state(room_code)
+            legal_actions = get_legal_actions(room_code, socket.assigns.selected_position)
+            events = process_events(game_state.events)
+
+            {:noreply,
+             socket
+             |> assign(:game_state, game_state)
+             |> assign(:legal_actions, legal_actions)
+             |> assign(:events, events)
+             |> put_flash(:info, "Game restarted! Good luck.")}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Failed to restart game: #{inspect(reason)}")}
+        end
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to stop previous game: #{inspect(reason)}")}
     end
   end
 
@@ -621,33 +776,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
-  def handle_info(:replay_tick, socket) do
-    if socket.assigns.replay_playing && socket.assigns.replay_mode do
-      case ReplayController.step_forward(socket.assigns.room_code, socket.assigns.replay_index) do
-        {:ok, state, new_index} ->
-          # Schedule next tick
-          Process.send_after(self(), :replay_tick, socket.assigns.replay_speed)
-
-          {:noreply,
-           socket
-           |> assign(:game_state, state)
-           |> assign(:replay_index, new_index)
-           |> assign(:legal_actions, [])}
-
-        {:error, :at_end} ->
-          # Stop playing when we reach the end
-          {:noreply, assign(socket, :replay_playing, false)}
-
-        {:error, _reason} ->
-          # Stop on error
-          {:noreply, assign(socket, :replay_playing, false)}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  @impl true
   def render(assigns) do
     ~H"""
     <div class="px-4 py-10 sm:px-6 lg:px-8">
@@ -668,6 +796,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </p>
         </div>
         
+
     <!-- Room Info Card -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
           <div class="px-4 py-5 sm:px-6">
@@ -762,6 +891,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               <% end %>
             </div>
 
+            <!-- Position buttons moved to Game Table (click on player name) -->
+            <!--
             <div class="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -838,6 +969,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                 God Mode (All)
               </button>
             </div>
+            -->
           </div>
         </div>
         
@@ -1147,43 +1279,86 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             </div>
           <% else %>
             <%!-- Single View Layout --%>
-            <%= cond do %>
-              <% @game_state.phase == :bidding -> %>
-                <div class="mb-8">
-                  <CardComponents.bidding_panel
-                    current_bid={get_current_bid(@game_state)}
-                    bidder={get_current_bidder(@game_state)}
-                    legal_actions={@legal_actions}
-                    bid_history={get_bid_history(@game_state)}
-                  />
+            <div class="mb-8 relative">
+              <CardComponents.card_table
+                game_state={@game_state}
+                selected_position={@selected_position}
+                god_mode={@selected_position == :all}
+                legal_actions={@legal_actions}
+                bot_configs={@bot_configs}
+              />
+
+              <%= if @game_state.phase == :complete do %>
+                <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
+                  <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
+                    <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
+                      <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
+                      <p class="text-lg text-indigo-600 font-medium">
+                        <%= case @game_state.winner do %>
+                          <% :north_south -> %> 🏆 North/South Wins! 🏆
+                          <% :east_west -> %> 🏆 East/West Wins! 🏆
+                          <% _ -> %> Game Complete
+                        <% end %>
+                      </p>
+                    </div>
+                    
+                    <div class="p-6">
+                      <div class="grid grid-cols-2 gap-8 mb-8 text-center">
+                        <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
+                          <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">North/South</div>
+                          <div class="text-4xl font-black text-blue-800">{@game_state.cumulative_scores.north_south}</div>
+                        </div>
+                        <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
+                          <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">East/West</div>
+                          <div class="text-4xl font-black text-green-800">{@game_state.cumulative_scores.east_west}</div>
+                        </div>
+                      </div>
+
+                      <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Score History</h3>
+                      <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
+                        <table class="min-w-full divide-y divide-gray-200">
+                          <thead class="bg-gray-100">
+                            <tr>
+                              <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hand</th>
+                              <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">N/S</th>
+                              <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">E/W</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-gray-200 bg-white">
+                            <%= for {score, index} <- get_score_history(@game_state.events) do %>
+                              <tr>
+                                <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
+                                <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
+                                  <%= if score.ns > 0, do: "+#{score.ns}", else: score.ns %>
+                                </td>
+                                <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
+                                  <%= if score.ew > 0, do: "+#{score.ew}", else: score.ew %>
+                                </td>
+                              </tr>
+                            <% end %>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div class="flex gap-3">
+                        <.link
+                          navigate={~p"/dev/games"}
+                          class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
+                        >
+                          Back to Lobby
+                        </.link>
+                        <button
+                          phx-click="play_again"
+                          class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
+                        >
+                          Play Again
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              <% @game_state.phase == :trump_selection -> %>
-                <div class="mb-8">
-                  <CardComponents.trump_selection_panel
-                    legal_actions={@legal_actions}
-                    hand={get_selected_hand(@game_state, @selected_position)}
-                  />
-                </div>
-              <% @game_state.phase == :playing -> %>
-                <div class="mb-8">
-                  <CardComponents.card_table
-                    game_state={@game_state}
-                    selected_position={@selected_position}
-                    god_mode={@selected_position == :all}
-                    legal_actions={@legal_actions}
-                  />
-                </div>
-              <% true -> %>
-                <%!-- Other phases like dealer_selection, hand_scoring, etc. --%>
-                <div class="mb-8 bg-white shadow overflow-hidden sm:rounded-lg p-6">
-                  <p class="text-sm text-gray-600">
-                    Phase: <span class="font-semibold">{@game_state.phase}</span>
-                  </p>
-                  <p class="text-xs text-gray-500 mt-2">
-                    Visual card table available during playing phase
-                  </p>
-                </div>
-            <% end %>
+              <% end %>
+            </div>
           <% end %>
         <% end %>
         
@@ -1674,6 +1849,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:bid, amount} -> "Bid #{amount}"
       {:play_card, {rank, suit}} -> "Play #{format_card(rank, suit)}"
       {:declare_trump, suit} -> "Declare #{format_suit(suit)}"
+      {:select_hand, :choose_6_cards} -> "Choose 6 Cards"
       _ -> inspect(action)
     end
   end
@@ -1726,6 +1902,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:bid, _} -> :bidding
       {:declare_trump, _} -> :trump
       {:play_card, _} -> :cards
+      {:select_hand, _} -> :hand_selection
       _ -> :other
     end
   end
@@ -1735,6 +1912,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       :bidding -> "Bidding Actions"
       :trump -> "Trump Declaration"
       :cards -> "Card Play"
+      :hand_selection -> "Hand Selection"
       :other -> "Other Actions"
     end
   end
@@ -1745,6 +1923,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   defp encode_action({:bid, amount}), do: Jason.encode!(["bid", amount])
   defp encode_action({:declare_trump, suit}), do: Jason.encode!(["declare_trump", suit])
   defp encode_action({:play_card, {rank, suit}}), do: Jason.encode!(["play_card", [rank, suit]])
+  defp encode_action({:select_hand, sub_action}), do: Jason.encode!(["select_hand", sub_action])
   defp encode_action(action), do: Jason.encode!(action)
 
   defp decode_action(action_json) do
@@ -1763,6 +1942,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
       {:ok, ["play_card", [rank, suit]]} ->
         {:ok, {:play_card, {rank, String.to_existing_atom(suit)}}}
+
+      {:ok, ["select_hand", sub_action]} ->
+        {:ok, {:select_hand, String.to_existing_atom(sub_action)}}
 
       {:error, error} ->
         {:error, "Invalid action format: #{inspect(error)}"}
@@ -1878,11 +2060,23 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     difficulty = if config.difficulty == :unknown, do: :random, else: config.difficulty
 
     case {config.type, bot_exists} do
-      {:bot, false} ->
-        # Start a new bot
-        BotManager.start_bot(room_code, position, difficulty, config.delay_ms)
+    {:bot, false} ->
+    # Start a new bot
+    # Check if seat is empty before starting bot
+    room = RoomManager.get_room(room_code) |> elem(1)
+    is_seat_empty = is_seat_available?(room, position)
 
-      {:bot, true} ->
+    if is_seat_empty do
+      BotManager.start_bot(room_code, position, difficulty, config.delay_ms)
+    else
+      # Seat is occupied by a human (potentially the admin/host)
+      # We can't just overwrite a human player with a bot unless we kick them first
+      # For now, let's just log it or maybe force start if it's dev mode
+      Logger.info("Cannot start bot at #{position}, seat occupied by human")
+      {:error, :seat_occupied}
+    end
+
+    {:bot, true} ->
         # Bot exists - stop and restart with new config
         BotManager.stop_bot(room_code, position)
         # Small delay to ensure cleanup
@@ -1896,6 +2090,25 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:human, false} ->
         # No bot exists, and user wants human - nothing to do
         :ok
+    end
+  end
+
+  defp is_seat_available?(room, position) do
+    # Helper to check if a seat is physically occupied by a player ID
+    # Positions: North=0, East=1, South=2, West=3
+    index =
+      case position do
+        :north -> 0
+        :east -> 1
+        :south -> 2
+        :west -> 3
+        _ -> -1
+      end
+
+    if index >= 0 and index < length(room.player_ids) do
+      false # Occupied
+    else
+      true # Empty
     end
   end
 
@@ -1923,42 +2136,80 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   # DEV-1505 & DEV-1506: Helper functions for card table and phase displays
 
   defp get_current_bid(state) do
-    get_in(state, [:winning_bid, :amount])
+    case Map.get(state, :winning_bid) do
+      %{amount: amount} -> amount
+      _ -> nil
+    end
   end
 
   defp get_current_bidder(state) do
-    case get_in(state, [:winning_bid, :team]) do
-      :north_south -> :north
-      :east_west -> :east
-      team -> team
+    case Map.get(state, :winning_bid) do
+      %{team: team} ->
+        case team do
+          :north_south -> :north
+          :east_west -> :east
+          team -> team
+        end
+      _ -> nil
     end
   end
 
   defp get_bid_history(state) do
-    # Extract bid history from game state if available
     Map.get(state, :bid_history, [])
   end
 
   defp get_selected_hand(_state, :all), do: []
 
   defp get_selected_hand(state, position) when is_atom(position) do
-    get_in(state, [:players, position, :hand]) || []
+    with %{players: players} <- state,
+         %{hand: hand} <- Map.get(players, position) do
+      hand
+    else
+      _ -> []
+    end
   end
 
-  # Helper function to get filtered events
-  defp get_filtered_events(assigns, show_bot_reasoning) do
-    events =
-      EventRecorder.get_events(assigns.room_code,
-        limit: 50,
-        type: assigns.event_filter_type,
-        player: assigns.event_filter_player
-      )
+  # Helper function to process and filter events from game state
+  defp process_events(raw_events, assigns \\ %{}) do
+    filter_type = Map.get(assigns, :event_filter_type, nil)
+    filter_player = Map.get(assigns, :event_filter_player, nil)
+    show_bot = Map.get(assigns, :show_bot_reasoning, true)
 
-    if show_bot_reasoning do
-      events
-    else
-      Enum.reject(events, &(&1.type == :bot_reasoning))
-    end
+    raw_events
+    |> Enum.map(&Event.from_raw/1)
+    |> Enum.reject(&is_nil/1)
+    |> filter_by_type(filter_type)
+    |> filter_by_player(filter_player)
+    |> filter_bot_reasoning(show_bot)
+    |> Enum.take(50)
+  end
+
+  defp filter_by_type(events, nil), do: events
+  defp filter_by_type(events, type), do: Enum.filter(events, &(&1.type == type))
+
+  defp filter_by_player(events, nil), do: events
+  defp filter_by_player(events, player), do: Enum.filter(events, &(&1.player == player))
+
+  defp filter_bot_reasoning(events, true), do: events
+  defp filter_bot_reasoning(events, false), do: Enum.reject(events, &(&1.type == :bot_reasoning))
+
+  # Helper function to extract score history
+  defp get_score_history(events) do
+    events
+    |> Enum.filter(fn
+      {:hand_scored, _, _} -> true
+      _ -> false
+    end)
+    |> Enum.chunk_every(2) # Group NS and EW scores for same hand
+    |> Enum.map(fn
+      [{:hand_scored, :east_west, ew}, {:hand_scored, :north_south, ns}] ->
+        %{ns: ns, ew: ew}
+      [{:hand_scored, :north_south, ns}, {:hand_scored, :east_west, ew}] ->
+        %{ns: ns, ew: ew}
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.with_index(1)
   end
 
   # DEV-1301: Format phase names for display

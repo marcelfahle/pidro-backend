@@ -56,6 +56,49 @@ if Mix.env() == :dev do
     defstruct [:type, :player, :timestamp, :metadata]
 
     @doc """
+    Converts a raw game engine event tuple into an Event struct.
+    """
+    @spec from_raw(tuple()) :: t()
+    def from_raw({:dealer_selected, position, _card}),
+      do: new(:dealer_selected, position)
+
+    def from_raw({:cards_dealt, _hands}),
+      do: new(:cards_dealt, nil)
+
+    def from_raw({:bid_made, position, amount}),
+      do: new(:bid_made, position, %{bid_amount: amount})
+
+    def from_raw({:player_passed, position}),
+      do: new(:bid_passed, position)
+
+    def from_raw({:bidding_complete, _position, _amount}),
+      do: nil # Skip this one for UI noise reduction or handle if needed
+
+    def from_raw({:trump_declared, suit}),
+      do: new(:trump_declared, nil, %{suit: suit}) # Declarer implicit in UI usually
+
+    # Adjust for trump declared with declarer if available in context, but raw event is {:trump_declared, suit}
+    # Wait, Core Types says: {:trump_declared, suit()}
+    # So we don't know who declared it from the event alone? The context might be needed.
+    # But EventRecorder was inferring it from state.
+    # For now, we just show "Trump declared: Suit".
+
+    def from_raw({:card_played, position, card}),
+      do: new(:card_played, position, %{card: card})
+
+    def from_raw({:trick_won, position, points}),
+      do: new(:trick_won, position, %{points: points})
+
+    def from_raw({:hand_scored, winning_team, points}),
+      # We might need to infer the split points from context or just show winner
+      do: new(:hand_scored, nil, %{winning_team: winning_team, points: points, ns_points: 0, ew_points: 0}) # Simplified
+
+    def from_raw({:game_won, team, score}),
+      do: new(:game_over, nil, %{winner: team, final_scores: %{team => score}})
+
+    def from_raw(_), do: nil # Ignore other events
+
+    @doc """
     Creates a new event with the given type, optional player, and metadata.
 
     ## Parameters

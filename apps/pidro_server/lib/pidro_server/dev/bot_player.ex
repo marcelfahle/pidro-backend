@@ -67,7 +67,6 @@ if Mix.env() == :dev do
 
     use GenServer
     require Logger
-    alias PidroServer.Dev.Event
     alias PidroServer.Dev.Strategies.RandomStrategy
     alias PidroServer.Games.GameAdapter
 
@@ -312,16 +311,6 @@ if Mix.env() == :dev do
                 "BotPlayer (#{state.room_code}/#{state.position}) executing action: #{inspect(action)} - #{reasoning}"
               )
 
-              # Emit bot reasoning event
-              event =
-                Event.new(:bot_reasoning, state.position, %{
-                  action: action,
-                  reasoning: reasoning,
-                  alternatives_count: length(legal_actions)
-                })
-
-              emit_bot_reasoning_event(state.room_code, event)
-
               # Apply the action
               case GameAdapter.apply_action(state.room_code, state.position, action) do
                 {:ok, _new_state} ->
@@ -373,21 +362,6 @@ if Mix.env() == :dev do
       case GameAdapter.get_state(room_code) do
         {:ok, state} -> state
         {:error, _} -> %{}
-      end
-    end
-
-    @doc false
-    defp emit_bot_reasoning_event(room_code, event) do
-      # Try to record the event via EventRecorder
-      case Registry.lookup(PidroServer.Dev.EventRecorderRegistry, room_code) do
-        [{pid, _}] when is_pid(pid) ->
-          # Send the event directly to the EventRecorder
-          send(pid, {:bot_reasoning, event})
-          :ok
-
-        [] ->
-          # EventRecorder not running - skip logging
-          :ok
       end
     end
   end
