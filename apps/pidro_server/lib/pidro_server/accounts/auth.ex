@@ -184,4 +184,52 @@ defmodule PidroServer.Accounts.Auth do
   def get_user_by_email(email) do
     Repo.one(from u in User, where: u.email == ^email)
   end
+
+  @doc """
+  Fetches a map of users by their IDs.
+
+  Returns a map where keys are user IDs and values are user structs.
+  Only returns users that exist.
+
+  ## Examples
+
+      iex> PidroServer.Accounts.Auth.get_users_map(["1", "999"])
+      %{"1" => %User{id: 1, ...}}
+  """
+  def get_users_map(user_ids) do
+    # Filter out non-UUID IDs (like bot IDs or "dev_host")
+    valid_uuids = Enum.filter(user_ids, &valid_uuid?/1)
+
+    from(u in User, where: u.id in ^valid_uuids)
+    |> Repo.all()
+    |> Map.new(&{&1.id, &1})
+  end
+
+  defp valid_uuid?(id) when is_binary(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, _} -> true
+      :error -> false
+    end
+  end
+  defp valid_uuid?(_), do: false
+
+  @doc """
+  Lists recent users for development purposes.
+
+  ## Parameters
+
+    - `limit` (integer) - Maximum number of users to return (default: 10)
+
+  ## Returns
+
+    - `[user]` - List of user structs
+
+  ## Examples
+
+      iex> PidroServer.Accounts.Auth.list_recent_users(5)
+      [%User{}, ...]
+  """
+  def list_recent_users(limit \\ 10) do
+    Repo.all(from u in User, order_by: [desc: u.inserted_at], limit: ^limit)
+  end
 end
