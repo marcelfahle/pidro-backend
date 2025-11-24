@@ -44,6 +44,8 @@ defmodule PidroServerWeb.LobbyChannel do
 
   alias PidroServer.Games.RoomManager
   alias PidroServerWeb.Presence
+  alias PidroServer.Accounts.Auth
+  alias PidroServer.Accounts.User
 
   @doc """
   Joins the lobby channel.
@@ -78,7 +80,22 @@ defmodule PidroServerWeb.LobbyChannel do
   def handle_info(msg, socket)
 
   def handle_info({:lobby_update, rooms}, socket) do
-    broadcast(socket, "lobby_update", %{rooms: serialize_rooms(rooms)})
+    push(socket, "lobby_update", %{rooms: serialize_rooms(rooms)})
+    {:noreply, socket}
+  end
+
+  def handle_info({:room_created, room}, socket) do
+    push(socket, "room_created", %{room: serialize_room_with_users(room)})
+    {:noreply, socket}
+  end
+
+  def handle_info({:room_updated, room}, socket) do
+    push(socket, "room_updated", %{room: serialize_room_with_users(room)})
+    {:noreply, socket}
+  end
+
+  def handle_info({:room_closed, room_code}, socket) do
+    push(socket, "room_closed", %{room_code: room_code})
     {:noreply, socket}
   end
 
@@ -96,13 +113,26 @@ defmodule PidroServerWeb.LobbyChannel do
 
   ## Private Helpers
 
-  @spec serialize_rooms([RoomManager.Room.t()]) :: [map()]
-  defp serialize_rooms(rooms) do
-    Enum.map(rooms, &serialize_room/1)
+  defp serialize_room_with_users(room) do
+    user_map = Auth.get_users_map(room.player_ids)
+    serialize_room(room, user_map)
   end
 
-  @spec serialize_room(RoomManager.Room.t()) :: map()
-  defp serialize_room(room) do
+  @spec serialize_rooms([RoomManager.Room.t()]) :: [map()]
+  defp serialize_rooms(rooms) do
+    # Bulk fetch all users involved in these rooms to avoid N+1 queries
+    all_player_ids =
+      rooms
+      |> Enum.flat_map(& &1.player_ids)
+      |> Enum.uniq()
+
+    user_map = Auth.get_users_map(all_player_ids)
+
+    Enum.map(rooms, &serialize_room(&1, user_map))
+  end
+
+  @spec serialize_room(RoomManager.Room.t(), map()) :: map()
+  defp serialize_room(room, user_map) do
     %{
       code: room.code,
       host_id: room.host_id,
@@ -110,7 +140,51 @@ defmodule PidroServerWeb.LobbyChannel do
       max_players: room.max_players,
       status: room.status,
       created_at: DateTime.to_iso8601(room.created_at),
-      metadata: room.metadata
+      metadata: room.metadata,
+      seats: serialize_seats(room, user_map)
     }
+  end
+
+  defp serialize_seats(room, user_map) do
+    # Pidro usually has 4 seats. We map the current player list to seats.
+    # Assuming player_ids order corresponds to seat 0, 1, 2, 3.
+    
+    Enum.map(0..(room.max_players - 1), fn seat_index ->
+      player_id = Enum.at(room.player_ids, seat_index)
+      
+      player_data = 
+        if player_id do
+          get_player_summary(player_id, user_map)
+        else
+          nil
+        end
+
+      %{
+        seat_index: seat_index,
+        status: if(player_id, do: "occupied", else: "free"),
+        player: player_data
+      }
+    end)
+  end
+
+  defp get_player_summary(player_id, user_map) do
+    case Map.get(user_map, player_id) do
+      %User{} = user ->
+        %{
+          id: user.id,
+          username: user.username,
+          is_bot: false,
+          avatar_url: nil # Placeholder for future avatar implementation
+        }
+      
+      nil ->
+        # If user not found in DB, assume it's a bot or dev/test user
+        %{
+          id: player_id,
+          username: "Bot/User #{String.slice(player_id, 0..5)}",
+          is_bot: true,
+          avatar_url: nil
+        }
+    end
   end
 end
