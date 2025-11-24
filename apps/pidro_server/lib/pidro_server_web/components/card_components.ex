@@ -43,6 +43,7 @@ defmodule PidroServerWeb.CardComponents do
   - `points` - Integer, show point badge if > 0
   - `size` - Atom, :sm | :md | :lg
   - `on_click` - Boolean, enable click handler
+  - `selected` - Boolean, highlight as selected
 
   ## Examples
 
@@ -56,11 +57,12 @@ defmodule PidroServerWeb.CardComponents do
   attr :points, :integer, default: 0
   attr :size, :atom, default: :md
   attr :on_click, :boolean, default: false
+  attr :selected, :boolean, default: false
 
   def card(assigns) do
     ~H"""
     <div
-      class={card_classes(@face_down, @playable, @trump, @size)}
+      class={card_classes(@face_down, @playable, @trump, @size, @selected)}
       phx-click={@on_click && "play_card"}
       phx-value-card={@card && encode_card(@card)}
     >
@@ -93,21 +95,23 @@ defmodule PidroServerWeb.CardComponents do
     """
   end
 
-  defp card_classes(face_down, playable, trump, size) do
-    base = "rounded shadow border"
+  defp card_classes(face_down, playable, trump, size, selected) do
+    base = "rounded shadow border relative transition-all duration-200"
     size_class = size_class(size)
     bg_class = if face_down, do: "bg-blue-800", else: "bg-white"
 
     trump_class =
       if trump and not face_down, do: "ring-2 ring-yellow-400", else: "border-gray-300"
 
-    playable_class =
-      if playable,
-        do:
-          "cursor-pointer hover:ring-2 hover:ring-blue-500 hover:-translate-y-1 transition-transform",
-        else: ""
+    selected_class =
+      if selected, do: "ring-4 ring-blue-500 -translate-y-4 z-10", else: ""
 
-    [base, size_class, bg_class, trump_class, playable_class]
+    playable_class =
+      if playable and not selected,
+        do: "cursor-pointer hover:ring-2 hover:ring-blue-500 hover:-translate-y-1",
+        else: if(selected, do: "cursor-pointer", else: "")
+
+    [base, size_class, bg_class, trump_class, selected_class, playable_class]
   end
 
   defp size_class(:sm), do: "w-8 h-12 text-xs"
@@ -149,19 +153,42 @@ defmodule PidroServerWeb.CardComponents do
   attr :position, :atom, required: true
   attr :is_current_turn, :boolean, default: false
   attr :is_human, :boolean, default: false
+  attr :is_bot, :boolean, default: false
   attr :show_cards, :boolean, default: true
   attr :legal_plays, :list, default: []
   attr :trump_suit, :atom, default: nil
   attr :is_cold, :boolean, default: false
+  attr :is_dealer, :boolean, default: false
+  attr :selected_cards, :list, default: []
+  attr :can_select, :boolean, default: false
   attr :orientation, :atom, default: :horizontal
+  attr :align, :atom, default: :start
 
   def hand(assigns) do
     ~H"""
     <div class={hand_container_classes(@is_current_turn)}>
-      <div class="flex items-center gap-2 mb-1">
+      <div
+        class={[
+          "flex items-center gap-2 mb-1 cursor-pointer hover:text-blue-300 transition-colors select-none",
+          header_align_class(@align)
+        ]}
+        phx-click="select_position"
+        phx-value-position={@position}
+        title="Click to switch view to this player"
+      >
         <span class="font-medium text-sm text-white">{position_label(@position)}</span>
+        <%= if @is_dealer do %>
+          <div class="bg-yellow-500 text-black text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full border border-yellow-600 shadow-sm" title="Dealer">D</div>
+        <% end %>
         <%= if @is_human do %>
-          <span class="text-blue-300 text-xs">👤 You</span>
+          <span class="text-blue-300 text-xs bg-blue-900/50 px-1 rounded border border-blue-500/30">
+            👤 You
+          </span>
+        <% end %>
+        <%= if @is_bot do %>
+          <span class="text-purple-300 text-xs bg-purple-900/50 px-1 rounded border border-purple-500/30">
+            🤖 Bot
+          </span>
         <% end %>
         <%= if @is_current_turn do %>
           <span class="text-green-300 text-xs animate-pulse">← Turn</span>
@@ -174,16 +201,17 @@ defmodule PidroServerWeb.CardComponents do
       <%= if @is_cold do %>
         <div class="text-gray-300 italic text-sm">No cards remaining</div>
       <% else %>
-        <div class={cards_row_classes(@orientation)}>
+        <div class={[cards_row_classes(@orientation), cards_align_class(@orientation, @align)]}>
           <%= for card <- sort_hand(@cards, @trump_suit) do %>
             <.card
               card={card}
               face_down={not @show_cards}
-              playable={card in @legal_plays}
+              playable={(@can_select and @is_human) or card in @legal_plays}
+              selected={card in @selected_cards}
               trump={is_trump?(card, @trump_suit)}
               points={point_value(card, @trump_suit)}
               size={:md}
-              on_click={card in @legal_plays}
+              on_click={(@can_select and @is_human) or card in @legal_plays}
             />
           <% end %>
         </div>
@@ -205,6 +233,17 @@ defmodule PidroServerWeb.CardComponents do
 
   defp cards_row_classes(:horizontal), do: "flex gap-1 flex-wrap"
   defp cards_row_classes(:vertical), do: "flex flex-col gap-1"
+
+  defp header_align_class(:start), do: "justify-start"
+  defp header_align_class(:end), do: "justify-end"
+  defp header_align_class(:center), do: "justify-center"
+
+  defp cards_align_class(:vertical, :start), do: "items-start"
+  defp cards_align_class(:vertical, :end), do: "items-end"
+  defp cards_align_class(:vertical, :center), do: "items-center"
+  defp cards_align_class(:horizontal, :start), do: "justify-start"
+  defp cards_align_class(:horizontal, :end), do: "justify-end"
+  defp cards_align_class(:horizontal, :center), do: "justify-center"
 
   # =============================================================================
   # Trick Area Component
@@ -370,14 +409,41 @@ defmodule PidroServerWeb.CardComponents do
   attr :selected_position, :atom, default: :south
   attr :god_mode, :boolean, default: false
   attr :legal_actions, :list, default: []
+  attr :bot_configs, :map, default: %{}
+  attr :selected_hand_cards, :list, default: []
 
   def card_table(assigns) do
     # Extract playable cards from legal actions
     legal_plays = extract_legal_plays(assigns.legal_actions)
-    assigns = assign(assigns, :legal_plays, legal_plays)
+    
+    # Check if hand selection is active (dealer second deal)
+    can_select_hand = Enum.any?(assigns.legal_actions, fn 
+      {:select_hand, _} -> true
+      _ -> false
+    end)
+
+    assigns = 
+      assigns 
+      |> assign(:legal_plays, legal_plays)
+      |> assign(:can_select_hand, can_select_hand)
 
     ~H"""
-    <div class="bg-green-800 rounded-xl p-4 shadow-lg">
+    <div class="bg-green-800 rounded-xl p-4 shadow-lg relative">
+      <%!-- God Mode Toggle --%>
+      <button
+        phx-click="select_position"
+        phx-value-position={if @god_mode, do: "south", else: "all"}
+        class={[
+          "absolute top-4 right-4 px-2 py-1 text-xs rounded border transition-colors z-10",
+          if(@god_mode,
+            do: "bg-yellow-500 text-black border-yellow-600",
+            else: "bg-green-700 text-green-100 border-green-600 hover:bg-green-600"
+          )
+        ]}
+      >
+        {if @god_mode, do: "👁 God Mode On", else: "👁 God Mode Off"}
+      </button>
+
       <%!-- North --%>
       <div class="flex justify-center mb-4">
         <.hand
@@ -385,52 +451,103 @@ defmodule PidroServerWeb.CardComponents do
           position={:north}
           is_current_turn={get_current_turn(@game_state) == :north}
           is_human={@selected_position == :north}
+          is_bot={is_bot(@bot_configs, :north)}
           show_cards={@god_mode or @selected_position == :north}
           legal_plays={if @selected_position == :north, do: @legal_plays, else: []}
           trump_suit={get_trump_suit(@game_state)}
           is_cold={player_is_cold?(@game_state, :north)}
+          is_dealer={get_dealer(@game_state) == :north}
+          selected_cards={if @selected_position == :north, do: @selected_hand_cards, else: []}
+          can_select={@can_select_hand and @selected_position == :north}
         />
       </div>
-      <%!-- West - Trick - East --%>
+      <%!-- West - Center - East --%>
       <div class="flex justify-between items-start mb-4 gap-4">
-        <div class="flex-1">
+        <div class="w-40 flex-none">
           <.hand
             cards={get_hand(@game_state, :west)}
             position={:west}
             is_current_turn={get_current_turn(@game_state) == :west}
             is_human={@selected_position == :west}
+            is_bot={is_bot(@bot_configs, :west)}
             show_cards={@god_mode or @selected_position == :west}
             legal_plays={if @selected_position == :west, do: @legal_plays, else: []}
             trump_suit={get_trump_suit(@game_state)}
             is_cold={player_is_cold?(@game_state, :west)}
+            is_dealer={get_dealer(@game_state) == :west}
             orientation={:vertical}
+            selected_cards={if @selected_position == :west, do: @selected_hand_cards, else: []}
+            can_select={@can_select_hand and @selected_position == :west}
           />
         </div>
 
-        <div class="flex-1">
-          <.trick_area
-            trick={get_current_trick(@game_state)}
-            leader={trick_leader(@game_state)}
-            winner={trick_winner(@game_state)}
-            trump_suit={get_trump_suit(@game_state)}
-            trick_number={get_trick_number(@game_state)}
-            points_in_trick={
-              calculate_trick_points(get_current_trick(@game_state), get_trump_suit(@game_state))
-            }
-          />
+        <div class="flex-1 min-w-[300px]">
+          <%= case @game_state.phase do %>
+            <% :dealer_selection -> %>
+              <div class="bg-green-700 rounded-lg p-8 min-h-[200px] flex flex-col items-center justify-center text-center border-2 border-dashed border-green-600">
+                <h3 class="text-xl text-green-100 font-bold mb-4">Dealer Selection</h3>
+                <button
+                  phx-click="execute_action"
+                  phx-value-action={Jason.encode!("select_dealer")}
+                  class="px-6 py-3 bg-yellow-500 hover:bg-yellow-400 text-yellow-900 font-bold rounded-lg shadow-lg transform transition hover:scale-105"
+                >
+                  Select Dealer
+                </button>
+              </div>
+            <% :bidding -> %>
+              <div class="bg-green-700/90 p-2 rounded-lg">
+                <.bidding_panel
+                  current_bid={get_current_bid(@game_state)}
+                  bidder={get_current_bidder(@game_state)}
+                  legal_actions={@legal_actions}
+                  bid_history={get_bid_history(@game_state)}
+                />
+              </div>
+            <% :declaring -> %>
+              <div class="bg-green-700/90 p-2 rounded-lg">
+                <.trump_selection_panel
+                  legal_actions={@legal_actions}
+                  hand={get_hand(@game_state, @selected_position)}
+                />
+              </div>
+            <% :second_deal when @can_select_hand -> %>
+              <div class="bg-green-700/90 p-2 rounded-lg">
+                <.hand_selection_panel
+                  selected_count={length(@selected_hand_cards)}
+                  target_count={6}
+                  can_submit={length(@selected_hand_cards) == 6}
+                />
+              </div>
+            <% _ -> %>
+              <.trick_area
+                trick={get_current_trick(@game_state)}
+                leader={trick_leader(@game_state)}
+                winner={trick_winner(@game_state)}
+                trump_suit={get_trump_suit(@game_state)}
+                trick_number={get_trick_number(@game_state)}
+                points_in_trick={
+                  calculate_trick_points(get_current_trick(@game_state), get_trump_suit(@game_state))
+                }
+              />
+          <% end %>
         </div>
 
-        <div class="flex-1">
+        <div class="w-40 flex-none">
           <.hand
             cards={get_hand(@game_state, :east)}
             position={:east}
             is_current_turn={get_current_turn(@game_state) == :east}
             is_human={@selected_position == :east}
+            is_bot={is_bot(@bot_configs, :east)}
             show_cards={@god_mode or @selected_position == :east}
             legal_plays={if @selected_position == :east, do: @legal_plays, else: []}
             trump_suit={get_trump_suit(@game_state)}
             is_cold={player_is_cold?(@game_state, :east)}
+            is_dealer={get_dealer(@game_state) == :east}
             orientation={:vertical}
+            align={:end}
+            selected_cards={if @selected_position == :east, do: @selected_hand_cards, else: []}
+            can_select={@can_select_hand and @selected_position == :east}
           />
         </div>
       </div>
@@ -441,10 +558,14 @@ defmodule PidroServerWeb.CardComponents do
           position={:south}
           is_current_turn={get_current_turn(@game_state) == :south}
           is_human={@selected_position == :south}
+          is_bot={is_bot(@bot_configs, :south)}
           show_cards={@god_mode or @selected_position == :south}
           legal_plays={if @selected_position == :south, do: @legal_plays, else: []}
           trump_suit={get_trump_suit(@game_state)}
           is_cold={player_is_cold?(@game_state, :south)}
+          is_dealer={get_dealer(@game_state) == :south}
+          selected_cards={if @selected_position == :south, do: @selected_hand_cards, else: []}
+          can_select={@can_select_hand and @selected_position == :south}
         />
       </div>
       <%!-- Game info bar --%>
@@ -508,7 +629,7 @@ defmodule PidroServerWeb.CardComponents do
             <% {:bid, amount} -> %>
               <button
                 phx-click="execute_action"
-                phx-value-action={"bid:#{amount}"}
+                phx-value-action={Jason.encode!(["bid", amount])}
                 class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 font-medium"
               >
                 Bid {amount}
@@ -516,7 +637,7 @@ defmodule PidroServerWeb.CardComponents do
             <% :pass -> %>
               <button
                 phx-click="execute_action"
-                phx-value-action="pass"
+                phx-value-action={Jason.encode!("pass")}
                 class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
               >
                 Pass
@@ -575,7 +696,7 @@ defmodule PidroServerWeb.CardComponents do
         <%= for {:declare_trump, suit} <- @legal_actions do %>
           <button
             phx-click="execute_action"
-            phx-value-action={"declare_trump:#{suit}"}
+            phx-value-action={Jason.encode!(["declare_trump", suit])}
             class={[
               "p-4 rounded-lg border-2 hover:border-blue-500 transition-colors",
               suit_button_color(suit)
@@ -597,6 +718,66 @@ defmodule PidroServerWeb.CardComponents do
   defp suit_button_color(_), do: "text-gray-900 border-gray-300"
 
   # =============================================================================
+  # Hand Selection Panel Component
+  # =============================================================================
+
+  @doc """
+  Renders UI for selecting cards to keep (dealer robs pack).
+
+  ## Attributes
+
+  - `selected_count` - Number of cards currently selected
+  - `target_count` - Number of cards to select (usually 6)
+  - `can_submit` - Boolean, true if selection is complete
+
+  ## Examples
+
+      <.hand_selection_panel
+        selected_count={6}
+        target_count={6}
+        can_submit={true}
+      />
+  """
+  attr :selected_count, :integer, default: 0
+  attr :target_count, :integer, default: 6
+  attr :can_submit, :boolean, default: false
+
+  def hand_selection_panel(assigns) do
+    ~H"""
+    <div class="bg-white rounded-lg p-4 shadow text-center">
+      <h3 class="font-bold mb-2 text-lg">Select Hand</h3>
+      <p class="text-sm text-gray-600 mb-4">
+        Choose exactly {@target_count} cards to keep.
+      </p>
+
+      <div class="mb-4">
+        <span class={[
+          "text-2xl font-bold",
+          if(@selected_count == @target_count, do: "text-green-600", else: "text-gray-800")
+        ]}>
+          {@selected_count} / {@target_count}
+        </span>
+        <span class="text-sm text-gray-500 ml-1">selected</span>
+      </div>
+
+      <button
+        phx-click="submit_hand_selection"
+        disabled={not @can_submit}
+        class={[
+          "px-6 py-2 rounded font-medium transition-colors",
+          if(@can_submit,
+            do: "bg-green-500 text-white hover:bg-green-600",
+            else: "bg-gray-300 text-gray-500 cursor-not-allowed"
+          )
+        ]}
+      >
+        Confirm Selection
+      </button>
+    </div>
+    """
+  end
+
+  # =============================================================================
   # Helper Functions
   # =============================================================================
 
@@ -610,7 +791,16 @@ defmodule PidroServerWeb.CardComponents do
   end
 
   defp get_hand(state, position) do
-    get_in(state, [:players, position, :hand]) || []
+    with %{players: players} <- state,
+         %{hand: hand} <- Map.get(players, position) do
+      hand
+    else
+      _ -> []
+    end
+  end
+
+  defp get_dealer(state) do
+    Map.get(state, :current_dealer)
   end
 
   defp get_current_turn(state) do
@@ -622,32 +812,52 @@ defmodule PidroServerWeb.CardComponents do
   end
 
   defp player_is_cold?(state, position) do
-    get_in(state, [:players, position, :cold]) || false
+    with %{players: players} <- state,
+         %{cold: cold} <- Map.get(players, position) do
+      cold
+    else
+      _ -> false
+    end
   end
 
   defp get_current_trick(state) do
     case Map.get(state, :current_trick) do
-      nil -> []
-      trick when is_list(trick) -> trick
-      _ -> []
+      %{plays: plays} when is_list(plays) ->
+        Enum.map(plays, fn {pos, card} -> %{position: pos, card: card} end)
+
+      trick when is_list(trick) ->
+        trick
+
+      _ ->
+        []
     end
   end
 
   defp trick_leader(state) do
-    case get_current_trick(state) do
-      [%{position: leader} | _] -> leader
+    case Map.get(state, :current_trick) do
+      %{leader: leader} ->
+        leader
+
+      _ ->
+        case get_current_trick(state) do
+          [%{position: leader} | _] -> leader
+          _ -> nil
+        end
+    end
+  end
+
+  defp trick_winner(state) do
+    case Map.get(state, :current_trick) do
+      %{winner: winner} -> winner
       _ -> nil
     end
   end
 
-  defp trick_winner(_state) do
-    # TODO: Calculate current winning position based on highest trump
-    # This would use Pidro.Core.Trick logic
-    nil
-  end
-
   defp get_trick_number(state) do
-    (Map.get(state, :tricks_played, 0) || 0) + 1
+    case Map.get(state, :current_trick) do
+      %{number: number} -> number
+      _ -> Map.get(state, :trick_number, 1)
+    end
   end
 
   defp calculate_trick_points(trick, trump_suit) do
@@ -664,6 +874,34 @@ defmodule PidroServerWeb.CardComponents do
   end
 
   defp get_score(state, team) do
-    get_in(state, [:cumulative_scores, team]) || 0
+    case Map.get(state, :cumulative_scores) do
+      scores when is_map(scores) -> Map.get(scores, team, 0)
+      _ -> 0
+    end
+  end
+
+  defp is_bot(bot_configs, position) do
+    case Map.get(bot_configs, position) do
+      %{type: :bot} -> true
+      _ -> false
+    end
+  end
+
+  defp get_current_bid(state) do
+    case Map.get(state, :highest_bid) do
+      {_position, amount} -> amount
+      _ -> nil
+    end
+  end
+
+  defp get_current_bidder(state) do
+    case Map.get(state, :highest_bid) do
+      {position, _amount} -> position
+      _ -> nil
+    end
+  end
+
+  defp get_bid_history(state) do
+    Map.get(state, :bids, [])
   end
 end

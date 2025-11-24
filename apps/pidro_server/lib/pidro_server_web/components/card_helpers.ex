@@ -92,14 +92,25 @@ defmodule PidroServerWeb.CardHelpers do
   def sort_hand(cards, trump_suit) do
     Enum.sort_by(cards, fn card ->
       is_trump = is_trump?(card, trump_suit)
-      {rank, _suit} = card
+      {rank, suit} = card
 
       # Trump cards first (priority 0), then non-trump (priority 1)
-      # Within each group, sort by rank descending
       trump_priority = if is_trump, do: 0, else: 1
-      {trump_priority, -rank}
+
+      # Group non-trumps by suit. Trumps are grouped together (0).
+      # We use a fixed order for suits to keep them stable.
+      suit_group = if is_trump, do: 0, else: suit_order(suit)
+
+      # Sort by rank descending
+      {trump_priority, suit_group, -rank}
     end)
   end
+
+  defp suit_order(:spades), do: 0
+  defp suit_order(:hearts), do: 1
+  defp suit_order(:clubs), do: 2
+  defp suit_order(:diamonds), do: 3
+  defp suit_order(_), do: 4
 
   # =============================================================================
   # Card Formatting
@@ -174,8 +185,12 @@ defmodule PidroServerWeb.CardHelpers do
       iex> CardHelpers.suit_color(:spades)
       "text-gray-900"
   """
-  @spec suit_color(Card.suit()) :: String.t()
-  def suit_color(suit) when suit in [:hearts, :diamonds], do: "text-red-600"
+  @spec suit_color(Card.card() | Card.suit()) :: String.t()
+  def suit_color({_rank, suit}), do: suit_color(suit)
+  def suit_color(:hearts), do: "text-red-600"
+  def suit_color(:diamonds), do: "text-rose-500"
+  def suit_color(:spades), do: "text-gray-900"
+  def suit_color(:clubs), do: "text-slate-600"
   def suit_color(_), do: "text-gray-900"
 
   @doc """
