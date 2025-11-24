@@ -13,6 +13,7 @@ defmodule PidroServerWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug OpenApiSpex.Plug.PutApiSpec, module: PidroServerWeb.ApiSpec
   end
 
   pipeline :api_authenticated do

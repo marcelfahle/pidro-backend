@@ -212,7 +212,7 @@ defmodule PidroServerWeb.API.AuthController do
     ## Error Responses
     - Returns 401 Unauthorized if token is missing, invalid, or expired
     """,
-    security: [%{"bearer" => []}],
+    security: [%{"bearer_auth" => []}],
     responses: [
       ok: {"Current user retrieved successfully", "application/json", UserSchemas.UserResponse},
       unauthorized:

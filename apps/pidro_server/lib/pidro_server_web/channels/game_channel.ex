@@ -92,10 +92,8 @@ defmodule PidroServerWeb.GameChannel do
                 # Broadcast reconnection to other players
                 position = get_player_position(updated_room, user_id)
 
-                broadcast_from(socket, "player_reconnected", %{
-                  user_id: user_id,
-                  position: position
-                })
+                # Schedule broadcast after join is complete
+                send(self(), {:broadcast_reconnection, user_id, position})
 
                 # Continue with normal join flow
                 proceed_with_join(room_code, user_id, socket, :reconnect, :player)
@@ -281,6 +279,15 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:broadcast_reconnection, user_id, position}, socket) do
+    broadcast_from(socket, "player_reconnected", %{
+      user_id: user_id,
+      position: position
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info(:after_join, socket) do
     user_id = socket.assigns.user_id
     role = socket.assigns.role
@@ -361,13 +368,18 @@ defmodule PidroServerWeb.GameChannel do
           )
 
           # Notify room manager - this will handle cleanup and broadcast to room channel
-          RoomManager.leave_room(user_id)
+          # Use handle_player_disconnect instead of leave_room
+          case RoomManager.handle_player_disconnect(room_code, user_id) do
+            :ok -> :ok
+            error -> Logger.warning("Failed to handle disconnect: #{inspect(error)}")
+          end
 
           # Broadcast to other users in the game channel
           broadcast_from(socket, "player_disconnected", %{
             user_id: user_id,
             position: socket.assigns[:position],
-            reason: format_reason(reason)
+            reason: format_reason(reason),
+            grace_period: true
           })
 
         :spectator ->
@@ -462,6 +474,7 @@ defmodule PidroServerWeb.GameChannel do
 
   @spec format_reason(term()) :: String.t()
   defp format_reason(:normal), do: "left"
+  defp format_reason({:shutdown, :left}), do: "left"
   defp format_reason(:shutdown), do: "connection_lost"
   defp format_reason({:shutdown, _}), do: "connection_lost"
   defp format_reason(_), do: "error"
