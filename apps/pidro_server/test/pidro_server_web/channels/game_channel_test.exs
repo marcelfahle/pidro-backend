@@ -553,8 +553,9 @@ defmodule PidroServerWeb.GameChannelTest do
 
       {:ok, room} = RoomManager.get_room(room_code)
 
-      # Player should still be in player_ids (grace period)
-      assert to_string(user.id) in Enum.map(room.player_ids, &to_string/1)
+      # Player should still be in positions (grace period)
+      player_ids = PidroServer.Games.Room.Positions.player_ids(room)
+      assert to_string(user.id) in Enum.map(player_ids, &to_string/1)
       # Player should be in disconnected_players
       assert Map.has_key?(room.disconnected_players, user.id)
     end
@@ -666,7 +667,8 @@ defmodule PidroServerWeb.GameChannelTest do
 
       # Both should succeed (same player, multiple connections)
       {:ok, room} = RoomManager.get_room(room_code)
-      user_count = Enum.count(room.player_ids, fn id -> to_string(id) == to_string(user.id) end)
+      player_ids = PidroServer.Games.Room.Positions.player_ids(room)
+      user_count = Enum.count(player_ids, fn id -> to_string(id) == to_string(user.id) end)
       assert user_count == 1
     end
   end

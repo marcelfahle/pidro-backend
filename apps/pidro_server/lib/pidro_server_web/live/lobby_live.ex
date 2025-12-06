@@ -37,7 +37,7 @@ defmodule PidroServerWeb.LobbyLive do
           <h1 class="text-4xl font-bold text-zinc-900">Pidro Server - Lobby Monitor</h1>
           <p class="mt-2 text-lg text-zinc-600">Real-time overview of all game rooms</p>
         </div>
-        
+
     <!-- Statistics Cards -->
         <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
           <div class="bg-white overflow-hidden shadow rounded-lg">
@@ -68,7 +68,7 @@ defmodule PidroServerWeb.LobbyLive do
             </div>
           </div>
         </div>
-        
+
     <!-- Rooms Table -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg">
           <div class="px-4 py-5 sm:px-6">
@@ -133,7 +133,7 @@ defmodule PidroServerWeb.LobbyLive do
                         </span>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        {length(room.player_ids)} / 4
+                        {PidroServer.Games.Room.Positions.count(room)} / 4
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
                         {room.host_id |> String.slice(0..7)}...
@@ -158,7 +158,7 @@ defmodule PidroServerWeb.LobbyLive do
             <% end %>
           </div>
         </div>
-        
+
     <!-- Auto-refresh indicator -->
         <div class="mt-4 text-center text-sm text-zinc-500">
           <span class="inline-flex items-center">

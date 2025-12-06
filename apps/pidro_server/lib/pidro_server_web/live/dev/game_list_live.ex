@@ -19,6 +19,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
   use PidroServerWeb, :live_view
   alias PidroServer.Dev.BotManager
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.Room.Positions
   alias PidroServer.Accounts.Auth
 
   @impl true
@@ -547,7 +548,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                         </span>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        {length(room.player_ids)} / 4
+                        {Positions.count(room)} / 4
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
                         {room.host_id |> String.slice(0..7)}...

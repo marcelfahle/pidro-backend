@@ -814,7 +814,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               </div>
               <div>
                 <dt class="text-sm font-medium text-zinc-500">Players</dt>
-                <dd class="mt-1 text-sm text-zinc-900">{length(@room.player_ids)} / 4</dd>
+                <dd class="mt-1 text-sm text-zinc-900">
+                  {PidroServer.Games.Room.Positions.count(@room)} / 4
+                </dd>
               </div>
               <div>
                 <dt class="text-sm font-medium text-zinc-500">Host</dt>
@@ -2114,23 +2116,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   defp is_seat_available?(room, position) do
     # Helper to check if a seat is physically occupied by a player ID
-    # Positions: North=0, East=1, South=2, West=3
-    index =
-      case position do
-        :north -> 0
-        :east -> 1
-        :south -> 2
-        :west -> 3
-        _ -> -1
-      end
+    alias PidroServer.Games.Room.Positions
 
-    if index >= 0 and index < length(room.player_ids) do
-      # Occupied
-      false
-    else
-      # Empty
-      true
-    end
+    # Check if the position is occupied in the positions map
+    not Positions.has_player?(room, room.positions[position])
   end
 
   # Event log helper functions
