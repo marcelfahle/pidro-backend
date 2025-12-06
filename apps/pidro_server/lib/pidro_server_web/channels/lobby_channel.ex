@@ -114,16 +114,19 @@ defmodule PidroServerWeb.LobbyChannel do
   ## Private Helpers
 
   defp serialize_room_with_users(room) do
-    user_map = Auth.get_users_map(room.player_ids)
+    alias PidroServer.Games.Room.Positions
+    player_ids = Positions.player_ids(room)
+    user_map = Auth.get_users_map(player_ids)
     serialize_room(room, user_map)
   end
 
   @spec serialize_rooms([RoomManager.Room.t()]) :: [map()]
   defp serialize_rooms(rooms) do
+    alias PidroServer.Games.Room.Positions
     # Bulk fetch all users involved in these rooms to avoid N+1 queries
     all_player_ids =
       rooms
-      |> Enum.flat_map(& &1.player_ids)
+      |> Enum.flat_map(&Positions.player_ids/1)
       |> Enum.uniq()
 
     user_map = Auth.get_users_map(all_player_ids)
@@ -133,10 +136,12 @@ defmodule PidroServerWeb.LobbyChannel do
 
   @spec serialize_room(RoomManager.Room.t(), map()) :: map()
   defp serialize_room(room, user_map) do
+    alias PidroServer.Games.Room.Positions
+
     %{
       code: room.code,
       host_id: room.host_id,
-      player_count: length(room.player_ids),
+      player_count: Positions.count(room),
       max_players: room.max_players,
       status: room.status,
       created_at: DateTime.to_iso8601(room.created_at),
@@ -146,13 +151,15 @@ defmodule PidroServerWeb.LobbyChannel do
   end
 
   defp serialize_seats(room, user_map) do
-    # Pidro usually has 4 seats. We map the current player list to seats.
-    # Assuming player_ids order corresponds to seat 0, 1, 2, 3.
-    
-    Enum.map(0..(room.max_players - 1), fn seat_index ->
-      player_id = Enum.at(room.player_ids, seat_index)
-      
-      player_data = 
+    # Map positions to seats with player data
+    positions = [:north, :east, :south, :west]
+
+    positions
+    |> Enum.with_index()
+    |> Enum.map(fn {position, index} ->
+      player_id = room.positions[position]
+
+      player_data =
         if player_id do
           get_player_summary(player_id, user_map)
         else
@@ -160,7 +167,8 @@ defmodule PidroServerWeb.LobbyChannel do
         end
 
       %{
-        seat_index: seat_index,
+        position: position,
+        seat_index: index,
         status: if(player_id, do: "occupied", else: "free"),
         player: player_data
       }
@@ -174,9 +182,10 @@ defmodule PidroServerWeb.LobbyChannel do
           id: user.id,
           username: user.username,
           is_bot: false,
-          avatar_url: nil # Placeholder for future avatar implementation
+          # Placeholder for future avatar implementation
+          avatar_url: nil
         }
-      
+
       nil ->
         # If user not found in DB, assume it's a bot or dev/test user
         %{

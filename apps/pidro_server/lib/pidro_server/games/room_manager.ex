@@ -44,6 +44,7 @@ defmodule PidroServer.Games.RoomManager do
   require Logger
 
   alias PidroServer.Games.GameSupervisor
+  alias PidroServer.Games.Room.Positions
 
   @max_players 4
   @room_code_length 4
@@ -57,7 +58,7 @@ defmodule PidroServer.Games.RoomManager do
 
     - `:code` - Unique 4-character alphanumeric room code
     - `:host_id` - User ID of the room host (creator)
-    - `:player_ids` - List of user IDs currently in the room
+    - `:positions` - Map of positions to player IDs (%{north: "user1", east: nil, ...}) - SINGLE SOURCE OF TRUTH
     - `:spectator_ids` - List of user IDs currently spectating the room
     - `:status` - Current room status (`:waiting`, `:ready`, `:playing`, `:finished`, or `:closed`)
     - `:max_players` - Maximum number of players (default: 4)
@@ -65,13 +66,19 @@ defmodule PidroServer.Games.RoomManager do
     - `:created_at` - DateTime when the room was created
     - `:metadata` - Additional room metadata (e.g., room name)
     - `:disconnected_players` - Map of disconnected players with their disconnect timestamps (%{user_id => DateTime.t()})
+
+    ## Derived Data
+
+    DO NOT store player_ids separately. Use `Positions.player_ids(room)` to derive the list.
     """
 
+    @type position :: :north | :east | :south | :west
+    @type positions_map :: %{position() => String.t() | nil}
     @type status :: :waiting | :ready | :playing | :finished | :closed
     @type t :: %__MODULE__{
             code: String.t(),
             host_id: String.t(),
-            player_ids: [String.t()],
+            positions: positions_map(),
             spectator_ids: [String.t()],
             status: status(),
             max_players: integer(),
@@ -85,12 +92,12 @@ defmodule PidroServer.Games.RoomManager do
     defstruct [
       :code,
       :host_id,
-      :player_ids,
       :status,
       :max_players,
       :created_at,
       :metadata,
       :last_activity,
+      positions: %{north: nil, east: nil, south: nil, west: nil},
       spectator_ids: [],
       max_spectators: 10,
       disconnected_players: %{}
@@ -167,24 +174,35 @@ defmodule PidroServer.Games.RoomManager do
 
   - `room_code` - The unique room code (case-insensitive)
   - `player_id` - User ID of the joining player
+  - `position` - Optional position preference (`:north`, `:east`, `:south`, `:west`, `:north_south`, `:east_west`, or `nil` for auto)
 
   ## Returns
 
-  - `{:ok, room}` - Successfully joined room
+  - `{:ok, room, assigned_position}` - Successfully joined room with assigned position
   - `{:error, :room_not_found}` - Room code doesn't exist
   - `{:error, :room_full}` - Room already has 4 players
   - `{:error, :already_in_room}` - Player is already in another room
-  - `{:error, :already_in_this_room}` - Player is already in this room
+  - `{:error, :seat_taken}` - Requested specific seat is already occupied
+  - `{:error, :team_full}` - Requested team is fully occupied
+  - `{:error, :invalid_position}` - Invalid position parameter
 
   ## Examples
 
-      {:ok, room} = RoomManager.join_room("A1B2", "user456")
+      {:ok, room, :north} = RoomManager.join_room("A1B2", "user456", :north)
+      {:ok, room, :south} = RoomManager.join_room("A1B2", "user789", :north_south)
+      {:ok, room, :east} = RoomManager.join_room("A1B2", "user999")
   """
-  @spec join_room(String.t(), String.t()) ::
-          {:ok, Room.t()}
-          | {:error, :room_not_found | :room_full | :already_in_room | :already_in_this_room}
-  def join_room(room_code, player_id) do
-    GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id})
+  @spec join_room(String.t(), String.t(), Positions.choice()) ::
+          {:ok, Room.t(), Positions.position()}
+          | {:error,
+             :room_not_found
+             | :room_full
+             | :already_in_room
+             | :seat_taken
+             | :team_full
+             | :invalid_position}
+  def join_room(room_code, player_id, position \\ nil) do
+    GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id, position})
   end
 
   @doc """
@@ -475,102 +493,76 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_call({:create_room, host_id, metadata}, _from, %State{} = state) do
-    cond do
-      Map.has_key?(state.player_rooms, host_id) ->
-        {:reply, {:error, :already_in_room}, state}
+    with :ok <- ensure_not_in_other_room(state, host_id, nil) do
+      room_code = generate_room_code()
+      now = DateTime.utc_now()
 
-      true ->
-        room_code = generate_room_code()
-        now = DateTime.utc_now()
+      room = %Room{
+        code: room_code,
+        host_id: host_id,
+        positions: Positions.empty(),
+        status: :waiting,
+        max_players: @max_players,
+        created_at: now,
+        last_activity: now,
+        metadata: metadata
+      }
 
-        room = %Room{
-          code: room_code,
-          host_id: host_id,
-          player_ids: [host_id],
-          status: :waiting,
-          max_players: @max_players,
-          created_at: now,
-          last_activity: now,
-          metadata: metadata
+      # Auto-assign host to first available position
+      {:ok, room_with_host, _pos} = Positions.assign(room, host_id, :auto)
+
+      %State{} =
+        new_state = %State{
+          state
+          | rooms: Map.put(state.rooms, room_code, room_with_host),
+            player_rooms: Map.put(state.player_rooms, host_id, room_code)
         }
 
-        %State{} =
-          new_state = %State{
-            state
-            | rooms: Map.put(state.rooms, room_code, room),
-              player_rooms: Map.put(state.player_rooms, host_id, room_code)
-          }
+      Logger.info("Room created: #{room_code} by host: #{host_id}")
+      broadcast_lobby_event({:room_created, room_with_host})
 
-        Logger.info("Room created: #{room_code} by host: #{host_id}")
-        broadcast_lobby_event({:room_created, room})
-
-        {:reply, {:ok, room}, new_state}
+      {:reply, {:ok, room_with_host}, new_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   @impl true
-  def handle_call({:join_room, room_code, player_id}, _from, %State{} = state) do
-    cond do
-      not Map.has_key?(state.rooms, room_code) ->
-        {:reply, {:error, :room_not_found}, state}
+  def handle_call({:join_room, room_code, player_id, position}, _from, %State{} = state) do
+    with {:ok, room} <- fetch_room(state, room_code),
+         :ok <- ensure_not_in_other_room(state, player_id, room_code),
+         :ok <- ensure_room_joinable(room),
+         {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
+      # Update room status and last activity
+      final_room =
+        updated_room
+        |> maybe_set_ready()
+        |> touch_last_activity()
 
-      Map.has_key?(state.player_rooms, player_id) ->
-        # Check if already in this specific room
-        if state.player_rooms[player_id] == room_code do
-          {:reply, {:error, :already_in_this_room}, state}
+      # Update state
+      new_state = put_room_and_player(state, final_room, player_id)
+
+      # Log and broadcast
+      player_count = Positions.count(final_room)
+
+      Logger.info(
+        "Player #{player_id} joined room #{room_code} at position #{assigned_position} (#{player_count}/#{@max_players})"
+      )
+
+      broadcast_room(room_code, final_room)
+      broadcast_lobby_event({:room_updated, final_room})
+
+      # Auto-start game if room is now ready
+      final_state =
+        if final_room.status == :ready do
+          start_game_for_room(final_room, new_state)
         else
-          {:reply, {:error, :already_in_room}, state}
+          new_state
         end
 
-      true ->
-        %Room{} = room = state.rooms[room_code]
-
-        cond do
-          room.status not in [:waiting, :ready] ->
-            {:reply, {:error, :room_not_available}, state}
-
-          length(room.player_ids) >= room.max_players ->
-            {:reply, {:error, :room_full}, state}
-
-          true ->
-            updated_player_ids = room.player_ids ++ [player_id]
-            player_count = length(updated_player_ids)
-
-            # Auto-start game when 4th player joins
-            new_status = if player_count == @max_players, do: :ready, else: :waiting
-
-            %Room{} =
-              updated_room = %Room{
-                room
-                | player_ids: updated_player_ids,
-                  status: new_status,
-                  last_activity: DateTime.utc_now()
-              }
-
-            %State{} =
-              new_state = %State{
-                state
-                | rooms: Map.put(state.rooms, room_code, updated_room),
-                  player_rooms: Map.put(state.player_rooms, player_id, room_code)
-              }
-
-            Logger.info(
-              "Player #{player_id} joined room #{room_code} (#{player_count}/#{@max_players})"
-            )
-
-            broadcast_room(room_code, updated_room)
-            broadcast_lobby_event({:room_updated, updated_room})
-
-            # Start game if room is ready
-            final_state =
-              if new_status == :ready do
-                start_game_for_room(updated_room, new_state)
-              else
-                new_state
-              end
-
-            {:reply, {:ok, updated_room}, final_state}
-        end
+      {:reply, {:ok, final_room, assigned_position}, final_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -586,43 +578,35 @@ defmodule PidroServer.Games.RoomManager do
         # If host leaves, close the room entirely
         if room.host_id == player_id do
           Logger.info("Host #{player_id} left room #{room_code}, closing room")
-
           new_state = remove_room(state, room_code)
-
           {:reply, :ok, new_state}
         else
-          # Remove player from room
-          Logger.info("Attempting to remove player #{inspect(player_id)} from #{inspect(room.player_ids)}")
-          updated_player_ids = List.delete(room.player_ids, player_id)
-          Logger.info("Updated player list: #{inspect(updated_player_ids)}")
+          # Remove player from their position
+          updated_room = Positions.remove(room, player_id)
 
           # If room becomes empty, delete it
-          if Enum.empty?(updated_player_ids) do
+          if Positions.count(updated_room) == 0 do
             Logger.info("Room #{room_code} is now empty, deleting")
-
             new_state = remove_room(state, room_code)
-
             {:reply, :ok, new_state}
           else
-            %Room{} =
-              updated_room = %Room{
-                room
-                | player_ids: updated_player_ids,
-                  status: :waiting,
-                  last_activity: DateTime.utc_now()
-              }
+            # Update room status back to waiting and touch activity
+            final_room =
+              updated_room
+              |> Map.put(:status, :waiting)
+              |> touch_last_activity()
 
             %State{} =
               new_state = %State{
                 state
-                | rooms: Map.put(state.rooms, room_code, updated_room),
+                | rooms: Map.put(state.rooms, room_code, final_room),
                   player_rooms: Map.delete(state.player_rooms, player_id)
               }
 
             Logger.info("Player #{player_id} left room #{room_code}")
 
-            broadcast_room(room_code, updated_room)
-            broadcast_lobby_event({:room_updated, updated_room})
+            broadcast_room(room_code, final_room)
+            broadcast_lobby_event({:room_updated, final_room})
 
             {:reply, :ok, new_state}
           end
@@ -655,7 +639,8 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        %Room{} = updated_room = %Room{room | status: new_status, last_activity: DateTime.utc_now()}
+        %Room{} =
+          updated_room = %Room{room | status: new_status, last_activity: DateTime.utc_now()}
 
         %State{} =
           new_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
@@ -790,7 +775,7 @@ defmodule PidroServer.Games.RoomManager do
 
       %Room{} = room ->
         # Only track disconnect if player is actually in the room
-        if user_id in room.player_ids do
+        if Positions.has_player?(room, user_id) do
           %Room{} =
             updated_room = %Room{
               room
@@ -812,7 +797,12 @@ defmodule PidroServer.Games.RoomManager do
 
           # Schedule cleanup check after grace period
           grace_period = get_grace_period_ms()
-          Process.send_after(self(), {:check_disconnect_timeout, room_code, user_id}, grace_period)
+
+          Process.send_after(
+            self(),
+            {:check_disconnect_timeout, room_code, user_id},
+            grace_period
+          )
 
           {:reply, :ok, updated_state}
         else
@@ -930,13 +920,11 @@ defmodule PidroServer.Games.RoomManager do
                 "Player #{user_id} grace period expired for room #{room_code}, removing from room"
               )
 
-              # Remove player from room entirely
-              %Room{} =
-                updated_room = %Room{
-                  room
-                  | player_ids: List.delete(room.player_ids, user_id),
-                    disconnected_players: Map.delete(room.disconnected_players, user_id)
-                }
+              # Remove player from their position and from disconnected list
+              updated_room =
+                room
+                |> Positions.remove(user_id)
+                |> Map.put(:disconnected_players, Map.delete(room.disconnected_players, user_id))
 
               # Update player_rooms
               updated_player_rooms = Map.delete(state.player_rooms, user_id)
@@ -967,6 +955,50 @@ defmodule PidroServer.Games.RoomManager do
   ## Private Helper Functions
 
   @doc false
+  defp fetch_room(%State{rooms: rooms}, code) do
+    case Map.get(rooms, code) do
+      nil -> {:error, :room_not_found}
+      room -> {:ok, room}
+    end
+  end
+
+  @doc false
+  defp ensure_not_in_other_room(%State{player_rooms: pr}, player_id, room_code) do
+    case Map.get(pr, player_id) do
+      nil -> :ok
+      ^room_code -> {:error, :already_seated}
+      _other -> {:error, :already_in_room}
+    end
+  end
+
+  @doc false
+  defp ensure_room_joinable(%Room{status: status}) when status in [:waiting, :ready], do: :ok
+  defp ensure_room_joinable(_), do: {:error, :room_not_available}
+
+  @doc false
+  defp maybe_set_ready(%Room{} = room) do
+    if Positions.count(room) == @max_players do
+      %{room | status: :ready}
+    else
+      room
+    end
+  end
+
+  @doc false
+  defp touch_last_activity(%Room{} = room) do
+    %{room | last_activity: DateTime.utc_now()}
+  end
+
+  @doc false
+  defp put_room_and_player(%State{} = state, %Room{code: code} = room, player_id) do
+    %State{
+      state
+      | rooms: Map.put(state.rooms, code, room),
+        player_rooms: Map.put(state.player_rooms, player_id, code)
+    }
+  end
+
+  @doc false
   defp get_grace_period_ms do
     Application.get_env(:pidro_server, PidroServer.Games.RoomManager)[:grace_period_ms] || 120_000
   end
@@ -982,8 +1014,10 @@ defmodule PidroServer.Games.RoomManager do
         # Remove room and all player/spectator mappings
         new_rooms = Map.delete(state.rooms, room_code)
 
+        player_ids = Positions.player_ids(room)
+
         new_player_rooms =
-          Enum.reduce(room.player_ids, state.player_rooms, fn player_id, acc ->
+          Enum.reduce(player_ids, state.player_rooms, fn player_id, acc ->
             Map.delete(acc, player_id)
           end)
 
@@ -1029,9 +1063,9 @@ defmodule PidroServer.Games.RoomManager do
     is_idle = DateTime.diff(now, room.last_activity, :second) > grace_period_seconds
 
     # Check if room is effectively empty (all players disconnected or room empty)
-    # Note: disconnected players are in the player_ids list, so we filter them out
+    # Note: disconnected players are in positions, so we filter them out
     active_player_count =
-      room.player_ids
+      Positions.player_ids(room)
       |> Enum.count(fn id -> !Map.has_key?(room.disconnected_players, id) end)
 
     active_spectator_count = length(room.spectator_ids)
@@ -1093,7 +1127,8 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   @spec start_game_for_room(Room.t(), State.t()) :: State.t()
   defp start_game_for_room(%Room{} = room, %State{} = state) do
-    Logger.info("Starting game for room #{room.code} with players: #{inspect(room.player_ids)}")
+    player_ids = Positions.player_ids(room)
+    Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
     case GameSupervisor.start_game(room.code) do
       {:ok, _pid} ->

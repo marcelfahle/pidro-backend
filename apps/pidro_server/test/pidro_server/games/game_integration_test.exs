@@ -161,13 +161,14 @@ defmodule PidroServer.Games.GameIntegrationTest do
       room_code = room.code
 
       # Join 3 more players
-      assert {:ok, _room} = RoomManager.join_room(room_code, "player2")
-      assert {:ok, _room} = RoomManager.join_room(room_code, "player3")
-      assert {:ok, room} = RoomManager.join_room(room_code, "player4")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "player2")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "player3")
+      assert {:ok, room, _} = RoomManager.join_room(room_code, "player4")
 
       # Room should be ready
+      alias PidroServer.Games.Room.Positions
       assert room.status == :ready
-      assert length(room.player_ids) == 4
+      assert Positions.count(room) == 4
 
       # Game should have auto-started
       # Give it a moment to start

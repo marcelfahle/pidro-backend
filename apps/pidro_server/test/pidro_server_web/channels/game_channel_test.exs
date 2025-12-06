@@ -44,9 +44,9 @@ defmodule PidroServerWeb.GameChannelTest do
     {:ok, room} = RoomManager.create_room(user1.id, %{name: "Test Game"})
     room_code = room.code
 
-    {:ok, _room} = RoomManager.join_room(room_code, user2.id)
-    {:ok, _room} = RoomManager.join_room(room_code, user3.id)
-    {:ok, room} = RoomManager.join_room(room_code, user4.id)
+    {:ok, _, _} = RoomManager.join_room(room_code, user2.id)
+    {:ok, _, _} = RoomManager.join_room(room_code, user3.id)
+    {:ok, room, _} = RoomManager.join_room(room_code, user4.id)
 
     # Start the game (handle case where it's already started)
     case GameSupervisor.start_game(room_code) do
@@ -578,7 +578,10 @@ defmodule PidroServerWeb.GameChannelTest do
       close(socket2)
 
       # Socket1 should receive disconnect broadcast
-      assert_broadcast "player_disconnected", %{user_id: user_id, reason: reason, grace_period: grace_period}, 1000
+      assert_broadcast "player_disconnected",
+                       %{user_id: user_id, reason: reason, grace_period: grace_period},
+                       1000
+
       assert to_string(user_id) == to_string(user2.id)
       assert reason in ["left", "connection_lost", "error"]
       assert grace_period == true

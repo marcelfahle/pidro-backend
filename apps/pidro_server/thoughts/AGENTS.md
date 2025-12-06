@@ -1,6 +1,62 @@
 This is a web application written using the Phoenix web framework.
 
-## Project guidelines
+## Architectural Principles
+
+Inspired by Rich Hickey (Clojure) and Dave Thomas (Elixir/Pragmatic):
+
+### Data > Functions > Macros
+
+- Prefer plain data structures (maps, structs) over complex abstractions
+- Pure functions transform data; side effects happen at boundaries
+- Avoid macros unless there's a compelling reason
+
+### Single Source of Truth
+
+- Each piece of state should live in exactly one place
+- Derive data instead of storing duplicates
+- Example: derive `player_ids` from `positions` map, don't store both
+
+### Thin GenServers
+
+GenServers should be **coordinators**, not **calculators**:
+
+```elixir
+# Good: thin GenServer delegates to pure function
+def handle_call({:join_room, room_code, player_id, position}, _from, state) do
+  with {:ok, room} <- fetch_room(state, room_code),
+       {:ok, updated_room, pos} <- Positions.assign(room, player_id, position) do
+    # update state, broadcast, reply
+  end
+end
+
+# Bad: business logic mixed into GenServer
+def handle_call({:join_room, ...}, _from, state) do
+  cond do
+    # 50 lines of nested conditionals...
+  end
+end
+```
+
+### Separation of Concerns
+
+- **Pure modules**: Business logic, data transformations (testable in isolation)
+- **GenServers**: State coordination, message handling
+- **Controllers/Channels**: HTTP/WebSocket boundaries, parse input, format output
+- **Schemas**: OpenAPI specs, validation
+
+### Error Handling
+
+- Return `{:ok, result}` or `{:error, reason}` tuples
+- Use `with` chains for multi-step operations
+- Errors should be atoms or tagged tuples with context: `{:error, {:seat_taken, available}}`
+
+### Naming Conventions
+
+- Predicate functions end in `?`: `has_player?/2`, `full?/1`
+- Query functions describe what they return: `available/1`, `player_ids/1`
+- Mutation functions describe the action: `assign/3`, `remove/2`
+
+## Project Guidelines
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps

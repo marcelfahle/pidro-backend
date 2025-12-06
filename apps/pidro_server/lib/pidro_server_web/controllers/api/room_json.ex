@@ -7,19 +7,26 @@ defmodule PidroServerWeb.API.RoomJSON do
   single room responses, room lists, and room creation responses.
   """
 
+  alias PidroServer.Games.Room.Positions
+
   @doc """
   Renders a single room response.
 
   Takes a map with a :room key and returns the serialized room data
-  wrapped in a data envelope.
+  wrapped in a data envelope. Optionally includes assigned_position if provided.
 
   ## Examples
 
       iex> show(%{room: room})
       %{data: %{room: room_data}}
+
+      iex> show(%{room: room, assigned_position: :north})
+      %{data: %{room: room_data, assigned_position: "north"}}
   """
-  def show(%{room: room}) do
-    %{data: %{room: data(room)}}
+  def show(assigns) do
+    data = %{room: room(assigns)}
+    data = maybe_add_assigned_position(data, assigns)
+    %{data: data}
   end
 
   @doc """
@@ -34,7 +41,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{rooms: [room_data1, room_data2]}}
   """
   def index(%{rooms: rooms}) do
-    %{data: %{rooms: Enum.map(rooms, &data/1)}}
+    %{data: %{rooms: Enum.map(rooms, &room/1)}}
   end
 
   @doc """
@@ -49,7 +56,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{room: room_data, code: "A1B2"}}
   """
   def created(%{room: room}) do
-    %{data: %{room: data(room), code: room.code}}
+    %{data: %{room: room(room), code: room.code}}
   end
 
   @doc """
@@ -68,23 +75,33 @@ defmodule PidroServerWeb.API.RoomJSON do
     %{data: %{state: serialize_game_state(game_state)}}
   end
 
-  @doc false
-  # Private function to transform a Room struct into a JSON-serializable map.
-  #
-  # Serializes all room fields including:
-  # - code: Unique room code
-  # - host_id: User ID of the room host
-  # - player_ids: List of player user IDs
-  # - spectator_ids: List of spectator user IDs
-  # - status: Current room status (:waiting, :ready, :playing, :finished, or :closed)
-  # - max_players: Maximum number of players allowed
-  # - max_spectators: Maximum number of spectators allowed
-  # - created_at: Room creation timestamp in ISO8601 format
-  defp data(room) do
+  @doc """
+  Transforms a Room struct into a JSON-serializable map.
+
+  Serializes all room fields including:
+  - code: Unique room code
+  - host_id: User ID of the room host
+  - positions: Map of positions to player IDs
+  - available_positions: List of unoccupied positions
+  - player_count: Number of seated players
+  - spectator_ids: List of spectator user IDs
+  - status: Current room status (:waiting, :ready, :playing, :finished, or :closed)
+  - max_players: Maximum number of players allowed
+  - max_spectators: Maximum number of spectators allowed
+  - created_at: Room creation timestamp in ISO8601 format
+  """
+  def room(%{room: room}), do: room(room)
+
+  def room(room) when is_map(room) do
     %{
       code: room.code,
       host_id: room.host_id,
-      player_ids: room.player_ids,
+      # New fields for position selection feature
+      positions: serialize_positions(room.positions),
+      available_positions: Positions.available(room),
+      player_count: Positions.count(room),
+      # Legacy field for backward compatibility - derive from positions
+      player_ids: Positions.player_ids(room),
       spectator_ids: room.spectator_ids || [],
       status: room.status,
       max_players: room.max_players,
@@ -92,6 +109,20 @@ defmodule PidroServerWeb.API.RoomJSON do
       created_at: DateTime.to_iso8601(room.created_at)
     }
   end
+
+  @doc false
+  defp serialize_positions(positions) do
+    Map.new(positions, fn {pos, player_id} ->
+      {pos, player_id}
+    end)
+  end
+
+  @doc false
+  defp maybe_add_assigned_position(data, %{assigned_position: pos}) when not is_nil(pos) do
+    Map.put(data, :assigned_position, pos)
+  end
+
+  defp maybe_add_assigned_position(data, _), do: data
 
   @doc false
   # Serializes a Pidro game state struct into a JSON-safe map.

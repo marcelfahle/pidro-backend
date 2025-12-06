@@ -38,7 +38,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
      |> assign(:game_name, "")
      |> assign(:bot_count, 0)
      |> assign(:bot_difficulty, "random")
-     |> assign(:host_user_id, "dev_host") # Default to dev host string
+     # Default to dev host string
+     |> assign(:host_user_id, "dev_host")
      |> assign(:show_create_form, false)
      |> assign(:show_confirm_modal, false)
      |> assign(:confirm_action, nil)
@@ -119,8 +120,10 @@ defmodule PidroServerWeb.Dev.GameListLive do
     # Determine actual host ID
     host_id =
       case host_user_id_param do
-        "dev_host" -> game_name # Use game name as ID for dev/testing
-        user_id -> user_id # Use real user ID
+        # Use game name as ID for dev/testing
+        "dev_host" -> game_name
+        # Use real user ID
+        user_id -> user_id
       end
 
     # Validate game name
@@ -290,8 +293,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                     />
                   </div>
-
-                  <!-- Host Selection -->
+                  
+    <!-- Host Selection -->
                   <div>
                     <label for="host_user_id" class="block text-sm font-medium text-zinc-700">
                       Host / Player 1
@@ -301,7 +304,9 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       id="host_user_id"
                       class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                     >
-                      <option value="dev_host" selected={@host_user_id == "dev_host"}>Use Game Name (Dev Mode)</option>
+                      <option value="dev_host" selected={@host_user_id == "dev_host"}>
+                        Use Game Name (Dev Mode)
+                      </option>
                       <%= for user <- @users do %>
                         <option value={user.id} selected={@host_user_id == user.id}>
                           User: {user.username} ({String.slice(user.id, 0..7)}...)
@@ -312,8 +317,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       Select a real user to allow that user to play as the host.
                     </p>
                   </div>
-
-                  <!-- Bot Count Radio Buttons -->
+                  
+    <!-- Bot Count Radio Buttons -->
                   <div>
                     <label class="block text-sm font-medium text-zinc-700">Bot Count</label>
                     <div class="mt-2 flex flex-wrap gap-4">
@@ -332,11 +337,16 @@ defmodule PidroServerWeb.Dev.GameListLive do
                     </div>
                     <p class="mt-1 text-xs text-zinc-500">
                       <%= case @bot_count do %>
-                        <% 0 -> %> No bots. Waiting for 4 human players.
-                        <% 1 -> %> 1 bot. Waiting for 3 human players.
-                        <% 2 -> %> 2 bots. Waiting for 2 human players.
-                        <% 3 -> %> 3 bots. Waiting for 1 human player (Host).
-                        <% 4 -> %> 4 bots. Full automated game (Spectator only).
+                        <% 0 -> %>
+                          No bots. Waiting for 4 human players.
+                        <% 1 -> %>
+                          1 bot. Waiting for 3 human players.
+                        <% 2 -> %>
+                          2 bots. Waiting for 2 human players.
+                        <% 3 -> %>
+                          3 bots. Waiting for 1 human player (Host).
+                        <% 4 -> %>
+                          4 bots. Full automated game (Spectator only).
                       <% end %>
                     </p>
                   </div>
@@ -726,11 +736,12 @@ defmodule PidroServerWeb.Dev.GameListLive do
   end
 
   defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
+    alias PidroServer.Games.Room.Positions
     strategy = String.to_existing_atom(bot_difficulty)
 
     # Check if North (Seat 1) is already occupied (by host)
     {:ok, room} = RoomManager.get_room(room_code)
-    seats_occupied = length(room.player_ids)
+    _seats_occupied = Positions.count(room)
 
     # If seats are occupied (e.g., host is Player 1), we need to be careful
     # BotManager.start_bots currently tries to fill from 0 to N

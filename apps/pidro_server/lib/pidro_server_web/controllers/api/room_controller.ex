@@ -563,15 +563,27 @@ defmodule PidroServerWeb.API.RoomController do
       }
   """
   @spec join(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def join(conn, %{"code" => code}) do
+  def join(conn, %{"code" => code} = params) do
     user = conn.assigns[:current_user]
+    position = parse_position(params["position"])
 
-    with {:ok, room} <- RoomManager.join_room(code, user.id) do
+    with {:ok, room, assigned_position} <- RoomManager.join_room(code, user.id, position) do
       conn
       |> put_view(RoomJSON)
-      |> render(:show, %{room: room})
+      |> render(:show, %{room: room, assigned_position: assigned_position})
     end
   end
+
+  @doc false
+  @spec parse_position(String.t() | nil) :: atom() | nil
+  defp parse_position(nil), do: nil
+  defp parse_position("north"), do: :north
+  defp parse_position("east"), do: :east
+  defp parse_position("south"), do: :south
+  defp parse_position("west"), do: :west
+  defp parse_position("north_south"), do: :north_south
+  defp parse_position("east_west"), do: :east_west
+  defp parse_position(_), do: nil
 
   @doc """
   Removes the authenticated player from their current room.

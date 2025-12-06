@@ -37,11 +37,60 @@ pidro_backend/                    # Umbrella project root
 mix deps.get
 mix ecto.setup
 mix phx.server
-
-# Visit:
-# http://localhost:4000/dev/games     # Dev testing UI
-# http://localhost:4000/admin/lobby   # Admin panel
 ```
+
+## Routes
+
+### Dev Routes (Development Only)
+
+These routes are only available when `config :pidro_server, dev_routes: true` (set in `config/dev.exs`):
+
+| Route | Description |
+|-------|-------------|
+| `/dev/games` | Dev UI - create test games, manage bots |
+| `/dev/games/:code` | Dev UI - play/debug a specific game |
+| `/dev/analytics` | Dev UI - analytics dashboard |
+| `/dev/dashboard` | Phoenix LiveDashboard (metrics, processes) |
+| `/dev/mailbox` | Swoosh email preview |
+
+### Admin Panel (Basic Auth Protected)
+
+| Route | Description |
+|-------|-------------|
+| `/admin/lobby` | Room list overview |
+| `/admin/games/:code` | Monitor a specific game |
+| `/admin/stats` | Server statistics |
+
+### REST API
+
+**Public (no auth):**
+| Route | Description |
+|-------|-------------|
+| `GET /api/swagger` | Interactive API documentation |
+| `GET /api/openapi` | OpenAPI spec (JSON) |
+| `POST /api/v1/auth/register` | Register new user |
+| `POST /api/v1/auth/login` | Login, get JWT token |
+| `GET /api/v1/rooms` | List all rooms |
+| `GET /api/v1/rooms/:code` | Get room details |
+| `GET /api/v1/rooms/:code/state` | Get game state |
+
+**Authenticated (Bearer token):**
+| Route | Description |
+|-------|-------------|
+| `GET /api/v1/auth/me` | Get current user |
+| `GET /api/v1/users/me/stats` | Get user stats |
+| `POST /api/v1/rooms` | Create a room |
+| `POST /api/v1/rooms/:code/join` | Join a room |
+| `DELETE /api/v1/rooms/:code/leave` | Leave a room |
+| `POST /api/v1/rooms/:code/watch` | Spectate a room |
+| `DELETE /api/v1/rooms/:code/unwatch` | Stop spectating |
+
+### WebSocket Channels
+
+| Channel | Topic | Description |
+|---------|-------|-------------|
+| LobbyChannel | `lobby:main` | Room list updates |
+| GameChannel | `game:{code}` | Real-time gameplay events |
 
 ## Key Concepts
 
@@ -180,6 +229,35 @@ mix dialyzer                      # Type checking
 
 ## Configuration
 
+Config files are at the umbrella level: `pidro_backend/config/`
+
+```
+config/
+├── config.exs    # Shared config (all environments)
+├── dev.exs       # Development settings
+├── prod.exs      # Production settings
+├── runtime.exs   # Runtime config (env vars for prod)
+└── test.exs      # Test settings
+```
+
+### Admin Panel Credentials
+
+The admin panel (`/admin/*`) uses HTTP Basic Auth. Credentials are configured in:
+
+**Development** (`config/dev.exs`):
+```elixir
+config :pidro_server,
+  admin_username: "admin",
+  admin_password: "pidro_admin_2025"
+```
+
+**Production** (`config/runtime.exs`): Set via environment variables:
+```elixir
+config :pidro_server,
+  admin_username: System.get_env("ADMIN_USERNAME") || "admin",
+  admin_password: System.get_env("ADMIN_PASSWORD") || raise "ADMIN_PASSWORD required"
+```
+
 ### Environment Variables
 ```bash
 # Database
@@ -189,6 +267,10 @@ DATABASE_URL=ecto://postgres:postgres@localhost/pidro_server_dev
 SECRET_KEY_BASE=...  # Generate with: mix phx.gen.secret
 PORT=4000
 HOST=localhost
+
+# Admin (production)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_secure_password
 
 # For production
 MIX_ENV=prod

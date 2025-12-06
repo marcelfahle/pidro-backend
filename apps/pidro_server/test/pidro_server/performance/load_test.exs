@@ -47,9 +47,9 @@ defmodule PidroServer.Performance.LoadTest do
 
             # Have 3 other players join
             [p1, p2, p3] = Enum.slice(users, i * 4 + 1, 3)
-            {:ok, _} = RoomManager.join_room(room_code, p1.id)
-            {:ok, _} = RoomManager.join_room(room_code, p2.id)
-            {:ok, room} = RoomManager.join_room(room_code, p3.id)
+            {:ok, _, _} = RoomManager.join_room(room_code, p1.id)
+            {:ok, _, _} = RoomManager.join_room(room_code, p2.id)
+            {:ok, room, _} = RoomManager.join_room(room_code, p3.id)
 
             {room_code, room}
           end)
@@ -102,7 +102,7 @@ defmodule PidroServer.Performance.LoadTest do
 
         # Join players (game auto-starts when 4th player joins)
         Enum.each(players, fn player_id ->
-          {:ok, _} = RoomManager.join_room(room_code, player_id)
+          {:ok, _, _} = RoomManager.join_room(room_code, player_id)
         end)
 
         # Verify game was auto-started
@@ -147,7 +147,7 @@ defmodule PidroServer.Performance.LoadTest do
 
           # Game auto-starts when 4th player joins
           Enum.each(players, fn player ->
-            {:ok, _} = RoomManager.join_room(room_code, player.id)
+            {:ok, _, _} = RoomManager.join_room(room_code, player.id)
           end)
 
           {room_code, [host | players]}
@@ -223,7 +223,7 @@ defmodule PidroServer.Performance.LoadTest do
 
       # Game auto-starts when 4th player joins
       Enum.each(players, fn player_id ->
-        {:ok, _} = RoomManager.join_room(room_code, player_id)
+        {:ok, _, _} = RoomManager.join_room(room_code, player_id)
       end)
 
       # Give a moment for auto-start to complete
@@ -304,7 +304,7 @@ defmodule PidroServer.Performance.LoadTest do
 
           # Game auto-starts when 4th player joins
           Enum.each(players, fn player ->
-            {:ok, _} = RoomManager.join_room(room_code, player.id)
+            {:ok, _, _} = RoomManager.join_room(room_code, player.id)
           end)
 
           {:ok, pid} = GameSupervisor.get_game(room_code)
@@ -343,7 +343,7 @@ defmodule PidroServer.Performance.LoadTest do
 
       # Game auto-starts when 4th player joins
       Enum.each(players, fn player_id ->
-        {:ok, _} = RoomManager.join_room(room_code, player_id)
+        {:ok, _, _} = RoomManager.join_room(room_code, player_id)
       end)
 
       {:ok, pid} = GameSupervisor.get_game(room_code)
@@ -391,7 +391,7 @@ defmodule PidroServer.Performance.LoadTest do
 
           # Game auto-starts when 4th player joins
           Enum.each(players, fn player ->
-            {:ok, _} = RoomManager.join_room(room_code, player.id)
+            {:ok, _, _} = RoomManager.join_room(room_code, player.id)
           end)
 
           room_code

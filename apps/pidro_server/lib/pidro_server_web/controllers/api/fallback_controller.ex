@@ -217,6 +217,78 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :seat_taken}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "SEAT_TAKEN",
+          title: "Seat taken",
+          detail: "The requested seat is already occupied",
+          available_positions: []
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :team_full}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "TEAM_FULL",
+          title: "Team full",
+          detail: "The requested team is fully occupied",
+          available_positions: []
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :invalid_position}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "INVALID_POSITION",
+          title: "Invalid position",
+          detail: "The position parameter is invalid"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :room_not_available}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "ROOM_NOT_AVAILABLE",
+          title: "Room not available",
+          detail: "Room is not available for joining"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :already_seated}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "ALREADY_SEATED",
+          title: "Already seated",
+          detail: "Player is already seated in this room"
+        }
+      ]
+    })
+  end
+
   @doc false
   # Convert field names from underscores to human-readable format
   defp humanize_field(field) do

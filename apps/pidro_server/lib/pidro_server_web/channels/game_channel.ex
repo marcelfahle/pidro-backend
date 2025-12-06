@@ -422,9 +422,10 @@ defmodule PidroServerWeb.GameChannel do
 
   @spec user_in_room?(String.t(), RoomManager.Room.t()) :: boolean()
   defp user_in_room?(user_id, room) do
+    alias PidroServer.Games.Room.Positions
     # Convert user_id to string if it's an integer
     user_id_str = to_string(user_id)
-    Enum.any?(room.player_ids, fn id -> to_string(id) == user_id_str end)
+    Positions.has_player?(room, user_id_str)
   end
 
   @spec user_authorized?(String.t(), RoomManager.Room.t(), atom()) :: boolean()
@@ -440,10 +441,11 @@ defmodule PidroServerWeb.GameChannel do
   @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
           :player | :spectator | :unauthorized
   defp determine_user_role(room, user_id) do
+    alias PidroServer.Games.Room.Positions
     user_id_str = to_string(user_id)
 
     cond do
-      Enum.any?(room.player_ids, fn id -> to_string(id) == user_id_str end) ->
+      Positions.has_player?(room, user_id_str) ->
         :player
 
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
@@ -456,15 +458,9 @@ defmodule PidroServerWeb.GameChannel do
 
   @spec get_player_position(RoomManager.Room.t(), String.t()) :: atom()
   defp get_player_position(room, user_id) do
-    # Positions are assigned in order: north, east, south, west
-    positions = [:north, :east, :south, :west]
+    alias PidroServer.Games.Room.Positions
     user_id_str = to_string(user_id)
-
-    # Find the index of the user in the player list
-    index =
-      Enum.find_index(room.player_ids, fn id -> to_string(id) == user_id_str end) || 0
-
-    Enum.at(positions, index, :north)
+    Positions.get_position(room, user_id_str) || :north
   end
 
   @spec format_error(term()) :: String.t()
@@ -505,6 +501,8 @@ defmodule PidroServerWeb.GameChannel do
           DateTime.diff(DateTime.utc_now(), room.created_at, :second)
 
         # Prepare stats attributes
+        player_ids = PidroServer.Games.Room.Positions.player_ids(room)
+
         stats_attrs = %{
           room_code: room_code,
           winner: winner,
@@ -513,7 +511,7 @@ defmodule PidroServerWeb.GameChannel do
           bid_team: bid_info.bid_team,
           duration_seconds: duration_seconds,
           completed_at: DateTime.utc_now(),
-          player_ids: room.player_ids
+          player_ids: player_ids
         }
 
         # Save to database

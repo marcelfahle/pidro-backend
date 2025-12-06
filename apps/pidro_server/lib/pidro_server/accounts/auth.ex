@@ -211,6 +211,7 @@ defmodule PidroServer.Accounts.Auth do
       :error -> false
     end
   end
+
   defp valid_uuid?(_), do: false
 
   @doc """

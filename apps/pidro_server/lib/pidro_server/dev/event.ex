@@ -72,10 +72,12 @@ if Mix.env() == :dev do
       do: new(:bid_passed, position)
 
     def from_raw({:bidding_complete, _position, _amount}),
-      do: nil # Skip this one for UI noise reduction or handle if needed
+      # Skip this one for UI noise reduction or handle if needed
+      do: nil
 
     def from_raw({:trump_declared, suit}),
-      do: new(:trump_declared, nil, %{suit: suit}) # Declarer implicit in UI usually
+      # Declarer implicit in UI usually
+      do: new(:trump_declared, nil, %{suit: suit})
 
     # Adjust for trump declared with declarer if available in context, but raw event is {:trump_declared, suit}
     # Wait, Core Types says: {:trump_declared, suit()}
@@ -91,12 +93,20 @@ if Mix.env() == :dev do
 
     def from_raw({:hand_scored, winning_team, points}),
       # We might need to infer the split points from context or just show winner
-      do: new(:hand_scored, nil, %{winning_team: winning_team, points: points, ns_points: 0, ew_points: 0}) # Simplified
+      # Simplified
+      do:
+        new(:hand_scored, nil, %{
+          winning_team: winning_team,
+          points: points,
+          ns_points: 0,
+          ew_points: 0
+        })
 
     def from_raw({:game_won, team, score}),
       do: new(:game_over, nil, %{winner: team, final_scores: %{team => score}})
 
-    def from_raw(_), do: nil # Ignore other events
+    # Ignore other events
+    def from_raw(_), do: nil
 
     @doc """
     Creates a new event with the given type, optional player, and metadata.

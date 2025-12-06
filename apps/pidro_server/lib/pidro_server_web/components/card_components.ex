@@ -178,7 +178,12 @@ defmodule PidroServerWeb.CardComponents do
       >
         <span class="font-medium text-sm text-white">{position_label(@position)}</span>
         <%= if @is_dealer do %>
-          <div class="bg-yellow-500 text-black text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full border border-yellow-600 shadow-sm" title="Dealer">D</div>
+          <div
+            class="bg-yellow-500 text-black text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full border border-yellow-600 shadow-sm"
+            title="Dealer"
+          >
+            D
+          </div>
         <% end %>
         <%= if @is_human do %>
           <span class="text-blue-300 text-xs bg-blue-900/50 px-1 rounded border border-blue-500/30">
@@ -415,15 +420,16 @@ defmodule PidroServerWeb.CardComponents do
   def card_table(assigns) do
     # Extract playable cards from legal actions
     legal_plays = extract_legal_plays(assigns.legal_actions)
-    
-    # Check if hand selection is active (dealer second deal)
-    can_select_hand = Enum.any?(assigns.legal_actions, fn 
-      {:select_hand, _} -> true
-      _ -> false
-    end)
 
-    assigns = 
-      assigns 
+    # Check if hand selection is active (dealer second deal)
+    can_select_hand =
+      Enum.any?(assigns.legal_actions, fn
+        {:select_hand, _} -> true
+        _ -> false
+      end)
+
+    assigns =
+      assigns
       |> assign(:legal_plays, legal_plays)
       |> assign(:can_select_hand, can_select_hand)
 

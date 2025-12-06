@@ -119,7 +119,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
           password: "password123"
         })
 
-      {:ok, _updated_room} = RoomManager.join_room(room.code, other_user.id)
+      {:ok, _, _} = RoomManager.join_room(room.code, other_user.id)
 
       # Should receive lobby_update and room_updated pushes
       assert_push "lobby_update", %{rooms: _rooms}, 1000
@@ -149,7 +149,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
       # Join all 3 players
       Enum.each(other_users, fn u ->
-        RoomManager.join_room(room.code, u.id)
+        elem(RoomManager.join_room(room.code, u.id), 1)
         # Each join should broadcast lobby_update and room_updated
         assert_push "lobby_update", %{rooms: _}, 1000
         assert_push "room_updated", %{room: _}, 1000

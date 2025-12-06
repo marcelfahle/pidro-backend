@@ -38,7 +38,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
         # DEV-1301: Initialize replay state
         {:ok, event_count} = ReplayController.get_event_count(room_code)
-        
+
         events = process_events(game_state.events)
 
         {:ok,
@@ -266,18 +266,18 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         # This handles cases where user clicks the button instead of using the card table
         game_state = socket.assigns.game_state
         dealer = game_state.current_dealer
-        
+
         if game_state.current_turn == dealer do
           dealer_player = Map.get(game_state.players, dealer)
           pool = dealer_player.hand ++ game_state.deck
           trump_suit = game_state.trump_suit
-          
+
           # Use DealerRob logic to select best cards
           selected_cards = Pidro.Game.DealerRob.select_best_cards(pool, trump_suit)
-          
+
           # Construct actual action with selected cards
           action = {:select_hand, selected_cards}
-          
+
           case GameAdapter.apply_action(room_code, dealer, action) do
             {:ok, _new_state} ->
               # Refetch game state and legal actions
@@ -301,10 +301,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                |> put_flash(:error, "Auto-selection failed: #{error_message}")}
           end
         else
-           {:noreply,
-            socket
-            |> assign(:executing_action, false)
-            |> put_flash(:error, "Not dealer's turn to select hand")}
+          {:noreply,
+           socket
+           |> assign(:executing_action, false)
+           |> put_flash(:error, "Not dealer's turn to select hand")}
         end
 
       {:ok, action} ->
@@ -370,16 +370,17 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       # Check if we are allowed to execute actions for this position
       is_hand_selection =
         game_state.phase == :second_deal and
-        game_state.current_dealer == position and
-        Enum.any?(socket.assigns.legal_actions, fn
-          {:select_hand, _} -> true
-          _ -> false
-        end)
+          game_state.current_dealer == position and
+          Enum.any?(socket.assigns.legal_actions, fn
+            {:select_hand, _} -> true
+            _ -> false
+          end)
 
       if is_hand_selection do
         # Toggle card selection
         selected = socket.assigns.selected_hand_cards
-        new_selected = 
+
+        new_selected =
           if card in selected do
             List.delete(selected, card)
           else
@@ -389,7 +390,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               selected
             end
           end
-        
+
         {:noreply, assign(socket, :selected_hand_cards, new_selected)}
       else
         # Normal play card action
@@ -470,7 +471,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_event("filter_events", %{"type" => type}, socket) do
     type_atom = if type == "all", do: nil, else: String.to_existing_atom(type)
-    
+
     new_assigns = assign(socket.assigns, :event_filter_type, type_atom)
     events = process_events(socket.assigns.game_state.events, new_assigns)
 
@@ -503,7 +504,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_event("toggle_bot_reasoning", _params, socket) do
     # Toggle bot reasoning visibility and refresh events
     new_value = !socket.assigns.show_bot_reasoning
-    
+
     new_assigns = assign(socket.assigns, :show_bot_reasoning, new_value)
     events = process_events(socket.assigns.game_state.events, new_assigns)
 
@@ -796,7 +797,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </p>
         </div>
         
-
     <!-- Room Info Card -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
           <div class="px-4 py-5 sm:px-6">
@@ -890,8 +890,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                 </div>
               <% end %>
             </div>
-
-            <!-- Position buttons moved to Game Table (click on player name) -->
+            
+    <!-- Position buttons moved to Game Table (click on player name) -->
             <!--
             <div class="flex flex-wrap gap-2">
               <button
@@ -1295,33 +1295,52 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                       <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
                       <p class="text-lg text-indigo-600 font-medium">
                         <%= case @game_state.winner do %>
-                          <% :north_south -> %> 🏆 North/South Wins! 🏆
-                          <% :east_west -> %> 🏆 East/West Wins! 🏆
-                          <% _ -> %> Game Complete
+                          <% :north_south -> %>
+                            🏆 North/South Wins! 🏆
+                          <% :east_west -> %>
+                            🏆 East/West Wins! 🏆
+                          <% _ -> %>
+                            Game Complete
                         <% end %>
                       </p>
                     </div>
-                    
+
                     <div class="p-6">
                       <div class="grid grid-cols-2 gap-8 mb-8 text-center">
                         <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
-                          <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">North/South</div>
-                          <div class="text-4xl font-black text-blue-800">{@game_state.cumulative_scores.north_south}</div>
+                          <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
+                            North/South
+                          </div>
+                          <div class="text-4xl font-black text-blue-800">
+                            {@game_state.cumulative_scores.north_south}
+                          </div>
                         </div>
                         <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
-                          <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">East/West</div>
-                          <div class="text-4xl font-black text-green-800">{@game_state.cumulative_scores.east_west}</div>
+                          <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
+                            East/West
+                          </div>
+                          <div class="text-4xl font-black text-green-800">
+                            {@game_state.cumulative_scores.east_west}
+                          </div>
                         </div>
                       </div>
 
-                      <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">Score History</h3>
+                      <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
+                        Score History
+                      </h3>
                       <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
                         <table class="min-w-full divide-y divide-gray-200">
                           <thead class="bg-gray-100">
                             <tr>
-                              <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hand</th>
-                              <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">N/S</th>
-                              <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">E/W</th>
+                              <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                Hand
+                              </th>
+                              <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
+                                N/S
+                              </th>
+                              <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
+                                E/W
+                              </th>
                             </tr>
                           </thead>
                           <tbody class="divide-y divide-gray-200 bg-white">
@@ -1329,10 +1348,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                               <tr>
                                 <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
                                 <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
-                                  <%= if score.ns > 0, do: "+#{score.ns}", else: score.ns %>
+                                  {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
                                 </td>
                                 <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
-                                  <%= if score.ew > 0, do: "+#{score.ew}", else: score.ew %>
+                                  {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
                                 </td>
                               </tr>
                             <% end %>
@@ -2060,23 +2079,23 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     difficulty = if config.difficulty == :unknown, do: :random, else: config.difficulty
 
     case {config.type, bot_exists} do
-    {:bot, false} ->
-    # Start a new bot
-    # Check if seat is empty before starting bot
-    room = RoomManager.get_room(room_code) |> elem(1)
-    is_seat_empty = is_seat_available?(room, position)
+      {:bot, false} ->
+        # Start a new bot
+        # Check if seat is empty before starting bot
+        room = RoomManager.get_room(room_code) |> elem(1)
+        is_seat_empty = is_seat_available?(room, position)
 
-    if is_seat_empty do
-      BotManager.start_bot(room_code, position, difficulty, config.delay_ms)
-    else
-      # Seat is occupied by a human (potentially the admin/host)
-      # We can't just overwrite a human player with a bot unless we kick them first
-      # For now, let's just log it or maybe force start if it's dev mode
-      Logger.info("Cannot start bot at #{position}, seat occupied by human")
-      {:error, :seat_occupied}
-    end
+        if is_seat_empty do
+          BotManager.start_bot(room_code, position, difficulty, config.delay_ms)
+        else
+          # Seat is occupied by a human (potentially the admin/host)
+          # We can't just overwrite a human player with a bot unless we kick them first
+          # For now, let's just log it or maybe force start if it's dev mode
+          Logger.info("Cannot start bot at #{position}, seat occupied by human")
+          {:error, :seat_occupied}
+        end
 
-    {:bot, true} ->
+      {:bot, true} ->
         # Bot exists - stop and restart with new config
         BotManager.stop_bot(room_code, position)
         # Small delay to ensure cleanup
@@ -2106,9 +2125,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       end
 
     if index >= 0 and index < length(room.player_ids) do
-      false # Occupied
+      # Occupied
+      false
     else
-      true # Empty
+      # Empty
+      true
     end
   end
 
@@ -2150,7 +2171,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           :east_west -> :east
           team -> team
         end
-      _ -> nil
+
+      _ ->
+        nil
     end
   end
 
@@ -2200,13 +2223,17 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:hand_scored, _, _} -> true
       _ -> false
     end)
-    |> Enum.chunk_every(2) # Group NS and EW scores for same hand
+    # Group NS and EW scores for same hand
+    |> Enum.chunk_every(2)
     |> Enum.map(fn
       [{:hand_scored, :east_west, ew}, {:hand_scored, :north_south, ns}] ->
         %{ns: ns, ew: ew}
+
       [{:hand_scored, :north_south, ns}, {:hand_scored, :east_west, ew}] ->
         %{ns: ns, ew: ew}
-      _ -> nil
+
+      _ ->
+        nil
     end)
     |> Enum.reject(&is_nil/1)
     |> Enum.with_index(1)
