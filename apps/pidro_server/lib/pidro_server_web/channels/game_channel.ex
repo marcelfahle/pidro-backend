@@ -52,6 +52,7 @@ defmodule PidroServerWeb.GameChannel do
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServer.Stats
   alias PidroServerWeb.Presence
+  alias PidroServerWeb.Serializers.GameStateSerializer
 
   # Intercept presence_diff, player_ready, and player_reconnected broadcasts to handle them explicitly
   intercept ["presence_diff", "player_ready", "player_reconnected"]
@@ -251,7 +252,8 @@ defmodule PidroServerWeb.GameChannel do
   def handle_info(msg, socket)
 
   def handle_info({:state_update, new_state}, socket) do
-    broadcast(socket, "game_state", %{state: new_state})
+    serialized_state = GameStateSerializer.serialize(new_state)
+    broadcast(socket, "game_state", %{state: serialized_state})
     {:noreply, socket}
   end
 

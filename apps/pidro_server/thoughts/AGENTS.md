@@ -42,7 +42,33 @@ end
 - **Pure modules**: Business logic, data transformations (testable in isolation)
 - **GenServers**: State coordination, message handling
 - **Controllers/Channels**: HTTP/WebSocket boundaries, parse input, format output
+- **Serializers**: Transform internal structs to JSON-safe maps for API/WebSocket responses
 - **Schemas**: OpenAPI specs, validation
+
+### Serialization Pattern
+
+**Never send raw structs through Phoenix channels or API responses.** Internal game state structs (e.g., `Pidro.Core.Types.GameState`) are not JSON-serializable and will crash the channel.
+
+Always use `PidroServerWeb.Serializers.GameStateSerializer`:
+
+```elixir
+# Good: serialize before broadcasting
+def handle_info({:state_update, new_state}, socket) do
+  serialized = GameStateSerializer.serialize(new_state)
+  broadcast(socket, "game_state", %{state: serialized})
+  {:noreply, socket}
+end
+
+# Bad: sending raw struct (will crash with Jason.Encoder not implemented)
+def handle_info({:state_update, new_state}, socket) do
+  broadcast(socket, "game_state", %{state: new_state})
+  {:noreply, socket}
+end
+```
+
+The serializer lives at `lib/pidro_server_web/serializers/game_state_serializer.ex` and is used by:
+- `GameChannel` for real-time game state broadcasts
+- `RoomJSON` for REST API responses
 
 ### Error Handling
 

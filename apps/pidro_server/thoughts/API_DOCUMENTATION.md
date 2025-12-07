@@ -950,9 +950,33 @@ Future versions will be released as `/api/v2/` while maintaining backward compat
 - **Dates/Times**: ISO 8601 format in UTC (e.g., `2025-11-02T10:30:00Z`)
 - **Request Bodies**: JSON with `Content-Type: application/json`
 - **Response Bodies**: JSON with `Content-Type: application/json; charset=utf-8`
-- **Card Representation**: Tuples of `[rank, suit]` where rank is 2-14 (Jack=11, Queen=12, King=13, Ace=14)
-- **Positions**: `:north`, `:east`, `:south`, `:west`
-- **Teams**: `:north_south`, `:east_west`
+- **Card Representation**: `{rank: number, suit: string}` where rank is 2-14 (Jack=11, Queen=12, King=13, Ace=14)
+- **Positions**: `"north"`, `"east"`, `"south"`, `"west"` (strings in JSON)
+- **Teams**: `"north_south"`, `"east_west"` (strings in JSON)
+
+### Game State Serialization
+
+All game state sent through the API or WebSocket channels is serialized by `PidroServerWeb.Serializers.GameStateSerializer`. This converts internal Elixir structs (e.g., `Pidro.Core.Types.GameState`) into JSON-safe maps.
+
+**Card format**:
+```json
+{"rank": 14, "suit": "spades"}
+```
+
+**Game state fields** (example):
+```json
+{
+  "phase": "playing",
+  "current_turn": "north",
+  "trump_suit": "hearts",
+  "players": {
+    "north": {"position": "north", "team": "north_south", "hand": [...], "tricks_won": 2},
+    ...
+  },
+  "current_trick": {"number": 3, "leader": "south", "plays": [...], "winner": null},
+  "cumulative_scores": {"north_south": 24, "east_west": 18}
+}
+```
 
 ### Room Codes
 

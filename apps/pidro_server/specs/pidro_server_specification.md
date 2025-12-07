@@ -327,6 +327,9 @@ lib/
 │   │   ├── core_components.ex          # Phoenix default
 │   │   └── layouts.ex                  # Layouts
 │   │
+│   ├── serializers/                    # Data serialization
+│   │   └── game_state_serializer.ex    # GameState → JSON-safe maps
+│   │
 │   └── views/                          # JSON views
 │       └── api/
 │           ├── room_view.ex            # Room serialization
