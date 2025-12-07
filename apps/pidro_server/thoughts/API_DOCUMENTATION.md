@@ -221,8 +221,10 @@ http://localhost:4000/api/v1
 - `GET /rooms/:code` - Get specific room details
 - `GET /rooms/:code/state` - Get current game state for a room
 - `POST /rooms` - Create a new room (requires auth)
-- `POST /rooms/:code/join` - Join a room (requires auth)
+- `POST /rooms/:code/join` - Join a room with optional seat selection (requires auth)
 - `DELETE /rooms/:code/leave` - Leave a room (requires auth)
+- `POST /rooms/:code/watch` - Join as spectator (requires auth)
+- `DELETE /rooms/:code/unwatch` - Leave spectating (requires auth)
 
 ### Example: Creating and Joining a Room
 
@@ -245,6 +247,9 @@ curl -X POST http://localhost:4000/api/v1/rooms \
     "room": {
       "code": "A1B2",
       "host_id": "user123",
+      "positions": { "north": null, "east": null, "south": null, "west": "user123" },
+      "available_positions": ["north", "east", "south"],
+      "player_count": 1,
       "player_ids": ["user123"],
       "status": "waiting",
       "max_players": 4,
@@ -255,11 +260,32 @@ curl -X POST http://localhost:4000/api/v1/rooms \
 }
 ```
 
-**Join a Room**:
+**Join a Room** (Auto-assign):
 ```bash
 curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
   -H "Authorization: Bearer <token>"
 ```
+
+**Join a Room** (Specific Seat):
+```bash
+curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "position": "north" }'
+```
+
+**Join a Room** (Team Preference):
+```bash
+curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "position": "north_south" }'
+```
+
+**Position Values**:
+- `null` or omitted - Auto-assign first available (N→E→S→W order)
+- `"north"`, `"east"`, `"south"`, `"west"` - Specific seat
+- `"north_south"`, `"east_west"` - Team preference
 
 **Response** (200 OK):
 ```json
@@ -268,13 +294,25 @@ curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
     "room": {
       "code": "A1B2",
       "host_id": "user123",
+      "positions": { "north": "user456", "east": null, "south": null, "west": "user123" },
+      "available_positions": ["east", "south"],
+      "player_count": 2,
       "player_ids": ["user123", "user456"],
       "status": "waiting",
       "max_players": 4
-    }
+    },
+    "assigned_position": "north"
   }
 }
 ```
+
+**Seat Selection Errors**:
+
+| Error Code | HTTP | Description |
+|------------|------|-------------|
+| `SEAT_TAKEN` | 422 | Requested seat is already occupied |
+| `TEAM_FULL` | 422 | Both seats on requested team are taken |
+| `INVALID_POSITION` | 422 | Invalid position value provided |
 
 ### User Statistics
 

@@ -39,7 +39,7 @@ Pidro.Server         GameSupervisor
 **Key Responsibilities:**
 - Manage room lifecycle (create → waiting → ready → playing → finished → closed)
 - Track player-to-room mappings
-- Handle player joins/leaves
+- Handle player joins/leaves with optional seat selection
 - Auto-start games when 4 players join
 - Manage player disconnections and grace periods
 - Broadcast room updates via PubSub
@@ -48,7 +48,10 @@ Pidro.Server         GameSupervisor
 ```elixir
 %State{
   rooms: %{
-    "XXXX" => %Room{...},  # Key: room code, Value: Room struct
+    "XXXX" => %Room{
+      positions: %{north: "user1", east: nil, south: nil, west: "user2"},
+      ...
+    },
     ...
   },
   player_rooms: %{
@@ -57,6 +60,12 @@ Pidro.Server         GameSupervisor
   }
 }
 ```
+
+**Room Positions (Single Source of Truth):**
+The `positions` map is the canonical source for player seating:
+- Keys: `:north`, `:east`, `:south`, `:west`
+- Values: player_id or `nil` if empty
+- `player_ids` list is derived from this map
 
 **Critical:** Single GenServer manages ALL rooms - no horizontal scaling currently
 
@@ -329,6 +338,7 @@ Client                GameChannel       RoomManager          Timer
 | Component | Type | Scope | Responsibility |
 |-----------|------|-------|-----------------|
 | RoomManager | GenServer | Global | Room lifecycle, player tracking |
+| Positions | Pure Module | Per-room | Seat assignment logic |
 | GameChannel | Phoenix Channel | Per-game | WebSocket, player actions |
 | GameAdapter | Module | Per-game | Bridge to game logic |
 | Pidro.Server | External | Per-game | Game rules & state logic |
@@ -351,14 +361,23 @@ POST /api/v1/rooms
 ### Joining a Room
 ```
 POST /api/v1/rooms/:code/join
+Body: { "position": "north" }  // Optional: specific seat, team, or auto
   → RoomController.join/2
-    → RoomManager.join_room/2
+    → parse_position/1 (nil | :north/:east/:south/:west | :north_south/:east_west)
+    → RoomManager.join_room/3 (code, player_id, position)
+      → Positions.assign/3 (pure function for seat logic)
       → If 4 players reached:
         → GameSupervisor.start_game/1
           → Creates Pidro.Server process
           → Registers in GameRegistry
       → Broadcasts on "room:CODE" and "lobby:updates"
+    → Returns {:ok, room, assigned_position}
 ```
+
+**Position Selection Options:**
+- `nil` / auto → first available (N→E→S→W order)
+- `:north`, `:east`, `:south`, `:west` → specific seat
+- `:north_south`, `:east_west` → team preference
 
 ### Connecting to Game Channel
 ```

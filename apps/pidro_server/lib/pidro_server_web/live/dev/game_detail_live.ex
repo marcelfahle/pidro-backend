@@ -911,45 +911,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </div>
         </div>
         
-    <!-- Dev Seat Management - GitHub Issue #6 -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Dev Seat Management</h3>
-            <p class="mt-1 text-sm text-zinc-500">
-              Assign players to specific seats for testing scenarios
-            </p>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <%= for position <- [:north, :east, :south, :west] do %>
-                <div class="bg-zinc-50 rounded-lg p-4">
-                  <label class="block text-sm font-medium text-zinc-700 mb-2">
-                    {format_position(position)}
-                  </label>
-                  <form phx-change="assign_seat" phx-value-position={position}>
-                    <select
-                      name="user_id"
-                      class="w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
-                    >
-                      <option value="empty" selected={is_nil(@room.positions[position])}>
-                        — Empty Seat —
-                      </option>
-                      <%= for user <- @users do %>
-                        <option
-                          value={user.id}
-                          selected={@room.positions[position] == user.id}
-                        >
-                          {user.username || user.email || user.id |> String.slice(0..7)}
-                        </option>
-                      <% end %>
-                    </select>
-                  </form>
-                </div>
-              <% end %>
-            </div>
-          </div>
-        </div>
-        
     <!-- Position Selector - DEV-401 & DEV-502 -->
         <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
           <div class="px-4 py-5 sm:px-6 flex justify-between items-start">
@@ -1378,41 +1339,43 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         <% end %>
         
     <!-- Card Table UI - DEV-1505 & DEV-502: Visual Card Table Integration with Split View -->
-        <%= if @game_state do %>
-          <%= if @view_mode == :split && @game_state.phase == :playing do %>
-            <%!-- DEV-502: Split View Layout (2x2 Grid) --%>
-            <div class="mb-8">
-              <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg shadow-lg">
-                <div class="text-center mb-3">
-                  <h3 class="text-lg font-semibold text-purple-900">Split View Mode</h3>
-                  <p class="text-sm text-purple-700">
-                    Viewing all 4 player perspectives simultaneously
-                  </p>
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                  <%= for position <- [:north, :south, :east, :west] do %>
-                    <.render_position_view
-                      position={position}
-                      game_state={@game_state}
-                      selected_position={@selected_position}
-                      room_code={@room_code}
-                    />
-                  <% end %>
-                </div>
+        <%= if @game_state && @view_mode == :split && @game_state.phase == :playing do %>
+          <%!-- DEV-502: Split View Layout (2x2 Grid) --%>
+          <div class="mb-8">
+            <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg shadow-lg">
+              <div class="text-center mb-3">
+                <h3 class="text-lg font-semibold text-purple-900">Split View Mode</h3>
+                <p class="text-sm text-purple-700">
+                  Viewing all 4 player perspectives simultaneously
+                </p>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <%= for position <- [:north, :south, :east, :west] do %>
+                  <.render_position_view
+                    position={position}
+                    game_state={@game_state}
+                    selected_position={@selected_position}
+                    room_code={@room_code}
+                  />
+                <% end %>
               </div>
             </div>
-          <% else %>
-            <%!-- Single View Layout --%>
-            <div class="mb-8 relative">
-              <CardComponents.card_table
-                game_state={@game_state}
-                selected_position={@selected_position}
-                god_mode={@selected_position == :all}
-                legal_actions={@legal_actions}
-                bot_configs={@bot_configs}
-              />
+          </div>
+        <% else %>
+          <%!-- Single View Layout (or Waiting State) --%>
+          <div class="mb-8 relative">
+            <CardComponents.card_table
+              game_state={@game_state}
+              selected_position={@selected_position}
+              god_mode={@selected_position == :all}
+              legal_actions={@legal_actions}
+              bot_configs={@bot_configs}
+              room={@room}
+              users={@users}
+              show_seat_selectors={true}
+            />
 
-              <%= if @game_state.phase == :complete do %>
+              <%= if @game_state && @game_state.phase == :complete do %>
                 <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
                   <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
                     <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
@@ -1501,8 +1464,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                   </div>
                 </div>
               <% end %>
-            </div>
-          <% end %>
+          </div>
         <% end %>
         
     <!-- Action Execution - DEV-901 to DEV-904 Implementation -->

@@ -151,6 +151,7 @@ defmodule PidroServerWeb.CardComponents do
   """
   attr :cards, :list, required: true
   attr :position, :atom, required: true
+  attr :player_name, :string, default: nil
   attr :is_current_turn, :boolean, default: false
   attr :is_human, :boolean, default: false
   attr :is_bot, :boolean, default: false
@@ -176,7 +177,9 @@ defmodule PidroServerWeb.CardComponents do
         phx-value-position={@position}
         title="Click to switch view to this player"
       >
-        <span class="font-medium text-sm text-white">{position_label(@position)}</span>
+        <span class="font-medium text-sm text-white">
+          {position_label(@position)}<%= if @player_name do %><span class="text-green-300 ml-1">({@player_name})</span><% end %>
+        </span>
         <%= if @is_dealer do %>
           <div
             class="bg-yellow-500 text-black text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full border border-yellow-600 shadow-sm"
@@ -229,6 +232,11 @@ defmodule PidroServerWeb.CardComponents do
   defp position_label(:south), do: "South"
   defp position_label(:east), do: "East"
   defp position_label(:west), do: "West"
+
+  defp position_abbrev(:north), do: "N"
+  defp position_abbrev(:south), do: "S"
+  defp position_abbrev(:east), do: "E"
+  defp position_abbrev(:west), do: "W"
 
   defp hand_container_classes(is_current_turn) do
     base = "p-2 rounded"
@@ -410,14 +418,19 @@ defmodule PidroServerWeb.CardComponents do
         legal_actions={@legal_actions}
       />
   """
-  attr :game_state, :map, required: true
+  attr :game_state, :map, default: nil
   attr :selected_position, :atom, default: :south
   attr :god_mode, :boolean, default: false
   attr :legal_actions, :list, default: []
   attr :bot_configs, :map, default: %{}
   attr :selected_hand_cards, :list, default: []
+  attr :room, :map, default: nil
+  attr :users, :list, default: []
+  attr :show_seat_selectors, :boolean, default: false
 
   def card_table(assigns) do
+    waiting = is_nil(assigns.game_state)
+    assigns = assign(assigns, :waiting, waiting)
     # Extract playable cards from legal actions
     legal_plays = extract_legal_plays(assigns.legal_actions)
 
@@ -435,34 +448,38 @@ defmodule PidroServerWeb.CardComponents do
 
     ~H"""
     <div class="bg-green-800 rounded-xl p-4 shadow-lg relative">
-      <%!-- God Mode Toggle --%>
-      <button
-        phx-click="select_position"
-        phx-value-position={if @god_mode, do: "south", else: "all"}
-        class={[
-          "absolute top-4 right-4 px-2 py-1 text-xs rounded border transition-colors z-10",
-          if(@god_mode,
-            do: "bg-yellow-500 text-black border-yellow-600",
-            else: "bg-green-700 text-green-100 border-green-600 hover:bg-green-600"
-          )
-        ]}
-      >
-        {if @god_mode, do: "👁 God Mode On", else: "👁 God Mode Off"}
-      </button>
+      <%= if @waiting do %>
+        <.waiting_table room={@room} users={@users} show_seat_selectors={@show_seat_selectors} />
+      <% else %>
+        <%!-- God Mode Toggle --%>
+        <button
+          phx-click="select_position"
+          phx-value-position={if @god_mode, do: "south", else: "all"}
+          class={[
+            "absolute top-4 right-4 px-2 py-1 text-xs rounded border transition-colors z-10",
+            if(@god_mode,
+              do: "bg-yellow-500 text-black border-yellow-600",
+              else: "bg-green-700 text-green-100 border-green-600 hover:bg-green-600"
+            )
+          ]}
+        >
+          {if @god_mode, do: "👁 God Mode On", else: "👁 God Mode Off"}
+        </button>
 
-      <%!-- North --%>
-      <div class="flex justify-center mb-4">
-        <.hand
-          cards={get_hand(@game_state, :north)}
-          position={:north}
-          is_current_turn={get_current_turn(@game_state) == :north}
-          is_human={@selected_position == :north}
-          is_bot={is_bot(@bot_configs, :north)}
-          show_cards={@god_mode or @selected_position == :north}
-          legal_plays={if @selected_position == :north, do: @legal_plays, else: []}
-          trump_suit={get_trump_suit(@game_state)}
-          is_cold={player_is_cold?(@game_state, :north)}
-          is_dealer={get_dealer(@game_state) == :north}
+        <%!-- North --%>
+        <div class="flex justify-center mb-4">
+          <.hand
+            cards={get_hand(@game_state, :north)}
+            position={:north}
+            player_name={get_player_name(@room, @users, :north)}
+            is_current_turn={get_current_turn(@game_state) == :north}
+            is_human={@selected_position == :north}
+            is_bot={is_bot(@bot_configs, :north)}
+            show_cards={@god_mode or @selected_position == :north}
+            legal_plays={if @selected_position == :north, do: @legal_plays, else: []}
+            trump_suit={get_trump_suit(@game_state)}
+            is_cold={player_is_cold?(@game_state, :north)}
+            is_dealer={get_dealer(@game_state) == :north}
           selected_cards={if @selected_position == :north, do: @selected_hand_cards, else: []}
           can_select={@can_select_hand and @selected_position == :north}
         />
@@ -473,6 +490,7 @@ defmodule PidroServerWeb.CardComponents do
           <.hand
             cards={get_hand(@game_state, :west)}
             position={:west}
+            player_name={get_player_name(@room, @users, :west)}
             is_current_turn={get_current_turn(@game_state) == :west}
             is_human={@selected_position == :west}
             is_bot={is_bot(@bot_configs, :west)}
@@ -542,6 +560,7 @@ defmodule PidroServerWeb.CardComponents do
           <.hand
             cards={get_hand(@game_state, :east)}
             position={:east}
+            player_name={get_player_name(@room, @users, :east)}
             is_current_turn={get_current_turn(@game_state) == :east}
             is_human={@selected_position == :east}
             is_bot={is_bot(@bot_configs, :east)}
@@ -562,6 +581,7 @@ defmodule PidroServerWeb.CardComponents do
         <.hand
           cards={get_hand(@game_state, :south)}
           position={:south}
+          player_name={get_player_name(@room, @users, :south)}
           is_current_turn={get_current_turn(@game_state) == :south}
           is_human={@selected_position == :south}
           is_bot={is_bot(@bot_configs, :south)}
@@ -582,8 +602,225 @@ defmodule PidroServerWeb.CardComponents do
           N/S: {get_score(@game_state, :north_south)} | E/W: {get_score(@game_state, :east_west)}
         </span>
       </div>
+      <% end %>
     </div>
     """
+  end
+
+  # =============================================================================
+  # Waiting Table Component (Pre-game state with seat selection)
+  # =============================================================================
+
+  @doc """
+  Renders the card table in waiting state with seat selection dropdowns.
+
+  ## Attributes
+
+  - `room` - Room struct with positions map
+  - `users` - List of available users for selection
+  - `show_seat_selectors` - Whether to show dropdown selectors
+
+  ## Examples
+
+      <.waiting_table room={@room} users={@users} show_seat_selectors={true} />
+  """
+  attr :room, :map, default: nil
+  attr :users, :list, default: []
+  attr :show_seat_selectors, :boolean, default: false
+
+  def waiting_table(assigns) do
+    filled_seats = count_filled_seats(assigns.room)
+    assigns = assign(assigns, :filled_seats, filled_seats)
+
+    ~H"""
+    <div class="relative min-h-[400px]">
+      <%!-- North seat --%>
+      <div class="flex justify-center mb-8">
+        <.seat_panel
+          position={:north}
+          room={@room}
+          users={@users}
+          show_seat_selectors={@show_seat_selectors}
+        />
+      </div>
+
+      <%!-- West - Center - East --%>
+      <div class="flex justify-between items-center mb-8 gap-4">
+        <div class="w-48 flex-none">
+          <.seat_panel
+            position={:west}
+            room={@room}
+            users={@users}
+            show_seat_selectors={@show_seat_selectors}
+          />
+        </div>
+
+        <div class="flex-1 min-w-[300px]">
+          <div class="bg-green-700 rounded-lg p-6 min-h-[180px] flex flex-col items-center justify-center text-center border-2 border-dashed border-green-600">
+            <h3 class="text-xl text-green-100 font-bold mb-2">Waiting for Players</h3>
+            <p class="text-green-200 text-sm mb-3">
+              {@filled_seats} / 4 seats filled
+            </p>
+            <div class="flex gap-3 mb-3">
+              <%= for position <- [:north, :east, :south, :west] do %>
+                <div class="flex flex-col items-center gap-1">
+                  <div class={[
+                    "w-4 h-4 rounded-full",
+                    if(seat_filled?(@room, position),
+                      do: "bg-green-400",
+                      else: "bg-green-900 border-2 border-green-500"
+                    )
+                  ]}>
+                  </div>
+                  <span class="text-xs text-green-300">{position_abbrev(position)}</span>
+                </div>
+              <% end %>
+            </div>
+            <%= if @filled_seats == 4 do %>
+              <p class="text-yellow-300 text-sm animate-pulse">
+                All seats filled! Game starting...
+              </p>
+            <% else %>
+              <p class="text-green-300/70 text-xs mt-2">
+                Open seats can be joined by mobile players
+              </p>
+            <% end %>
+          </div>
+        </div>
+
+        <div class="w-48 flex-none">
+          <.seat_panel
+            position={:east}
+            room={@room}
+            users={@users}
+            show_seat_selectors={@show_seat_selectors}
+          />
+        </div>
+      </div>
+
+      <%!-- South seat --%>
+      <div class="flex justify-center">
+        <.seat_panel
+          position={:south}
+          room={@room}
+          users={@users}
+          show_seat_selectors={@show_seat_selectors}
+        />
+      </div>
+    </div>
+    """
+  end
+
+  # =============================================================================
+  # Seat Panel Component
+  # =============================================================================
+
+  @doc """
+  Renders a single seat position with optional player selector dropdown.
+
+  ## Attributes
+
+  - `position` - Seat position (:north | :south | :east | :west)
+  - `room` - Room struct with positions map
+  - `users` - List of available users
+  - `show_seat_selectors` - Whether to show the dropdown selector
+  """
+  attr :position, :atom, required: true
+  attr :room, :map, default: nil
+  attr :users, :list, default: []
+  attr :show_seat_selectors, :boolean, default: false
+
+  def seat_panel(assigns) do
+    current_user_id = get_seat_user_id(assigns.room, assigns.position)
+    player_name = get_player_name(assigns.room, assigns.users, assigns.position)
+
+    assigns =
+      assigns
+      |> assign(:current_user_id, current_user_id)
+      |> assign(:player_name, player_name)
+      |> assign(:is_filled, not is_nil(current_user_id))
+
+    ~H"""
+    <div class={[
+      "bg-gray-800 rounded-lg p-3 shadow-md min-w-[140px]",
+      if(@is_filled, do: "ring-2 ring-green-500", else: "ring-1 ring-gray-600")
+    ]}>
+      <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 text-center">
+        {position_label(@position)}
+      </div>
+
+      <%= if @show_seat_selectors do %>
+        <form phx-change="assign_seat" phx-value-position={@position}>
+          <select
+            name="user_id"
+            class="w-full text-xs bg-gray-700 border-gray-600 text-white rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+          >
+            <option value="empty" selected={is_nil(@current_user_id)}>
+              — Empty Seat —
+            </option>
+            <%= for user <- @users do %>
+              <option value={user.id} selected={@current_user_id == user.id}>
+                {user_display_name(user)}
+              </option>
+            <% end %>
+          </select>
+        </form>
+      <% else %>
+        <div class="text-sm text-center text-white">
+          {@player_name || "Empty"}
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp count_filled_seats(nil), do: 0
+
+  defp count_filled_seats(%{positions: positions}) when is_map(positions) do
+    positions
+    |> Enum.count(fn {_pos, user_id} -> not is_nil(user_id) end)
+  end
+
+  defp count_filled_seats(_), do: 0
+
+  defp seat_filled?(nil, _position), do: false
+
+  defp seat_filled?(%{positions: positions}, position) when is_map(positions) do
+    not is_nil(Map.get(positions, position))
+  end
+
+  defp seat_filled?(_, _), do: false
+
+  defp get_seat_user_id(nil, _position), do: nil
+
+  defp get_seat_user_id(%{positions: positions}, position) when is_map(positions) do
+    Map.get(positions, position)
+  end
+
+  defp get_seat_user_id(_, _), do: nil
+
+  defp get_player_name(nil, _users, _position), do: nil
+
+  defp get_player_name(%{positions: positions}, users, position)
+       when is_map(positions) and is_list(users) do
+    case Map.get(positions, position) do
+      nil ->
+        nil
+
+      user_id ->
+        users
+        |> Enum.find(&(&1.id == user_id))
+        |> case do
+          nil -> String.slice(user_id, 0, 8)
+          user -> user_display_name(user)
+        end
+    end
+  end
+
+  defp get_player_name(_, _, _), do: nil
+
+  defp user_display_name(user) do
+    user.username || user.email || String.slice(user.id, 0, 8)
   end
 
   # =============================================================================
