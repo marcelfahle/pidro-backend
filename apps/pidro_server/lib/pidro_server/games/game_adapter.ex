@@ -33,7 +33,7 @@ defmodule PidroServer.Games.GameAdapter do
 
   require Logger
   alias Pidro.Game.Replay
-  alias PidroServer.Games.{GameRegistry, GameSupervisor}
+  alias PidroServer.Games.{GameRegistry, GameSupervisor, RoomManager}
 
   @doc """
   Applies an action to a game.
@@ -69,11 +69,11 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec apply_action(String.t(), atom(), term()) :: {:ok, term()} | {:error, term()}
   def apply_action(room_code, position, action) do
-    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+    with :ok <- validate_room_status(room_code),
+         {:ok, pid} <- GameRegistry.lookup(room_code) do
       try do
         case Pidro.Server.apply_action(pid, position, action) do
           {:ok, _state} = result ->
-            # Broadcast state update to all subscribers
             broadcast_state_update(room_code, pid)
             result
 
@@ -169,9 +169,13 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec get_legal_actions(String.t(), atom()) :: {:ok, list()} | {:error, :not_found}
   def get_legal_actions(room_code, position) do
-    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+    with :ok <- validate_room_status(room_code),
+         {:ok, pid} <- GameRegistry.lookup(room_code) do
       actions = Pidro.Server.legal_actions(pid, position)
       {:ok, actions}
+    else
+      {:error, :room_not_playable} -> {:ok, []}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -310,6 +314,15 @@ defmodule PidroServer.Games.GameAdapter do
   end
 
   ## Private Functions
+
+  @spec validate_room_status(String.t()) :: :ok | {:error, :room_not_playable}
+  defp validate_room_status(room_code) do
+    case RoomManager.get_room(room_code) do
+      {:ok, %{status: :playing}} -> :ok
+      {:ok, %{status: _}} -> {:error, :room_not_playable}
+      {:error, :room_not_found} -> :ok
+    end
+  end
 
   @doc false
   @spec broadcast_state_update(String.t(), pid()) :: :ok | {:error, term()}

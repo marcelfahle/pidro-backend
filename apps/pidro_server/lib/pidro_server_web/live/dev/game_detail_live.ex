@@ -1474,33 +1474,51 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           <div class="px-4 py-5 sm:px-6">
             <h3 class="text-lg leading-6 font-medium text-zinc-900">Legal Actions</h3>
             <p class="mt-1 text-sm text-zinc-500">
-              <%= if @selected_position == :all do %>
-                Select a specific position to view and execute actions
+              <%= if @room.status != :playing do %>
+                Game is not active
               <% else %>
-                Execute game actions for position:
-                <span class="font-semibold">{@selected_position}</span>
+                <%= if @selected_position == :all do %>
+                  Select a specific position to view and execute actions
+                <% else %>
+                  Execute game actions for position:
+                  <span class="font-semibold">{@selected_position}</span>
+                <% end %>
               <% end %>
             </p>
           </div>
           <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <%= if @selected_position == :all do %>
-              <div class="text-sm text-zinc-500 italic">
-                Please select a specific position above to view legal actions.
+            <%= if @room.status != :playing do %>
+              <div class="flex items-center justify-center py-8 text-amber-600">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span class="text-sm font-medium">Waiting for players to rejoin...</span>
               </div>
             <% else %>
-              <%= if @executing_action do %>
-                <div class="flex items-center justify-center py-8">
-                  <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                  <span class="ml-3 text-sm text-zinc-600">Executing action...</span>
+              <%= if @selected_position == :all do %>
+                <div class="text-sm text-zinc-500 italic">
+                  Please select a specific position above to view legal actions.
                 </div>
               <% else %>
-                <%= if Enum.empty?(@legal_actions) do %>
-                  <div class="text-sm text-zinc-500 italic">
-                    No legal actions available for this position at this time.
+                <%= if @executing_action do %>
+                  <div class="flex items-center justify-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                    <span class="ml-3 text-sm text-zinc-600">Executing action...</span>
                   </div>
                 <% else %>
-                  <%!-- DEV-902: Render action buttons grouped by type --%>
-                  <.render_action_groups legal_actions={@legal_actions} />
+                  <%= if Enum.empty?(@legal_actions) do %>
+                    <div class="text-sm text-zinc-500 italic">
+                      No legal actions available for this position at this time.
+                    </div>
+                  <% else %>
+                    <%!-- DEV-902: Render action buttons grouped by type --%>
+                    <.render_action_groups legal_actions={@legal_actions} />
+                  <% end %>
                 <% end %>
               <% end %>
             <% end %>
