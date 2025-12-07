@@ -643,4 +643,180 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, _} = RoomManager.get_room(room.code)
     end
   end
+
+  describe "dev_set_position/3 - GitHub Issue #6" do
+    test "sets a position to a user" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user2")
+
+      assert updated_room.positions[:north] == "user2"
+      assert Positions.has_player?(updated_room, "user2")
+    end
+
+    test "clears a seat when user_id is nil" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, room_with_player} = RoomManager.dev_set_position(room.code, :south, "user2")
+
+      assert room_with_player.positions[:south] == "user2"
+
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :south, nil)
+
+      assert updated_room.positions[:south] == nil
+      refute Positions.has_player?(updated_room, "user2")
+    end
+
+    test "auto-starts game when 4 players assigned (returns :playing status)" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+
+      {:ok, room2} = RoomManager.dev_set_position(room.code, :north, "user1")
+      assert room2.status == :waiting
+
+      {:ok, room3} = RoomManager.dev_set_position(room.code, :east, "user2")
+      assert room3.status == :waiting
+
+      {:ok, room4} = RoomManager.dev_set_position(room.code, :south, "user3")
+      assert room4.status == :waiting
+
+      # When 4th player is assigned, game auto-starts and returns final :playing status
+      {:ok, final_room} = RoomManager.dev_set_position(room.code, :west, "user4")
+      assert final_room.status == :playing
+      assert Positions.count(final_room) == 4
+    end
+
+    test "broadcasts to correct topics on position change" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+
+      # Subscribe to both topics
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user2")
+
+      # Should receive room update
+      assert_receive {:room_update, updated_room}, 100
+      assert updated_room.positions[:east] == "user2"
+
+      # Should receive lobby event
+      assert_receive {:room_updated, _room}, 100
+    end
+
+    test "allows changes during :playing status (no restrictions)" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _} = RoomManager.dev_set_position(room.code, :north, "user1")
+      {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user2")
+      {:ok, _} = RoomManager.dev_set_position(room.code, :south, "user3")
+
+      # Change status to playing before 4th player
+      :ok = RoomManager.update_room_status(room.code, :playing)
+
+      # Should still allow position changes and preserve :playing status
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :west, "user4")
+      assert updated_room.positions[:west] == "user4"
+      assert updated_room.status == :playing
+      assert Positions.count(updated_room) == 4
+    end
+
+    test "allows changes during :playing status (after auto-start)" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _} = RoomManager.dev_set_position(room.code, :north, "user1")
+      {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user2")
+      {:ok, _} = RoomManager.dev_set_position(room.code, :south, "user3")
+      {:ok, playing_room} = RoomManager.dev_set_position(room.code, :west, "user4")
+
+      # Game auto-starts when 4 players are assigned
+      assert playing_room.status == :playing
+
+      # Should allow changing a seat even during :playing status
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user5")
+      assert updated_room.positions[:north] == "user5"
+    end
+
+    test "allows changes during :finished status" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      :ok = RoomManager.update_room_status(room.code, :finished)
+
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :south, "user2")
+      assert updated_room.positions[:south] == "user2"
+      assert updated_room.status == :finished
+    end
+
+    test "returns error for invalid position" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+
+      assert {:error, :invalid_position} =
+               RoomManager.dev_set_position(room.code, :invalid, "user2")
+    end
+
+    test "returns error for non-existent room" do
+      assert {:error, :room_not_found} =
+               RoomManager.dev_set_position("ZZZZ", :north, "user1")
+    end
+
+    test "replaces player at position when reassigning" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, room2} = RoomManager.dev_set_position(room.code, :north, "user2")
+
+      assert room2.positions[:north] == "user2"
+
+      # Replace user2 with user3 at north
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user3")
+
+      assert updated_room.positions[:north] == "user3"
+      # user2 should no longer be in the room
+      refute Positions.has_player?(updated_room, "user2")
+      assert Positions.has_player?(updated_room, "user3")
+    end
+
+    test "updates player_rooms mapping correctly when replacing" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user2")
+
+      # user2 should be mapped to this room
+      {:ok, room_check} = RoomManager.get_room(room.code)
+      assert Positions.has_player?(room_check, "user2")
+
+      # Replace user2 with user3
+      {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user3")
+
+      # user2 should be able to join another room now (not blocked)
+      {:ok, new_room} = RoomManager.create_room("user2", %{})
+      assert new_room.host_id == "user2"
+    end
+
+    test "moves player from one position to another, clearing old position" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _} = RoomManager.dev_set_position(room.code, :north, "user2")
+
+      # Move user2 from north to south
+      {:ok, _} = RoomManager.dev_set_position(room.code, :south, "user2")
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+
+      # user2 should now be at south only, old position (north) should be cleared
+      assert updated_room.positions[:south] == "user2"
+      assert updated_room.positions[:north] == nil
+
+      # Verify user occupies exactly one seat
+      seats = [
+        updated_room.positions[:north],
+        updated_room.positions[:south],
+        updated_room.positions[:east],
+        updated_room.positions[:west]
+      ]
+
+      assert Enum.count(seats, &(&1 == "user2")) == 1
+    end
+
+    test "updates last_activity timestamp" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      initial_activity = room.last_activity
+
+      # Wait a tiny bit to ensure timestamp difference
+      Process.sleep(10)
+
+      {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user2")
+
+      assert DateTime.compare(updated_room.last_activity, initial_activity) == :gt
+    end
+  end
 end

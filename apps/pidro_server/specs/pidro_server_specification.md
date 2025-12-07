@@ -135,9 +135,25 @@ GET    /api/v1/auth/me              # Current user info
 GET    /api/v1/rooms                # List available rooms
 POST   /api/v1/rooms                # Create room
 GET    /api/v1/rooms/:code          # Room details
-POST   /api/v1/rooms/:code/join     # Join room
+POST   /api/v1/rooms/:code/join     # Join room (with optional position selection)
 DELETE /api/v1/rooms/:code/leave    # Leave room
+POST   /api/v1/rooms/:code/watch    # Join as spectator
+DELETE /api/v1/rooms/:code/unwatch  # Leave spectating
 ```
+
+#### Seat Selection (Join Room)
+
+Players can optionally specify a seat preference when joining:
+
+```
+POST /api/v1/rooms/:code/join
+Body: { "position": "<position>" }
+```
+
+**Position Values**:
+- `null` or omitted - Auto-assign first available (N→E→S→W order)
+- `"north"`, `"east"`, `"south"`, `"west"` - Specific seat
+- `"north_south"`, `"east_west"` - Team preference (first available on team)
 
 #### User
 
@@ -174,6 +190,50 @@ PATCH  /api/v1/users/me             # Update profile
   ]
 }
 ```
+
+#### Room Response Schema
+
+Room responses now include position-related fields:
+
+```json
+{
+  "data": {
+    "room": {
+      "code": "A1B2",
+      "host_id": "user123",
+      "positions": {
+        "north": "user456",
+        "east": null,
+        "south": null,
+        "west": "user123"
+      },
+      "available_positions": ["east", "south"],
+      "player_count": 2,
+      "player_ids": ["user123", "user456"],
+      "status": "waiting",
+      "max_players": 4,
+      "created_at": "2024-11-02T10:30:00Z"
+    },
+    "assigned_position": "north"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `positions` | Object | Map of position → player_id (null if empty) |
+| `available_positions` | Array | Unoccupied positions list |
+| `player_count` | Number | Count of seated players (0-4) |
+| `assigned_position` | String | (Join response only) Assigned seat |
+| `player_ids` | Array | Legacy field - derived from positions |
+
+#### Seat Selection Error Codes
+
+| Error Code | HTTP | Description |
+|------------|------|-------------|
+| `SEAT_TAKEN` | 422 | Requested seat is occupied |
+| `TEAM_FULL` | 422 | Both team seats are taken |
+| `INVALID_POSITION` | 422 | Invalid position value |
 
 ### WebSocket API (Channels)
 
@@ -227,6 +287,8 @@ lib/
 │   │   ├── game_supervisor.ex          # DynamicSupervisor for games
 │   │   ├── game_registry.ex            # Registry (via Registry)
 │   │   ├── room_manager.ex             # Room CRUD, state tracking
+│   │   ├── room/
+│   │   │   └── positions.ex            # Pure seat assignment logic
 │   │   ├── matchmaker.ex               # Queue-based matchmaking
 │   │   └── game_adapter.ex             # Adapter for Pidro.Server
 │   │
