@@ -198,38 +198,40 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   @impl true
   def handle_event("assign_seat", %{"position" => position, "user_id" => user_id}, socket) do
-    # Parse position string to atom
-    position_atom = String.to_existing_atom(position)
-    room_code = socket.assigns.room_code
+    case parse_seat_position(position) do
+      {:ok, position_atom} ->
+        room_code = socket.assigns.room_code
 
-    # Parse user_id - handle empty/nil for clearing seat
-    parsed_user_id =
-      case user_id do
-        "" -> nil
-        "empty" -> nil
-        nil -> nil
-        id -> id
-      end
+        parsed_user_id =
+          case user_id do
+            "" -> nil
+            "empty" -> nil
+            nil -> nil
+            id -> id
+          end
 
-    Logger.info(
-      "Dev assign_seat: room=#{room_code}, position=#{position}, user_id=#{inspect(parsed_user_id)}"
-    )
-
-    # Call RoomManager to set the position
-    case RoomManager.dev_set_position(room_code, position_atom, parsed_user_id) do
-      {:ok, updated_room} ->
         Logger.info(
-          "Dev assign_seat SUCCESS: status=#{updated_room.status}, player_count=#{PidroServer.Games.Room.Positions.count(updated_room)}"
+          "Dev assign_seat: room=#{room_code}, position=#{position_atom}, user_id=#{inspect(parsed_user_id)}"
         )
 
-        {:noreply,
-         socket
-         |> assign(:room, updated_room)
-         |> put_flash(:info, "Seat #{position} updated successfully")}
+        case RoomManager.dev_set_position(room_code, position_atom, parsed_user_id) do
+          {:ok, updated_room} ->
+            Logger.info(
+              "Dev assign_seat SUCCESS: status=#{updated_room.status}, player_count=#{PidroServer.Games.Room.Positions.count(updated_room)}"
+            )
 
-      {:error, reason} ->
-        Logger.error("Dev assign_seat FAILED: #{inspect(reason)}")
-        {:noreply, put_flash(socket, :error, "Failed to update seat: #{inspect(reason)}")}
+            {:noreply,
+             socket
+             |> assign(:room, updated_room)
+             |> put_flash(:info, "Seat #{position_atom} updated successfully")}
+
+          {:error, reason} ->
+            Logger.error("Dev assign_seat FAILED: #{inspect(reason)}")
+            {:noreply, put_flash(socket, :error, "Failed to update seat: #{inspect(reason)}")}
+        end
+
+      :error ->
+        {:noreply, put_flash(socket, :error, "Invalid position: #{position}")}
     end
   end
 
@@ -1375,95 +1377,95 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               show_seat_selectors={true}
             />
 
-              <%= if @game_state && @game_state.phase == :complete do %>
-                <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
-                  <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
-                    <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
-                      <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
-                      <p class="text-lg text-indigo-600 font-medium">
-                        <%= case @game_state.winner do %>
-                          <% :north_south -> %>
-                            🏆 North/South Wins! 🏆
-                          <% :east_west -> %>
-                            🏆 East/West Wins! 🏆
-                          <% _ -> %>
-                            Game Complete
-                        <% end %>
-                      </p>
+            <%= if @game_state && @game_state.phase == :complete do %>
+              <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
+                <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
+                  <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
+                    <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
+                    <p class="text-lg text-indigo-600 font-medium">
+                      <%= case @game_state.winner do %>
+                        <% :north_south -> %>
+                          🏆 North/South Wins! 🏆
+                        <% :east_west -> %>
+                          🏆 East/West Wins! 🏆
+                        <% _ -> %>
+                          Game Complete
+                      <% end %>
+                    </p>
+                  </div>
+
+                  <div class="p-6">
+                    <div class="grid grid-cols-2 gap-8 mb-8 text-center">
+                      <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
+                        <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
+                          North/South
+                        </div>
+                        <div class="text-4xl font-black text-blue-800">
+                          {@game_state.cumulative_scores.north_south}
+                        </div>
+                      </div>
+                      <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
+                        <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
+                          East/West
+                        </div>
+                        <div class="text-4xl font-black text-green-800">
+                          {@game_state.cumulative_scores.east_west}
+                        </div>
+                      </div>
                     </div>
 
-                    <div class="p-6">
-                      <div class="grid grid-cols-2 gap-8 mb-8 text-center">
-                        <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
-                          <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
-                            North/South
-                          </div>
-                          <div class="text-4xl font-black text-blue-800">
-                            {@game_state.cumulative_scores.north_south}
-                          </div>
-                        </div>
-                        <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
-                          <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
-                            East/West
-                          </div>
-                          <div class="text-4xl font-black text-green-800">
-                            {@game_state.cumulative_scores.east_west}
-                          </div>
-                        </div>
-                      </div>
-
-                      <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-                        Score History
-                      </h3>
-                      <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
-                        <table class="min-w-full divide-y divide-gray-200">
-                          <thead class="bg-gray-100">
+                    <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
+                      Score History
+                    </h3>
+                    <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
+                      <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-100">
+                          <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                              Hand
+                            </th>
+                            <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
+                              N/S
+                            </th>
+                            <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
+                              E/W
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200 bg-white">
+                          <%= for {score, index} <- get_score_history(@game_state.events) do %>
                             <tr>
-                              <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                Hand
-                              </th>
-                              <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
-                                N/S
-                              </th>
-                              <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
-                                E/W
-                              </th>
+                              <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
+                              <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
+                                {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
+                              </td>
+                              <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
+                                {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody class="divide-y divide-gray-200 bg-white">
-                            <%= for {score, index} <- get_score_history(@game_state.events) do %>
-                              <tr>
-                                <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
-                                <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
-                                  {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
-                                </td>
-                                <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
-                                  {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
-                                </td>
-                              </tr>
-                            <% end %>
-                          </tbody>
-                        </table>
-                      </div>
+                          <% end %>
+                        </tbody>
+                      </table>
+                    </div>
 
-                      <div class="flex gap-3">
-                        <.link
-                          navigate={~p"/dev/games"}
-                          class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
-                        >
-                          Back to Lobby
-                        </.link>
-                        <button
-                          phx-click="play_again"
-                          class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
-                        >
-                          Play Again
-                        </button>
-                      </div>
+                    <div class="flex gap-3">
+                      <.link
+                        navigate={~p"/dev/games"}
+                        class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
+                      >
+                        Back to Lobby
+                      </.link>
+                      <button
+                        phx-click="play_again"
+                        class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
+                      >
+                        Play Again
+                      </button>
                     </div>
                   </div>
                 </div>
-              <% end %>
+              </div>
+            <% end %>
           </div>
         <% end %>
         
@@ -2069,6 +2071,16 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
 
   defp format_error(reason), do: inspect(reason)
+
+  defp parse_seat_position(position) do
+    case position do
+      "north" -> {:ok, :north}
+      "south" -> {:ok, :south}
+      "east" -> {:ok, :east}
+      "west" -> {:ok, :west}
+      _ -> :error
+    end
+  end
 
   defp status_color(status) do
     case status do

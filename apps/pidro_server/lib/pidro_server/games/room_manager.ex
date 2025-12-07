@@ -808,8 +808,20 @@ defmodule PidroServer.Games.RoomManager do
       # Get previous player at this position (if any)
       previous_player = Map.get(room.positions, position)
 
-      # Update the position directly
-      updated_positions = Map.put(room.positions, position, user_id)
+      # Clear user from any other positions in this room (prevent occupying multiple seats)
+      positions_with_user_cleared =
+        if user_id do
+          room.positions
+          |> Enum.map(fn {pos, id} ->
+            if id == user_id && pos != position, do: {pos, nil}, else: {pos, id}
+          end)
+          |> Enum.into(%{})
+        else
+          room.positions
+        end
+
+      # Set the user at the new position
+      updated_positions = Map.put(positions_with_user_cleared, position, user_id)
 
       # Update room with new positions and touch activity
       # Note: Only auto-set to :ready if room is in :waiting status
@@ -858,7 +870,10 @@ defmodule PidroServer.Games.RoomManager do
           new_state
         end
 
-      {:reply, {:ok, updated_room}, final_state}
+      # Return the final room from final_state (may have :playing status if auto-started)
+      final_room = Map.get(final_state.rooms, room_code, updated_room)
+
+      {:reply, {:ok, final_room}, final_state}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end

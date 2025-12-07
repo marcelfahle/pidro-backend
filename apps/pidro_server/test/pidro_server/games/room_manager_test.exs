@@ -666,7 +666,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       refute Positions.has_player?(updated_room, "user2")
     end
 
-    test "auto-updates status to :ready when 4 players assigned" do
+    test "auto-starts game when 4 players assigned (returns :playing status)" do
       {:ok, room} = RoomManager.create_room("user1", %{})
 
       {:ok, room2} = RoomManager.dev_set_position(room.code, :north, "user1")
@@ -678,8 +678,9 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, room4} = RoomManager.dev_set_position(room.code, :south, "user3")
       assert room4.status == :waiting
 
+      # When 4th player is assigned, game auto-starts and returns final :playing status
       {:ok, final_room} = RoomManager.dev_set_position(room.code, :west, "user4")
-      assert final_room.status == :ready
+      assert final_room.status == :playing
       assert Positions.count(final_room) == 4
     end
 
@@ -716,16 +717,17 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert Positions.count(updated_room) == 4
     end
 
-    test "allows changes during :ready status" do
+    test "allows changes during :playing status (after auto-start)" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _} = RoomManager.dev_set_position(room.code, :north, "user1")
       {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user2")
       {:ok, _} = RoomManager.dev_set_position(room.code, :south, "user3")
-      {:ok, ready_room} = RoomManager.dev_set_position(room.code, :west, "user4")
+      {:ok, playing_room} = RoomManager.dev_set_position(room.code, :west, "user4")
 
-      assert ready_room.status == :ready
+      # Game auto-starts when 4 players are assigned
+      assert playing_room.status == :playing
 
-      # Should allow changing a seat
+      # Should allow changing a seat even during :playing status
       {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user5")
       assert updated_room.positions[:north] == "user5"
     end
@@ -782,7 +784,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert new_room.host_id == "user2"
     end
 
-    test "moves player from one position to another" do
+    test "moves player from one position to another, clearing old position" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _} = RoomManager.dev_set_position(room.code, :north, "user2")
 
@@ -790,10 +792,19 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _} = RoomManager.dev_set_position(room.code, :south, "user2")
       {:ok, updated_room} = RoomManager.get_room(room.code)
 
-      # user2 should now be at south, not north
+      # user2 should now be at south only, old position (north) should be cleared
       assert updated_room.positions[:south] == "user2"
-      # Note: north still has user2 because we didn't clear it - this is expected behavior
-      # In real usage, you'd clear the old position manually or use a different approach
+      assert updated_room.positions[:north] == nil
+
+      # Verify user occupies exactly one seat
+      seats = [
+        updated_room.positions[:north],
+        updated_room.positions[:south],
+        updated_room.positions[:east],
+        updated_room.positions[:west]
+      ]
+
+      assert Enum.count(seats, &(&1 == "user2")) == 1
     end
 
     test "updates last_activity timestamp" do
