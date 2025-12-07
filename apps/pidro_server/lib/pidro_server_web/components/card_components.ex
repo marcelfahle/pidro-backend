@@ -178,7 +178,10 @@ defmodule PidroServerWeb.CardComponents do
         title="Click to switch view to this player"
       >
         <span class="font-medium text-sm text-white">
-          {position_label(@position)}<%= if @player_name do %><span class="text-green-300 ml-1">({@player_name})</span><% end %>
+          {position_label(@position)}
+          <%= if @player_name do %>
+            <span class="text-green-300 ml-1">({@player_name})</span>
+          <% end %>
         </span>
         <%= if @is_dealer do %>
           <div
@@ -480,128 +483,131 @@ defmodule PidroServerWeb.CardComponents do
             trump_suit={get_trump_suit(@game_state)}
             is_cold={player_is_cold?(@game_state, :north)}
             is_dealer={get_dealer(@game_state) == :north}
-          selected_cards={if @selected_position == :north, do: @selected_hand_cards, else: []}
-          can_select={@can_select_hand and @selected_position == :north}
-        />
-      </div>
-      <%!-- West - Center - East --%>
-      <div class="flex justify-between items-start mb-4 gap-4">
-        <div class="w-40 flex-none">
-          <.hand
-            cards={get_hand(@game_state, :west)}
-            position={:west}
-            player_name={get_player_name(@room, @users, :west)}
-            is_current_turn={get_current_turn(@game_state) == :west}
-            is_human={@selected_position == :west}
-            is_bot={is_bot(@bot_configs, :west)}
-            show_cards={@god_mode or @selected_position == :west}
-            legal_plays={if @selected_position == :west, do: @legal_plays, else: []}
-            trump_suit={get_trump_suit(@game_state)}
-            is_cold={player_is_cold?(@game_state, :west)}
-            is_dealer={get_dealer(@game_state) == :west}
-            orientation={:vertical}
-            selected_cards={if @selected_position == :west, do: @selected_hand_cards, else: []}
-            can_select={@can_select_hand and @selected_position == :west}
+            selected_cards={if @selected_position == :north, do: @selected_hand_cards, else: []}
+            can_select={@can_select_hand and @selected_position == :north}
           />
         </div>
+        <%!-- West - Center - East --%>
+        <div class="flex justify-between items-start mb-4 gap-4">
+          <div class="w-40 flex-none">
+            <.hand
+              cards={get_hand(@game_state, :west)}
+              position={:west}
+              player_name={get_player_name(@room, @users, :west)}
+              is_current_turn={get_current_turn(@game_state) == :west}
+              is_human={@selected_position == :west}
+              is_bot={is_bot(@bot_configs, :west)}
+              show_cards={@god_mode or @selected_position == :west}
+              legal_plays={if @selected_position == :west, do: @legal_plays, else: []}
+              trump_suit={get_trump_suit(@game_state)}
+              is_cold={player_is_cold?(@game_state, :west)}
+              is_dealer={get_dealer(@game_state) == :west}
+              orientation={:vertical}
+              selected_cards={if @selected_position == :west, do: @selected_hand_cards, else: []}
+              can_select={@can_select_hand and @selected_position == :west}
+            />
+          </div>
 
-        <div class="flex-1 min-w-[300px]">
-          <%= case @game_state.phase do %>
-            <% :dealer_selection -> %>
-              <div class="bg-green-700 rounded-lg p-8 min-h-[200px] flex flex-col items-center justify-center text-center border-2 border-dashed border-green-600">
-                <h3 class="text-xl text-green-100 font-bold mb-4">Dealer Selection</h3>
-                <button
-                  phx-click="execute_action"
-                  phx-value-action={Jason.encode!("select_dealer")}
-                  class="px-6 py-3 bg-yellow-500 hover:bg-yellow-400 text-yellow-900 font-bold rounded-lg shadow-lg transform transition hover:scale-105"
-                >
-                  Select Dealer
-                </button>
-              </div>
-            <% :bidding -> %>
-              <div class="bg-green-700/90 p-2 rounded-lg">
-                <.bidding_panel
-                  current_bid={get_current_bid(@game_state)}
-                  bidder={get_current_bidder(@game_state)}
-                  legal_actions={@legal_actions}
-                  bid_history={get_bid_history(@game_state)}
+          <div class="flex-1 min-w-[300px]">
+            <%= case @game_state.phase do %>
+              <% :dealer_selection -> %>
+                <div class="bg-green-700 rounded-lg p-8 min-h-[200px] flex flex-col items-center justify-center text-center border-2 border-dashed border-green-600">
+                  <h3 class="text-xl text-green-100 font-bold mb-4">Dealer Selection</h3>
+                  <button
+                    phx-click="execute_action"
+                    phx-value-action={Jason.encode!("select_dealer")}
+                    class="px-6 py-3 bg-yellow-500 hover:bg-yellow-400 text-yellow-900 font-bold rounded-lg shadow-lg transform transition hover:scale-105"
+                  >
+                    Select Dealer
+                  </button>
+                </div>
+              <% :bidding -> %>
+                <div class="bg-green-700/90 p-2 rounded-lg">
+                  <.bidding_panel
+                    current_bid={get_current_bid(@game_state)}
+                    bidder={get_current_bidder(@game_state)}
+                    legal_actions={@legal_actions}
+                    bid_history={get_bid_history(@game_state)}
+                  />
+                </div>
+              <% :declaring -> %>
+                <div class="bg-green-700/90 p-2 rounded-lg">
+                  <.trump_selection_panel
+                    legal_actions={@legal_actions}
+                    hand={get_hand(@game_state, @selected_position)}
+                  />
+                </div>
+              <% :second_deal when @can_select_hand -> %>
+                <div class="bg-green-700/90 p-2 rounded-lg">
+                  <.hand_selection_panel
+                    selected_count={length(@selected_hand_cards)}
+                    target_count={6}
+                    can_submit={length(@selected_hand_cards) == 6}
+                  />
+                </div>
+              <% _ -> %>
+                <.trick_area
+                  trick={get_current_trick(@game_state)}
+                  leader={trick_leader(@game_state)}
+                  winner={trick_winner(@game_state)}
+                  trump_suit={get_trump_suit(@game_state)}
+                  trick_number={get_trick_number(@game_state)}
+                  points_in_trick={
+                    calculate_trick_points(
+                      get_current_trick(@game_state),
+                      get_trump_suit(@game_state)
+                    )
+                  }
                 />
-              </div>
-            <% :declaring -> %>
-              <div class="bg-green-700/90 p-2 rounded-lg">
-                <.trump_selection_panel
-                  legal_actions={@legal_actions}
-                  hand={get_hand(@game_state, @selected_position)}
-                />
-              </div>
-            <% :second_deal when @can_select_hand -> %>
-              <div class="bg-green-700/90 p-2 rounded-lg">
-                <.hand_selection_panel
-                  selected_count={length(@selected_hand_cards)}
-                  target_count={6}
-                  can_submit={length(@selected_hand_cards) == 6}
-                />
-              </div>
-            <% _ -> %>
-              <.trick_area
-                trick={get_current_trick(@game_state)}
-                leader={trick_leader(@game_state)}
-                winner={trick_winner(@game_state)}
-                trump_suit={get_trump_suit(@game_state)}
-                trick_number={get_trick_number(@game_state)}
-                points_in_trick={
-                  calculate_trick_points(get_current_trick(@game_state), get_trump_suit(@game_state))
-                }
-              />
-          <% end %>
+            <% end %>
+          </div>
+
+          <div class="w-40 flex-none">
+            <.hand
+              cards={get_hand(@game_state, :east)}
+              position={:east}
+              player_name={get_player_name(@room, @users, :east)}
+              is_current_turn={get_current_turn(@game_state) == :east}
+              is_human={@selected_position == :east}
+              is_bot={is_bot(@bot_configs, :east)}
+              show_cards={@god_mode or @selected_position == :east}
+              legal_plays={if @selected_position == :east, do: @legal_plays, else: []}
+              trump_suit={get_trump_suit(@game_state)}
+              is_cold={player_is_cold?(@game_state, :east)}
+              is_dealer={get_dealer(@game_state) == :east}
+              orientation={:vertical}
+              align={:end}
+              selected_cards={if @selected_position == :east, do: @selected_hand_cards, else: []}
+              can_select={@can_select_hand and @selected_position == :east}
+            />
+          </div>
         </div>
-
-        <div class="w-40 flex-none">
+        <%!-- South --%>
+        <div class="flex justify-center">
           <.hand
-            cards={get_hand(@game_state, :east)}
-            position={:east}
-            player_name={get_player_name(@room, @users, :east)}
-            is_current_turn={get_current_turn(@game_state) == :east}
-            is_human={@selected_position == :east}
-            is_bot={is_bot(@bot_configs, :east)}
-            show_cards={@god_mode or @selected_position == :east}
-            legal_plays={if @selected_position == :east, do: @legal_plays, else: []}
+            cards={get_hand(@game_state, :south)}
+            position={:south}
+            player_name={get_player_name(@room, @users, :south)}
+            is_current_turn={get_current_turn(@game_state) == :south}
+            is_human={@selected_position == :south}
+            is_bot={is_bot(@bot_configs, :south)}
+            show_cards={@god_mode or @selected_position == :south}
+            legal_plays={if @selected_position == :south, do: @legal_plays, else: []}
             trump_suit={get_trump_suit(@game_state)}
-            is_cold={player_is_cold?(@game_state, :east)}
-            is_dealer={get_dealer(@game_state) == :east}
-            orientation={:vertical}
-            align={:end}
-            selected_cards={if @selected_position == :east, do: @selected_hand_cards, else: []}
-            can_select={@can_select_hand and @selected_position == :east}
+            is_cold={player_is_cold?(@game_state, :south)}
+            is_dealer={get_dealer(@game_state) == :south}
+            selected_cards={if @selected_position == :south, do: @selected_hand_cards, else: []}
+            can_select={@can_select_hand and @selected_position == :south}
           />
         </div>
-      </div>
-      <%!-- South --%>
-      <div class="flex justify-center">
-        <.hand
-          cards={get_hand(@game_state, :south)}
-          position={:south}
-          player_name={get_player_name(@room, @users, :south)}
-          is_current_turn={get_current_turn(@game_state) == :south}
-          is_human={@selected_position == :south}
-          is_bot={is_bot(@bot_configs, :south)}
-          show_cards={@god_mode or @selected_position == :south}
-          legal_plays={if @selected_position == :south, do: @legal_plays, else: []}
-          trump_suit={get_trump_suit(@game_state)}
-          is_cold={player_is_cold?(@game_state, :south)}
-          is_dealer={get_dealer(@game_state) == :south}
-          selected_cards={if @selected_position == :south, do: @selected_hand_cards, else: []}
-          can_select={@can_select_hand and @selected_position == :south}
-        />
-      </div>
-      <%!-- Game info bar --%>
-      <div class="mt-4 bg-green-900 rounded p-2 text-white text-sm flex justify-between">
-        <span>Trump: {format_trump(get_trump_suit(@game_state))}</span>
-        <span>Hand #{get_hand_number(@game_state)}</span>
-        <span>
-          N/S: {get_score(@game_state, :north_south)} | E/W: {get_score(@game_state, :east_west)}
-        </span>
-      </div>
+        <%!-- Game info bar --%>
+        <div class="mt-4 bg-green-900 rounded p-2 text-white text-sm flex justify-between">
+          <span>Trump: {format_trump(get_trump_suit(@game_state))}</span>
+          <span>Hand #{get_hand_number(@game_state)}</span>
+          <span>
+            N/S: {get_score(@game_state, :north_south)} | E/W: {get_score(@game_state, :east_west)}
+          </span>
+        </div>
       <% end %>
     </div>
     """

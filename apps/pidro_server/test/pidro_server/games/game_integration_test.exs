@@ -197,6 +197,105 @@ defmodule PidroServer.Games.GameIntegrationTest do
     end
   end
 
+  describe "room status validation (GH-7)" do
+    test "apply_action returns error when room status is not :playing" do
+      # Create a room with 4 players to auto-start game
+      assert {:ok, room} = RoomManager.create_room("gh7_p1", %{name: "GH-7 Test"})
+      room_code = room.code
+
+      # Join 3 more players to reach 4 and auto-start
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_p2")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_p3")
+      assert {:ok, room, _} = RoomManager.join_room(room_code, "gh7_p4")
+
+      # Wait for game to start
+      Process.sleep(100)
+      assert room.status == :ready
+
+      # Verify game is running and action can be applied
+      assert {:ok, _state} = GameAdapter.get_state(room_code)
+      assert {:ok, _} = GameAdapter.apply_action(room_code, :north, :select_dealer)
+
+      # Now simulate a player leaving - room status goes to :waiting
+      :ok = RoomManager.leave_room("gh7_p2")
+      {:ok, updated_room} = RoomManager.get_room(room_code)
+      assert updated_room.status == :waiting
+
+      # Attempting to apply action should fail with :room_not_playable
+      assert {:error, :room_not_playable} = GameAdapter.apply_action(room_code, :north, {:bid, 6})
+    end
+
+    test "get_legal_actions returns empty list when room status is not :playing" do
+      # Create a room with 4 players to auto-start game
+      assert {:ok, room} = RoomManager.create_room("gh7_legal_p1", %{name: "GH-7 Legal Test"})
+      room_code = room.code
+
+      # Join 3 more players
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_legal_p2")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_legal_p3")
+      assert {:ok, room, _} = RoomManager.join_room(room_code, "gh7_legal_p4")
+
+      # Wait for game to start
+      Process.sleep(100)
+      assert room.status == :ready
+
+      # Get game state to verify it's running
+      assert {:ok, _state} = GameAdapter.get_state(room_code)
+
+      # Legal actions should be available during gameplay
+      assert {:ok, actions} = GameAdapter.get_legal_actions(room_code, :north)
+      assert is_list(actions)
+      # Should have at least select_dealer during dealer_selection
+      assert length(actions) > 0
+
+      # Simulate player leaving
+      :ok = RoomManager.leave_room("gh7_legal_p2")
+      {:ok, updated_room} = RoomManager.get_room(room_code)
+      assert updated_room.status == :waiting
+
+      # Legal actions should return empty list when room is not playable
+      assert {:ok, []} = GameAdapter.get_legal_actions(room_code, :north)
+    end
+
+    test "actions are allowed again when room returns to :playing status" do
+      # Create a room with 4 players
+      assert {:ok, room} = RoomManager.create_room("gh7_rejoin_p1", %{name: "GH-7 Rejoin Test"})
+      room_code = room.code
+
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_rejoin_p2")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_rejoin_p3")
+      assert {:ok, room, _} = RoomManager.join_room(room_code, "gh7_rejoin_p4")
+
+      Process.sleep(100)
+      assert room.status == :ready
+
+      # Select dealer to progress game
+      assert {:ok, _} = GameAdapter.apply_action(room_code, :north, :select_dealer)
+
+      # Player leaves - room becomes :waiting
+      :ok = RoomManager.leave_room("gh7_rejoin_p2")
+      {:ok, waiting_room} = RoomManager.get_room(room_code)
+      assert waiting_room.status == :waiting
+
+      # Actions blocked
+      assert {:error, :room_not_playable} = GameAdapter.apply_action(room_code, :north, {:bid, 6})
+
+      # Player rejoins - room goes to :ready (4 players present)
+      assert {:ok, rejoined_room, _} = RoomManager.join_room(room_code, "gh7_rejoin_new")
+      assert rejoined_room.status == :ready
+
+      # Manually set room status back to :playing (simulating game resume)
+      :ok = RoomManager.update_room_status(room_code, :playing)
+      {:ok, playing_room} = RoomManager.get_room(room_code)
+      assert playing_room.status == :playing
+
+      # Actions should work again (but might fail for invalid action reasons, not room status)
+      result = GameAdapter.apply_action(room_code, :north, {:bid, 6})
+      # It might fail due to game rules, but NOT due to room_not_playable
+      refute match?({:error, :room_not_playable}, result)
+    end
+  end
+
   ## Helper Functions
 
   # Unused but kept for potential future test expansion

@@ -1375,95 +1375,95 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               show_seat_selectors={true}
             />
 
-              <%= if @game_state && @game_state.phase == :complete do %>
-                <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
-                  <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
-                    <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
-                      <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
-                      <p class="text-lg text-indigo-600 font-medium">
-                        <%= case @game_state.winner do %>
-                          <% :north_south -> %>
-                            🏆 North/South Wins! 🏆
-                          <% :east_west -> %>
-                            🏆 East/West Wins! 🏆
-                          <% _ -> %>
-                            Game Complete
-                        <% end %>
-                      </p>
+            <%= if @game_state && @game_state.phase == :complete do %>
+              <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
+                <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
+                  <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
+                    <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
+                    <p class="text-lg text-indigo-600 font-medium">
+                      <%= case @game_state.winner do %>
+                        <% :north_south -> %>
+                          🏆 North/South Wins! 🏆
+                        <% :east_west -> %>
+                          🏆 East/West Wins! 🏆
+                        <% _ -> %>
+                          Game Complete
+                      <% end %>
+                    </p>
+                  </div>
+
+                  <div class="p-6">
+                    <div class="grid grid-cols-2 gap-8 mb-8 text-center">
+                      <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
+                        <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
+                          North/South
+                        </div>
+                        <div class="text-4xl font-black text-blue-800">
+                          {@game_state.cumulative_scores.north_south}
+                        </div>
+                      </div>
+                      <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
+                        <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
+                          East/West
+                        </div>
+                        <div class="text-4xl font-black text-green-800">
+                          {@game_state.cumulative_scores.east_west}
+                        </div>
+                      </div>
                     </div>
 
-                    <div class="p-6">
-                      <div class="grid grid-cols-2 gap-8 mb-8 text-center">
-                        <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
-                          <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
-                            North/South
-                          </div>
-                          <div class="text-4xl font-black text-blue-800">
-                            {@game_state.cumulative_scores.north_south}
-                          </div>
-                        </div>
-                        <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
-                          <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
-                            East/West
-                          </div>
-                          <div class="text-4xl font-black text-green-800">
-                            {@game_state.cumulative_scores.east_west}
-                          </div>
-                        </div>
-                      </div>
-
-                      <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-                        Score History
-                      </h3>
-                      <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
-                        <table class="min-w-full divide-y divide-gray-200">
-                          <thead class="bg-gray-100">
+                    <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
+                      Score History
+                    </h3>
+                    <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
+                      <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-100">
+                          <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                              Hand
+                            </th>
+                            <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
+                              N/S
+                            </th>
+                            <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
+                              E/W
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200 bg-white">
+                          <%= for {score, index} <- get_score_history(@game_state.events) do %>
                             <tr>
-                              <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                Hand
-                              </th>
-                              <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
-                                N/S
-                              </th>
-                              <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
-                                E/W
-                              </th>
+                              <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
+                              <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
+                                {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
+                              </td>
+                              <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
+                                {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody class="divide-y divide-gray-200 bg-white">
-                            <%= for {score, index} <- get_score_history(@game_state.events) do %>
-                              <tr>
-                                <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
-                                <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
-                                  {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
-                                </td>
-                                <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
-                                  {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
-                                </td>
-                              </tr>
-                            <% end %>
-                          </tbody>
-                        </table>
-                      </div>
+                          <% end %>
+                        </tbody>
+                      </table>
+                    </div>
 
-                      <div class="flex gap-3">
-                        <.link
-                          navigate={~p"/dev/games"}
-                          class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
-                        >
-                          Back to Lobby
-                        </.link>
-                        <button
-                          phx-click="play_again"
-                          class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
-                        >
-                          Play Again
-                        </button>
-                      </div>
+                    <div class="flex gap-3">
+                      <.link
+                        navigate={~p"/dev/games"}
+                        class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
+                      >
+                        Back to Lobby
+                      </.link>
+                      <button
+                        phx-click="play_again"
+                        class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
+                      >
+                        Play Again
+                      </button>
                     </div>
                   </div>
                 </div>
-              <% end %>
+              </div>
+            <% end %>
           </div>
         <% end %>
         
@@ -1472,33 +1472,51 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           <div class="px-4 py-5 sm:px-6">
             <h3 class="text-lg leading-6 font-medium text-zinc-900">Legal Actions</h3>
             <p class="mt-1 text-sm text-zinc-500">
-              <%= if @selected_position == :all do %>
-                Select a specific position to view and execute actions
+              <%= if @room.status != :playing do %>
+                Game is not active
               <% else %>
-                Execute game actions for position:
-                <span class="font-semibold">{@selected_position}</span>
+                <%= if @selected_position == :all do %>
+                  Select a specific position to view and execute actions
+                <% else %>
+                  Execute game actions for position:
+                  <span class="font-semibold">{@selected_position}</span>
+                <% end %>
               <% end %>
             </p>
           </div>
           <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <%= if @selected_position == :all do %>
-              <div class="text-sm text-zinc-500 italic">
-                Please select a specific position above to view legal actions.
+            <%= if @room.status != :playing do %>
+              <div class="flex items-center justify-center py-8 text-amber-600">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span class="text-sm font-medium">Waiting for players to rejoin...</span>
               </div>
             <% else %>
-              <%= if @executing_action do %>
-                <div class="flex items-center justify-center py-8">
-                  <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                  <span class="ml-3 text-sm text-zinc-600">Executing action...</span>
+              <%= if @selected_position == :all do %>
+                <div class="text-sm text-zinc-500 italic">
+                  Please select a specific position above to view legal actions.
                 </div>
               <% else %>
-                <%= if Enum.empty?(@legal_actions) do %>
-                  <div class="text-sm text-zinc-500 italic">
-                    No legal actions available for this position at this time.
+                <%= if @executing_action do %>
+                  <div class="flex items-center justify-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                    <span class="ml-3 text-sm text-zinc-600">Executing action...</span>
                   </div>
                 <% else %>
-                  <%!-- DEV-902: Render action buttons grouped by type --%>
-                  <.render_action_groups legal_actions={@legal_actions} />
+                  <%= if Enum.empty?(@legal_actions) do %>
+                    <div class="text-sm text-zinc-500 italic">
+                      No legal actions available for this position at this time.
+                    </div>
+                  <% else %>
+                    <%!-- DEV-902: Render action buttons grouped by type --%>
+                    <.render_action_groups legal_actions={@legal_actions} />
+                  <% end %>
                 <% end %>
               <% end %>
             <% end %>
