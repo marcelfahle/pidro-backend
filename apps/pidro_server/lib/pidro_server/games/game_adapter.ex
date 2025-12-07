@@ -167,8 +167,7 @@ defmodule PidroServer.Games.GameAdapter do
       iex> GameAdapter.get_legal_actions("A3F9", :north)
       {:ok, [{:bid, 6}, {:bid, 7}, ..., :pass]}
   """
-  @spec get_legal_actions(String.t(), atom()) ::
-          {:ok, list()} | {:error, :not_found | :room_not_playable}
+  @spec get_legal_actions(String.t(), atom()) :: {:ok, list()} | {:error, :not_found}
   def get_legal_actions(room_code, position) do
     with :ok <- validate_room_status(room_code),
          {:ok, pid} <- GameRegistry.lookup(room_code) do

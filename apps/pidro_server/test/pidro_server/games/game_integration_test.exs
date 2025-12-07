@@ -206,11 +206,12 @@ defmodule PidroServer.Games.GameIntegrationTest do
       # Join 3 more players to reach 4 and auto-start
       assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_p2")
       assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_p3")
-      assert {:ok, room, _} = RoomManager.join_room(room_code, "gh7_p4")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_p4")
 
-      # Wait for game to start
+      # Wait for game to start and verify room is now :playing
       Process.sleep(100)
-      assert room.status == :ready
+      {:ok, started_room} = RoomManager.get_room(room_code)
+      assert started_room.status == :playing
 
       # Verify game is running and action can be applied
       assert {:ok, _state} = GameAdapter.get_state(room_code)
@@ -233,11 +234,12 @@ defmodule PidroServer.Games.GameIntegrationTest do
       # Join 3 more players
       assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_legal_p2")
       assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_legal_p3")
-      assert {:ok, room, _} = RoomManager.join_room(room_code, "gh7_legal_p4")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_legal_p4")
 
-      # Wait for game to start
+      # Wait for game to start and verify room is now :playing
       Process.sleep(100)
-      assert room.status == :ready
+      {:ok, started_room} = RoomManager.get_room(room_code)
+      assert started_room.status == :playing
 
       # Get game state to verify it's running
       assert {:ok, _state} = GameAdapter.get_state(room_code)
@@ -264,10 +266,12 @@ defmodule PidroServer.Games.GameIntegrationTest do
 
       assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_rejoin_p2")
       assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_rejoin_p3")
-      assert {:ok, room, _} = RoomManager.join_room(room_code, "gh7_rejoin_p4")
+      assert {:ok, _, _} = RoomManager.join_room(room_code, "gh7_rejoin_p4")
 
+      # Wait for game to start and verify room is now :playing
       Process.sleep(100)
-      assert room.status == :ready
+      {:ok, started_room} = RoomManager.get_room(room_code)
+      assert started_room.status == :playing
 
       # Select dealer to progress game
       assert {:ok, _} = GameAdapter.apply_action(room_code, :north, :select_dealer)
