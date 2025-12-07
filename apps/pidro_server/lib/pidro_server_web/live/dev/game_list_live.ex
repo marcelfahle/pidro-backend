@@ -535,7 +535,12 @@ defmodule PidroServerWeb.Dev.GameListLive do
                   <%= for room <- @rooms do %>
                     <tr>
                       <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm font-medium text-zinc-900">{room.code}</div>
+                        <.link
+                          navigate={~p"/dev/games/#{room.code}"}
+                          class="text-sm font-medium text-indigo-600 hover:text-indigo-900"
+                        >
+                          {room.code}
+                        </.link>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap">
                         <div class="text-sm text-zinc-900">

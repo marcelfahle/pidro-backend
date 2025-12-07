@@ -401,6 +401,41 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Dev-only function to directly set a position without join validation.
+
+  Used by dev UI to populate test scenarios with specific players.
+  Allows position changes at any time (waiting, ready, playing, finished).
+  Set user_id to nil to clear a seat.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `position` - Position to set (:north, :east, :south, :west)
+  - `user_id` - User ID to assign, or nil to clear the seat
+
+  ## Returns
+
+  - `{:ok, room}` - Successfully updated position
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :invalid_position}` - Invalid position atom
+
+  ## Examples
+
+      {:ok, room} = RoomManager.dev_set_position("A1B2", :north, "user123")
+      {:ok, room} = RoomManager.dev_set_position("A1B2", :south, nil)
+  """
+  @spec dev_set_position(String.t(), Positions.position(), String.t() | nil) ::
+          {:ok, Room.t()} | {:error, :room_not_found | :invalid_position}
+  def dev_set_position(room_code, position, user_id)
+      when position in [:north, :east, :south, :west] do
+    GenServer.call(__MODULE__, {:dev_set_position, String.upcase(room_code), position, user_id})
+  end
+
+  def dev_set_position(_room_code, _position, _user_id) do
+    {:error, :invalid_position}
+  end
+
+  @doc """
   Handles a player disconnect and starts the reconnection grace period.
 
   When a player disconnects, they are tracked in the disconnected_players map
@@ -768,6 +803,68 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:dev_set_position, room_code, position, user_id}, _from, %State{} = state) do
+    with {:ok, room} <- fetch_room(state, room_code) do
+      # Get previous player at this position (if any)
+      previous_player = Map.get(room.positions, position)
+
+      # Update the position directly
+      updated_positions = Map.put(room.positions, position, user_id)
+
+      # Update room with new positions and touch activity
+      # Note: Only auto-set to :ready if room is in :waiting status
+      # This preserves :playing, :finished, etc. statuses for dev testing
+      updated_room =
+        %{room | positions: updated_positions}
+        |> dev_maybe_set_ready()
+        |> touch_last_activity()
+
+      # Update player_rooms mapping
+      # Remove previous player's mapping if they were replaced
+      new_player_rooms =
+        if previous_player && previous_player != user_id do
+          Map.delete(state.player_rooms, previous_player)
+        else
+          state.player_rooms
+        end
+
+      # Add new player's mapping if not nil
+      new_player_rooms =
+        if user_id do
+          Map.put(new_player_rooms, user_id, room_code)
+        else
+          new_player_rooms
+        end
+
+      new_state = %State{
+        state
+        | rooms: Map.put(state.rooms, room_code, updated_room),
+          player_rooms: new_player_rooms
+      }
+
+      Logger.info(
+        "Dev set position #{position} in room #{room_code}: #{inspect(previous_player)} -> #{inspect(user_id)}"
+      )
+
+      # Broadcast using established pattern
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+
+      # Auto-start game if room is now ready (4 players)
+      final_state =
+        if updated_room.status == :ready do
+          start_game_for_room(updated_room, new_state)
+        else
+          new_state
+        end
+
+      {:reply, {:ok, updated_room}, final_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:player_disconnect, room_code, user_id}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
@@ -983,6 +1080,19 @@ defmodule PidroServer.Games.RoomManager do
       room
     end
   end
+
+  @doc false
+  # Dev version that only sets to :ready if currently :waiting
+  # This preserves :playing, :finished, etc. for dev testing
+  defp dev_maybe_set_ready(%Room{status: :waiting} = room) do
+    if Positions.count(room) == @max_players do
+      %{room | status: :ready}
+    else
+      room
+    end
+  end
+
+  defp dev_maybe_set_ready(%Room{} = room), do: room
 
   @doc false
   defp touch_last_activity(%Room{} = room) do

@@ -14,6 +14,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   use PidroServerWeb, :live_view
   require Logger
+  alias PidroServer.Accounts.Auth
   alias PidroServer.Dev.{BotManager, Event, GameHelpers, ReplayController}
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.CardComponents
@@ -25,6 +26,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         if connected?(socket) do
           # Subscribe to game updates for this specific room
           Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+          # Subscribe to room updates (for seat assignments, player joins/leaves)
+          Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room_code}")
         end
 
         # Get initial game state
@@ -37,9 +40,21 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         bot_configs = initialize_bot_configs(room_code)
 
         # DEV-1301: Initialize replay state
-        {:ok, event_count} = ReplayController.get_event_count(room_code)
+        event_count =
+          case ReplayController.get_event_count(room_code) do
+            {:ok, count} -> count
+            {:error, _} -> 0
+          end
 
-        events = process_events(game_state.events)
+        events =
+          if game_state do
+            process_events(game_state.events)
+          else
+            []
+          end
+
+        # Load users for seat management dropdowns
+        users = Auth.list_recent_users(20)
 
         {:ok,
          socket
@@ -63,6 +78,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:replay_playing, false)
          |> assign(:replay_speed, 1000)
          |> assign(:selected_hand_cards, [])
+         |> assign(:users, users)
          |> assign(:page_title, "Game Detail - Dev")}
 
       {:error, _reason} ->
@@ -96,6 +112,36 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
      |> assign(:game_state, game_state)
      |> assign(:legal_actions, [])
      |> put_flash(:info, "Game Over!")}
+  end
+
+  @impl true
+  def handle_info({:room_update, room}, socket) do
+    Logger.info(
+      "LiveView received :room_update - status=#{room.status}, player_count=#{PidroServer.Games.Room.Positions.count(room)}"
+    )
+
+    # If room status changed to :playing, fetch initial game state
+    socket =
+      if room.status == :playing && is_nil(socket.assigns.game_state) do
+        Logger.info("Room is :playing and game_state is nil - fetching game state")
+        game_state = get_game_state(socket.assigns.room_code)
+        Logger.info("Fetched game_state: #{inspect(game_state != nil)}")
+
+        legal_actions =
+          get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
+
+        socket
+        |> assign(:game_state, game_state)
+        |> assign(:legal_actions, legal_actions)
+      else
+        Logger.info(
+          "Not fetching game_state - status=#{room.status}, game_state_nil=#{is_nil(socket.assigns.game_state)}"
+        )
+
+        socket
+      end
+
+    {:noreply, assign(socket, :room, room)}
   end
 
   @impl true
@@ -148,6 +194,43 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_event("reset_clipboard_feedback", _params, socket) do
     {:noreply, assign(socket, :copy_feedback, false)}
+  end
+
+  @impl true
+  def handle_event("assign_seat", %{"position" => position, "user_id" => user_id}, socket) do
+    # Parse position string to atom
+    position_atom = String.to_existing_atom(position)
+    room_code = socket.assigns.room_code
+
+    # Parse user_id - handle empty/nil for clearing seat
+    parsed_user_id =
+      case user_id do
+        "" -> nil
+        "empty" -> nil
+        nil -> nil
+        id -> id
+      end
+
+    Logger.info(
+      "Dev assign_seat: room=#{room_code}, position=#{position}, user_id=#{inspect(parsed_user_id)}"
+    )
+
+    # Call RoomManager to set the position
+    case RoomManager.dev_set_position(room_code, position_atom, parsed_user_id) do
+      {:ok, updated_room} ->
+        Logger.info(
+          "Dev assign_seat SUCCESS: status=#{updated_room.status}, player_count=#{PidroServer.Games.Room.Positions.count(updated_room)}"
+        )
+
+        {:noreply,
+         socket
+         |> assign(:room, updated_room)
+         |> put_flash(:info, "Seat #{position} updated successfully")}
+
+      {:error, reason} ->
+        Logger.error("Dev assign_seat FAILED: #{inspect(reason)}")
+        {:noreply, put_flash(socket, :error, "Failed to update seat: #{inspect(reason)}")}
+    end
   end
 
   @impl true
@@ -825,6 +908,45 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                 </dd>
               </div>
             </dl>
+          </div>
+        </div>
+        
+    <!-- Dev Seat Management - GitHub Issue #6 -->
+        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+          <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg leading-6 font-medium text-zinc-900">Dev Seat Management</h3>
+            <p class="mt-1 text-sm text-zinc-500">
+              Assign players to specific seats for testing scenarios
+            </p>
+          </div>
+          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <%= for position <- [:north, :east, :south, :west] do %>
+                <div class="bg-zinc-50 rounded-lg p-4">
+                  <label class="block text-sm font-medium text-zinc-700 mb-2">
+                    {format_position(position)}
+                  </label>
+                  <form phx-change="assign_seat" phx-value-position={position}>
+                    <select
+                      name="user_id"
+                      class="w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                    >
+                      <option value="empty" selected={is_nil(@room.positions[position])}>
+                        — Empty Seat —
+                      </option>
+                      <%= for user <- @users do %>
+                        <option
+                          value={user.id}
+                          selected={@room.positions[position] == user.id}
+                        >
+                          {user.username || user.email || user.id |> String.slice(0..7)}
+                        </option>
+                      <% end %>
+                    </select>
+                  </form>
+                </div>
+              <% end %>
+            </div>
           </div>
         </div>
         
