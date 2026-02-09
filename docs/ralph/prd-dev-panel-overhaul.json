@@ -84,7 +84,7 @@
             "Run: mix test apps/pidro_server/test/pidro_server/games/bots/bot_manager_test.exs",
             "Verify: All tests pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },

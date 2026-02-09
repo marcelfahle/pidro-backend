@@ -332,3 +332,40 @@ Note for next person:
 - Phase 2 is COMPLETE (2.1, 2.2, 2.3 all done).
 - Phase 1 remaining: only 1.5 (tests for bot seat-skipping and cascading
   cleanup). This is the LAST remaining feature in the entire PRD.
+
+--- 2026-02-09 — Feature 1.5: Tests for bot seat-skipping and cascading cleanup ---
+Status: DONE
+Changed:
+  - Created: apps/pidro_server/test/pidro_server/games/bots/bot_manager_test.exs
+
+What was done:
+- Created BotManagerTest with 9 tests across 3 describe blocks:
+  1. start_bots/4 skips occupied seats (3 tests):
+     - Host at north, request 3 bots → bots placed at east/south/west
+     - Host + player at east, request 2 bots → bots at south/west
+     - 3 seats occupied, request 1 bot → fills the only available seat (west)
+  2. start_bots/4 returns error when not enough seats (2 tests):
+     - Host at north, request 4 bots → {:error, :not_enough_seats}
+     - 3 seats occupied, request 2 bots → {:error, :not_enough_seats}
+  3. Cascading cleanup via stop_all_bots (4 tests):
+     - After stop_all_bots, list_bots returns empty map
+     - stop_all_bots on room with no bots returns :ok
+     - stop_all_bots terminates bot processes (checks Process.alive?)
+     - Full cascading cleanup: stop bots then close room (same pattern
+       as GameListLive.handle_single_delete)
+- Tests use async: false (singleton GenServers), same setup pattern as
+  RoomManagerTest (check GenServer.whereis, start_supervised! if needed,
+  reset_for_test).
+- All bot delay set to 0ms for fast test execution.
+
+Verification:
+- mix format --check-formatted passes
+- mix test: all 9 new tests pass; engine 529/170/79 pass (1 pre-existing
+  flaky SupervisorTest); server 200 tests with 5 pre-existing failures
+  (LobbyChannelTest format, GameChannelTest reconnection) — none related
+  to this change.
+
+=== PRD STATUS: ALL FEATURES COMPLETE ===
+- Phase 1: 1.1, 1.2, 1.3, 1.4, 1.5 — all DONE
+- Phase 2: 2.1, 2.2, 2.3 — all DONE
+- Phase 3: 3.1, 3.2, 3.3, 3.4, 3.5 — all DONE
