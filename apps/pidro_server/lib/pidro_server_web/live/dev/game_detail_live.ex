@@ -1678,7 +1678,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             <div class="space-y-1">
               <%= for event <- @events do %>
                 <div class="flex gap-2">
-                  <span class="text-gray-500">[{format_event_timestamp(event)}]</span>
+                  <span class="text-gray-500">[#{event.metadata[:index] || "?"}]</span>
                   <span class={event_type_color(event.type)}>
                     {Event.format(event)}
                   </span>
@@ -1689,7 +1689,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         </div>
 
         <div class="mt-2 text-sm text-gray-600">
-          Showing {length(@events)} events (max 50)
+          Showing {length(@events)} of {length(@game_state.events)} events (last 50)
         </div>
       </div>
 
@@ -1717,7 +1717,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                 >{Jason.encode!(@events |> Enum.map(&Event.to_json/1), pretty: true)}</textarea>
                 <button
                   id="copy-json-button"
-                  phx-hook="CopyToClipboard"
+                  phx-hook="Clipboard"
                   data-target="export-json"
                   class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
                 >
@@ -1732,11 +1732,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                   readonly
                   class="w-full h-64 font-mono text-xs border rounded p-2"
                 >{Enum.map_join(@events, "\n", fn event ->
-                  "[#{Calendar.strftime(event.timestamp, "%H:%M:%S")}] #{Event.format(event)}"
+                  "[##{event.metadata[:index] || "?"}] #{Event.format(event)}"
                 end)}</textarea>
                 <button
                   id="copy-text-button"
-                  phx-hook="CopyToClipboard"
+                  phx-hook="Clipboard"
                   data-target="export-text"
                   class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
                 >
@@ -2304,10 +2304,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   # Event log helper functions
 
-  defp format_event_timestamp(event) do
-    event.timestamp
-    |> Calendar.strftime("%H:%M:%S")
-  end
 
   defp event_type_color(type) do
     case type do
@@ -2368,12 +2364,13 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     show_bot = Map.get(assigns, :show_bot_reasoning, true)
 
     raw_events
-    |> Enum.map(&Event.from_raw/1)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {raw, idx} -> Event.from_raw(raw, idx) end)
     |> Enum.reject(&is_nil/1)
     |> filter_by_type(filter_type)
     |> filter_by_player(filter_player)
     |> filter_bot_reasoning(show_bot)
-    |> Enum.take(50)
+    |> Enum.take(-50)
   end
 
   defp filter_by_type(events, nil), do: events

@@ -550,7 +550,7 @@ defmodule Pidro.Game.Engine do
 
         if new_state.phase == :second_deal do
           # Dealer needs to rob - check if auto mode is enabled
-          auto_rob = Map.get(new_state.config, :auto_dealer_rob, false)
+          auto_rob = Map.get(new_state.config, :auto_dealer_rob, true)
 
           if auto_rob do
             # Auto mode: automatically select best 6 cards for dealer

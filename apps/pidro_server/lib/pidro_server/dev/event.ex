@@ -57,56 +57,50 @@ if Mix.env() == :dev do
 
     @doc """
     Converts a raw game engine event tuple into an Event struct.
+
+    The optional `index` parameter assigns a sequential number to each event
+    for display purposes (since engine events don't carry timestamps).
     """
-    @spec from_raw(tuple()) :: t()
-    def from_raw({:dealer_selected, position, _card}),
-      do: new(:dealer_selected, position)
+    @spec from_raw(tuple(), non_neg_integer()) :: t() | nil
+    def from_raw(raw_event, index \\ 0)
 
-    def from_raw({:cards_dealt, _hands}),
-      do: new(:cards_dealt, nil)
+    def from_raw({:dealer_selected, position, _card}, index),
+      do: new(:dealer_selected, position, %{index: index})
 
-    def from_raw({:bid_made, position, amount}),
-      do: new(:bid_made, position, %{bid_amount: amount})
+    def from_raw({:cards_dealt, _hands}, index),
+      do: new(:cards_dealt, nil, %{index: index})
 
-    def from_raw({:player_passed, position}),
-      do: new(:bid_passed, position)
+    def from_raw({:bid_made, position, amount}, index),
+      do: new(:bid_made, position, %{bid_amount: amount, index: index})
 
-    def from_raw({:bidding_complete, _position, _amount}),
-      # Skip this one for UI noise reduction or handle if needed
+    def from_raw({:player_passed, position}, index),
+      do: new(:bid_passed, position, %{index: index})
+
+    def from_raw({:bidding_complete, _position, _amount}, _index),
       do: nil
 
-    def from_raw({:trump_declared, suit}),
-      # Declarer implicit in UI usually
-      do: new(:trump_declared, nil, %{suit: suit})
+    def from_raw({:trump_declared, suit}, index),
+      do: new(:trump_declared, nil, %{suit: suit, index: index})
 
-    # Adjust for trump declared with declarer if available in context, but raw event is {:trump_declared, suit}
-    # Wait, Core Types says: {:trump_declared, suit()}
-    # So we don't know who declared it from the event alone? The context might be needed.
-    # But EventRecorder was inferring it from state.
-    # For now, we just show "Trump declared: Suit".
+    def from_raw({:card_played, position, card}, index),
+      do: new(:card_played, position, %{card: card, index: index})
 
-    def from_raw({:card_played, position, card}),
-      do: new(:card_played, position, %{card: card})
+    def from_raw({:trick_won, position, points}, index),
+      do: new(:trick_won, position, %{points: points, index: index})
 
-    def from_raw({:trick_won, position, points}),
-      do: new(:trick_won, position, %{points: points})
-
-    def from_raw({:hand_scored, winning_team, points}),
-      # We might need to infer the split points from context or just show winner
-      # Simplified
+    def from_raw({:hand_scored, team, delta}, index),
       do:
         new(:hand_scored, nil, %{
-          winning_team: winning_team,
-          points: points,
-          ns_points: 0,
-          ew_points: 0
+          team: team,
+          delta: delta,
+          index: index
         })
 
-    def from_raw({:game_won, team, score}),
-      do: new(:game_over, nil, %{winner: team, final_scores: %{team => score}})
+    def from_raw({:game_won, team, score}, index),
+      do: new(:game_over, nil, %{winner: team, final_scores: %{team => score}, index: index})
 
     # Ignore other events
-    def from_raw(_), do: nil
+    def from_raw(_, _index), do: nil
 
     @doc """
     Creates a new event with the given type, optional player, and metadata.
@@ -177,6 +171,12 @@ if Mix.env() == :dev do
       "#{format_player(player)} won trick (#{points} points)"
     end
 
+    def format(%__MODULE__{type: :hand_scored, metadata: %{team: team, delta: delta}}) do
+      sign = if delta >= 0, do: "+", else: ""
+      "#{format_team(team)} scored #{sign}#{delta}"
+    end
+
+    # Legacy format for old-style hand_scored events
     def format(%__MODULE__{
           type: :hand_scored,
           metadata: %{ns_points: ns, ew_points: ew, winning_team: winner}
