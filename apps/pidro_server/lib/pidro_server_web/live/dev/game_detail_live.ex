@@ -1058,6 +1058,50 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       </div>
     </div>
 
+    <!-- Take a Seat Shortcut -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Take a Seat</h3>
+        <p class="mt-1 text-sm text-zinc-500">Quick seat assignment without leaving the Board tab</p>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-4 sm:px-6">
+        <form phx-submit="assign_seat" class="flex items-end gap-3">
+          <div class="flex-shrink-0">
+            <label class="block text-xs font-medium text-zinc-700 mb-1">Position</label>
+            <select name="position" class="text-sm rounded border-zinc-300 py-1.5">
+              <%= for pos <- [:north, :east, :south, :west] do %>
+                <option value={to_string(pos)}>
+                  {format_position(pos)}
+                  <%= if @room.positions[pos] do %>
+                    (occupied)
+                  <% else %>
+                    (empty)
+                  <% end %>
+                </option>
+              <% end %>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-zinc-700 mb-1">User</label>
+            <select name="user_id" class="w-full text-sm rounded border-zinc-300 py-1.5">
+              <option value="empty">-- Clear seat --</option>
+              <%= for user <- @users do %>
+                <option value={user.id}>
+                  {user.display_name || user.id |> String.slice(0..11)}
+                </option>
+              <% end %>
+            </select>
+          </div>
+          <button
+            type="submit"
+            class="px-4 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+          >
+            Assign
+          </button>
+        </form>
+      </div>
+    </div>
+
     <!-- Dev Quick Actions - DEV-1001 to DEV-1003 Implementation -->
     <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
       <div class="px-4 py-5 sm:px-6">

@@ -256,3 +256,41 @@ Note for next person:
   3.4 (Take a Seat shortcut), 3.5 (god mode with position selection).
 - The render/1 in GameDetailLive is ~65 lines — Phase 3.2/3.3 should get it
   under 50.
+
+--- 2026-02-09 — Feature 3.4: Take a Seat shortcut on Board tab ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex
+
+What was done:
+- Added a "Take a Seat" card on the Board tab (in render_board_tab) between the
+  Position Filter section and the Dev Quick Actions section.
+- The card contains an inline form with:
+  - Position dropdown (North/East/South/West) showing (occupied)/(empty) status
+  - User dropdown (same user list as the Seats & Bots tab) with a "-- Clear seat --" option
+  - "Assign" submit button
+- The form submits to the existing "assign_seat" event handler — no new logic
+  was needed. This handler already handles bot eviction (stops bot before
+  reassigning), seat clearing, and user assignment.
+- This gives devs a quick way to assign seats without switching to the Seats &
+  Bots tab, which is especially useful when observing a game in progress.
+
+Why this was prioritized:
+- High-impact UX shortcut — during active game observation on the Board tab,
+  having to switch tabs just to assign a seat breaks flow. This keeps the dev
+  on the Board tab for the most common seat operations.
+- Zero risk — reuses existing event handler with no new backend logic.
+- Simple, self-contained change (single file, ~40 lines of template).
+
+Verification:
+- mix format --check-formatted passes
+- mix compile succeeds (only pre-existing warnings)
+- mix test: engine 529 tests/170 properties/79 doctests pass; 1 pre-existing
+  flaky failure in SupervisorTest.lookup_game/1; 4 pre-existing skips
+
+Note for next person:
+- Phase 3 remaining: 3.2 (extract board tab — PRD says further refinement but
+  render_board_tab already exists from 3.1), 3.3 (extract seats tab — same
+  situation), 3.5 (god mode with manual position selection).
+- Phase 1 remaining: 1.5 (tests for bot seat-skipping and cascading cleanup).
+- The render/1 in GameDetailLive is ~65 lines. Phase 3.2/3.3 should get it
+  under 50 as the PRD targets.
