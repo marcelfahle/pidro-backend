@@ -16,6 +16,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
   use GenServer
   require Logger
+  alias Pidro.Game.DealerRob
   alias PidroServer.Games.Bots.Strategies.RandomStrategy
   alias PidroServer.Games.GameAdapter
 
@@ -89,7 +90,22 @@ defmodule PidroServer.Games.Bots.BotPlayer do
       paused?: paused?
     }
 
-    {:ok, state}
+    {:ok, state, {:continue, :check_initial_move}}
+  end
+
+  @impl true
+  def handle_continue(:check_initial_move, state) do
+    case GameAdapter.get_state(state.room_code) do
+      {:ok, game_state} ->
+        if should_make_move?(game_state, state) do
+          schedule_move(state.delay_ms)
+        end
+
+      {:error, _} ->
+        :ok
+    end
+
+    {:noreply, state}
   end
 
   @impl true
@@ -170,9 +186,12 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   ## Private Functions
 
   defp should_make_move?(game_state, state) do
+    phase = Map.get(game_state, :phase)
+
     not state.paused? and
-      Map.get(game_state, :current_turn) == state.position and
-      Map.get(game_state, :phase) not in [:complete, nil]
+      phase not in [:complete, nil] and
+      (Map.get(game_state, :current_turn) == state.position or
+         phase == :dealer_selection)
   end
 
   defp schedule_move(delay_ms) do
@@ -186,6 +205,8 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
         case state.strategy.pick_action(legal_actions, game_state) do
           {:ok, action, reasoning} ->
+            action = resolve_action(action, game_state, state.position)
+
             Logger.debug(
               "BotPlayer (#{state.room_code}/#{state.position}) executing: #{inspect(action)} - #{reasoning}"
             )
@@ -202,6 +223,8 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
           action ->
             # Fallback for strategies that don't return {:ok, action, reasoning}
+            action = resolve_action(action, game_state, state.position)
+
             Logger.debug(
               "BotPlayer (#{state.room_code}/#{state.position}) executing: #{inspect(action)} (legacy)"
             )
@@ -229,6 +252,20 @@ defmodule PidroServer.Games.Bots.BotPlayer do
         )
     end
   end
+
+  # Resolve placeholder actions into concrete actions.
+  # {:select_hand, :choose_6_cards} is a marker — bots must compute actual card selection.
+  defp resolve_action({:select_hand, :choose_6_cards}, game_state, position) do
+    player = Map.get(game_state.players, position, %{})
+    hand = Map.get(player, :hand, [])
+    deck = Map.get(game_state, :deck, [])
+    trump = Map.get(game_state, :trump_suit)
+    pool = hand ++ deck
+    selected = DealerRob.select_best_cards(pool, trump)
+    {:select_hand, selected}
+  end
+
+  defp resolve_action(action, _game_state, _position), do: action
 
   defp get_game_state(room_code) do
     case GameAdapter.get_state(room_code) do
