@@ -170,7 +170,7 @@
             "Run: mix compile",
             "Verify: No compilation errors; Board tab renders identically to before"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.3",
@@ -185,7 +185,7 @@
             "Run: mix compile",
             "Verify: No compilation errors; render/1 is under 50 lines; Seats & Bots tab renders correctly"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.4",
@@ -214,7 +214,7 @@
             "Run: mix compile",
             "Verify: No compilation errors"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     }

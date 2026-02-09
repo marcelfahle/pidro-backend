@@ -294,3 +294,41 @@ Note for next person:
 - Phase 1 remaining: 1.5 (tests for bot seat-skipping and cascading cleanup).
 - The render/1 in GameDetailLive is ~65 lines. Phase 3.2/3.3 should get it
   under 50 as the PRD targets.
+
+--- 2026-02-09 — Features 3.2, 3.3, 3.5: Complete Phase 3 tab refactoring ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex
+
+What was done:
+- Feature 3.3 (render/1 under 50 lines): Extracted the inline Room Info Card
+  from render/1 into defp render_room_info/1. render/1 is now 36 lines (down
+  from ~65), well under the PRD target of 50.
+- Feature 3.2 (extract board tab): Already completed in 3.1 — render_board_tab/1
+  was created during the tab infrastructure work. Verified it contains all board
+  content: position selector, quick actions, replay controls, card table, legal
+  actions panel, game state card, event log, export modal, raw state JSON.
+- Feature 3.5 (god mode with position selection): Already fully implemented in
+  prior work. Verified all PRD requirements:
+  - selected_position defaults to :all on mount (line 65)
+  - Clicking position names switches perspective via select_position event handler
+  - God Mode toggle button on card_table returns to :all view
+  - Current turn highlighted with green ring, green background, and pulsing
+    "← Turn" indicator
+
+Why these were prioritized together:
+- 3.2 and 3.5 were already implemented but not marked as passing in the PRD.
+  Verified and marked them done.
+- 3.3 only needed the Room Info Card extraction to meet its target (render/1
+  under 50 lines). This was a minimal, safe refactoring.
+
+Verification:
+- mix format --check-formatted passes
+- mix compile succeeds (only pre-existing warnings)
+- mix test: engine 529 tests/170 properties/79 doctests pass; 0 failures;
+  4 pre-existing skips
+
+Note for next person:
+- Phase 3 is now COMPLETE (3.1, 3.2, 3.3, 3.4, 3.5 all done).
+- Phase 2 is COMPLETE (2.1, 2.2, 2.3 all done).
+- Phase 1 remaining: only 1.5 (tests for bot seat-skipping and cascading
+  cleanup). This is the LAST remaining feature in the entire PRD.

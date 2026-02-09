@@ -887,7 +887,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     ~H"""
     <div class="px-4 py-10 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-7xl">
-        <!-- Header -->
         <div class="mb-8">
           <.link
             navigate={~p"/dev/games"}
@@ -895,62 +894,61 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           >
             &larr; Back to Games
           </.link>
-          <h1 class="text-4xl font-bold text-zinc-900">
-            Game: {@room_code}
-          </h1>
+          <h1 class="text-4xl font-bold text-zinc-900">Game: {@room_code}</h1>
           <p class="mt-2 text-lg text-zinc-600">
             Development game detail view with interactive controls
           </p>
         </div>
-        
-    <!-- Room Info Card -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Room Information</h3>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Status</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(@room.status)}"}>
-                    {@room.status}
-                  </span>
-                </dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Players</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {PidroServer.Games.Room.Positions.count(@room)} / 4
-                </dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Host</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {@room.host_id |> String.slice(0..7)}...
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </div>
-        
-    <!-- Tab Bar -->
+
+        <.render_room_info room={@room} />
         <.render_tab_bar active_tab={@active_tab} room_code={@room_code} />
-        
-    <!-- Tab Content -->
+
         <%= if @active_tab == :board do %>
           <.render_board_tab {assigns} />
         <% else %>
           <.render_seats_tab {assigns} />
         <% end %>
-        
-    <!-- Auto-refresh indicator -->
+
         <div class="mt-4 text-center text-sm text-zinc-500">
           <span class="inline-flex items-center">
             <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
             Live updates enabled
           </span>
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp render_room_info(assigns) do
+    ~H"""
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Room Information</h3>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
+          <div>
+            <dt class="text-sm font-medium text-zinc-500">Status</dt>
+            <dd class="mt-1 text-sm text-zinc-900">
+              <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(@room.status)}"}>
+                {@room.status}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-zinc-500">Players</dt>
+            <dd class="mt-1 text-sm text-zinc-900">
+              {PidroServer.Games.Room.Positions.count(@room)} / 4
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-zinc-500">Host</dt>
+            <dd class="mt-1 text-sm text-zinc-900">
+              {@room.host_id |> String.slice(0..7)}...
+            </dd>
+          </div>
+        </dl>
       </div>
     </div>
     """
