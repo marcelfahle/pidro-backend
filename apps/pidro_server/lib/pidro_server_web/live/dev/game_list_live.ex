@@ -17,7 +17,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
   """
 
   use PidroServerWeb, :live_view
-  alias PidroServer.Dev.BotManager
+  alias PidroServer.Games.Bots.BotManager
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Accounts.Auth

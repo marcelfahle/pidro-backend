@@ -15,7 +15,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   use PidroServerWeb, :live_view
   require Logger
   alias PidroServer.Accounts.Auth
-  alias PidroServer.Dev.{BotManager, Event, GameHelpers, ReplayController}
+  alias PidroServer.Dev.{Event, ReplayController}
+  alias PidroServer.Games.Bots.{BotManager, GameHelpers}
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.CardComponents
 
