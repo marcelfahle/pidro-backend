@@ -18,7 +18,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   use PidroServerWeb, :live_view
   alias PidroServer.Games.Bots.BotManager
-  alias PidroServer.Games.{GameSupervisor, RoomManager}
+  alias PidroServer.Games.{GameAdapter, GameSupervisor, RoomManager}
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Accounts.Auth
 
@@ -663,6 +663,18 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       scope="col"
                       class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
                     >
+                      Phase
+                    </th>
+                    <th
+                      scope="col"
+                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                    >
+                      Score
+                    </th>
+                    <th
+                      scope="col"
+                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                    >
                       Host
                     </th>
                     <th
@@ -699,6 +711,20 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
                         {Positions.count(room)} / 4
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                        <%= if game_state = @game_states[room.code] do %>
+                          <span class="font-medium">{format_game_phase(game_state)}</span>
+                        <% else %>
+                          <span class="text-zinc-400">-</span>
+                        <% end %>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                        <%= if game_state = @game_states[room.code] do %>
+                          <span class="font-mono">{format_scores(game_state)}</span>
+                        <% else %>
+                          <span class="text-zinc-400">-</span>
+                        <% end %>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
                         {room.host_id |> String.slice(0..7)}...
@@ -823,10 +849,12 @@ defmodule PidroServerWeb.Dev.GameListLive do
     filtered_rooms = filter_rooms_by_phase(rooms, socket.assigns.phase_filter)
     sorted_rooms = sort_rooms(filtered_rooms, socket.assigns.sort_order)
     stats = calculate_stats(rooms, length(sorted_rooms))
+    game_states = fetch_game_states(sorted_rooms)
 
     socket
     |> assign(:rooms, sorted_rooms)
     |> assign(:stats, stats)
+    |> assign(:game_states, game_states)
   end
 
   defp filter_rooms_by_phase(rooms, :all), do: rooms
@@ -884,6 +912,38 @@ defmodule PidroServerWeb.Dev.GameListLive do
       _ ->
         "N/A"
     end
+  end
+
+  defp fetch_game_states(rooms) do
+    rooms
+    |> Enum.filter(&(&1.status in [:playing, :finished]))
+    |> Enum.reduce(%{}, fn room, acc ->
+      case GameAdapter.get_state(room.code) do
+        {:ok, state} -> Map.put(acc, room.code, state)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp format_game_phase(game_state) do
+    case game_state.phase do
+      :dealer_selection -> "Dealer Sel."
+      :dealing -> "Dealing"
+      :bidding -> "Bidding"
+      :declaring -> "Declaring"
+      :discarding -> "Discarding"
+      :second_deal -> "2nd Deal"
+      :playing -> "Trick #{game_state.trick_number}"
+      :scoring -> "Scoring"
+      :complete -> "Complete"
+      other -> to_string(other)
+    end
+  end
+
+  defp format_scores(game_state) do
+    ns = game_state.cumulative_scores[:north_south] || 0
+    ew = game_state.cumulative_scores[:east_west] || 0
+    "#{ns} - #{ew}"
   end
 
   defp random_suffix do

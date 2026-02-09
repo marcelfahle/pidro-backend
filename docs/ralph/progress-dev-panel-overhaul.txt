@@ -217,3 +217,42 @@ Note for next person:
   happen when 3.2 and 3.3 further refine the tab content.
 - Phase 2 remaining: 2.3 (phase/scores columns in room table).
 - Phase 1 remaining: 1.5 (tests).
+
+--- 2026-02-09 — Feature 2.3: Phase and scores columns in room table ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex
+
+What was done:
+- Added "Phase" and "Score" columns to the room table between Players and Host.
+- Phase column shows human-readable game phase (e.g., "Trick 3", "Bidding",
+  "Complete") for rooms with active/finished games. Shows "-" for waiting rooms.
+- Score column shows cumulative N/S vs E/W scores in monospace font (e.g.,
+  "12 - 8") for rooms with active/finished games. Shows "-" for waiting rooms.
+- Added GameAdapter alias and fetch_game_states/1 helper that queries game state
+  only for rooms in :playing or :finished status (avoids unnecessary lookups for
+  waiting rooms).
+- Added format_game_phase/1 and format_scores/1 private helpers for display
+  formatting. Phase display includes trick number during play phase.
+- Game states are stored in @game_states assign (map of room_code => game_state)
+  and refreshed on every room list update.
+
+Why this was prioritized:
+- Last remaining Phase 2 feature — completing Phase 2 entirely.
+- High-value UX improvement: at a glance, the dev can see which games are in
+  which phase and what the scores are without clicking into each room.
+- Self-contained change with no dependencies on incomplete features.
+
+Verification:
+- mix compile succeeds (only pre-existing warnings)
+- mix format --check-formatted passes
+- mix test: engine 529 tests/170 properties/79 doctests pass; server tests
+  have 5 pre-existing failures (supervisor race, lobby channel format) — none
+  related to this change
+
+Note for next person:
+- Phase 2 is now COMPLETE (2.1, 2.2, 2.3 all done).
+- Phase 1 remaining: 1.5 (tests for bot seat-skipping and cascading cleanup).
+- Phase 3 remaining: 3.2 (extract board tab content), 3.3 (extract seats tab),
+  3.4 (Take a Seat shortcut), 3.5 (god mode with position selection).
+- The render/1 in GameDetailLive is ~65 lines — Phase 3.2/3.3 should get it
+  under 50.

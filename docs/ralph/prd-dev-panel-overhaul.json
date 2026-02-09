@@ -133,7 +133,7 @@
             "Run: mix compile",
             "Verify: No compilation errors"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },
