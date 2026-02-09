@@ -18,7 +18,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   use PidroServerWeb, :live_view
   alias PidroServer.Games.Bots.BotManager
-  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.{GameSupervisor, RoomManager}
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Accounts.Auth
 
@@ -209,6 +209,111 @@ defmodule PidroServerWeb.Dev.GameListLive do
   end
 
   @impl true
+  def handle_event("preset_empty_room", _params, socket) do
+    name = "Dev #{random_suffix()}"
+    metadata = %{name: name, is_dev_room: true}
+
+    case RoomManager.create_room(name, metadata) do
+      {:ok, room} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Empty room '#{name}' created (#{room.code})")
+         |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
+  def handle_event("preset_1h_3b", _params, socket) do
+    name = "Dev #{random_suffix()}"
+    metadata = %{name: name, bot_difficulty: "random", is_dev_room: true}
+
+    case RoomManager.create_room(name, metadata) do
+      {:ok, room} ->
+        case start_bots_if_needed(room.code, 3, "random") do
+          {:error, reason} ->
+            BotManager.stop_all_bots(room.code)
+
+            {:noreply,
+             socket
+             |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
+             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+
+          _ ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Room '#{name}' created with 1 host + 3 bots (#{room.code})")
+             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+        end
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
+  def handle_event("preset_2h_2b", _params, socket) do
+    name = "Dev #{random_suffix()}"
+    metadata = %{name: name, bot_difficulty: "random", is_dev_room: true}
+
+    case RoomManager.create_room(name, metadata) do
+      {:ok, room} ->
+        # Host is at north. Place bots at east and west, leave south empty for a second human.
+        case start_bots_at_positions(room.code, [:east, :west], :random) do
+          {:ok, _pids} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Room '#{name}' created — 2H + 2B, south open (#{room.code})")
+             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+
+          {:error, reason} ->
+            BotManager.stop_all_bots(room.code)
+
+            {:noreply,
+             socket
+             |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
+             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+        end
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
+  def handle_event("preset_4_bots", _params, socket) do
+    name = "Dev #{random_suffix()}"
+    metadata = %{name: name, bot_difficulty: "random", is_dev_room: true}
+
+    case RoomManager.create_room(name, metadata) do
+      {:ok, room} ->
+        # Host was auto-assigned to north. Clear it so all 4 seats are available for bots.
+        RoomManager.dev_set_position(room.code, :north, nil)
+
+        case start_bots_if_needed(room.code, 4, "random") do
+          {:error, reason} ->
+            BotManager.stop_all_bots(room.code)
+
+            {:noreply,
+             socket
+             |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
+             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+
+          _ ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Room '#{name}' created with 4 bots (#{room.code})")
+             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+        end
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
+    end
+  end
+
+  @impl true
   def handle_event("request_delete", %{"code" => code}, socket) do
     {:noreply,
      socket
@@ -260,6 +365,46 @@ defmodule PidroServerWeb.Dev.GameListLive do
           <p class="mt-2 text-lg text-zinc-600">
             Real-time overview and management of all game rooms
           </p>
+        </div>
+        
+    <!-- Quick-Create Presets -->
+        <div class="bg-white shadow sm:rounded-lg mb-8">
+          <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-lg leading-6 font-medium text-zinc-900">Quick Create</h3>
+            <div class="mt-2 max-w-xl text-sm text-zinc-500">
+              <p>One-click room presets for common dev scenarios.</p>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                phx-click="preset_empty_room"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-zinc-600 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-zinc-500"
+              >
+                Empty Room
+              </button>
+              <button
+                type="button"
+                phx-click="preset_1h_3b"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              >
+                1H + 3B
+              </button>
+              <button
+                type="button"
+                phx-click="preset_2h_2b"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                2H + 2B
+              </button>
+              <button
+                type="button"
+                phx-click="preset_4_bots"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+              >
+                4 Bots
+              </button>
+            </div>
+          </div>
         </div>
         
     <!-- Create New Game Section -->
@@ -741,6 +886,10 @@ defmodule PidroServerWeb.Dev.GameListLive do
     end
   end
 
+  defp random_suffix do
+    :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
+  end
+
   defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
     alias PidroServer.Games.Room.Positions
     strategy = String.to_existing_atom(bot_difficulty)
@@ -781,8 +930,31 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   defp start_bots_if_needed(_room_code, _bot_count, _bot_difficulty), do: :ok
 
+  defp start_bots_at_positions(room_code, positions, strategy) do
+    positions
+    |> Enum.reduce_while({:ok, []}, fn position, {:ok, pids} ->
+      try do
+        case BotManager.start_bot(room_code, position, strategy, 1000) do
+          {:ok, pid} -> {:cont, {:ok, [pid | pids]}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      catch
+        :exit, {:noproc, _} -> {:halt, {:error, :bot_manager_not_running}}
+        :exit, reason -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, pids} -> {:ok, Enum.reverse(pids)}
+      error -> error
+    end
+  end
+
   defp handle_single_delete(socket) do
     room_code = socket.assigns.room_to_delete
+
+    # Cascading cleanup: stop bots and game process before closing room
+    BotManager.stop_all_bots(room_code)
+    GameSupervisor.stop_game(room_code)
 
     case RoomManager.close_room(room_code) do
       :ok ->
@@ -811,6 +983,9 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
     results =
       Enum.map(finished_rooms, fn room ->
+        # Cascading cleanup: stop bots and game process before closing room
+        BotManager.stop_all_bots(room.code)
+        GameSupervisor.stop_game(room.code)
         RoomManager.close_room(room.code)
       end)
 

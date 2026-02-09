@@ -1,0 +1,244 @@
+{
+  "project": "Dev Panel Overhaul — Unified Admin Control Room",
+  "description": "Consolidate the split /dev/ and /admin/ views into a single dev panel at /dev/. Delete duplicate admin views. Restructure the monolithic GameDetailLive (~2,343 lines) into a tabbed interface. Add quick-create presets, fix bot-seat conflicts, and enable cascading cleanup on room deletion.",
+  "repository": "pidro_backend",
+
+  "human_inputs_required": [],
+
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Delete & Fix",
+      "features": [
+        {
+          "id": "1.1",
+          "category": "refactor",
+          "description": "Delete admin views and routes — remove the duplicate /admin/ scope and its read-only LiveViews",
+          "steps": [
+            "Delete file: apps/pidro_server/lib/pidro_server_web/live/lobby_live.ex (module: PidroServerWeb.LobbyLive)",
+            "Delete file: apps/pidro_server/lib/pidro_server_web/live/game_monitor_live.ex (module: PidroServerWeb.GameMonitorLive)",
+            "Delete file: apps/pidro_server/lib/pidro_server_web/live/stats_live.ex (module: PidroServerWeb.StatsLive)",
+            "Open file: apps/pidro_server/lib/pidro_server_web/router.ex",
+            "Remove the /admin scope (lines 44-50) and admin_basic_auth plug",
+            "Delete any admin-specific test files if they exist (grep for LobbyLive, GameMonitorLive, StatsLive in test/)",
+            "Run: mix compile",
+            "Verify: No compilation errors referencing deleted modules"
+          ],
+          "passes": true
+        },
+        {
+          "id": "1.2",
+          "category": "functional",
+          "description": "Fix BotManager.start_bots to skip occupied seats instead of filling from north regardless of occupancy",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server/games/bots/bot_manager.ex",
+            "Find start_bots/4 (lines 43-57)",
+            "Add a call to RoomManager.get_room(room_code) to query occupied positions",
+            "Filter the position list [:north, :east, :south, :west] to only empty seats",
+            "Fill empty seats up to bot_count",
+            "If fewer empty seats than bot_count, return {:error, :not_enough_seats}",
+            "Keep existing return type {:ok, [pid()]} on success",
+            "Run: mix compile",
+            "Verify: No compilation errors; dependency direction is BotManager → RoomManager (read-only)"
+          ],
+          "passes": true
+        },
+        {
+          "id": "1.3",
+          "category": "functional",
+          "description": "Add cascading cleanup on room deletion — stop bots and game processes before closing the room",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex",
+            "Find the room deletion handler",
+            "Add BotManager.stop_all_bots(room_code) and GameSupervisor.stop_game(room_code) calls before close_room — do this in the LiveView handler, not inside RoomManager GenServer",
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Find the assign_seat handler",
+            "Add check: if a bot occupies the target position, call BotManager.stop_bot(room_code, position) before reassigning",
+            "Run: mix compile",
+            "Verify: No compilation errors"
+          ],
+          "passes": true
+        },
+        {
+          "id": "1.4",
+          "category": "refactor",
+          "description": "Clean up dead code in GameDetailLive — remove commented-out position buttons and unused helpers",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Delete commented-out position buttons (lines ~982-1060)",
+            "Remove any helper functions that become unused after admin view deletion",
+            "Run: mix compile",
+            "Verify: No compilation errors or warnings about unused functions"
+          ],
+          "passes": true
+        },
+        {
+          "id": "1.5",
+          "category": "testing",
+          "description": "Write tests for Phase 1 — bot seat-skipping and cascading cleanup",
+          "steps": [
+            "Create test file: apps/pidro_server/test/pidro_server/games/bots/bot_manager_test.exs",
+            "Write test: start_bots skips occupied seats (host at north, request 3 bots → bots at east/south/west)",
+            "Write test: start_bots returns {:error, :not_enough_seats} when not enough empty seats",
+            "Write test: after room deletion, BotManager.list_bots(room_code) returns []",
+            "Run: mix test apps/pidro_server/test/pidro_server/games/bots/bot_manager_test.exs",
+            "Verify: All tests pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Quick-Create Presets",
+      "features": [
+        {
+          "id": "2.1",
+          "category": "functional",
+          "description": "Add 'Empty Room' and '1H + 3B' preset buttons — simple presets with straightforward bot assignment",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex",
+            "Add a row of preset buttons above the existing creation form",
+            "Implement 'Empty Room' preset: create room with dev host at north, no bots, 3 empty seats",
+            "Implement '1H + 3B' preset: create room with dev host at north, call start_bots to fill remaining 3 seats",
+            "After creation, navigate to the new room's detail view",
+            "Run: mix compile",
+            "Verify: No compilation errors"
+          ],
+          "passes": true
+        },
+        {
+          "id": "2.2",
+          "category": "functional",
+          "description": "Add '2H + 2B' and '4 Bots' preset buttons — presets requiring careful seat assignment to avoid race conditions",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex",
+            "Implement '2H + 2B' preset: create room with dev host at north, 2 bots at east and west, south left empty for a second human",
+            "Implement '4 Bots' preset: create room, assign bot IDs to all 4 seats via dev_set_position *before* starting bot processes (avoids 4-player auto-start firing before the host is displaced)",
+            "On bot failure in any preset: call BotManager.stop_all_bots(room_code) in the error branch",
+            "After creation, navigate to the new room's detail view",
+            "Run: mix compile",
+            "Verify: No compilation errors"
+          ],
+          "passes": true
+        },
+        {
+          "id": "2.3",
+          "category": "ui",
+          "description": "Add phase and scores columns to the room table in GameListLive",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex",
+            "Add game phase column to the room table (e.g., 'Trick 3', 'Bidding')",
+            "Add scores column showing N/S vs E/W for active/finished games",
+            "Run: mix compile",
+            "Verify: No compilation errors"
+          ],
+          "passes": false
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Tabbed Detail View",
+      "features": [
+        {
+          "id": "3.1",
+          "category": "ui",
+          "description": "Add tab infrastructure to GameDetailLive — @active_tab assign, tab bar component, and conditional rendering shell",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Add @active_tab assign (default :board) in mount/3",
+            "Sync @active_tab with URL param ?tab=board via handle_params",
+            "Extract defp render_tab_bar(assigns) — horizontal tab navigation with Board and Seats & Bots tabs",
+            "Update render/1 to: render tab bar, then conditionally render active tab content",
+            "For now, wrap existing template content as the :board tab and add a placeholder for :seats_bots tab",
+            "Preserve all existing handle_event and handle_info clauses — no logic changes",
+            "Run: mix compile",
+            "Verify: No compilation errors; tab switching works"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.2",
+          "category": "refactor",
+          "description": "Extract Board tab content into defp render_board_tab — card table, actions, replay, raw state",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Identify all template sections that belong on the Board tab: CardComponents.card_table, legal actions panel, quick actions (auto-bid/auto-play), replay controls, raw state JSON collapsible",
+            "Move that markup into defp render_board_tab(assigns)",
+            "Update render/1 to call render_board_tab(assigns) for the :board tab",
+            "Run: mix compile",
+            "Verify: No compilation errors; Board tab renders identically to before"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.3",
+          "category": "refactor",
+          "description": "Extract Seats & Bots tab content into defp render_seats_tab — seat assignment and bot configuration",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Identify all template sections for seat management: 4-seat visual layout, per-seat occupant info, assign user dropdown, start/stop bot, bot config (difficulty/strategy/delay), pause/resume",
+            "Move that markup into defp render_seats_tab(assigns)",
+            "Replace the :seats_bots placeholder from 3.1 with render_seats_tab(assigns)",
+            "Target: main render/1 under 50 lines (tab bar + conditional render calls)",
+            "Run: mix compile",
+            "Verify: No compilation errors; render/1 is under 50 lines; Seats & Bots tab renders correctly"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.4",
+          "category": "functional",
+          "description": "Add Take a Seat shortcut on the Board tab — convenience button using existing seat assignment mechanism",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Add a 'Take Seat' button on the Board tab that shows a position picker (North/South/East/West)",
+            "Position picker also shows the existing user dropdown to select which user to seat",
+            "On submit, call RoomManager.dev_set_position(room_code, position, user_id) — same mechanism as the Seats & Bots tab",
+            "Run: mix compile",
+            "Verify: No compilation errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.5",
+          "category": "functional",
+          "description": "Implement god mode with manual position selection — default to :all (all hands visible), click to switch perspective",
+          "steps": [
+            "Open file: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex",
+            "Default selected_position to :all on mount",
+            "Add click handler: clicking a position name switches to that player's perspective and shows their legal actions",
+            "Add click handler: clicking 'All' / god-mode toggle returns to :all view",
+            "Highlight current turn prominently so the admin knows who to click",
+            "Run: mix compile",
+            "Verify: No compilation errors"
+          ],
+          "passes": false
+        }
+      ]
+    }
+  ],
+
+  "verification": {
+    "final_checks": [
+      "All /admin/* routes return 404",
+      "Room dashboard shows all rooms with status, players, phase, scores",
+      "Quick-create presets work in one click, navigate to detail view",
+      "start_bots skips occupied seats (no more bot-seat conflicts)",
+      "Room deletion cascades: bots stopped, game process stopped",
+      "Reassigning a bot's seat auto-stops the bot",
+      "Game detail view has 2 tabs: Board and Seats & Bots",
+      "Board tab shows CardComponents.card_table with god mode on by default",
+      "Admin can take a seat from the Board tab via position picker + user dropdown",
+      "Seats & Bots tab shows per-seat controls with bot config",
+      "Raw state JSON accessible as collapsible on Board tab",
+      "No new LiveComponents — follow existing function component pattern",
+      "No new modules for template extraction — use private defp render functions",
+      "All PubSub subscriptions inside if connected?(socket) guard",
+      "GameDetailLive render/1 under 50 lines",
+      "mix compile succeeds with no warnings",
+      "mix test passes"
+    ]
+  }
+}

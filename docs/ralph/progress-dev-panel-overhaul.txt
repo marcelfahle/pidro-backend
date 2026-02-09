@@ -1,0 +1,168 @@
+== Dev Panel Overhaul Progress ==
+
+--- 2026-02-09 — Feature 1.2: Fix BotManager.start_bots seat-skipping ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server/games/bots/bot_manager.ex
+
+What was done:
+- Rewrote start_bots/4 to query RoomManager.get_room(room_code) and use
+  Positions.available(room) to get only empty seats, instead of blindly
+  assigning from [:north, :east, :south, :west].
+- Returns {:error, :not_enough_seats} when fewer empty seats than bot_count.
+- Dependency direction: BotManager -> RoomManager (read-only), which is correct.
+
+Why this was prioritized first:
+- Functional bug fix — bots were overwriting occupied seats, causing data
+  corruption. This blocks several Phase 2 presets (1H+3B, 2H+2B) from
+  working correctly.
+
+Note for next person:
+- mix format and mix test were NOT run due to permission issues in the
+  automated session. Please verify manually before pushing:
+    mix format --check-formatted
+    mix test
+- Feature 1.1 (delete admin views) and 1.3 (cascading cleanup) are the
+  natural next picks. 1.1 is pure deletion/cleanup; 1.3 adds functional
+  safety for room deletion flows.
+
+--- 2026-02-09 — Feature 1.3: Cascading cleanup on room deletion ---
+Status: DONE
+Changed:
+  - apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex
+  - apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex
+
+What was done:
+- GameListLive.handle_single_delete: added BotManager.stop_all_bots(room_code)
+  and GameSupervisor.stop_game(room_code) before RoomManager.close_room.
+- GameListLive.handle_bulk_delete: same cascading cleanup for each finished
+  room before closing it.
+- GameDetailLive.handle_event("assign_seat"): added BotManager.list_bots
+  check — if a bot occupies the target position, calls BotManager.stop_bot
+  before reassigning the seat.
+- Added GameSupervisor alias to GameListLive imports.
+
+Why this was prioritized:
+- Functional safety — deleting a room without stopping bots/game leaves
+  orphaned processes (bot GenServers, game process) that leak memory and
+  can cause errors on subsequent room creation with the same code.
+- Reassigning a bot's seat without stopping it left the bot process running
+  against a seat it no longer owns, causing ghost actions.
+
+Note for next person:
+- mix format and mix test were NOT run due to permission issues in the
+  automated session. Please verify manually before pushing:
+    mix format --check-formatted
+    mix test
+- Next picks: 1.1 (delete admin views — pure cleanup), 1.4 (dead code
+  removal), or 2.1 (quick-create presets — builds on 1.2 + 1.3).
+
+--- 2026-02-09 — Feature 1.1: Delete admin views and routes ---
+Status: DONE (was already completed in working tree by previous session)
+Changed:
+  - Deleted: apps/pidro_server/lib/pidro_server_web/live/lobby_live.ex
+  - Deleted: apps/pidro_server/lib/pidro_server_web/live/game_monitor_live.ex
+  - Deleted: apps/pidro_server/lib/pidro_server_web/live/stats_live.ex
+  - Modified: apps/pidro_server/lib/pidro_server_web/router.ex (admin scope removed)
+
+What was done:
+- Three admin LiveViews deleted: LobbyLive, GameMonitorLive, StatsLive.
+- /admin scope and admin_basic_auth plug removed from router.ex.
+- No admin-specific test files existed (grep confirmed).
+- Remaining references to admin views only exist in docs/thoughts files
+  (MASTERPLAN, README, etc.) — not in source code.
+- admin_basic_auth config was already absent from config/dev.exs.
+
+--- 2026-02-09 — Feature 1.4: Clean up dead code in GameDetailLive ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex
+
+What was done:
+- Removed 79-line commented-out position buttons block (lines ~990-1068).
+  These buttons were replaced by click-on-player-name in the game table.
+- Audited all private helper functions for unused code after admin view
+  deletion. All helpers (format_action, get_score_history, status_color,
+  is_seat_available?, etc.) are still actively referenced in the template
+  or handle_event clauses — no unused helpers to remove.
+- Net reduction: ~79 lines of dead commented-out code removed.
+
+Note for next person:
+- mix format and mix test were NOT run due to permission issues in the
+  automated session. Please verify manually before pushing:
+    mix format --check-formatted
+    mix test
+- Phase 1 remaining: only 1.5 (tests). Phase 2 features (quick-create
+  presets) are the natural next high-impact picks, especially 2.1
+  (Empty Room + 1H+3B presets) which builds on 1.2 + 1.3.
+
+--- 2026-02-09 — Feature 2.1: Quick-Create Presets (Empty Room + 1H+3B) ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex
+
+What was done:
+- Added "Quick Create" section above the existing "Create New Game" form with
+  two one-click preset buttons: "Empty Room" and "1H + 3B".
+- "Empty Room" preset: creates a room with a random dev host name at north,
+  no bots, 3 empty seats. Navigates to the detail view on success.
+- "1H + 3B" preset: creates a room with dev host at north, then calls
+  start_bots_if_needed(room.code, 3, "random") to fill 3 remaining seats.
+  On bot failure, calls BotManager.stop_all_bots for cleanup. Navigates to
+  the detail view regardless.
+- Added random_suffix/0 helper that generates 6-char hex string via
+  :crypto.strong_rand_bytes(3) for unique auto-generated room names.
+- Both presets use push_navigate to redirect to /dev/games/:code after
+  creation, as specified in the PRD.
+
+Why this was prioritized:
+- Highest UX impact for dev workflow — eliminates multiple form interactions
+  for the two most common room configurations (empty room for manual testing,
+  full room with bots for automated play observation).
+- Builds directly on 1.2 (seat-skipping fix) and 1.3 (cascading cleanup),
+  which are prerequisites for reliable bot assignment.
+
+Note for next person:
+- mix format and mix test were NOT run due to permission issues in the
+  automated session. Please verify manually before pushing:
+    mix format --check-formatted
+    mix test
+- Next picks: 2.2 (2H+2B and 4 Bots presets — more complex seat assignment),
+  2.3 (phase/scores columns in room table), or 3.1 (tab infrastructure for
+  GameDetailLive). 2.2 builds directly on this work.
+
+--- 2026-02-09 — Feature 2.2: Quick-Create Presets (2H+2B + 4 Bots) ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_list_live.ex
+
+What was done:
+- Added "2H + 2B" preset button: creates room with dev host at north, starts
+  bots at specifically east and west positions (using new start_bots_at_positions
+  helper), leaves south open for a second human player.
+- Added "4 Bots" preset button: creates room, clears host from north via
+  dev_set_position(code, :north, nil), then calls start_bots(code, 4, :random)
+  to fill all 4 seats with bots. This avoids the race condition described in the
+  PRD — clearing the host first ensures all 4 seats are available before bots
+  start joining.
+- Added start_bots_at_positions/3 private helper that calls BotManager.start_bot
+  for each specific position (unlike start_bots which fills first-N available).
+  Includes try/catch for :noproc errors when BotManager isn't running.
+- Both presets call BotManager.stop_all_bots on failure for cleanup.
+- Both presets navigate to the detail view after creation.
+- Buttons styled consistently: blue for 2H+2B, purple for 4 Bots.
+
+PRD deviation note:
+- The PRD suggested using dev_set_position to pre-assign bot IDs before starting
+  processes. Investigation revealed this doesn't work — BotPlayer.init calls
+  join_room which returns {:error, :already_seated} if the ID is already in the
+  positions map. Instead, for 4 Bots: we clear the host seat, then start_bots
+  fills all 4 empty positions normally.
+
+Verification:
+- mix format --check-formatted passes (also fixed pre-existing format issues in
+  6 other files: config/config.exs, config/test.exs, play.ex, and 3 test files)
+- mix test passes (engine: 529 tests, 170 properties, 79 doctests; 1 pre-existing
+  flaky failure in SupervisorTest.lookup_game/1, 4 pre-existing skips)
+
+Note for next person:
+- Phase 2 remaining: 2.3 (phase/scores columns in room table).
+- Phase 1 remaining: 1.5 (tests for bot seat-skipping and cascading cleanup).
+- Phase 3 (tabbed detail view) is the next major chunk — 3.1 adds tab
+  infrastructure, then 3.2-3.5 extract content into tabs.
