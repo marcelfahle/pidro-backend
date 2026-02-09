@@ -127,10 +127,31 @@ defmodule Pidro.Game.Play do
       end)
       |> Map.new()
 
+    # After killing excess cards, eliminate players with no trump cards.
+    # This can happen when a player receives only non-trump cards during
+    # the second deal (the deck contains both trump and non-trump cards).
+    final_players =
+      new_players
+      |> Enum.map(fn {pos, player} ->
+        if not player.eliminated? and length(player.hand) > 0 do
+          trump_cards = Trump.get_trump_cards(player.hand, trump)
+
+          if trump_cards == [] do
+            # No trump at all — go cold, reveal hand
+            {pos, %{player | eliminated?: true, revealed_cards: player.hand, hand: []}}
+          else
+            {pos, player}
+          end
+        else
+          {pos, player}
+        end
+      end)
+      |> Map.new()
+
     # Update state with killed cards and new hands
     state
     |> GameState.update(:killed_cards, killed_cards)
-    |> GameState.update(:players, new_players)
+    |> GameState.update(:players, final_players)
     |> record_cards_killed_event(killed_cards)
   end
 
@@ -634,10 +655,13 @@ defmodule Pidro.Game.Play do
     Enum.all?(active_positions, fn pos -> pos in played_positions end)
   end
 
+  @doc """
+  Finds next non-eliminated player clockwise from the given position.
 
-  # Finds next non-eliminated player clockwise from current turn
-  @spec find_next_active_player(game_state()) :: position()
-  defp find_next_active_player(state) do
+  Used after compute_kills to advance current_turn past eliminated players.
+  """
+  @spec find_next_active_player(game_state()) :: position() | nil
+  def find_next_active_player(state) do
     current = state.current_turn
 
     current
@@ -704,7 +728,7 @@ defmodule Pidro.Game.Play do
           |> Stream.iterate(&Types.next_position/1)
           |> Stream.drop(1)
           # Limit the stream to avoid infinite loops if everyone is cold
-          |> Stream.take(4) 
+          |> Stream.take(4)
           |> Enum.find(fn pos ->
             case players[pos] do
               %Player{eliminated?: false} -> true

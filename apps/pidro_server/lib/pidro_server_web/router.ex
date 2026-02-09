@@ -60,7 +60,6 @@ defmodule PidroServerWeb.Router do
     # Room routes without authentication
     get "/rooms", RoomController, :index
     get "/rooms/:code", RoomController, :show
-    get "/rooms/:code/state", RoomController, :state
   end
 
   # API v1 authenticated routes
@@ -76,6 +75,8 @@ defmodule PidroServerWeb.Router do
     post "/rooms", RoomController, :create
     post "/rooms/:code/join", RoomController, :join
     delete "/rooms/:code/leave", RoomController, :leave
+    get "/rooms/:code/state", RoomController, :state
+    get "/rooms/:code/legal-actions", RoomController, :legal_actions
 
     # Spectator routes with authentication
     post "/rooms/:code/watch", RoomController, :watch
