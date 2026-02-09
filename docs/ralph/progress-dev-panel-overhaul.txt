@@ -166,3 +166,54 @@ Note for next person:
 - Phase 1 remaining: 1.5 (tests for bot seat-skipping and cascading cleanup).
 - Phase 3 (tabbed detail view) is the next major chunk — 3.1 adds tab
   infrastructure, then 3.2-3.5 extract content into tabs.
+
+--- 2026-02-09 — Feature 3.1: Tab infrastructure for GameDetailLive ---
+Status: DONE
+Changed: apps/pidro_server/lib/pidro_server_web/live/dev/game_detail_live.ex
+
+What was done:
+- Added @active_tab assign (default :board) in mount/3.
+- Added handle_params/3 to sync @active_tab with URL query param ?tab=board
+  or ?tab=seats_bots. Uses .link patch for tab switching (no full page reload).
+- Extracted defp render_tab_bar/1 — horizontal tab navigation bar with "Board"
+  and "Seats & Bots" tabs, styled with indigo underline for active tab.
+- Restructured render/1 into: header + room info card + tab bar + conditional
+  tab content + auto-refresh indicator. render/1 is now ~65 lines (down from
+  ~838 lines of template).
+- Extracted defp render_board_tab/1 — contains all existing board content:
+  position selector, quick actions, replay controls, card table (split/single
+  view + game over overlay), legal actions panel, game state card, event log,
+  export modal, and raw state JSON collapsible.
+- Extracted defp render_seats_tab/1 — new tab with bot configuration (migrated
+  from Board tab's collapsible) and seat management panel with per-position
+  user assignment dropdowns.
+- Bot configuration on the Seats & Bots tab is now a full section (not a
+  collapsible details element), making it more prominent.
+- All existing handle_event and handle_info clauses preserved unchanged — no
+  logic changes.
+
+Why this was prioritized:
+- Unblocks all of Phase 3 (3.2-3.5). The tabbed interface is the core
+  architectural refactor of the project — every subsequent feature in Phase 3
+  depends on this infrastructure being in place.
+- The monolithic render/1 at ~838 lines was the largest single function in the
+  codebase and was difficult to navigate or modify safely.
+
+Verification:
+- mix format --check-formatted passes
+- mix compile succeeds with only pre-existing warnings (3 unused bid-helper
+  functions, replay_controller, room_schemas)
+- mix test: engine 529 tests/170 properties/79 doctests all pass; server
+  tests have 5 pre-existing failures (supervisor race, lobby channel format,
+  game channel timeout) — none related to this change
+
+Note for next person:
+- Phase 3 remaining: 3.2 (extract board tab content — mostly done since
+  render_board_tab already exists, but PRD wants further refinement), 3.3
+  (extract seats tab content — seats_tab already has basic content), 3.4
+  (Take a Seat shortcut on Board tab), 3.5 (god mode with manual position
+  selection).
+- The render/1 is ~65 lines — not yet under 50 as the PRD targets. This will
+  happen when 3.2 and 3.3 further refine the tab content.
+- Phase 2 remaining: 2.3 (phase/scores columns in room table).
+- Phase 1 remaining: 1.5 (tests).

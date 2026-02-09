@@ -156,7 +156,7 @@
             "Run: mix compile",
             "Verify: No compilation errors; tab switching works"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.2",
