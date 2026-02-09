@@ -587,6 +587,17 @@ defmodule Pidro.Game.Engine do
     # This determines which players have been eliminated in this round
     kill_state = Play.compute_kills(state)
 
+    # After kills, current_turn may point to a newly-eliminated player.
+    # Advance to the next active player so the game doesn't get stuck.
+    kill_state =
+      if kill_state.current_turn &&
+           kill_state.players[kill_state.current_turn].eliminated? do
+        next = Play.find_next_active_player(kill_state)
+        %{kill_state | current_turn: next}
+      else
+        kill_state
+      end
+
     # After computing kills, check if we can auto-transition to scoring
     if can_auto_transition?(kill_state) do
       case StateMachine.next_phase(kill_state.phase, kill_state) do

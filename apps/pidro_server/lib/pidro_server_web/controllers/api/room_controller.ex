@@ -32,9 +32,11 @@ defmodule PidroServerWeb.API.RoomController do
   use OpenApiSpex.ControllerSpecs
 
   alias OpenApiSpex.Operation
-  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.{GameAdapter, RoomManager}
+  alias PidroServer.Games.Room.Positions
   alias PidroServerWeb.API.RoomJSON
   alias PidroServerWeb.Schemas.{RoomSchemas, ErrorSchemas}
+  alias PidroServerWeb.Serializers.LegalActionsSerializer
 
   action_fallback PidroServerWeb.API.FallbackController
 
@@ -269,13 +271,15 @@ defmodule PidroServerWeb.API.RoomController do
     %Operation{
       summary: "Get room game state",
       description: """
-      Retrieves the current game state from the Pidro.Server process. This includes
-      the game phase, current turn, player hands, bids, tricks, and scores.
+      Retrieves the current game state from the Pidro.Server process, masked for
+      the authenticated player's position. Players see their own hand but opponent
+      hands are replaced with card counts. Spectators see all hands masked.
 
-      This endpoint is publicly accessible and does not require authentication.
+      Requires authentication via Bearer token.
       """,
       operationId: "RoomController.state",
       tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
       parameters: [
         Operation.parameter(
           :code,
@@ -292,6 +296,66 @@ defmodule PidroServerWeb.API.RoomController do
       ],
       responses: %{
         200 => Operation.response("Success", "application/json", RoomSchemas.GameStateResponse),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        404 =>
+          Operation.response(
+            "Room or game not found",
+            "application/json",
+            ErrorSchemas.not_found_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:legal_actions) do
+    %Operation{
+      summary: "Get legal actions for current player",
+      description: """
+      Retrieves the list of valid actions the authenticated player can take in
+      their current game position. This includes actions like bidding, playing
+      cards, or declaring trump depending on the game phase.
+
+      Only players in the game can access their legal actions. Spectators will
+      receive a 403 Forbidden response.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.legal_actions",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{
+            type: :string,
+            minLength: 4,
+            maxLength: 4,
+            description: "Unique 4-character room code"
+          },
+          "The unique room code",
+          required: true
+        )
+      ],
+      responses: %{
+        200 =>
+          Operation.response(
+            "Legal actions retrieved successfully",
+            "application/json",
+            RoomSchemas.LegalActionsResponse
+          ),
+        403 =>
+          Operation.response(
+            "Not a player in this room",
+            "application/json",
+            ErrorSchemas.forbidden_error()
+          ),
         404 =>
           Operation.response(
             "Room or game not found",
@@ -842,12 +906,112 @@ defmodule PidroServerWeb.API.RoomController do
   """
   @spec state(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def state(conn, %{"code" => code}) do
-    alias PidroServer.Games.GameAdapter
+    user = conn.assigns[:current_user]
+    user_id = to_string(user.id)
 
-    with {:ok, game_state} <- GameAdapter.get_state(code) do
+    with {:ok, room} <- RoomManager.get_room(code) do
+      if Positions.has_player?(room, user_id) do
+        position = Positions.get_position(room, user_id)
+
+        with {:ok, masked_state} <- GameAdapter.get_state(code, position) do
+          conn
+          |> put_view(RoomJSON)
+          |> render(:state, %{state: masked_state})
+        end
+      else
+        # Spectators or non-players get spectator view
+        alias Pidro.Core.StateView
+
+        with {:ok, full_state} <- GameAdapter.get_state(code) do
+          conn
+          |> put_view(RoomJSON)
+          |> render(:state, %{state: StateView.for_spectator(full_state)})
+        end
+      end
+    end
+  end
+
+  @doc """
+  Gets the legal actions for the authenticated player in a room.
+
+  Retrieves the list of valid actions the player can take based on their
+  position and the current game state. Only players can access this endpoint;
+  spectators receive a 403 Forbidden response.
+
+  Requires authentication via Bearer token.
+
+  Returns HTTP 200 (OK) on success.
+
+  ## Parameters
+
+    * `conn` - The Plug.Conn connection struct (must have :current_user assigned)
+    * `params` - Request parameters, must include:
+      - `code` - The unique room code (case-insensitive)
+
+  ## Headers Required
+
+      Authorization: Bearer <token>
+
+  ## Route Example
+
+      GET /api/v1/rooms/A1B2/legal-actions
+
+  ## Response Example (Success - Bidding Phase)
+
+      {
+        "data": {
+          "legal_actions": [
+            {"type": "bid", "amount": 7},
+            {"type": "bid", "amount": 8},
+            {"type": "pass"}
+          ]
+        }
+      }
+
+  ## Response Example (Success - Playing Phase)
+
+      {
+        "data": {
+          "legal_actions": [
+            {"type": "play_card", "card": {"rank": 14, "suit": "spades"}},
+            {"type": "play_card", "card": {"rank": 10, "suit": "hearts"}}
+          ]
+        }
+      }
+
+  ## Response Example (Error - Not a Player)
+
+      {
+        "errors": [
+          {
+            "code": "FORBIDDEN",
+            "title": "Forbidden",
+            "detail": "Not a player in this room"
+          }
+        ]
+      }
+  """
+  @spec legal_actions(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def legal_actions(conn, %{"code" => code}) do
+    user = conn.assigns[:current_user]
+    user_id = to_string(user.id)
+
+    with {:ok, room} <- RoomManager.get_room(code),
+         {:ok, position} <- get_player_position_for_user(room, user_id),
+         {:ok, actions} <- GameAdapter.get_legal_actions(code, position) do
       conn
       |> put_view(RoomJSON)
-      |> render(:state, %{state: game_state})
+      |> render(:legal_actions, %{legal_actions: LegalActionsSerializer.serialize(actions)})
+    end
+  end
+
+  @spec get_player_position_for_user(RoomManager.Room.t(), String.t()) ::
+          {:ok, atom()} | {:error, :not_a_player}
+  defp get_player_position_for_user(room, user_id) do
+    if Positions.has_player?(room, user_id) do
+      {:ok, Positions.get_position(room, user_id)}
+    else
+      {:error, :not_a_player}
     end
   end
 

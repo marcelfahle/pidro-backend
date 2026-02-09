@@ -362,8 +362,11 @@ defmodule Pidro.Game.Discard do
     with :ok <- validate_second_deal_phase(state),
          :ok <- validate_dealer_exists(state),
          :ok <- validate_dealer_turn(state),
-         :ok <- validate_six_cards(selected_cards) do
-      dealer = state.current_dealer
+         dealer = state.current_dealer,
+         dealer_player = Map.get(state.players, dealer),
+         pool_size = length(dealer_player.hand) + length(state.deck),
+         expected_count = min(6, pool_size),
+         :ok <- validate_card_count(selected_cards, expected_count) do
       dealer_player = Map.get(state.players, dealer)
 
       # Dealer takes all remaining cards from deck
@@ -452,12 +455,12 @@ defmodule Pidro.Game.Discard do
     {:error, {:not_dealer_turn, dealer, turn}}
   end
 
-  # Validates exactly 6 cards selected
-  @spec validate_six_cards([card()]) :: :ok | {:error, error()}
-  defp validate_six_cards(cards) when length(cards) == 6, do: :ok
+  # Validates exactly `expected` cards selected (usually 6, fewer if pool is small)
+  @spec validate_card_count([card()], non_neg_integer()) :: :ok | {:error, error()}
+  defp validate_card_count(cards, expected) when length(cards) == expected, do: :ok
 
-  defp validate_six_cards(cards) do
-    {:error, {:invalid_card_count, 6, length(cards)}}
+  defp validate_card_count(cards, expected) do
+    {:error, {:invalid_card_count, expected, length(cards)}}
   end
 
   # Validates all selected cards are in dealer's hand

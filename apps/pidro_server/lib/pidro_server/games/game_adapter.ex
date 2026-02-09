@@ -120,30 +120,64 @@ defmodule PidroServer.Games.GameAdapter do
   end
 
   @doc """
-  Gets the state for a specific player position.
+  Gets the state for a specific player position (masked).
 
-  Returns the full game state (Pidro.Server does not have position-specific views yet).
+  Returns the game state masked for the given position using `StateView.for_player/2`.
+  The viewing player sees their own hand, but opponent hands are replaced with card counts.
 
   ## Parameters
 
     - `room_code` - The room code
-    - `_position` - The player position (currently unused, for future API compatibility)
+    - `position` - The player position (`:north`, `:east`, `:south`, `:west`)
 
   ## Returns
 
-    - `{:ok, state}` on success
+    - `{:ok, masked_state}` on success
     - `{:error, :not_found}` if the game doesn't exist
 
   ## Examples
 
       iex> GameAdapter.get_state("A3F9", :north)
-      {:ok, %{phase: :bidding, ...}}
+      {:ok, %{phase: :bidding, players: %{north: %{hand: [...]}, south: %{hand: 5}}, ...}}
   """
-  @spec get_state(String.t(), atom()) :: {:ok, term()} | {:error, :not_found}
-  def get_state(room_code, _position) do
-    # Note: Pidro.Server currently only has get_state/1
-    # Position-specific views could be added in the future
-    get_state(room_code)
+  @spec get_state(String.t(), atom()) :: {:ok, map()} | {:error, :not_found}
+  def get_state(room_code, position) do
+    alias Pidro.Core.StateView
+
+    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+      state = Pidro.Server.get_state(pid)
+      {:ok, StateView.for_player(state, position)}
+    end
+  end
+
+  @doc """
+  Gets the full unmasked game state (for dev/admin use only).
+
+  This bypasses state masking and returns complete game information
+  including all player hands. Use only for development tools and debugging.
+
+  ## Parameters
+
+    - `room_code` - The room code
+
+  ## Returns
+
+    - `{:ok, full_state_map}` on success
+    - `{:error, :not_found}` if the game doesn't exist
+
+  ## Examples
+
+      iex> GameAdapter.get_full_state("A3F9")
+      {:ok, %{phase: :bidding, players: %{north: %{hand: [...], ...}, ...}}}
+  """
+  @spec get_full_state(String.t()) :: {:ok, map()} | {:error, :not_found}
+  def get_full_state(room_code) do
+    alias Pidro.Core.StateView
+
+    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+      state = Pidro.Server.get_state(pid)
+      {:ok, StateView.full_state(state)}
+    end
   end
 
   @doc """
@@ -317,6 +351,8 @@ defmodule PidroServer.Games.GameAdapter do
     try do
       state = Pidro.Server.get_state(pid)
 
+      Logger.debug("Broadcasting state_update for room #{room_code}, phase: #{state.phase}")
+
       Phoenix.PubSub.broadcast(
         PidroServer.PubSub,
         "game:#{room_code}",
@@ -324,7 +360,7 @@ defmodule PidroServer.Games.GameAdapter do
       )
 
       # Check if game is over and broadcast game_over message
-      if Map.get(state, :phase) == :game_over do
+      if Map.get(state, :phase) == :complete do
         broadcast_game_over(room_code, state)
       end
 

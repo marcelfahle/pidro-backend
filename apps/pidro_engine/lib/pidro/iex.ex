@@ -36,7 +36,7 @@ defmodule Pidro.IEx do
   """
 
   alias Pidro.Core.{Types, Card, GameState, Deck}
-  alias Pidro.Game.{Engine, Dealing}
+  alias Pidro.Game.{Engine, Dealing, DealerRob}
 
   import IO.ANSI
 
@@ -89,6 +89,200 @@ defmodule Pidro.IEx do
     state = GameState.update(state, :phase, :bidding)
 
     state
+  end
+
+  @doc """
+  Starts a GenServer-backed game ready for bidding.
+
+  Creates a new game via `new_game/0` and wraps it in a `Pidro.Server` GenServer.
+  The returned pid supports the full `Pidro.Server` API.
+
+  ## Options
+
+    - All options passed through to `Pidro.Server.start_link/1`
+
+  ## Returns
+
+    - `{:ok, pid}` on success
+
+  ## Examples
+
+      iex> {:ok, pid} = Pidro.IEx.start_server_game()
+      iex> is_pid(pid)
+      true
+      iex> Pidro.Server.get_state(pid).phase
+      :bidding
+  """
+  @spec start_server_game(keyword()) :: GenServer.on_start()
+  def start_server_game(opts \\ []) do
+    initial_state = new_game()
+    Pidro.Server.start_link(Keyword.put(opts, :initial_state, initial_state))
+  end
+
+  @doc """
+  Returns a random strategy function suitable for `play_full_game/2`.
+
+  The strategy prefers passing or bidding the minimum during bidding,
+  and picks randomly among other actions. This produces games that complete
+  in a reasonable number of hands (typically 5-30).
+
+  ## Examples
+
+      iex> {:ok, pid} = Pidro.IEx.start_server_game()
+      iex> {:ok, result} = Pidro.IEx.play_full_game(pid, Pidro.IEx.random_strategy())
+      iex> result.winner in [:north_south, :east_west]
+      true
+  """
+  @spec random_strategy() :: (Types.GameState.t(), Types.position(), [Types.action()] ->
+                                Types.action())
+  def random_strategy do
+    fn _state, _pos, actions ->
+      case actions do
+        # During bidding: pass 70% of the time, otherwise bid minimum
+        [{:bid, _} | _] ->
+          if :pass in actions and :rand.uniform(10) <= 7 do
+            :pass
+          else
+            # Pick the lowest bid available
+            bids =
+              Enum.filter(actions, fn
+                {:bid, _} -> true
+                _ -> false
+              end)
+
+            if bids != [], do: hd(Enum.sort_by(bids, fn {:bid, n} -> n end)), else: hd(actions)
+          end
+
+        _ ->
+          Enum.random(actions)
+      end
+    end
+  end
+
+  @doc """
+  Plays a complete game using a strategy function.
+
+  The strategy function receives `(state, position, legal_actions)` and must
+  return one of the legal actions. The loop handles automatic phases, eliminated
+  players, and the dealer rob `select_hand` marker.
+
+  Works with both a `Pidro.Server` pid or a raw `GameState` struct.
+
+  ## Parameters
+
+    - `game` - A running `Pidro.Server` pid (from `start_server_game/0`) or a `GameState.t()`
+    - `strategy_fn` - A function `(state, position, actions) -> action`
+
+  ## Returns
+
+    - `{:ok, %{winner: team, scores: scores, hands_played: n}}`
+    - `{:error, reason}` if the game gets stuck
+
+  ## Examples
+
+      iex> {:ok, pid} = Pidro.IEx.start_server_game()
+      iex> {:ok, result} = Pidro.IEx.play_full_game(pid, fn _state, _pos, actions ->
+      ...>   Enum.random(actions)
+      ...> end)
+      iex> result.winner in [:north_south, :east_west]
+      true
+
+      # Also works with a raw GameState (no GenServer needed)
+      iex> state = Pidro.IEx.new_game()
+      iex> {:ok, result} = Pidro.IEx.play_full_game(state, fn _state, _pos, actions ->
+      ...>   Enum.random(actions)
+      ...> end)
+  """
+  @spec play_full_game(pid() | Types.GameState.t(), (Types.GameState.t(),
+                                                     Types.position(),
+                                                     [Types.action()] ->
+                                                       Types.action())) ::
+          {:ok, map()} | {:error, term()}
+  def play_full_game(pid, strategy_fn) when is_pid(pid) and is_function(strategy_fn, 3) do
+    state = Pidro.Server.get_state(pid)
+
+    case play_full_game(state, strategy_fn) do
+      {:ok, result} ->
+        # Sync final state back to the server
+        GenServer.call(pid, {:set_state, result.final_state})
+        {:ok, Map.delete(result, :final_state)}
+
+      error ->
+        error
+    end
+  end
+
+  def play_full_game(%Types.GameState{} = state, strategy_fn) when is_function(strategy_fn, 3) do
+    game_loop(state, strategy_fn, 0)
+  end
+
+  @max_game_steps 100_000
+
+  defp game_loop(_state, _strategy_fn, step_count) when step_count > @max_game_steps do
+    {:error, :max_steps_exceeded}
+  end
+
+  defp game_loop(%{phase: :complete} = state, _strategy_fn, _step_count) do
+    {:ok,
+     %{
+       winner: state.winner,
+       scores: state.cumulative_scores,
+       hands_played: state.hand_number,
+       final_state: state
+     }}
+  end
+
+  defp game_loop(state, strategy_fn, step_count) do
+    case advance_one_step(state, strategy_fn) do
+      {:ok, new_state} -> game_loop(new_state, strategy_fn, step_count + 1)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp advance_one_step(state, strategy_fn) do
+    position = state.current_turn
+
+    if is_nil(position) do
+      # No current turn — try all positions to find available actions
+      try_any_position(state)
+    else
+      actions = Engine.legal_actions(state, position)
+
+      cond do
+        actions == [{:select_hand, :choose_6_cards}] ->
+          handle_dealer_rob(state, position)
+
+        actions == [] ->
+          try_any_position(state)
+
+        true ->
+          action = strategy_fn.(state, position, actions)
+          Engine.apply_action(state, position, action)
+      end
+    end
+  end
+
+  defp handle_dealer_rob(state, dealer_position) do
+    dealer_player = Map.get(state.players, dealer_position)
+    pool = dealer_player.hand ++ state.deck
+    best_cards = DealerRob.select_best_cards(pool, state.trump_suit)
+    Engine.apply_action(state, dealer_position, {:select_hand, best_cards})
+  end
+
+  defp try_any_position(state) do
+    result =
+      Enum.find_value([:north, :east, :south, :west], nil, fn pos ->
+        actions = Engine.legal_actions(state, pos)
+
+        if actions != [] do
+          case Engine.apply_action(state, pos, hd(actions)) do
+            {:ok, _new_state} = ok -> ok
+            {:error, _} -> nil
+          end
+        end
+      end)
+
+    result || {:error, {:stuck, state.phase, state.current_turn}}
   end
 
   @doc """
