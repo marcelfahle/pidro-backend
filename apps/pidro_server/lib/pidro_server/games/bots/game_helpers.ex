@@ -90,14 +90,14 @@ defmodule PidroServer.Games.Bots.GameHelpers do
           if state.phase != :bidding do
             {:ok, state}
           else
-            current_player = state.current_player
+            current_turn = state.current_turn
 
-            case GameAdapter.get_legal_actions(room_code, current_player) do
+            case GameAdapter.get_legal_actions(room_code, current_turn) do
               {:ok, legal_actions} ->
                 # Fix: destructure the {:ok, action, reasoning} return
                 {:ok, action, _reasoning} = RandomStrategy.pick_action(legal_actions, state)
 
-                case GameAdapter.apply_action(room_code, current_player, action) do
+                case GameAdapter.apply_action(room_code, current_turn, action) do
                   {:ok, _new_state} ->
                     if delay_ms > 0, do: Process.sleep(delay_ms)
                     auto_bid_loop(room_code, delay_ms, iteration + 1)

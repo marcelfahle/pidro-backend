@@ -137,6 +137,8 @@ defmodule PidroServer.Games.Bots.BotManager do
   def handle_call({:stop_bot, room_code, position}, _from, state) do
     case :ets.lookup(@table_name, {room_code, position}) do
       [{_key, pid}] ->
+        # Clean up synchronously to avoid stop→start race
+        state = cleanup_bot(state, room_code, position, pid)
         DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, pid)
         {:reply, :ok, state}
 
@@ -149,9 +151,12 @@ defmodule PidroServer.Games.Bots.BotManager do
   def handle_call({:stop_all_bots, room_code}, _from, state) do
     positions = Map.get(state.bots, room_code, %{})
 
-    Enum.each(positions, fn {_position, bot_info} ->
-      DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, bot_info.pid)
-    end)
+    state =
+      Enum.reduce(positions, state, fn {position, bot_info}, acc ->
+        acc = cleanup_bot(acc, room_code, position, bot_info.pid)
+        DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, bot_info.pid)
+        acc
+      end)
 
     {:reply, :ok, state}
   end
@@ -214,33 +219,58 @@ defmodule PidroServer.Games.Bots.BotManager do
 
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
-    case Map.get(state.monitors, ref) do
-      {room_code, position, ^pid} ->
+    case Map.pop(state.monitors, ref) do
+      {{room_code, position, ^pid}, new_monitors} ->
         Logger.info("Bot for room #{room_code}, position #{position} exited: #{inspect(reason)}")
+        # Idempotent cleanup — may already be cleaned up by stop_bot/stop_all_bots
+        state = %{state | monitors: new_monitors}
+        {:noreply, cleanup_bot_state(state, room_code, position)}
 
-        :ets.delete(@table_name, {room_code, position})
-
-        new_bots =
-          Map.update(state.bots, room_code, %{}, fn positions ->
-            Map.delete(positions, position)
-          end)
-
-        new_bots =
-          if Map.get(new_bots, room_code) == %{} do
-            Map.delete(new_bots, room_code)
-          else
-            new_bots
-          end
-
-        new_monitors = Map.delete(state.monitors, ref)
-        {:noreply, %{state | bots: new_bots, monitors: new_monitors}}
-
-      nil ->
+      {nil, _} ->
         {:noreply, state}
     end
   end
 
   ## Private Functions
+
+  # Synchronous cleanup of ETS, state, and monitors for a single bot.
+  # Called from stop_bot/stop_all_bots before terminating the child.
+  defp cleanup_bot(state, room_code, position, pid) do
+    :ets.delete(@table_name, {room_code, position})
+
+    # Find and remove the monitor for this pid
+    {ref, _} =
+      Enum.find(state.monitors, {nil, nil}, fn {_ref, val} ->
+        val == {room_code, position, pid}
+      end)
+
+    state =
+      if ref do
+        Process.demonitor(ref, [:flush])
+        %{state | monitors: Map.delete(state.monitors, ref)}
+      else
+        state
+      end
+
+    cleanup_bot_state(state, room_code, position)
+  end
+
+  # Remove a bot from the bots map, cleaning up empty room entries.
+  defp cleanup_bot_state(state, room_code, position) do
+    new_bots =
+      Map.update(state.bots, room_code, %{}, fn positions ->
+        Map.delete(positions, position)
+      end)
+
+    new_bots =
+      if Map.get(new_bots, room_code) == %{} do
+        Map.delete(new_bots, room_code)
+      else
+        new_bots
+      end
+
+    %{state | bots: new_bots}
+  end
 
   defp add_bot_to_state(bots, room_code, position, bot_info) do
     Map.update(bots, room_code, %{position => bot_info}, fn positions ->

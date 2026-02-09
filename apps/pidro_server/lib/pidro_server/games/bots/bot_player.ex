@@ -61,9 +61,14 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
     bot_user_id = "bot_#{room_code}_#{position}"
 
-    case PidroServer.Games.RoomManager.join_room(room_code, bot_user_id) do
-      {:ok, _room} ->
-        Logger.info("Bot #{bot_user_id} joined room #{room_code}")
+    case PidroServer.Games.RoomManager.join_room(room_code, bot_user_id, position) do
+      {:ok, _room, ^position} ->
+        Logger.info("Bot #{bot_user_id} joined room #{room_code} at #{position}")
+
+      {:ok, _room, other_position} ->
+        Logger.warning(
+          "Bot #{bot_user_id} requested #{position} but got #{other_position} in room #{room_code}"
+        )
 
       {:error, reason} ->
         Logger.warning("Bot #{bot_user_id} could not join room #{room_code}: #{inspect(reason)}")
