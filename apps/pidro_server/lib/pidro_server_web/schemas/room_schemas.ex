@@ -548,7 +548,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   description: "Points earned by each team in this hand",
                   example: %{"north_south" => 0, "east_west" => 0}
                 },
-                cumulative_scores: %Schema{
+                scores: %Schema{
                   type: :object,
                   additionalProperties: %Schema{type: :integer},
                   description: "Total points for each team across all hands",
@@ -568,7 +568,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                 :bids,
                 :tricks,
                 :hand_points,
-                :cumulative_scores
+                :scores
               ],
               example: %{
                 "phase" => "bidding",
@@ -603,7 +603,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                 "current_trick" => nil,
                 "trick_number" => nil,
                 "hand_points" => %{"north_south" => 0, "east_west" => 0},
-                "cumulative_scores" => %{"north_south" => 0, "east_west" => 0},
+                "scores" => %{"north_south" => 0, "east_west" => 0},
                 "winner" => nil
               }
             }
@@ -640,7 +640,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "current_trick" => nil,
             "trick_number" => nil,
             "hand_points" => %{"north_south" => 0, "east_west" => 0},
-            "cumulative_scores" => %{"north_south" => 0, "east_west" => 0},
+            "scores" => %{"north_south" => 0, "east_west" => 0},
             "winner" => nil
           }
         }
