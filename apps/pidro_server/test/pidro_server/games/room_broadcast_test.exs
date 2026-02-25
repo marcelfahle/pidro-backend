@@ -4,7 +4,6 @@ defmodule PidroServer.Games.RoomBroadcastTest do
   alias PidroServer.Games.RoomManager
   alias PidroServer.AccountsFixtures
   alias PidroServerWeb.LobbyChannel
-  alias PidroServerWeb.UserSocket
 
   setup do
     RoomManager.reset_for_test()

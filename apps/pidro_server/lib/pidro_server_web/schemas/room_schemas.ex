@@ -11,9 +11,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Room Schemas ====================
 
-  @doc """
-  Schema for a Room object representing a game room.
-  """
+  # Schema for a Room object representing a game room.
   defmodule Room do
     OpenApiSpex.schema(%{
       title: "Room",
@@ -68,9 +66,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a single room response.
-  """
+  # Schema for a single room response.
   defmodule RoomResponse do
     OpenApiSpex.schema(%{
       title: "RoomResponse",
@@ -101,9 +97,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a list of rooms response.
-  """
+  # Schema for a list of rooms response.
   defmodule RoomsResponse do
     OpenApiSpex.schema(%{
       title: "RoomsResponse",
@@ -148,9 +142,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for room creation response including the room code.
-  """
+  # Schema for room creation response including the room code.
   defmodule RoomCreatedResponse do
     OpenApiSpex.schema(%{
       title: "RoomCreatedResponse",
@@ -190,9 +182,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Game State Schemas ====================
 
-  @doc """
-  Schema for a Card object representing a playing card.
-  """
+  # Schema for a Card object representing a playing card.
   defmodule Card do
     OpenApiSpex.schema(%{
       title: "Card",
@@ -223,9 +213,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Bid object representing a player's bid.
-  """
+  # Schema for a Bid object representing a player's bid.
   defmodule Bid do
     OpenApiSpex.schema(%{
       title: "Bid",
@@ -255,9 +243,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Play object representing a card played in a trick.
-  """
+  # Schema for a Play object representing a card played in a trick.
   defmodule Play do
     OpenApiSpex.schema(%{
       title: "Play",
@@ -283,9 +269,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Trick object representing a completed trick.
-  """
+  # Schema for a Trick object representing a completed trick.
   defmodule Trick do
     OpenApiSpex.schema(%{
       title: "Trick",
@@ -354,9 +338,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Player object representing a player's state in the game.
-  """
+  # Schema for a Player object representing a player's state in the game.
   defmodule Player do
     OpenApiSpex.schema(%{
       title: "Player",
@@ -411,9 +393,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for the complex game state response.
-  """
+  # Schema for the complex game state response.
   defmodule GameStateResponse do
     OpenApiSpex.schema(%{
       title: "GameStateResponse",

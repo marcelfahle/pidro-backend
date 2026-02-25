@@ -388,7 +388,7 @@ defmodule PidroServerWeb.GameChannelTest do
       [user1, user2 | _] = users
 
       # Both players join
-      {:ok, _reply, socket1} =
+      {:ok, _reply, _socket1} =
         subscribe_and_join(sockets[user1.id], GameChannel, "game:#{room_code}", %{})
 
       {:ok, _reply, _socket2} =

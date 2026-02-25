@@ -2377,31 +2377,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   # DEV-1505 & DEV-1506: Helper functions for card table and phase displays
 
-  defp get_current_bid(state) do
-    case Map.get(state, :winning_bid) do
-      %{amount: amount} -> amount
-      _ -> nil
-    end
-  end
-
-  defp get_current_bidder(state) do
-    case Map.get(state, :winning_bid) do
-      %{team: team} ->
-        case team do
-          :north_south -> :north
-          :east_west -> :east
-          team -> team
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp get_bid_history(state) do
-    Map.get(state, :bid_history, [])
-  end
-
   defp get_selected_hand(_state, :all), do: []
 
   defp get_selected_hand(state, position) when is_atom(position) do
