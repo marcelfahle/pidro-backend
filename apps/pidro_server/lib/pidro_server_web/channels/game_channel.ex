@@ -14,6 +14,7 @@ defmodule PidroServerWeb.GameChannel do
   * `"bid"` - Player makes a bid: `%{"amount" => 8}` or `%{"amount" => "pass"}`
   * `"declare_trump"` - Winner declares trump: `%{"suit" => "hearts"}`
   * `"play_card"` - Player plays a card: `%{"card" => %{"rank" => 14, "suit" => "spades"}}`
+  * `"select_hand"` - Dealer selects cards to keep: `%{"cards" => [%{"rank" => 14, "suit" => "hearts"}, ...]}`
   * `"ready"` - Player signals ready to start (optional)
 
   ## Outgoing Events (to clients)
@@ -132,6 +133,7 @@ defmodule PidroServerWeb.GameChannel do
       # Position only applies to players, not spectators
       position = if role == :player, do: get_player_position(room, user_id), else: nil
       {:ok, state} = GameAdapter.get_state(room_code)
+      serialized_state = GameStateSerializer.serialize(state)
 
       socket =
         socket
@@ -143,10 +145,21 @@ defmodule PidroServerWeb.GameChannel do
       # Track presence after join
       send(self(), :after_join)
 
+      legal_actions =
+        if position do
+          case GameAdapter.get_legal_actions(room_code, position) do
+            {:ok, actions} -> GameStateSerializer.serialize_legal_actions(actions)
+            _ -> []
+          end
+        else
+          []
+        end
+
       reply_data = %{
-        state: state,
+        state: serialized_state,
         role: role,
-        reconnected: join_type == :reconnect
+        reconnected: join_type == :reconnect,
+        legal_actions: legal_actions
       }
 
       # Add position only for players
@@ -176,6 +189,7 @@ defmodule PidroServerWeb.GameChannel do
   - `"bid"` - Make a bid or pass (players only)
   - `"declare_trump"` - Declare trump suit (players only)
   - `"play_card"` - Play a card from hand (players only)
+  - `"select_hand"` - Select cards to keep during dealer rob (players only)
   - `"ready"` - Signal ready status (players only)
 
   Spectators cannot perform game actions and will receive an error.
@@ -229,6 +243,19 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
+  def handle_in("select_hand", %{"cards" => cards}, socket) when is_list(cards) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot select hand"}}, socket}
+    else
+      card_tuples =
+        Enum.map(cards, fn %{"rank" => rank, "suit" => suit} ->
+          {rank, String.to_existing_atom(suit)}
+        end)
+
+      apply_game_action(socket, {:select_hand, card_tuples})
+    end
+  end
+
   def handle_in("ready", _params, socket) do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot signal ready"}}, socket}
@@ -253,7 +280,9 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_info({:state_update, new_state}, socket) do
     serialized_state = GameStateSerializer.serialize(new_state)
-    broadcast(socket, "game_state", %{state: serialized_state})
+    legal_actions = legal_actions_for_socket(socket)
+
+    push(socket, "game_state", %{state: serialized_state, legal_actions: legal_actions})
     {:noreply, socket}
   end
 
@@ -267,7 +296,7 @@ defmodule PidroServerWeb.GameChannel do
     save_game_stats(room_code, winner, scores)
 
     # Broadcast game over to all players
-    broadcast(socket, "game_over", %{winner: winner, scores: scores})
+    push(socket, "game_over", %{winner: winner, scores: scores})
 
     # Schedule room closure after 5 minutes
     Process.send_after(self(), {:close_room, room_code}, :timer.minutes(5))
@@ -469,6 +498,21 @@ defmodule PidroServerWeb.GameChannel do
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason), do: inspect(reason)
+
+  @spec legal_actions_for_socket(Phoenix.Socket.t()) :: list()
+  defp legal_actions_for_socket(socket) do
+    position = socket.assigns[:position]
+    room_code = socket.assigns[:room_code]
+
+    if position && room_code do
+      case GameAdapter.get_legal_actions(room_code, position) do
+        {:ok, actions} -> GameStateSerializer.serialize_legal_actions(actions)
+        _ -> []
+      end
+    else
+      []
+    end
+  end
 
   @spec format_reason(term()) :: String.t()
   defp format_reason(:normal), do: "left"
