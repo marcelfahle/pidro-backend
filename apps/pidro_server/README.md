@@ -6,8 +6,7 @@
 
 Phoenix-based multiplayer server for Finnish Pidro (4-player trick-taking card game):
 - **Game API**: REST + WebSocket for mobile clients (future)
-- **Admin Panel**: LiveView dashboard for monitoring games
-- **Dev UI**: Testing environment with bot players and debugging tools
+- **Dev Panel**: LiveView dashboard for monitoring, testing, and debugging games
 - **Game Engine**: Powered by `pidro_engine` (pure functional Elixir game logic)
 
 ## Architecture at a Glance
@@ -26,8 +25,7 @@ pidro_backend/                    # Umbrella project root
         ├── channels/            # WebSocket (LobbyChannel, GameChannel)
         ├── controllers/         # REST API
         └── live/                # LiveView UIs
-            ├── [admin views]    # Admin panel (lobby, game monitor, stats)
-            └── dev/             # Dev testing UI (game list, detail, analytics)
+            └── dev/             # Dev panel (game list, detail, analytics)
 ```
 
 ## Quick Start
@@ -52,14 +50,6 @@ These routes are only available when `config :pidro_server, dev_routes: true` (s
 | `/dev/analytics` | Dev UI - analytics dashboard |
 | `/dev/dashboard` | Phoenix LiveDashboard (metrics, processes) |
 | `/dev/mailbox` | Swoosh email preview |
-
-### Admin Panel (Basic Auth Protected)
-
-| Route | Description |
-|-------|-------------|
-| `/admin/lobby` | Room list overview |
-| `/admin/games/:code` | Monitor a specific game |
-| `/admin/stats` | Server statistics |
 
 ### REST API
 
@@ -184,15 +174,10 @@ mix dialyzer                      # Type checking
 ### Dev UI (Development Testing)
 - `lib/pidro_server_web/live/dev/game_list_live.ex` - Game creation & discovery
 - `lib/pidro_server_web/live/dev/game_detail_live.ex` - Play interface
-- `lib/pidro_server/dev/bot_manager.ex` - Bot lifecycle management
-- `lib/pidro_server/dev/bot_player.ex` - Bot GenServer (auto-plays)
+- `lib/pidro_server/games/bots/bot_manager.ex` - Bot lifecycle management
+- `lib/pidro_server/games/bots/bot_player.ex` - Bot GenServer (auto-plays)
 - `lib/pidro_server/dev/event_recorder.ex` - Event logging
 - `lib/pidro_server/dev/game_helpers.ex` - Quick actions (undo, auto-bid, etc.)
-
-### Admin Panel (Monitoring)
-- `lib/pidro_server_web/live/lobby_live.ex` - Room list overview
-- `lib/pidro_server_web/live/game_monitor_live.ex` - Watch live games
-- `lib/pidro_server_web/live/stats_live.ex` - Server statistics
 
 ### WebSocket Channels
 - `lib/pidro_server_web/channels/game_channel.ex` - Real-time gameplay
@@ -240,23 +225,10 @@ config/
 └── test.exs      # Test settings
 ```
 
-### Admin Panel Credentials
+### Dev Panel Access
 
-The admin panel (`/admin/*`) uses HTTP Basic Auth. Credentials are configured in:
-
-**Development** (`config/dev.exs`):
-```elixir
-config :pidro_server,
-  admin_username: "admin",
-  admin_password: "pidro_admin_2025"
-```
-
-**Production** (`config/runtime.exs`): Set via environment variables:
-```elixir
-config :pidro_server,
-  admin_username: System.get_env("ADMIN_USERNAME") || "admin",
-  admin_password: System.get_env("ADMIN_PASSWORD") || raise "ADMIN_PASSWORD required"
-```
+Dev panel routes are only compiled/enabled when `dev_routes` is set to `true`
+(default in `config/dev.exs`).
 
 ### Environment Variables
 ```bash
@@ -267,10 +239,6 @@ DATABASE_URL=ecto://postgres:postgres@localhost/pidro_server_dev
 SECRET_KEY_BASE=...  # Generate with: mix phx.gen.secret
 PORT=4000
 HOST=localhost
-
-# Admin (production)
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your_secure_password
 
 # For production
 MIX_ENV=prod
