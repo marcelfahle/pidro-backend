@@ -40,19 +40,28 @@ defmodule PidroServer.Games.Bots.BotManager do
           {:ok, [pid()]} | {:error, term()}
   def start_bots(room_code, bot_count, strategy, delay_ms \\ 1000)
       when bot_count >= 1 and bot_count <= 4 do
-    positions = [:north, :east, :south, :west]
+    alias PidroServer.Games.RoomManager
+    alias PidroServer.Games.Room.Positions
 
-    positions
-    |> Enum.take(bot_count)
-    |> Enum.reduce_while({:ok, []}, fn position, {:ok, pids} ->
-      case start_bot(room_code, position, strategy, delay_ms) do
-        {:ok, pid} -> {:cont, {:ok, [pid | pids]}}
-        {:error, reason} -> {:halt, {:error, reason}}
+    with {:ok, room} <- RoomManager.get_room(room_code) do
+      empty_seats = Positions.available(room)
+
+      if length(empty_seats) < bot_count do
+        {:error, :not_enough_seats}
+      else
+        empty_seats
+        |> Enum.take(bot_count)
+        |> Enum.reduce_while({:ok, []}, fn position, {:ok, pids} ->
+          case start_bot(room_code, position, strategy, delay_ms) do
+            {:ok, pid} -> {:cont, {:ok, [pid | pids]}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+        |> case do
+          {:ok, pids} -> {:ok, Enum.reverse(pids)}
+          error -> error
+        end
       end
-    end)
-    |> case do
-      {:ok, pids} -> {:ok, Enum.reverse(pids)}
-      error -> error
     end
   end
 

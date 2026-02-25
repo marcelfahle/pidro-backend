@@ -123,6 +123,15 @@ defmodule PidroServer.Games.Bots.BotPlayer do
     {:noreply, state}
   end
 
+  # Ignore Phoenix Channel broadcast messages (presence_diff, game_state, etc.).
+  # BotPlayer subscribes to the same PubSub topic as GameChannel, so it receives
+  # channel-level broadcasts. Game state updates are already handled via the
+  # direct {:state_update, state} PubSub messages above.
+  @impl true
+  def handle_info(%Phoenix.Socket.Broadcast{}, state) do
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info(:make_move, state) do
     execute_move(state)
