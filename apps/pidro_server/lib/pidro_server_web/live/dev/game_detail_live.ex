@@ -68,6 +68,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:executing_action, false)
          |> assign(:copy_feedback, false)
          |> assign(:bot_configs, bot_configs)
+         |> assign(:bots_paused, all_bots_paused?(bot_configs))
          |> assign(:events, events)
          |> assign(:event_filter_type, nil)
          |> assign(:event_filter_player, nil)
@@ -348,6 +349,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
           socket
           |> assign(:bot_configs, updated_configs)
+          |> assign(:bots_paused, all_bots_paused?(updated_configs))
           |> put_flash(
             :info,
             "Bot #{position} #{if config.paused, do: "resumed", else: "paused"}"
@@ -358,6 +360,36 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       end
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_all_bots_pause", _params, socket) do
+    room_code = socket.assigns.room_code
+    bot_configs = socket.assigns.bot_configs
+    pausing = !socket.assigns.bots_paused
+
+    updated_configs =
+      Enum.reduce([:north, :east, :south, :west], bot_configs, fn position, acc ->
+        config = Map.get(acc, position)
+
+        if config.type == :bot do
+          if pausing do
+            BotManager.pause_bot(room_code, position)
+          else
+            BotManager.resume_bot(room_code, position)
+          end
+
+          Map.update!(acc, position, fn c -> %{c | paused: pausing} end)
+        else
+          acc
+        end
+      end)
+
+    {:noreply,
+     socket
+     |> assign(:bot_configs, updated_configs)
+     |> assign(:bots_paused, pausing)
+     |> put_flash(:info, if(pausing, do: "All bots paused", else: "All bots resumed"))}
   end
 
   @impl true
@@ -894,7 +926,26 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           >
             &larr; Back to Games
           </.link>
-          <h1 class="text-4xl font-bold text-zinc-900">Game: {@room_code}</h1>
+          <div class="flex items-center gap-4">
+            <h1 class="text-4xl font-bold text-zinc-900">Game: {@room_code}</h1>
+            <button
+              type="button"
+              phx-click="toggle_all_bots_pause"
+              class={[
+                "px-3 py-1.5 text-sm font-medium rounded-md transition-all",
+                if(@bots_paused,
+                  do: "bg-green-100 text-green-700 hover:bg-green-200",
+                  else: "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                )
+              ]}
+            >
+              <%= if @bots_paused do %>
+                &#9654; Resume Bots
+              <% else %>
+                &#9646;&#9646; Pause Bots
+              <% end %>
+            </button>
+          </div>
           <p class="mt-2 text-lg text-zinc-600">
             Development game detail view with interactive controls
           </p>
@@ -2228,6 +2279,12 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     |> Map.new()
   end
 
+  defp all_bots_paused?(bot_configs) do
+    bot_configs
+    |> Enum.filter(fn {_pos, config} -> config.type == :bot end)
+    |> Enum.all?(fn {_pos, config} -> config.paused end)
+  end
+
   defp maybe_update_type(config, %{"type" => type}) when type in ["human", "bot"] do
     %{config | type: String.to_existing_atom(type)}
   end
@@ -2303,7 +2360,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   # Event log helper functions
-
 
   defp event_type_color(type) do
     case type do
