@@ -250,16 +250,23 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       description: "A card played by a player in a trick",
       type: :object,
       properties: %{
-        position: %Schema{
+        player: %Schema{
           type: :string,
           enum: [:north, :south, :east, :west],
           description: "Position of the player who played the card",
           example: :north
         },
+        position: %Schema{
+          type: :string,
+          enum: [:north, :south, :east, :west],
+          description: "Legacy alias for player (backward compatibility)",
+          example: :north
+        },
         card: Card
       },
-      required: [:position, :card],
+      required: [:player, :position, :card],
       example: %{
+        "player" => "north",
         "position" => "north",
         "card" => %{
           "rank" => 14,
@@ -273,7 +280,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
   defmodule Trick do
     OpenApiSpex.schema(%{
       title: "Trick",
-      description: "A completed trick including all plays and winner information",
+      description: "A completed trick including legacy (`plays`) and frontend (`cards`) arrays",
       type: :object,
       properties: %{
         number: %Schema{
@@ -292,13 +299,32 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         plays: %Schema{
           type: :array,
           items: Play,
-          description: "List of cards played in order",
+          description: "Legacy list of cards played in order",
           example: [
             %{
+              "player" => "north",
               "position" => "north",
               "card" => %{"rank" => 14, "suit" => "hearts"}
             },
             %{
+              "player" => "east",
+              "position" => "east",
+              "card" => %{"rank" => 13, "suit" => "hearts"}
+            }
+          ]
+        },
+        cards: %Schema{
+          type: :array,
+          items: Play,
+          description: "Frontend-oriented list of cards played in order",
+          example: [
+            %{
+              "player" => "north",
+              "position" => "north",
+              "card" => %{"rank" => 14, "suit" => "hearts"}
+            },
+            %{
+              "player" => "east",
               "position" => "east",
               "card" => %{"rank" => 13, "suit" => "hearts"}
             }
@@ -318,16 +344,30 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           example: 15
         }
       },
-      required: [:number, :leader, :plays, :points],
+      required: [:plays, :cards, :points],
       example: %{
         "number" => 1,
         "leader" => "north",
         "plays" => [
           %{
+            "player" => "north",
             "position" => "north",
             "card" => %{"rank" => 14, "suit" => "hearts"}
           },
           %{
+            "player" => "east",
+            "position" => "east",
+            "card" => %{"rank" => 13, "suit" => "hearts"}
+          }
+        ],
+        "cards" => [
+          %{
+            "player" => "north",
+            "position" => "north",
+            "card" => %{"rank" => 14, "suit" => "hearts"}
+          },
+          %{
+            "player" => "east",
             "position" => "east",
             "card" => %{"rank" => 13, "suit" => "hearts"}
           }
@@ -513,7 +553,17 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   description: "List of completed tricks",
                   example: []
                 },
-                current_trick: Trick,
+                current_trick: %Schema{
+                  type: :array,
+                  items: Play,
+                  description: "Current trick as flat plays (frontend shape)",
+                  example: []
+                },
+                current_trick_details: %Schema{
+                  allOf: [Trick],
+                  description: "Current trick in full object shape (legacy alias)",
+                  nullable: true
+                },
                 trick_number: %Schema{
                   type: :integer,
                   description: "Current trick number being played",
@@ -532,6 +582,12 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   type: :object,
                   additionalProperties: %Schema{type: :integer},
                   description: "Total points for each team across all hands",
+                  example: %{"north_south" => 0, "east_west" => 0}
+                },
+                cumulative_scores: %Schema{
+                  type: :object,
+                  additionalProperties: %Schema{type: :integer},
+                  description: "Deprecated alias for scores (backward compatibility)",
                   example: %{"north_south" => 0, "east_west" => 0}
                 },
                 winner: %Schema{
@@ -580,10 +636,12 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                 "bidding_team" => "north_south",
                 "trump_suit" => nil,
                 "tricks" => [],
-                "current_trick" => nil,
+                "current_trick" => [],
+                "current_trick_details" => nil,
                 "trick_number" => nil,
                 "hand_points" => %{"north_south" => 0, "east_west" => 0},
                 "scores" => %{"north_south" => 0, "east_west" => 0},
+                "cumulative_scores" => %{"north_south" => 0, "east_west" => 0},
                 "winner" => nil
               }
             }
@@ -617,10 +675,12 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "bidding_team" => "north_south",
             "trump_suit" => nil,
             "tricks" => [],
-            "current_trick" => nil,
+            "current_trick" => [],
+            "current_trick_details" => nil,
             "trick_number" => nil,
             "hand_points" => %{"north_south" => 0, "east_west" => 0},
             "scores" => %{"north_south" => 0, "east_west" => 0},
+            "cumulative_scores" => %{"north_south" => 0, "east_west" => 0},
             "winner" => nil
           }
         }

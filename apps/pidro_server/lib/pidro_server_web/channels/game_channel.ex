@@ -55,6 +55,13 @@ defmodule PidroServerWeb.GameChannel do
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
 
+  @suit_map %{
+    "hearts" => :hearts,
+    "diamonds" => :diamonds,
+    "clubs" => :clubs,
+    "spades" => :spades
+  }
+
   # Intercept presence_diff, player_ready, and player_reconnected broadcasts to handle them explicitly
   intercept ["presence_diff", "player_ready", "player_reconnected"]
 
@@ -228,8 +235,13 @@ defmodule PidroServerWeb.GameChannel do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot declare trump"}}, socket}
     else
-      suit_atom = String.to_atom(suit)
-      apply_game_action(socket, {:declare_trump, suit_atom})
+      case parse_suit(suit) do
+        {:ok, suit_atom} ->
+          apply_game_action(socket, {:declare_trump, suit_atom})
+
+        :error ->
+          {:reply, {:error, %{reason: "invalid suit"}}, socket}
+      end
     end
   end
 
@@ -237,9 +249,17 @@ defmodule PidroServerWeb.GameChannel do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot play cards"}}, socket}
     else
-      suit_atom = String.to_atom(suit)
-      card = {rank, suit_atom}
-      apply_game_action(socket, {:play_card, card})
+      with {:ok, suit_atom} <- parse_suit(suit),
+           true <- is_integer(rank) do
+        card = {rank, suit_atom}
+        apply_game_action(socket, {:play_card, card})
+      else
+        false ->
+          {:reply, {:error, %{reason: "invalid card rank"}}, socket}
+
+        :error ->
+          {:reply, {:error, %{reason: "invalid card suit"}}, socket}
+      end
     end
   end
 
@@ -247,12 +267,13 @@ defmodule PidroServerWeb.GameChannel do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot select hand"}}, socket}
     else
-      card_tuples =
-        Enum.map(cards, fn %{"rank" => rank, "suit" => suit} ->
-          {rank, String.to_existing_atom(suit)}
-        end)
+      case parse_cards(cards) do
+        {:ok, card_tuples} ->
+          apply_game_action(socket, {:select_hand, card_tuples})
 
-      apply_game_action(socket, {:select_hand, card_tuples})
+        {:error, reason} ->
+          {:reply, {:error, %{reason: reason}}, socket}
+      end
     end
   end
 
@@ -282,6 +303,8 @@ defmodule PidroServerWeb.GameChannel do
     serialized_state = GameStateSerializer.serialize(new_state)
     legal_actions = legal_actions_for_socket(socket)
 
+    # Each channel process subscribes directly to game PubSub updates.
+    # push/3 keeps legal actions personalized per player socket.
     push(socket, "game_state", %{state: serialized_state, legal_actions: legal_actions})
     {:noreply, socket}
   end
@@ -511,6 +534,29 @@ defmodule PidroServerWeb.GameChannel do
       end
     else
       []
+    end
+  end
+
+  @spec parse_suit(String.t()) :: {:ok, atom()} | :error
+  defp parse_suit(suit) when is_binary(suit) do
+    Map.fetch(@suit_map, suit)
+  end
+
+  @spec parse_cards(list()) :: {:ok, list({integer(), atom()})} | {:error, String.t()}
+  defp parse_cards(cards) when is_list(cards) do
+    Enum.reduce_while(cards, {:ok, []}, fn
+      %{"rank" => rank, "suit" => suit}, {:ok, acc} when is_integer(rank) ->
+        case parse_suit(suit) do
+          {:ok, suit_atom} -> {:cont, {:ok, [{rank, suit_atom} | acc]}}
+          :error -> {:halt, {:error, "invalid card suit"}}
+        end
+
+      _, _acc ->
+        {:halt, {:error, "invalid card payload"}}
+    end)
+    |> case do
+      {:ok, parsed} -> {:ok, Enum.reverse(parsed)}
+      error -> error
     end
   end
 

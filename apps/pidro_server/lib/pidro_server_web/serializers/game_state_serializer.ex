@@ -32,9 +32,11 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       trump_suit: Map.get(state, :trump_suit),
       tricks: serialize_tricks(Map.get(state, :tricks, [])),
       current_trick: serialize_current_trick(Map.get(state, :current_trick)),
+      current_trick_details: serialize_trick(Map.get(state, :current_trick)),
       trick_number: Map.get(state, :trick_number),
       hand_points: Map.get(state, :hand_points, %{}),
       scores: Map.get(state, :cumulative_scores, %{}),
+      cumulative_scores: Map.get(state, :cumulative_scores, %{}),
       winner: Map.get(state, :winner)
     }
   end
@@ -123,9 +125,15 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
   def serialize_trick(nil), do: nil
 
   def serialize_trick(trick) when is_map(trick) do
+    plays = serialize_plays(Map.get(trick, :plays, []))
+
     %{
-      cards: serialize_plays(Map.get(trick, :plays, [])),
-      winner: Map.get(trick, :winner)
+      number: Map.get(trick, :number),
+      leader: Map.get(trick, :leader),
+      plays: plays,
+      cards: plays,
+      winner: Map.get(trick, :winner),
+      points: Map.get(trick, :points, 0)
     }
   end
 
@@ -150,11 +158,18 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
 
   @spec serialize_play(tuple() | map() | any()) :: map() | nil
   def serialize_play({position, card}) do
-    %{player: position, card: serialize_card(card)}
+    serialized_card = serialize_card(card)
+    %{player: position, position: position, card: serialized_card}
   end
 
   def serialize_play(%{position: position, card: card}) do
-    %{player: position, card: serialize_card(card)}
+    serialized_card = serialize_card(card)
+    %{player: position, position: position, card: serialized_card}
+  end
+
+  def serialize_play(%{player: position, card: card}) do
+    serialized_card = serialize_card(card)
+    %{player: position, position: position, card: serialized_card}
   end
 
   def serialize_play(_), do: nil

@@ -269,6 +269,46 @@ defmodule PidroServerWeb.GameChannelTest do
     end
   end
 
+  describe "input validation" do
+    test "rejects invalid trump suit", %{user1: user, room_code: room_code, sockets: sockets} do
+      socket = sockets[user.id]
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      ref = push(socket, "declare_trump", %{"suit" => "stars"})
+      assert_reply ref, :error, %{reason: "invalid suit"}, 1000
+    end
+
+    test "rejects invalid play_card suit", %{user1: user, room_code: room_code, sockets: sockets} do
+      socket = sockets[user.id]
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      ref =
+        push(socket, "play_card", %{
+          "card" => %{"rank" => 14, "suit" => "stars"}
+        })
+
+      assert_reply ref, :error, %{reason: "invalid card suit"}, 1000
+    end
+
+    test "rejects malformed select_hand payload", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      ref = push(socket, "select_hand", %{"cards" => [%{"rank" => 14, "suit" => "stars"}]})
+      assert_reply ref, :error, %{reason: "invalid card suit"}, 1000
+    end
+  end
+
   describe "ready action" do
     test "player can signal ready", %{
       user1: user,
