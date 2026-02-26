@@ -212,6 +212,14 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
+  def handle_in("pass", _params, socket) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+    else
+      apply_game_action(socket, :pass)
+    end
+  end
+
   def handle_in("bid", %{"amount" => amount}, socket) when is_integer(amount) do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
