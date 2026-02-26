@@ -209,6 +209,23 @@ defmodule PidroServerWeb.GameChannelTest do
       assert_reply ref, _, _, 1000
     end
 
+    test "player can pass using pass event", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      # Advance game to bidding phase
+      advance_game_to_bidding(room_code)
+
+      socket = sockets[user.id]
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      ref = push(socket, "pass", %{})
+      assert_reply ref, _, _, 1000
+    end
+
     test "handles bid as string number", %{
       user1: user,
       room_code: room_code,
