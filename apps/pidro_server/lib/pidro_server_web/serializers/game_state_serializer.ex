@@ -31,9 +31,11 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       bidding_team: Map.get(state, :bidding_team),
       trump_suit: Map.get(state, :trump_suit),
       tricks: serialize_tricks(Map.get(state, :tricks, [])),
-      current_trick: serialize_trick(Map.get(state, :current_trick)),
+      current_trick: serialize_current_trick(Map.get(state, :current_trick)),
+      current_trick_details: serialize_trick(Map.get(state, :current_trick)),
       trick_number: Map.get(state, :trick_number),
       hand_points: Map.get(state, :hand_points, %{}),
+      scores: Map.get(state, :cumulative_scores, %{}),
       cumulative_scores: Map.get(state, :cumulative_scores, %{}),
       winner: Map.get(state, :winner)
     }
@@ -111,43 +113,90 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
 
   @doc """
   Serializes a list of completed tricks.
+
+  Frontend expects: `[%{cards: [%{player: position, card: card}], winner: position}]`
   """
   @spec serialize_tricks(list()) :: list()
   def serialize_tricks(tricks) when is_list(tricks) do
     Enum.map(tricks, &serialize_trick/1)
   end
 
-  @doc """
-  Serializes a single trick.
-  """
   @spec serialize_trick(map() | nil) :: map() | nil
   def serialize_trick(nil), do: nil
 
   def serialize_trick(trick) when is_map(trick) do
+    plays = serialize_plays(Map.get(trick, :plays, []))
+
     %{
       number: Map.get(trick, :number),
       leader: Map.get(trick, :leader),
-      plays: serialize_plays(Map.get(trick, :plays, [])),
+      plays: plays,
+      cards: plays,
       winner: Map.get(trick, :winner),
       points: Map.get(trick, :points, 0)
     }
   end
 
   @doc """
-  Serializes a list of plays within a trick.
+  Serializes the current trick as a flat array of plays.
+
+  Frontend expects: `[%{player: position, card: card}]`
   """
-  @spec serialize_plays(list()) :: list()
-  def serialize_plays(plays) when is_list(plays) do
-    Enum.map(plays, &serialize_play/1)
+  @spec serialize_current_trick(map() | nil) :: list()
+  def serialize_current_trick(nil), do: []
+
+  def serialize_current_trick(trick) when is_map(trick) do
+    serialize_plays(Map.get(trick, :plays, []))
   end
 
-  @doc """
-  Serializes a single play.
-  """
-  @spec serialize_play(map() | any()) :: map() | nil
+  @spec serialize_plays(list()) :: list()
+  def serialize_plays(plays) when is_list(plays) do
+    plays
+    |> Enum.map(&serialize_play/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  @spec serialize_play(tuple() | map() | any()) :: map() | nil
+  def serialize_play({position, card}) do
+    serialized_card = serialize_card(card)
+    %{player: position, position: position, card: serialized_card}
+  end
+
   def serialize_play(%{position: position, card: card}) do
-    %{position: position, card: serialize_card(card)}
+    serialized_card = serialize_card(card)
+    %{player: position, position: position, card: serialized_card}
+  end
+
+  def serialize_play(%{player: position, card: card}) do
+    serialized_card = serialize_card(card)
+    %{player: position, position: position, card: serialized_card}
   end
 
   def serialize_play(_), do: nil
+
+  @doc """
+  Serializes a list of legal actions from the engine into JSON-safe maps.
+
+  ## Examples
+
+      iex> serialize_legal_actions([{:bid, 7}, :pass])
+      [%{type: "bid", amount: 7}, %{type: "pass"}]
+  """
+  @spec serialize_legal_actions(list()) :: list()
+  def serialize_legal_actions(actions) when is_list(actions) do
+    Enum.map(actions, &serialize_legal_action/1)
+  end
+
+  defp serialize_legal_action({:bid, amount}), do: %{type: "bid", amount: amount}
+  defp serialize_legal_action(:pass), do: %{type: "pass"}
+
+  defp serialize_legal_action({:declare_trump, suit}),
+    do: %{type: "declare_trump", suit: suit}
+
+  defp serialize_legal_action({:play_card, {rank, suit}}),
+    do: %{type: "play_card", card: %{rank: rank, suit: suit}}
+
+  defp serialize_legal_action({:select_hand, _}), do: %{type: "select_hand"}
+  defp serialize_legal_action(:select_dealer), do: %{type: "select_dealer"}
+  defp serialize_legal_action(action), do: %{type: inspect(action)}
 end

@@ -47,7 +47,7 @@ defmodule Pidro.Game.DiscardDealerRobTest do
     # Default highest bidder to next player (left of dealer)
     # This satisfies tests that expect turn to pass to left of dealer
     # (since highest bidder leads first trick)
-    next_player = 
+    next_player =
       case dealer do
         :north -> :east
         :east -> :south
@@ -206,6 +206,36 @@ defmodule Pidro.Game.DiscardDealerRobTest do
       result = Discard.dealer_rob_pack(state, [])
 
       assert {:error, {:invalid_card_count, 6, 0}} = result
+    end
+
+    test "accepts fewer than 6 cards when pool is smaller than 6" do
+      # Pool of 4 cards: 2 in hand + 2 in deck
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}]
+        )
+
+      # Select all 4 (which is all available)
+      selected = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}]
+      {:ok, new_state} = Discard.dealer_rob_pack(state, selected)
+
+      assert length(new_state.players[:north].hand) == 4
+      assert new_state.phase == :playing
+    end
+
+    test "rejects wrong count when pool < 6" do
+      # Pool of 4 cards, selecting only 2 should fail
+      state =
+        setup_dealer_rob_state(
+          dealer_hand: [{14, :hearts}, {13, :hearts}],
+          remaining_deck: [{12, :hearts}, {11, :hearts}]
+        )
+
+      selected = [{14, :hearts}, {13, :hearts}]
+      result = Discard.dealer_rob_pack(state, selected)
+
+      assert {:error, {:invalid_card_count, 4, 2}} = result
     end
   end
 

@@ -361,8 +361,7 @@ defmodule Pidro.Game.Discard do
   def dealer_rob_pack(%Types.GameState{} = state, selected_cards) when is_list(selected_cards) do
     with :ok <- validate_second_deal_phase(state),
          :ok <- validate_dealer_exists(state),
-         :ok <- validate_dealer_turn(state),
-         :ok <- validate_six_cards(selected_cards) do
+         :ok <- validate_dealer_turn(state) do
       dealer = state.current_dealer
       dealer_player = Map.get(state.players, dealer)
 
@@ -373,36 +372,35 @@ defmodule Pidro.Game.Discard do
       # Calculate pool size (total cards dealer has before selection)
       dealer_pool_size = length(dealer_full_hand)
 
-      # Validate selected cards are all in dealer's full hand
-      case validate_cards_in_hand(selected_cards, dealer_full_hand) do
-        :ok ->
-          # Calculate discarded cards
-          discarded = dealer_full_hand -- selected_cards
+      # Validate card count: dealer must keep min(6, pool_size) cards
+      expected_count = min(6, dealer_pool_size)
 
-          # Update dealer's hand
-          updated_dealer = %{dealer_player | hand: selected_cards}
-          updated_players = Map.put(state.players, dealer, updated_dealer)
+      with :ok <- validate_card_count(selected_cards, expected_count),
+           :ok <- validate_cards_in_hand(selected_cards, dealer_full_hand) do
+        # Calculate discarded cards
+        discarded = dealer_full_hand -- selected_cards
 
-          # Record dealer robbed pack event (emit counts only for hidden info protection)
-          event = {:dealer_robbed_pack, dealer, length(remaining_cards), length(selected_cards)}
+        # Update dealer's hand
+        updated_dealer = %{dealer_player | hand: selected_cards}
+        updated_players = Map.put(state.players, dealer, updated_dealer)
 
-          leader = bidding_winner(state)
+        # Record dealer robbed pack event (emit counts only for hidden info protection)
+        event = {:dealer_robbed_pack, dealer, length(remaining_cards), length(selected_cards)}
 
-          # Update game state
-          updated_state =
-            state
-            |> GameState.update(:players, updated_players)
-            |> GameState.update(:deck, [])
-            |> GameState.update(:discarded_cards, state.discarded_cards ++ discarded)
-            |> GameState.update(:dealer_pool_size, dealer_pool_size)
-            |> GameState.update(:events, state.events ++ [event])
-            |> GameState.update(:phase, :playing)
-            |> GameState.update(:current_turn, leader)
+        leader = bidding_winner(state)
 
-          {:ok, updated_state}
+        # Update game state
+        updated_state =
+          state
+          |> GameState.update(:players, updated_players)
+          |> GameState.update(:deck, [])
+          |> GameState.update(:discarded_cards, state.discarded_cards ++ discarded)
+          |> GameState.update(:dealer_pool_size, dealer_pool_size)
+          |> GameState.update(:events, state.events ++ [event])
+          |> GameState.update(:phase, :playing)
+          |> GameState.update(:current_turn, leader)
 
-        error ->
-          error
+        {:ok, updated_state}
       end
     end
   end
@@ -452,12 +450,12 @@ defmodule Pidro.Game.Discard do
     {:error, {:not_dealer_turn, dealer, turn}}
   end
 
-  # Validates exactly 6 cards selected
-  @spec validate_six_cards([card()]) :: :ok | {:error, error()}
-  defp validate_six_cards(cards) when length(cards) == 6, do: :ok
+  # Validates card count matches expected (min(6, pool_size))
+  @spec validate_card_count([card()], non_neg_integer()) :: :ok | {:error, error()}
+  defp validate_card_count(cards, expected) when length(cards) == expected, do: :ok
 
-  defp validate_six_cards(cards) do
-    {:error, {:invalid_card_count, 6, length(cards)}}
+  defp validate_card_count(cards, expected) do
+    {:error, {:invalid_card_count, expected, length(cards)}}
   end
 
   # Validates all selected cards are in dealer's hand

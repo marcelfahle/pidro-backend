@@ -1,14 +1,20 @@
 export const Clipboard = {
   mounted() {
     this.el.addEventListener('click', () => {
-      const text = this.el.dataset.clipboardText
-      navigator.clipboard.writeText(text).then(() => {
-        this.pushEvent('clipboard_copied', {})
-        // Reset feedback after 2 seconds
-        setTimeout(() => {
-          this.pushEvent('reset_clipboard_feedback', {})
-        }, 2000)
-      })
+      let text = this.el.dataset.clipboardText
+      if (!text && this.el.dataset.target) {
+        const target = document.getElementById(this.el.dataset.target)
+        text = target ? target.value : ''
+      }
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          const original = this.el.textContent
+          this.el.textContent = 'Copied!'
+          setTimeout(() => {
+            this.el.textContent = original
+          }, 2000)
+        })
+      }
     })
   }
 }

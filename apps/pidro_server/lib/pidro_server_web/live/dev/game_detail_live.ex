@@ -8,8 +8,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   - Action execution capabilities (implemented in DEV-901 to DEV-904)
   - Raw state inspection with clipboard support (implemented in DEV-801)
 
-  Unlike GameMonitorLive (read-only monitoring), this view is designed
-  for active development and debugging with interactive controls.
+  This view is designed for active development and debugging with
+  interactive controls.
   """
 
   use PidroServerWeb, :live_view
@@ -68,6 +68,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:executing_action, false)
          |> assign(:copy_feedback, false)
          |> assign(:bot_configs, bot_configs)
+         |> assign(:bots_paused, all_bots_paused?(bot_configs))
          |> assign(:events, events)
          |> assign(:event_filter_type, nil)
          |> assign(:event_filter_player, nil)
@@ -80,6 +81,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:replay_speed, 1000)
          |> assign(:selected_hand_cards, [])
          |> assign(:users, users)
+         |> assign(:active_tab, :board)
          |> assign(:page_title, "Game Detail - Dev")}
 
       {:error, _reason} ->
@@ -88,6 +90,17 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> put_flash(:error, "Room not found")
          |> redirect(to: ~p"/dev/games")}
     end
+  end
+
+  @impl true
+  def handle_params(params, _uri, socket) do
+    tab =
+      case params["tab"] do
+        "seats_bots" -> :seats_bots
+        _ -> :board
+      end
+
+    {:noreply, assign(socket, :active_tab, tab)}
   end
 
   @impl true
@@ -215,6 +228,14 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           "Dev assign_seat: room=#{room_code}, position=#{position_atom}, user_id=#{inspect(parsed_user_id)}"
         )
 
+        # If a bot occupies this position, stop it before reassigning
+        bots = BotManager.list_bots(room_code)
+
+        if Map.has_key?(bots, position_atom) do
+          Logger.info("Stopping bot at #{position_atom} before seat reassignment")
+          BotManager.stop_bot(room_code, position_atom)
+        end
+
         case RoomManager.dev_set_position(room_code, position_atom, parsed_user_id) do
           {:ok, updated_room} ->
             Logger.info(
@@ -328,6 +349,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
           socket
           |> assign(:bot_configs, updated_configs)
+          |> assign(:bots_paused, all_bots_paused?(updated_configs))
           |> put_flash(
             :info,
             "Bot #{position} #{if config.paused, do: "resumed", else: "paused"}"
@@ -338,6 +360,36 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       end
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_all_bots_pause", _params, socket) do
+    room_code = socket.assigns.room_code
+    bot_configs = socket.assigns.bot_configs
+    pausing = !socket.assigns.bots_paused
+
+    updated_configs =
+      Enum.reduce([:north, :east, :south, :west], bot_configs, fn position, acc ->
+        config = Map.get(acc, position)
+
+        if config.type == :bot do
+          if pausing do
+            BotManager.pause_bot(room_code, position)
+          else
+            BotManager.resume_bot(room_code, position)
+          end
+
+          Map.update!(acc, position, fn c -> %{c | paused: pausing} end)
+        else
+          acc
+        end
+      end)
+
+    {:noreply,
+     socket
+     |> assign(:bot_configs, updated_configs)
+     |> assign(:bots_paused, pausing)
+     |> put_flash(:info, if(pausing, do: "All bots paused", else: "All bots resumed"))}
   end
 
   @impl true
@@ -867,7 +919,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     ~H"""
     <div class="px-4 py-10 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-7xl">
-        <!-- Header -->
         <div class="mb-8">
           <.link
             navigate={~p"/dev/games"}
@@ -875,908 +926,991 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           >
             &larr; Back to Games
           </.link>
-          <h1 class="text-4xl font-bold text-zinc-900">
-            Game: {@room_code}
-          </h1>
+          <div class="flex items-center gap-4">
+            <h1 class="text-4xl font-bold text-zinc-900">Game: {@room_code}</h1>
+            <button
+              type="button"
+              phx-click="toggle_all_bots_pause"
+              class={[
+                "px-3 py-1.5 text-sm font-medium rounded-md transition-all",
+                if(@bots_paused,
+                  do: "bg-green-100 text-green-700 hover:bg-green-200",
+                  else: "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                )
+              ]}
+            >
+              <%= if @bots_paused do %>
+                &#9654; Resume Bots
+              <% else %>
+                &#9646;&#9646; Pause Bots
+              <% end %>
+            </button>
+          </div>
           <p class="mt-2 text-lg text-zinc-600">
             Development game detail view with interactive controls
           </p>
         </div>
-        
-    <!-- Room Info Card -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Room Information</h3>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Status</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(@room.status)}"}>
-                    {@room.status}
-                  </span>
-                </dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Players</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {PidroServer.Games.Room.Positions.count(@room)} / 4
-                </dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Host</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {@room.host_id |> String.slice(0..7)}...
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </div>
-        
-    <!-- Position Selector - DEV-401 & DEV-502 -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6 flex justify-between items-start">
-            <div>
-              <h3 class="text-lg leading-6 font-medium text-zinc-900">Position Filter & View Mode</h3>
-              <p class="mt-1 text-sm text-zinc-500">Select a position to view and execute actions</p>
-            </div>
-            <%!-- DEV-502: Split View Toggle --%>
-            <button
-              type="button"
-              phx-click="toggle_view_mode"
-              class={[
-                "px-4 py-2 text-sm font-medium rounded-md transition-all shadow-sm",
-                if(@view_mode == :split,
-                  do: "bg-purple-600 text-white ring-2 ring-purple-300",
-                  else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                )
-              ]}
-              title="Toggle split screen view (4 quadrants)"
-            >
-              <%= if @view_mode == :split do %>
-                <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
-                  />
-                </svg>
-                Split View Active
-              <% else %>
-                <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5z"
-                  />
-                </svg>
-                Enable Split View
-              <% end %>
-            </button>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <div class="mb-4 flex justify-between items-center">
-              <div class={[
-                "inline-flex items-center px-3 py-1 rounded-md text-sm font-medium",
-                if(@selected_position == :all,
-                  do: "bg-purple-100 text-purple-800",
-                  else: "bg-blue-100 text-blue-800"
-                )
-              ]}>
-                <%= if @selected_position == :all do %>
-                  God Mode (All Players)
-                <% else %>
-                  Playing as: {format_position(@selected_position)}
-                <% end %>
-              </div>
-              <%= if @view_mode == :split do %>
-                <div class="text-xs text-purple-600 font-medium">
-                  Split view: {format_position(@selected_position)} highlighted
-                </div>
-              <% end %>
-            </div>
-            
-    <!-- Position buttons moved to Game Table (click on player name) -->
-            <!--
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                phx-click="select_position"
-                phx-value-position="north"
-                class={[
-                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
-                  if(@selected_position == :north,
-                    do: "bg-indigo-600 text-white",
-                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  )
-                ]}
-              >
-                North
-              </button>
 
-              <button
-                type="button"
-                phx-click="select_position"
-                phx-value-position="south"
-                class={[
-                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
-                  if(@selected_position == :south,
-                    do: "bg-indigo-600 text-white",
-                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  )
-                ]}
-              >
-                South
-              </button>
+        <.render_room_info room={@room} />
+        <.render_tab_bar active_tab={@active_tab} room_code={@room_code} />
 
-              <button
-                type="button"
-                phx-click="select_position"
-                phx-value-position="east"
-                class={[
-                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
-                  if(@selected_position == :east,
-                    do: "bg-indigo-600 text-white",
-                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  )
-                ]}
-              >
-                East
-              </button>
-
-              <button
-                type="button"
-                phx-click="select_position"
-                phx-value-position="west"
-                class={[
-                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
-                  if(@selected_position == :west,
-                    do: "bg-indigo-600 text-white",
-                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  )
-                ]}
-              >
-                West
-              </button>
-
-              <button
-                type="button"
-                phx-click="select_position"
-                phx-value-position="all"
-                class={[
-                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
-                  if(@selected_position == :all,
-                    do: "bg-purple-600 text-white",
-                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  )
-                ]}
-              >
-                God Mode (All)
-              </button>
-            </div>
-            -->
-          </div>
-        </div>
-        
-    <!-- Bot Configuration - DEV-1106 (Compact) -->
-        <details class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <summary class="px-4 py-3 cursor-pointer hover:bg-zinc-50 flex justify-between items-center">
-            <div>
-              <h3 class="text-sm font-medium text-zinc-900">Bot Configuration</h3>
-              <p class="text-xs text-zinc-500">Configure bot players</p>
-            </div>
-          </summary>
-          <div class="border-t border-zinc-200 px-4 py-4">
-            <div class="grid grid-cols-2 gap-3 mb-3">
-              <%= for position <- [:north, :south, :east, :west] do %>
-                <.render_bot_position_config position={position} config={@bot_configs[position]} />
-              <% end %>
-            </div>
-            <button
-              type="button"
-              phx-click="apply_bot_config"
-              class="w-full px-3 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
-            >
-              Apply Changes
-            </button>
-          </div>
-        </details>
-        
-    <!-- Dev Quick Actions - DEV-1001 to DEV-1003 Implementation -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Dev Quick Actions</h3>
-            <p class="mt-1 text-sm text-zinc-500">
-              Testing shortcuts for rapid development iteration
-            </p>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <div class="flex flex-wrap gap-3">
-              <button
-                type="button"
-                phx-click="undo_last_action"
-                class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
-                title="Undo the last game action"
-              >
-                <svg
-                  class="w-5 h-5 mr-2"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                  />
-                </svg>
-                Undo Last Action
-              </button>
-
-              <button
-                type="button"
-                phx-click="auto_bid"
-                class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
-                title="Automatically complete the bidding phase"
-              >
-                <svg
-                  class="w-5 h-5 mr-2"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M13 10V3L4 14h7v7l9-11h-7z"
-                  />
-                </svg>
-                Auto-complete Bidding
-              </button>
-
-              <button
-                type="button"
-                phx-click="fast_forward"
-                class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
-                title="Fast forward the game to completion"
-              >
-                <svg
-                  class="w-5 h-5 mr-2"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M5 3l14 9-14 9V3z"
-                  />
-                </svg>
-                Fast Forward
-              </button>
-            </div>
-          </div>
-        </div>
-        
-    <!-- DEV-1301: Hand Replay Controls -->
-        <%= if @replay_total_events > 0 do %>
-          <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-            <div class="px-4 py-5 sm:px-6 flex justify-between items-center">
-              <div>
-                <h3 class="text-lg leading-6 font-medium text-zinc-900">Hand Replay</h3>
-                <p class="mt-1 text-sm text-zinc-500">
-                  Step through game history event by event
-                </p>
-              </div>
-              <button
-                type="button"
-                phx-click="toggle_replay_mode"
-                class={[
-                  "px-4 py-2 text-sm font-medium rounded-md transition-all shadow-sm",
-                  if(@replay_mode,
-                    do: "bg-amber-600 text-white ring-2 ring-amber-300",
-                    else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-                  )
-                ]}
-              >
-                <%= if @replay_mode do %>
-                  <svg
-                    class="w-5 h-5 inline mr-1"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                  Exit Replay
-                <% else %>
-                  <svg
-                    class="w-5 h-5 inline mr-1"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"
-                    />
-                  </svg>
-                  Enter Replay Mode
-                <% end %>
-              </button>
-            </div>
-            <%= if @replay_mode do %>
-              <div class="border-t border-zinc-200 px-4 py-5 sm:p-6 bg-amber-50">
-                <!-- Event Progress Bar -->
-                <div class="mb-4">
-                  <div class="flex justify-between text-sm text-zinc-700 mb-2">
-                    <span>Event {@replay_index + 1} of {@replay_total_events}</span>
-                    <%= if @replay_index >= 0 && @replay_index < @replay_total_events do %>
-                      <%= case ReplayController.get_event_info(@room_code, @replay_index) do %>
-                        <% {:ok, event_info} -> %>
-                          <span class="text-zinc-600 italic">{event_info.description}</span>
-                        <% _ -> %>
-                          <span></span>
-                      <% end %>
-                    <% end %>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max={@replay_total_events - 1}
-                    value={@replay_index}
-                    phx-change="replay_jump_to"
-                    name="index"
-                    class="w-full h-2 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
-                  />
-                </div>
-                <!-- Playback Controls -->
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      phx-click="replay_step_backward"
-                      class="px-3 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
-                      disabled={@replay_index <= 0}
-                    >
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M15 19l-7-7 7-7"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="replay_toggle_play"
-                      class={[
-                        "px-4 py-2 shadow-sm text-sm font-medium rounded-md text-white transition-colors",
-                        if(@replay_playing,
-                          do: "bg-red-600 hover:bg-red-700",
-                          else: "bg-green-600 hover:bg-green-700"
-                        )
-                      ]}
-                    >
-                      <%= if @replay_playing do %>
-                        <svg class="w-5 h-5 inline" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
-                        </svg>
-                        Pause
-                      <% else %>
-                        <svg class="w-5 h-5 inline" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                        Play
-                      <% end %>
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="replay_step_forward"
-                      class="px-3 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
-                      disabled={@replay_index >= @replay_total_events - 1}
-                    >
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M9 5l7 7-7 7"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                  <div class="flex items-center gap-3">
-                    <label class="text-sm text-zinc-700">Speed:</label>
-                    <select
-                      name="speed"
-                      phx-change="replay_set_speed"
-                      class="px-2 py-1 text-sm border border-zinc-300 rounded-md bg-white"
-                    >
-                      <option value="2000" selected={@replay_speed == 2000}>0.5x</option>
-                      <option value="1000" selected={@replay_speed == 1000}>1x</option>
-                      <option value="500" selected={@replay_speed == 500}>2x</option>
-                      <option value="250" selected={@replay_speed == 250}>4x</option>
-                    </select>
-                  </div>
-                  <!-- Jump to Phase -->
-                  <div class="flex items-center gap-2">
-                    <label class="text-sm text-zinc-700">Jump to:</label>
-                    <select
-                      phx-change="replay_jump_to_phase"
-                      name="phase"
-                      class="px-2 py-1 text-sm border border-zinc-300 rounded-md bg-white"
-                    >
-                      <option value="">Select phase...</option>
-                      <option value="dealer_selection">Dealer Selection</option>
-                      <option value="dealing">Dealing</option>
-                      <option value="bidding">Bidding</option>
-                      <option value="declaring">Trump Declaration</option>
-                      <option value="discarding">Discarding</option>
-                      <option value="second_deal">Second Deal</option>
-                      <option value="playing">Playing</option>
-                      <option value="scoring">Scoring</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            <% end %>
-          </div>
-        <% end %>
-        
-    <!-- Card Table UI - DEV-1505 & DEV-502: Visual Card Table Integration with Split View -->
-        <%= if @game_state && @view_mode == :split && @game_state.phase == :playing do %>
-          <%!-- DEV-502: Split View Layout (2x2 Grid) --%>
-          <div class="mb-8">
-            <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg shadow-lg">
-              <div class="text-center mb-3">
-                <h3 class="text-lg font-semibold text-purple-900">Split View Mode</h3>
-                <p class="text-sm text-purple-700">
-                  Viewing all 4 player perspectives simultaneously
-                </p>
-              </div>
-              <div class="grid grid-cols-2 gap-4">
-                <%= for position <- [:north, :south, :east, :west] do %>
-                  <.render_position_view
-                    position={position}
-                    game_state={@game_state}
-                    selected_position={@selected_position}
-                    room_code={@room_code}
-                  />
-                <% end %>
-              </div>
-            </div>
-          </div>
+        <%= if @active_tab == :board do %>
+          <.render_board_tab {assigns} />
         <% else %>
-          <%!-- Single View Layout (or Waiting State) --%>
-          <div class="mb-8 relative">
-            <CardComponents.card_table
-              game_state={@game_state}
-              selected_position={@selected_position}
-              god_mode={@selected_position == :all}
-              legal_actions={@legal_actions}
-              bot_configs={@bot_configs}
-              room={@room}
-              users={@users}
-              show_seat_selectors={true}
-            />
-
-            <%= if @game_state && @game_state.phase == :complete do %>
-              <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
-                <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
-                  <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
-                    <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
-                    <p class="text-lg text-indigo-600 font-medium">
-                      <%= case @game_state.winner do %>
-                        <% :north_south -> %>
-                          🏆 North/South Wins! 🏆
-                        <% :east_west -> %>
-                          🏆 East/West Wins! 🏆
-                        <% _ -> %>
-                          Game Complete
-                      <% end %>
-                    </p>
-                  </div>
-
-                  <div class="p-6">
-                    <div class="grid grid-cols-2 gap-8 mb-8 text-center">
-                      <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
-                        <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
-                          North/South
-                        </div>
-                        <div class="text-4xl font-black text-blue-800">
-                          {@game_state.cumulative_scores.north_south}
-                        </div>
-                      </div>
-                      <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
-                        <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
-                          East/West
-                        </div>
-                        <div class="text-4xl font-black text-green-800">
-                          {@game_state.cumulative_scores.east_west}
-                        </div>
-                      </div>
-                    </div>
-
-                    <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
-                      Score History
-                    </h3>
-                    <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
-                      <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-100">
-                          <tr>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                              Hand
-                            </th>
-                            <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
-                              N/S
-                            </th>
-                            <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
-                              E/W
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-200 bg-white">
-                          <%= for {score, index} <- get_score_history(@game_state.events) do %>
-                            <tr>
-                              <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
-                              <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
-                                {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
-                              </td>
-                              <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
-                                {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
-                              </td>
-                            </tr>
-                          <% end %>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div class="flex gap-3">
-                      <.link
-                        navigate={~p"/dev/games"}
-                        class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
-                      >
-                        Back to Lobby
-                      </.link>
-                      <button
-                        phx-click="play_again"
-                        class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
-                      >
-                        Play Again
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            <% end %>
-          </div>
+          <.render_seats_tab {assigns} />
         <% end %>
-        
-    <!-- Action Execution - DEV-901 to DEV-904 Implementation -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Legal Actions</h3>
-            <p class="mt-1 text-sm text-zinc-500">
-              <%= if @selected_position == :all do %>
-                Select a specific position to view and execute actions
-              <% else %>
-                Execute game actions for position:
-                <span class="font-semibold">{@selected_position}</span>
-              <% end %>
-            </p>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <%= if @selected_position == :all do %>
-              <div class="text-sm text-zinc-500 italic">
-                Please select a specific position above to view legal actions.
-              </div>
-            <% else %>
-              <%= if @executing_action do %>
-                <div class="flex items-center justify-center py-8">
-                  <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-                  <span class="ml-3 text-sm text-zinc-600">Executing action...</span>
-                </div>
-              <% else %>
-                <%= if Enum.empty?(@legal_actions) do %>
-                  <div class="text-sm text-zinc-500 italic">
-                    No legal actions available for this position at this time.
-                  </div>
-                <% else %>
-                  <%!-- DEV-902: Render action buttons grouped by type --%>
-                  <.render_action_groups legal_actions={@legal_actions} />
-                <% end %>
-              <% end %>
-            <% end %>
-          </div>
-        </div>
-        
-    <!-- Game State Card -->
-        <%= if @game_state do %>
-          <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-            <div class="px-4 py-5 sm:px-6">
-              <h3 class="text-lg leading-6 font-medium text-zinc-900">Game State</h3>
-              <p class="mt-1 max-w-2xl text-sm text-zinc-500">
-                Current phase: <span class="font-semibold">{@game_state.phase}</span>
-              </p>
-            </div>
-            <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-              <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
-                <div>
-                  <dt class="text-sm font-medium text-zinc-500">Current Turn</dt>
-                  <dd class="mt-1 text-sm text-zinc-900">
-                    {inspect(@game_state.current_turn)}
-                  </dd>
-                </div>
-                <%= if Map.has_key?(@game_state, :dealer) do %>
-                  <div>
-                    <dt class="text-sm font-medium text-zinc-500">Dealer</dt>
-                    <dd class="mt-1 text-sm text-zinc-900">{inspect(@game_state.dealer)}</dd>
-                  </div>
-                <% end %>
-                <%= if Map.has_key?(@game_state, :trump_suit) && @game_state.trump_suit do %>
-                  <div>
-                    <dt class="text-sm font-medium text-zinc-500">Trump Suit</dt>
-                    <dd class="mt-1 text-sm text-zinc-900">
-                      {format_suit(@game_state.trump_suit)}
-                    </dd>
-                  </div>
-                <% end %>
-                <%= if Map.has_key?(@game_state, :winning_bid) && @game_state.winning_bid do %>
-                  <div>
-                    <dt class="text-sm font-medium text-zinc-500">Winning Bid</dt>
-                    <dd class="mt-1 text-sm text-zinc-900">
-                      {@game_state.winning_bid.amount} by {@game_state.winning_bid.team}
-                    </dd>
-                  </div>
-                <% end %>
-              </dl>
-              
-    <!-- Scores -->
-              <%= if Map.has_key?(@game_state, :scores) do %>
-                <div class="mt-6">
-                  <h4 class="text-sm font-medium text-zinc-500 mb-3">Scores</h4>
-                  <div class="grid grid-cols-2 gap-4">
-                    <div class="bg-blue-50 p-4 rounded-lg">
-                      <div class="text-sm font-medium text-blue-900">North-South</div>
-                      <div class="text-2xl font-bold text-blue-700">
-                        {@game_state.scores.north_south}
-                      </div>
-                    </div>
-                    <div class="bg-green-50 p-4 rounded-lg">
-                      <div class="text-sm font-medium text-green-900">East-West</div>
-                      <div class="text-2xl font-bold text-green-700">
-                        {@game_state.scores.east_west}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              <% end %>
-            </div>
-          </div>
 
-          <%!-- Event Log Panel (FR-7 / DEV-704) --%>
-          <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-semibold">Event Log</h2>
-              <div class="flex gap-2">
-                <button
-                  phx-click="refresh_events"
-                  class="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
-                >
-                  Refresh
-                </button>
-                <button
-                  phx-click="clear_events"
-                  data-confirm="Are you sure you want to clear the event log?"
-                  class="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
-                >
-                  Clear
-                </button>
-                <button
-                  phx-click="toggle_export_modal"
-                  class="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
-                >
-                  Export
-                </button>
-              </div>
-            </div>
-
-            <%!-- Filters --%>
-            <div class="flex gap-4 mb-4 items-end">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Type</label>
-                <select
-                  phx-change="filter_events"
-                  name="type"
-                  class="rounded border-gray-300"
-                >
-                  <option value="all" selected={is_nil(@event_filter_type)}>All Events</option>
-                  <option value="bid_made" selected={@event_filter_type == :bid_made}>Bids</option>
-                  <option value="bid_passed" selected={@event_filter_type == :bid_passed}>
-                    Passes
-                  </option>
-                  <option value="trump_declared" selected={@event_filter_type == :trump_declared}>
-                    Trump Declared
-                  </option>
-                  <option value="card_played" selected={@event_filter_type == :card_played}>
-                    Cards Played
-                  </option>
-                  <option value="trick_won" selected={@event_filter_type == :trick_won}>
-                    Tricks Won
-                  </option>
-                  <option value="hand_scored" selected={@event_filter_type == :hand_scored}>
-                    Hand Scored
-                  </option>
-                </select>
-              </div>
-
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Player</label>
-                <select
-                  phx-change="filter_events_by_player"
-                  name="player"
-                  class="rounded border-gray-300"
-                >
-                  <option value="all" selected={is_nil(@event_filter_player)}>All Players</option>
-                  <option value="north" selected={@event_filter_player == :north}>North</option>
-                  <option value="south" selected={@event_filter_player == :south}>South</option>
-                  <option value="east" selected={@event_filter_player == :east}>East</option>
-                  <option value="west" selected={@event_filter_player == :west}>West</option>
-                </select>
-              </div>
-
-              <div class="flex items-center">
-                <label class="inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    phx-click="toggle_bot_reasoning"
-                    checked={@show_bot_reasoning}
-                    class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                  />
-                  <span class="ml-2 text-sm text-gray-700">Show Bot Reasoning</span>
-                </label>
-              </div>
-            </div>
-
-            <%!-- Event List --%>
-            <div class="bg-gray-50 rounded p-4 max-h-96 overflow-y-auto font-mono text-sm">
-              <%= if Enum.empty?(@events) do %>
-                <p class="text-gray-500 italic">No events recorded yet</p>
-              <% else %>
-                <div class="space-y-1">
-                  <%= for event <- @events do %>
-                    <div class="flex gap-2">
-                      <span class="text-gray-500">[{format_event_timestamp(event)}]</span>
-                      <span class={event_type_color(event.type)}>
-                        {Event.format(event)}
-                      </span>
-                    </div>
-                  <% end %>
-                </div>
-              <% end %>
-            </div>
-
-            <div class="mt-2 text-sm text-gray-600">
-              Showing {length(@events)} events (max 50)
-            </div>
-          </div>
-
-          <%!-- Export Modal (FR-7 / DEV-705) --%>
-          <%= if @show_event_export do %>
-            <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4">
-                <div class="flex items-center justify-between mb-4">
-                  <h3 class="text-lg font-semibold">Export Events</h3>
-                  <button
-                    phx-click="toggle_export_modal"
-                    class="text-gray-500 hover:text-gray-700"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div class="space-y-4">
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">JSON Format</label>
-                    <textarea
-                      id="export-json"
-                      readonly
-                      class="w-full h-64 font-mono text-xs border rounded p-2"
-                    >{Jason.encode!(@events |> Enum.map(&Event.to_json/1), pretty: true)}</textarea>
-                    <button
-                      id="copy-json-button"
-                      phx-hook="CopyToClipboard"
-                      data-target="export-json"
-                      class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                    >
-                      Copy JSON
-                    </button>
-                  </div>
-
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Text Format</label>
-                    <textarea
-                      id="export-text"
-                      readonly
-                      class="w-full h-64 font-mono text-xs border rounded p-2"
-                    >{Enum.map_join(@events, "\n", fn event ->
-                      "[#{Calendar.strftime(event.timestamp, "%H:%M:%S")}] #{Event.format(event)}"
-                    end)}</textarea>
-                    <button
-                      id="copy-text-button"
-                      phx-hook="CopyToClipboard"
-                      data-target="export-text"
-                      class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                    >
-                      Copy Text
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          <% end %>
-          
-    <!-- Full State JSON (collapsible) -->
-          <details class="bg-white shadow overflow-hidden sm:rounded-lg">
-            <summary class="px-4 py-5 sm:px-6 cursor-pointer hover:bg-zinc-50">
-              <div class="flex items-center justify-between">
-                <div>
-                  <h3 class="text-lg leading-6 font-medium text-zinc-900 inline">
-                    Full Game State (Raw)
-                  </h3>
-                </div>
-                <button
-                  id="copy-game-state"
-                  type="button"
-                  phx-hook="Clipboard"
-                  data-clipboard-text={inspect(@game_state, pretty: true)}
-                  class="px-3 py-1 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-                  onclick="event.stopPropagation()"
-                >
-                  <%= if @copy_feedback do %>
-                    <span>Copied!</span>
-                  <% else %>
-                    <span>Copy State</span>
-                  <% end %>
-                </button>
-              </div>
-            </summary>
-            <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-              <pre class="text-xs bg-zinc-50 p-4 rounded overflow-auto"><%= inspect(@game_state, pretty: true, limit: :infinity) %></pre>
-            </div>
-          </details>
-        <% else %>
-          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-            <p class="text-yellow-800">
-              Game has not started yet or state is unavailable.
-            </p>
-          </div>
-        <% end %>
-        
-    <!-- Auto-refresh indicator -->
         <div class="mt-4 text-center text-sm text-zinc-500">
           <span class="inline-flex items-center">
             <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
             Live updates enabled
           </span>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp render_room_info(assigns) do
+    ~H"""
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Room Information</h3>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
+          <div>
+            <dt class="text-sm font-medium text-zinc-500">Status</dt>
+            <dd class="mt-1 text-sm text-zinc-900">
+              <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(@room.status)}"}>
+                {@room.status}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-zinc-500">Players</dt>
+            <dd class="mt-1 text-sm text-zinc-900">
+              {PidroServer.Games.Room.Positions.count(@room)} / 4
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-zinc-500">Host</dt>
+            <dd class="mt-1 text-sm text-zinc-900">
+              {@room.host_id |> String.slice(0..7)}...
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+    """
+  end
+
+  defp render_tab_bar(assigns) do
+    ~H"""
+    <div class="mb-8 border-b border-zinc-200">
+      <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+        <.link
+          patch={~p"/dev/games/#{@room_code}?tab=board"}
+          class={[
+            "whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium",
+            if(@active_tab == :board,
+              do: "border-indigo-500 text-indigo-600",
+              else: "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
+            )
+          ]}
+        >
+          Board
+        </.link>
+        <.link
+          patch={~p"/dev/games/#{@room_code}?tab=seats_bots"}
+          class={[
+            "whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium",
+            if(@active_tab == :seats_bots,
+              do: "border-indigo-500 text-indigo-600",
+              else: "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
+            )
+          ]}
+        >
+          Seats & Bots
+        </.link>
+      </nav>
+    </div>
+    """
+  end
+
+  defp render_board_tab(assigns) do
+    ~H"""
+    <!-- Position Selector - DEV-401 & DEV-502 -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6 flex justify-between items-start">
+        <div>
+          <h3 class="text-lg leading-6 font-medium text-zinc-900">Position Filter & View Mode</h3>
+          <p class="mt-1 text-sm text-zinc-500">Select a position to view and execute actions</p>
+        </div>
+        <%!-- DEV-502: Split View Toggle --%>
+        <button
+          type="button"
+          phx-click="toggle_view_mode"
+          class={[
+            "px-4 py-2 text-sm font-medium rounded-md transition-all shadow-sm",
+            if(@view_mode == :split,
+              do: "bg-purple-600 text-white ring-2 ring-purple-300",
+              else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+            )
+          ]}
+          title="Toggle split screen view (4 quadrants)"
+        >
+          <%= if @view_mode == :split do %>
+            <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
+              />
+            </svg>
+            Split View Active
+          <% else %>
+            <svg class="w-5 h-5 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5z"
+              />
+            </svg>
+            Enable Split View
+          <% end %>
+        </button>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+        <div class="mb-4 flex justify-between items-center">
+          <div class={[
+            "inline-flex items-center px-3 py-1 rounded-md text-sm font-medium",
+            if(@selected_position == :all,
+              do: "bg-purple-100 text-purple-800",
+              else: "bg-blue-100 text-blue-800"
+            )
+          ]}>
+            <%= if @selected_position == :all do %>
+              God Mode (All Players)
+            <% else %>
+              Playing as: {format_position(@selected_position)}
+            <% end %>
+          </div>
+          <%= if @view_mode == :split do %>
+            <div class="text-xs text-purple-600 font-medium">
+              Split view: {format_position(@selected_position)} highlighted
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+
+    <!-- Take a Seat Shortcut -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Take a Seat</h3>
+        <p class="mt-1 text-sm text-zinc-500">Quick seat assignment without leaving the Board tab</p>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-4 sm:px-6">
+        <form phx-submit="assign_seat" class="flex items-end gap-3">
+          <div class="flex-shrink-0">
+            <label class="block text-xs font-medium text-zinc-700 mb-1">Position</label>
+            <select name="position" class="text-sm rounded border-zinc-300 py-1.5">
+              <%= for pos <- [:north, :east, :south, :west] do %>
+                <option value={to_string(pos)}>
+                  {format_position(pos)}
+                  <%= if @room.positions[pos] do %>
+                    (occupied)
+                  <% else %>
+                    (empty)
+                  <% end %>
+                </option>
+              <% end %>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-zinc-700 mb-1">User</label>
+            <select name="user_id" class="w-full text-sm rounded border-zinc-300 py-1.5">
+              <option value="empty">-- Clear seat --</option>
+              <%= for user <- @users do %>
+                <option value={user.id}>
+                  {user.display_name || user.id |> String.slice(0..11)}
+                </option>
+              <% end %>
+            </select>
+          </div>
+          <button
+            type="submit"
+            class="px-4 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+          >
+            Assign
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Dev Quick Actions - DEV-1001 to DEV-1003 Implementation -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Dev Quick Actions</h3>
+        <p class="mt-1 text-sm text-zinc-500">
+          Testing shortcuts for rapid development iteration
+        </p>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+        <div class="flex flex-wrap gap-3">
+          <button
+            type="button"
+            phx-click="undo_last_action"
+            class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+            title="Undo the last game action"
+          >
+            <svg
+              class="w-5 h-5 mr-2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+              />
+            </svg>
+            Undo Last Action
+          </button>
+
+          <button
+            type="button"
+            phx-click="auto_bid"
+            class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+            title="Automatically complete the bidding phase"
+          >
+            <svg
+              class="w-5 h-5 mr-2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
+            </svg>
+            Auto-complete Bidding
+          </button>
+
+          <button
+            type="button"
+            phx-click="fast_forward"
+            class="inline-flex items-center px-4 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+            title="Fast forward the game to completion"
+          >
+            <svg
+              class="w-5 h-5 mr-2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M5 3l14 9-14 9V3z"
+              />
+            </svg>
+            Fast Forward
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DEV-1301: Hand Replay Controls -->
+    <%= if @replay_total_events > 0 do %>
+      <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+        <div class="px-4 py-5 sm:px-6 flex justify-between items-center">
+          <div>
+            <h3 class="text-lg leading-6 font-medium text-zinc-900">Hand Replay</h3>
+            <p class="mt-1 text-sm text-zinc-500">
+              Step through game history event by event
+            </p>
+          </div>
+          <button
+            type="button"
+            phx-click="toggle_replay_mode"
+            class={[
+              "px-4 py-2 text-sm font-medium rounded-md transition-all shadow-sm",
+              if(@replay_mode,
+                do: "bg-amber-600 text-white ring-2 ring-amber-300",
+                else: "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+              )
+            ]}
+          >
+            <%= if @replay_mode do %>
+              <svg
+                class="w-5 h-5 inline mr-1"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+              Exit Replay
+            <% else %>
+              <svg
+                class="w-5 h-5 inline mr-1"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"
+                />
+              </svg>
+              Enter Replay Mode
+            <% end %>
+          </button>
+        </div>
+        <%= if @replay_mode do %>
+          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6 bg-amber-50">
+            <!-- Event Progress Bar -->
+            <div class="mb-4">
+              <div class="flex justify-between text-sm text-zinc-700 mb-2">
+                <span>Event {@replay_index + 1} of {@replay_total_events}</span>
+                <%= if @replay_index >= 0 && @replay_index < @replay_total_events do %>
+                  <%= case ReplayController.get_event_info(@room_code, @replay_index) do %>
+                    <% {:ok, event_info} -> %>
+                      <span class="text-zinc-600 italic">{event_info.description}</span>
+                    <% _ -> %>
+                      <span></span>
+                  <% end %>
+                <% end %>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max={@replay_total_events - 1}
+                value={@replay_index}
+                phx-change="replay_jump_to"
+                name="index"
+                class="w-full h-2 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+              />
+            </div>
+            <!-- Playback Controls -->
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  phx-click="replay_step_backward"
+                  class="px-3 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={@replay_index <= 0}
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  phx-click="replay_toggle_play"
+                  class={[
+                    "px-4 py-2 shadow-sm text-sm font-medium rounded-md text-white transition-colors",
+                    if(@replay_playing,
+                      do: "bg-red-600 hover:bg-red-700",
+                      else: "bg-green-600 hover:bg-green-700"
+                    )
+                  ]}
+                >
+                  <%= if @replay_playing do %>
+                    <svg class="w-5 h-5 inline" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                    </svg>
+                    Pause
+                  <% else %>
+                    <svg class="w-5 h-5 inline" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                    Play
+                  <% end %>
+                </button>
+                <button
+                  type="button"
+                  phx-click="replay_step_forward"
+                  class="px-3 py-2 border border-zinc-300 shadow-sm text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
+                  disabled={@replay_index >= @replay_total_events - 1}
+                >
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="text-sm text-zinc-700">Speed:</label>
+                <select
+                  name="speed"
+                  phx-change="replay_set_speed"
+                  class="px-2 py-1 text-sm border border-zinc-300 rounded-md bg-white"
+                >
+                  <option value="2000" selected={@replay_speed == 2000}>0.5x</option>
+                  <option value="1000" selected={@replay_speed == 1000}>1x</option>
+                  <option value="500" selected={@replay_speed == 500}>2x</option>
+                  <option value="250" selected={@replay_speed == 250}>4x</option>
+                </select>
+              </div>
+              <!-- Jump to Phase -->
+              <div class="flex items-center gap-2">
+                <label class="text-sm text-zinc-700">Jump to:</label>
+                <select
+                  phx-change="replay_jump_to_phase"
+                  name="phase"
+                  class="px-2 py-1 text-sm border border-zinc-300 rounded-md bg-white"
+                >
+                  <option value="">Select phase...</option>
+                  <option value="dealer_selection">Dealer Selection</option>
+                  <option value="dealing">Dealing</option>
+                  <option value="bidding">Bidding</option>
+                  <option value="declaring">Trump Declaration</option>
+                  <option value="discarding">Discarding</option>
+                  <option value="second_deal">Second Deal</option>
+                  <option value="playing">Playing</option>
+                  <option value="scoring">Scoring</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+
+    <!-- Card Table UI - DEV-1505 & DEV-502: Visual Card Table Integration with Split View -->
+    <%= if @game_state && @view_mode == :split && @game_state.phase == :playing do %>
+      <%!-- DEV-502: Split View Layout (2x2 Grid) --%>
+      <div class="mb-8">
+        <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg shadow-lg">
+          <div class="text-center mb-3">
+            <h3 class="text-lg font-semibold text-purple-900">Split View Mode</h3>
+            <p class="text-sm text-purple-700">
+              Viewing all 4 player perspectives simultaneously
+            </p>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <%= for position <- [:north, :south, :east, :west] do %>
+              <.render_position_view
+                position={position}
+                game_state={@game_state}
+                selected_position={@selected_position}
+                room_code={@room_code}
+              />
+            <% end %>
+          </div>
+        </div>
+      </div>
+    <% else %>
+      <%!-- Single View Layout (or Waiting State) --%>
+      <div class="mb-8 relative">
+        <CardComponents.card_table
+          game_state={@game_state}
+          selected_position={@selected_position}
+          god_mode={@selected_position == :all}
+          legal_actions={@legal_actions}
+          bot_configs={@bot_configs}
+          room={@room}
+          users={@users}
+          show_seat_selectors={true}
+        />
+
+        <%= if @game_state && @game_state.phase == :complete do %>
+          <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
+            <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all scale-100 ring-1 ring-black/5 m-4">
+              <div class="p-6 text-center border-b bg-gradient-to-r from-indigo-50 to-purple-50">
+                <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Game Over!</h2>
+                <p class="text-lg text-indigo-600 font-medium">
+                  <%= case @game_state.winner do %>
+                    <% :north_south -> %>
+                      North/South Wins!
+                    <% :east_west -> %>
+                      East/West Wins!
+                    <% _ -> %>
+                      Game Complete
+                  <% end %>
+                </p>
+              </div>
+
+              <div class="p-6">
+                <div class="grid grid-cols-2 gap-8 mb-8 text-center">
+                  <div class="p-4 bg-blue-50 rounded-lg border-2 border-blue-100">
+                    <div class="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">
+                      North/South
+                    </div>
+                    <div class="text-4xl font-black text-blue-800">
+                      {@game_state.cumulative_scores.north_south}
+                    </div>
+                  </div>
+                  <div class="p-4 bg-green-50 rounded-lg border-2 border-green-100">
+                    <div class="text-sm text-green-600 font-bold uppercase tracking-wider mb-1">
+                      East/West
+                    </div>
+                    <div class="text-4xl font-black text-green-800">
+                      {@game_state.cumulative_scores.east_west}
+                    </div>
+                  </div>
+                </div>
+
+                <h3 class="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3">
+                  Score History
+                </h3>
+                <div class="bg-gray-50 rounded-lg border overflow-hidden max-h-48 overflow-y-auto mb-6">
+                  <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-100">
+                      <tr>
+                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                          Hand
+                        </th>
+                        <th class="px-4 py-2 text-center text-xs font-medium text-blue-600 uppercase">
+                          N/S
+                        </th>
+                        <th class="px-4 py-2 text-center text-xs font-medium text-green-600 uppercase">
+                          E/W
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 bg-white">
+                      <%= for {score, index} <- get_score_history(@game_state.events) do %>
+                        <tr>
+                          <td class="px-4 py-2 text-sm text-gray-900">#{index}</td>
+                          <td class="px-4 py-2 text-sm text-center font-medium text-blue-700">
+                            {if score.ns > 0, do: "+#{score.ns}", else: score.ns}
+                          </td>
+                          <td class="px-4 py-2 text-sm text-center font-medium text-green-700">
+                            {if score.ew > 0, do: "+#{score.ew}", else: score.ew}
+                          </td>
+                        </tr>
+                      <% end %>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="flex gap-3">
+                  <.link
+                    navigate={~p"/dev/games"}
+                    class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
+                  >
+                    Back to Lobby
+                  </.link>
+                  <button
+                    phx-click="play_again"
+                    class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg text-center transition-colors shadow-md"
+                  >
+                    Play Again
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% end %>
+
+    <!-- Action Execution - DEV-901 to DEV-904 Implementation -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Legal Actions</h3>
+        <p class="mt-1 text-sm text-zinc-500">
+          <%= if @selected_position == :all do %>
+            Select a specific position to view and execute actions
+          <% else %>
+            Execute game actions for position: <span class="font-semibold">{@selected_position}</span>
+          <% end %>
+        </p>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+        <%= if @selected_position == :all do %>
+          <div class="text-sm text-zinc-500 italic">
+            Please select a specific position above to view legal actions.
+          </div>
+        <% else %>
+          <%= if @executing_action do %>
+            <div class="flex items-center justify-center py-8">
+              <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+              <span class="ml-3 text-sm text-zinc-600">Executing action...</span>
+            </div>
+          <% else %>
+            <%= if Enum.empty?(@legal_actions) do %>
+              <div class="text-sm text-zinc-500 italic">
+                No legal actions available for this position at this time.
+              </div>
+            <% else %>
+              <%!-- DEV-902: Render action buttons grouped by type --%>
+              <.render_action_groups legal_actions={@legal_actions} />
+            <% end %>
+          <% end %>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- Game State Card -->
+    <%= if @game_state do %>
+      <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+        <div class="px-4 py-5 sm:px-6">
+          <h3 class="text-lg leading-6 font-medium text-zinc-900">Game State</h3>
+          <p class="mt-1 max-w-2xl text-sm text-zinc-500">
+            Current phase: <span class="font-semibold">{@game_state.phase}</span>
+          </p>
+        </div>
+        <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+          <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+            <div>
+              <dt class="text-sm font-medium text-zinc-500">Current Turn</dt>
+              <dd class="mt-1 text-sm text-zinc-900">
+                {inspect(@game_state.current_turn)}
+              </dd>
+            </div>
+            <%= if Map.has_key?(@game_state, :dealer) do %>
+              <div>
+                <dt class="text-sm font-medium text-zinc-500">Dealer</dt>
+                <dd class="mt-1 text-sm text-zinc-900">{inspect(@game_state.dealer)}</dd>
+              </div>
+            <% end %>
+            <%= if Map.has_key?(@game_state, :trump_suit) && @game_state.trump_suit do %>
+              <div>
+                <dt class="text-sm font-medium text-zinc-500">Trump Suit</dt>
+                <dd class="mt-1 text-sm text-zinc-900">
+                  {format_suit(@game_state.trump_suit)}
+                </dd>
+              </div>
+            <% end %>
+            <%= if Map.has_key?(@game_state, :winning_bid) && @game_state.winning_bid do %>
+              <div>
+                <dt class="text-sm font-medium text-zinc-500">Winning Bid</dt>
+                <dd class="mt-1 text-sm text-zinc-900">
+                  {@game_state.winning_bid.amount} by {@game_state.winning_bid.team}
+                </dd>
+              </div>
+            <% end %>
+          </dl>
+          
+    <!-- Scores -->
+          <%= if Map.has_key?(@game_state, :scores) do %>
+            <div class="mt-6">
+              <h4 class="text-sm font-medium text-zinc-500 mb-3">Scores</h4>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-blue-50 p-4 rounded-lg">
+                  <div class="text-sm font-medium text-blue-900">North-South</div>
+                  <div class="text-2xl font-bold text-blue-700">
+                    {@game_state.scores.north_south}
+                  </div>
+                </div>
+                <div class="bg-green-50 p-4 rounded-lg">
+                  <div class="text-sm font-medium text-green-900">East-West</div>
+                  <div class="text-2xl font-bold text-green-700">
+                    {@game_state.scores.east_west}
+                  </div>
+                </div>
+              </div>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <%!-- Event Log Panel (FR-7 / DEV-704) --%>
+      <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold">Event Log</h2>
+          <div class="flex gap-2">
+            <button
+              phx-click="refresh_events"
+              class="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              Refresh
+            </button>
+            <button
+              phx-click="clear_events"
+              data-confirm="Are you sure you want to clear the event log?"
+              class="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
+            >
+              Clear
+            </button>
+            <button
+              phx-click="toggle_export_modal"
+              class="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
+            >
+              Export
+            </button>
+          </div>
+        </div>
+
+        <%!-- Filters --%>
+        <div class="flex gap-4 mb-4 items-end">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Type</label>
+            <select
+              phx-change="filter_events"
+              name="type"
+              class="rounded border-gray-300"
+            >
+              <option value="all" selected={is_nil(@event_filter_type)}>All Events</option>
+              <option value="bid_made" selected={@event_filter_type == :bid_made}>Bids</option>
+              <option value="bid_passed" selected={@event_filter_type == :bid_passed}>
+                Passes
+              </option>
+              <option value="trump_declared" selected={@event_filter_type == :trump_declared}>
+                Trump Declared
+              </option>
+              <option value="card_played" selected={@event_filter_type == :card_played}>
+                Cards Played
+              </option>
+              <option value="trick_won" selected={@event_filter_type == :trick_won}>
+                Tricks Won
+              </option>
+              <option value="hand_scored" selected={@event_filter_type == :hand_scored}>
+                Hand Scored
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Filter by Player</label>
+            <select
+              phx-change="filter_events_by_player"
+              name="player"
+              class="rounded border-gray-300"
+            >
+              <option value="all" selected={is_nil(@event_filter_player)}>All Players</option>
+              <option value="north" selected={@event_filter_player == :north}>North</option>
+              <option value="south" selected={@event_filter_player == :south}>South</option>
+              <option value="east" selected={@event_filter_player == :east}>East</option>
+              <option value="west" selected={@event_filter_player == :west}>West</option>
+            </select>
+          </div>
+
+          <div class="flex items-center">
+            <label class="inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                phx-click="toggle_bot_reasoning"
+                checked={@show_bot_reasoning}
+                class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+              />
+              <span class="ml-2 text-sm text-gray-700">Show Bot Reasoning</span>
+            </label>
+          </div>
+        </div>
+
+        <%!-- Event List --%>
+        <div class="bg-gray-50 rounded p-4 max-h-96 overflow-y-auto font-mono text-sm">
+          <%= if Enum.empty?(@events) do %>
+            <p class="text-gray-500 italic">No events recorded yet</p>
+          <% else %>
+            <div class="space-y-1">
+              <%= for event <- @events do %>
+                <div class="flex gap-2">
+                  <span class="text-gray-500">[#{event.metadata[:index] || "?"}]</span>
+                  <span class={event_type_color(event.type)}>
+                    {Event.format(event)}
+                  </span>
+                </div>
+              <% end %>
+            </div>
+          <% end %>
+        </div>
+
+        <div class="mt-2 text-sm text-gray-600">
+          Showing {length(@events)} of {length(@game_state.events)} events (last 50)
+        </div>
+      </div>
+
+      <%!-- Export Modal (FR-7 / DEV-705) --%>
+      <%= if @show_event_export do %>
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-semibold">Export Events</h3>
+              <button
+                phx-click="toggle_export_modal"
+                class="text-gray-500 hover:text-gray-700"
+              >
+                x
+              </button>
+            </div>
+
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">JSON Format</label>
+                <textarea
+                  id="export-json"
+                  readonly
+                  class="w-full h-64 font-mono text-xs border rounded p-2"
+                >{Jason.encode!(@events |> Enum.map(&Event.to_json/1), pretty: true)}</textarea>
+                <button
+                  id="copy-json-button"
+                  phx-hook="Clipboard"
+                  data-target="export-json"
+                  class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Copy JSON
+                </button>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Text Format</label>
+                <textarea
+                  id="export-text"
+                  readonly
+                  class="w-full h-64 font-mono text-xs border rounded p-2"
+                >{Enum.map_join(@events, "\n", fn event ->
+                  "[##{event.metadata[:index] || "?"}] #{Event.format(event)}"
+                end)}</textarea>
+                <button
+                  id="copy-text-button"
+                  phx-hook="Clipboard"
+                  data-target="export-text"
+                  class="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Copy Text
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% end %>
+      
+    <!-- Full State JSON (collapsible) -->
+      <details class="bg-white shadow overflow-hidden sm:rounded-lg">
+        <summary class="px-4 py-5 sm:px-6 cursor-pointer hover:bg-zinc-50">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg leading-6 font-medium text-zinc-900 inline">
+                Full Game State (Raw)
+              </h3>
+            </div>
+            <button
+              id="copy-game-state"
+              type="button"
+              phx-hook="Clipboard"
+              data-clipboard-text={inspect(@game_state, pretty: true)}
+              class="px-3 py-1 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+              onclick="event.stopPropagation()"
+            >
+              <%= if @copy_feedback do %>
+                <span>Copied!</span>
+              <% else %>
+                <span>Copy State</span>
+              <% end %>
+            </button>
+          </div>
+        </summary>
+        <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+          <pre class="text-xs bg-zinc-50 p-4 rounded overflow-auto"><%= inspect(@game_state, pretty: true, limit: :infinity) %></pre>
+        </div>
+      </details>
+    <% else %>
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+        <p class="text-yellow-800">
+          Game has not started yet or state is unavailable.
+        </p>
+      </div>
+    <% end %>
+    """
+  end
+
+  defp render_seats_tab(assigns) do
+    ~H"""
+    <!-- Bot Configuration - DEV-1106 -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Bot Configuration</h3>
+        <p class="mt-1 text-sm text-zinc-500">Configure bot players for each seat</p>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-4">
+        <div class="grid grid-cols-2 gap-3 mb-3">
+          <%= for position <- [:north, :south, :east, :west] do %>
+            <.render_bot_position_config position={position} config={@bot_configs[position]} />
+          <% end %>
+        </div>
+        <button
+          type="button"
+          phx-click="apply_bot_config"
+          class="w-full px-3 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+        >
+          Apply Changes
+        </button>
+      </div>
+    </div>
+
+    <!-- Seat Management -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
+      <div class="px-4 py-5 sm:px-6">
+        <h3 class="text-lg leading-6 font-medium text-zinc-900">Seat Management</h3>
+        <p class="mt-1 text-sm text-zinc-500">Assign users to seats or manage bot positions</p>
+      </div>
+      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+        <div class="grid grid-cols-2 gap-4">
+          <%= for position <- [:north, :east, :south, :west] do %>
+            <div class="bg-zinc-50 rounded-lg p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="text-sm font-semibold text-zinc-900">{format_position(position)}</h4>
+                <span class={[
+                  "px-2 py-0.5 text-xs rounded-full font-medium",
+                  if(@room.positions[position],
+                    do: "bg-green-100 text-green-800",
+                    else: "bg-zinc-200 text-zinc-600"
+                  )
+                ]}>
+                  {if @room.positions[position], do: "Occupied", else: "Empty"}
+                </span>
+              </div>
+              <%= if @room.positions[position] do %>
+                <p class="text-xs text-zinc-600 mb-2 font-mono truncate">
+                  {@room.positions[position] |> String.slice(0..11)}...
+                </p>
+              <% end %>
+              <form phx-submit="assign_seat" class="flex gap-2">
+                <input type="hidden" name="position" value={to_string(position)} />
+                <select
+                  name="user_id"
+                  class="flex-1 text-xs rounded border-zinc-300 py-1"
+                >
+                  <option value="empty">-- Clear --</option>
+                  <%= for user <- @users do %>
+                    <option value={user.id}>
+                      {user.display_name || user.id |> String.slice(0..11)}
+                    </option>
+                  <% end %>
+                </select>
+                <button
+                  type="submit"
+                  class="px-3 py-1 text-xs font-medium rounded bg-indigo-600 text-white hover:bg-indigo-700"
+                >
+                  Set
+                </button>
+              </form>
+            </div>
+          <% end %>
         </div>
       </div>
     </div>
@@ -2145,6 +2279,12 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     |> Map.new()
   end
 
+  defp all_bots_paused?(bot_configs) do
+    bot_configs
+    |> Enum.filter(fn {_pos, config} -> config.type == :bot end)
+    |> Enum.all?(fn {_pos, config} -> config.paused end)
+  end
+
   defp maybe_update_type(config, %{"type" => type}) when type in ["human", "bot"] do
     %{config | type: String.to_existing_atom(type)}
   end
@@ -2221,11 +2361,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   # Event log helper functions
 
-  defp format_event_timestamp(event) do
-    event.timestamp
-    |> Calendar.strftime("%H:%M:%S")
-  end
-
   defp event_type_color(type) do
     case type do
       :bid_made -> "text-blue-600"
@@ -2241,31 +2376,6 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   # DEV-1505 & DEV-1506: Helper functions for card table and phase displays
-
-  defp get_current_bid(state) do
-    case Map.get(state, :winning_bid) do
-      %{amount: amount} -> amount
-      _ -> nil
-    end
-  end
-
-  defp get_current_bidder(state) do
-    case Map.get(state, :winning_bid) do
-      %{team: team} ->
-        case team do
-          :north_south -> :north
-          :east_west -> :east
-          team -> team
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp get_bid_history(state) do
-    Map.get(state, :bid_history, [])
-  end
 
   defp get_selected_hand(_state, :all), do: []
 
@@ -2285,12 +2395,13 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     show_bot = Map.get(assigns, :show_bot_reasoning, true)
 
     raw_events
-    |> Enum.map(&Event.from_raw/1)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {raw, idx} -> Event.from_raw(raw, idx) end)
     |> Enum.reject(&is_nil/1)
     |> filter_by_type(filter_type)
     |> filter_by_player(filter_player)
     |> filter_bot_reasoning(show_bot)
-    |> Enum.take(50)
+    |> Enum.take(-50)
   end
 
   defp filter_by_type(events, nil), do: events

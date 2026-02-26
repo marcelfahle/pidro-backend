@@ -1,6 +1,5 @@
 defmodule PidroServerWeb.Router do
   use PidroServerWeb, :router
-  import Plug.BasicAuth
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -21,11 +20,6 @@ defmodule PidroServerWeb.Router do
     plug PidroServerWeb.Plugs.Authenticate
   end
 
-  pipeline :admin do
-    plug :browser
-    plug :admin_basic_auth
-  end
-
   scope "/", PidroServerWeb do
     pipe_through :browser
 
@@ -38,15 +32,6 @@ defmodule PidroServerWeb.Router do
 
     get "/openapi", OpenApiSpex.Plug.RenderSpec, spec: PidroServerWeb.ApiSpec
     get "/swagger", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi"
-  end
-
-  # Admin panel routes (protected with basic auth)
-  scope "/admin", PidroServerWeb do
-    pipe_through :admin
-
-    live "/lobby", LobbyLive
-    live "/games/:code", GameMonitorLive
-    live "/stats", StatsLive
   end
 
   # API v1 routes
@@ -101,18 +86,11 @@ defmodule PidroServerWeb.Router do
     scope "/dev", PidroServerWeb.Dev do
       pipe_through :browser
 
-      live "/games", GameListLive
-      live "/games/:code", GameDetailLive
-      live "/analytics", AnalyticsLive
+      live_session :dev, root_layout: {PidroServerWeb.Layouts, :dev_root} do
+        live "/games", GameListLive
+        live "/games/:code", GameDetailLive
+        live "/analytics", AnalyticsLive
+      end
     end
-  end
-
-  # Private functions
-
-  defp admin_basic_auth(conn, _opts) do
-    username = Application.get_env(:pidro_server, :admin_username, "admin")
-    password = Application.get_env(:pidro_server, :admin_password, "secret")
-
-    basic_auth(conn, username: username, password: password)
   end
 end

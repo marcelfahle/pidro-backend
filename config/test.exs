@@ -33,6 +33,7 @@ config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 
 # Enable helpful, but potentially expensive runtime checks
-config :pidro_server, PidroServer.Games.RoomManager,
-  grace_period_ms: 200
+config :pidro_server, PidroServer.Games.RoomManager, grace_period_ms: 200
 
+# Compile dev-only LiveView routes in test to satisfy verified route checks
+config :pidro_server, dev_routes: true

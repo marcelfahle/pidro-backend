@@ -30,8 +30,10 @@ defmodule PidroServerWeb.API.RoomController do
 
   use PidroServerWeb, :controller
   use OpenApiSpex.ControllerSpecs
+  require Logger
 
   alias OpenApiSpex.Operation
+  alias PidroServer.Games.Bots.BotManager
   alias PidroServer.Games.RoomManager
   alias PidroServerWeb.API.RoomJSON
   alias PidroServerWeb.Schemas.{RoomSchemas, ErrorSchemas}
@@ -422,9 +424,13 @@ defmodule PidroServerWeb.API.RoomController do
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def create(conn, params) do
     user = conn.assigns[:current_user]
-    metadata = parse_metadata(params["room"])
+    # Payload may be nested under "room" key or at top level
+    room_params = params["room"] || params
+    metadata = parse_metadata(room_params)
 
     with {:ok, room} <- RoomManager.create_room(user.id, metadata) do
+      start_bots_for_room(room, room_params)
+
       conn
       |> put_status(:created)
       |> put_view(RoomJSON)
@@ -820,7 +826,7 @@ defmodule PidroServerWeb.API.RoomController do
               {"position": "north", "amount": 8}
             ],
             "tricks": [],
-            "cumulative_scores": {
+            "scores": {
               "north_south": 0,
               "east_west": 0
             }
@@ -863,6 +869,41 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_filter("waiting"), do: :waiting
   defp parse_filter("ready"), do: :ready
   defp parse_filter(_), do: :all
+
+  # Starts bots for AI seats after room creation.
+  #
+  # The host occupies the first position (:north). Remaining positions (:east, :south, :west)
+  # correspond to seat_2, seat_3, seat_4. For each seat configured as "ai", a bot is started
+  # via BotManager which will join the room and trigger auto-start when all seats are filled.
+  @spec start_bots_for_room(RoomManager.Room.t(), map()) :: :ok
+  defp start_bots_for_room(room, room_params) do
+    seats = room_params["seats"] || %{}
+    difficulty = parse_bot_difficulty(room_params["bot_difficulty"])
+
+    # Host gets :north (first auto-assigned position), remaining seats map to these positions
+    seat_positions = %{"seat_2" => :east, "seat_3" => :south, "seat_4" => :west}
+
+    for {seat_key, position} <- seat_positions,
+        Map.get(seats, seat_key) == "ai" do
+      case BotManager.start_bot(room.code, position, difficulty, 1000) do
+        {:ok, _pid} ->
+          Logger.info("Started #{difficulty} bot at #{position} in room #{room.code}")
+
+        {:error, reason} ->
+          Logger.warning(
+            "Failed to start bot at #{position} in room #{room.code}: #{inspect(reason)}"
+          )
+      end
+    end
+
+    :ok
+  end
+
+  @spec parse_bot_difficulty(String.t() | nil) :: :random | :basic | :smart
+  defp parse_bot_difficulty("random"), do: :random
+  defp parse_bot_difficulty("basic"), do: :basic
+  defp parse_bot_difficulty("smart"), do: :smart
+  defp parse_bot_difficulty(_), do: :basic
 
   @doc false
   # Parses room metadata from the request body

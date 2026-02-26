@@ -11,9 +11,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Room Schemas ====================
 
-  @doc """
-  Schema for a Room object representing a game room.
-  """
+  # Schema for a Room object representing a game room.
   defmodule Room do
     OpenApiSpex.schema(%{
       title: "Room",
@@ -68,9 +66,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a single room response.
-  """
+  # Schema for a single room response.
   defmodule RoomResponse do
     OpenApiSpex.schema(%{
       title: "RoomResponse",
@@ -101,9 +97,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a list of rooms response.
-  """
+  # Schema for a list of rooms response.
   defmodule RoomsResponse do
     OpenApiSpex.schema(%{
       title: "RoomsResponse",
@@ -148,9 +142,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for room creation response including the room code.
-  """
+  # Schema for room creation response including the room code.
   defmodule RoomCreatedResponse do
     OpenApiSpex.schema(%{
       title: "RoomCreatedResponse",
@@ -190,9 +182,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Game State Schemas ====================
 
-  @doc """
-  Schema for a Card object representing a playing card.
-  """
+  # Schema for a Card object representing a playing card.
   defmodule Card do
     OpenApiSpex.schema(%{
       title: "Card",
@@ -223,9 +213,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Bid object representing a player's bid.
-  """
+  # Schema for a Bid object representing a player's bid.
   defmodule Bid do
     OpenApiSpex.schema(%{
       title: "Bid",
@@ -255,25 +243,30 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Play object representing a card played in a trick.
-  """
+  # Schema for a Play object representing a card played in a trick.
   defmodule Play do
     OpenApiSpex.schema(%{
       title: "Play",
       description: "A card played by a player in a trick",
       type: :object,
       properties: %{
-        position: %Schema{
+        player: %Schema{
           type: :string,
           enum: [:north, :south, :east, :west],
           description: "Position of the player who played the card",
           example: :north
         },
+        position: %Schema{
+          type: :string,
+          enum: [:north, :south, :east, :west],
+          description: "Legacy alias for player (backward compatibility)",
+          example: :north
+        },
         card: Card
       },
-      required: [:position, :card],
+      required: [:player, :position, :card],
       example: %{
+        "player" => "north",
         "position" => "north",
         "card" => %{
           "rank" => 14,
@@ -283,13 +276,11 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Trick object representing a completed trick.
-  """
+  # Schema for a Trick object representing a completed trick.
   defmodule Trick do
     OpenApiSpex.schema(%{
       title: "Trick",
-      description: "A completed trick including all plays and winner information",
+      description: "A completed trick including legacy (`plays`) and frontend (`cards`) arrays",
       type: :object,
       properties: %{
         number: %Schema{
@@ -308,13 +299,32 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         plays: %Schema{
           type: :array,
           items: Play,
-          description: "List of cards played in order",
+          description: "Legacy list of cards played in order",
           example: [
             %{
+              "player" => "north",
               "position" => "north",
               "card" => %{"rank" => 14, "suit" => "hearts"}
             },
             %{
+              "player" => "east",
+              "position" => "east",
+              "card" => %{"rank" => 13, "suit" => "hearts"}
+            }
+          ]
+        },
+        cards: %Schema{
+          type: :array,
+          items: Play,
+          description: "Frontend-oriented list of cards played in order",
+          example: [
+            %{
+              "player" => "north",
+              "position" => "north",
+              "card" => %{"rank" => 14, "suit" => "hearts"}
+            },
+            %{
+              "player" => "east",
               "position" => "east",
               "card" => %{"rank" => 13, "suit" => "hearts"}
             }
@@ -334,16 +344,30 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           example: 15
         }
       },
-      required: [:number, :leader, :plays, :points],
+      required: [:plays, :cards, :points],
       example: %{
         "number" => 1,
         "leader" => "north",
         "plays" => [
           %{
+            "player" => "north",
             "position" => "north",
             "card" => %{"rank" => 14, "suit" => "hearts"}
           },
           %{
+            "player" => "east",
+            "position" => "east",
+            "card" => %{"rank" => 13, "suit" => "hearts"}
+          }
+        ],
+        "cards" => [
+          %{
+            "player" => "north",
+            "position" => "north",
+            "card" => %{"rank" => 14, "suit" => "hearts"}
+          },
+          %{
+            "player" => "east",
             "position" => "east",
             "card" => %{"rank" => 13, "suit" => "hearts"}
           }
@@ -354,9 +378,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for a Player object representing a player's state in the game.
-  """
+  # Schema for a Player object representing a player's state in the game.
   defmodule Player do
     OpenApiSpex.schema(%{
       title: "Player",
@@ -411,9 +433,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  @doc """
-  Schema for the complex game state response.
-  """
+  # Schema for the complex game state response.
   defmodule GameStateResponse do
     OpenApiSpex.schema(%{
       title: "GameStateResponse",
@@ -533,7 +553,17 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   description: "List of completed tricks",
                   example: []
                 },
-                current_trick: Trick,
+                current_trick: %Schema{
+                  type: :array,
+                  items: Play,
+                  description: "Current trick as flat plays (frontend shape)",
+                  example: []
+                },
+                current_trick_details: %Schema{
+                  allOf: [Trick],
+                  description: "Current trick in full object shape (legacy alias)",
+                  nullable: true
+                },
                 trick_number: %Schema{
                   type: :integer,
                   description: "Current trick number being played",
@@ -548,10 +578,16 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   description: "Points earned by each team in this hand",
                   example: %{"north_south" => 0, "east_west" => 0}
                 },
-                cumulative_scores: %Schema{
+                scores: %Schema{
                   type: :object,
                   additionalProperties: %Schema{type: :integer},
                   description: "Total points for each team across all hands",
+                  example: %{"north_south" => 0, "east_west" => 0}
+                },
+                cumulative_scores: %Schema{
+                  type: :object,
+                  additionalProperties: %Schema{type: :integer},
+                  description: "Deprecated alias for scores (backward compatibility)",
                   example: %{"north_south" => 0, "east_west" => 0}
                 },
                 winner: %Schema{
@@ -568,7 +604,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                 :bids,
                 :tricks,
                 :hand_points,
-                :cumulative_scores
+                :scores
               ],
               example: %{
                 "phase" => "bidding",
@@ -600,9 +636,11 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                 "bidding_team" => "north_south",
                 "trump_suit" => nil,
                 "tricks" => [],
-                "current_trick" => nil,
+                "current_trick" => [],
+                "current_trick_details" => nil,
                 "trick_number" => nil,
                 "hand_points" => %{"north_south" => 0, "east_west" => 0},
+                "scores" => %{"north_south" => 0, "east_west" => 0},
                 "cumulative_scores" => %{"north_south" => 0, "east_west" => 0},
                 "winner" => nil
               }
@@ -637,9 +675,11 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "bidding_team" => "north_south",
             "trump_suit" => nil,
             "tricks" => [],
-            "current_trick" => nil,
+            "current_trick" => [],
+            "current_trick_details" => nil,
             "trick_number" => nil,
             "hand_points" => %{"north_south" => 0, "east_west" => 0},
+            "scores" => %{"north_south" => 0, "east_west" => 0},
             "cumulative_scores" => %{"north_south" => 0, "east_west" => 0},
             "winner" => nil
           }
