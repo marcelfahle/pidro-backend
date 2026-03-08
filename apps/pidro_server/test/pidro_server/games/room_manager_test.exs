@@ -43,7 +43,6 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert room.status == :waiting
       assert room.max_players == 4
       assert room.metadata.name == "Test Room"
-      assert room.disconnected_players == %{}
     end
 
     test "prevents creating room if already in another room" do
@@ -162,20 +161,17 @@ defmodule PidroServer.Games.RoomManagerTest do
   end
 
   describe "handle_player_disconnect/2" do
-    test "marks player as disconnected with timestamp" do
+    test "updates last_activity for waiting room disconnect" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
 
       before_disconnect = DateTime.utc_now()
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
-      after_disconnect = DateTime.utc_now()
 
       {:ok, updated_room} = RoomManager.get_room(room.code)
 
-      assert Map.has_key?(updated_room.disconnected_players, "user2")
-      disconnect_time = updated_room.disconnected_players["user2"]
-      assert DateTime.compare(disconnect_time, before_disconnect) in [:gt, :eq]
-      assert DateTime.compare(disconnect_time, after_disconnect) in [:lt, :eq]
+      # Waiting rooms: disconnect only updates last_activity, no seat cascade
+      assert DateTime.compare(updated_room.last_activity, before_disconnect) in [:gt, :eq]
 
       # Player should still be in player_ids
       assert Positions.has_player?(updated_room, "user2")
@@ -197,18 +193,16 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, room} = RoomManager.create_room("user1", %{})
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
-      first_disconnect_time = DateTime.utc_now()
 
-      # Wait a bit (less than grace period of 50ms)
+      # Wait a bit
       Process.sleep(10)
 
+      # Second disconnect should also succeed for waiting rooms
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
 
+      # Player should still be in the room
       {:ok, updated_room} = RoomManager.get_room(room.code)
-      second_disconnect_time = updated_room.disconnected_players["user1"]
-
-      # Second disconnect should update timestamp
-      assert DateTime.compare(second_disconnect_time, first_disconnect_time) == :gt
+      assert Positions.has_player?(updated_room, "user1")
     end
 
     test "tracks multiple players disconnecting" do
@@ -219,24 +213,28 @@ defmodule PidroServer.Games.RoomManagerTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
+      # All players should still be in positions (waiting room, no seat cascade)
       {:ok, updated_room} = RoomManager.get_room(room.code)
-
-      assert Map.has_key?(updated_room.disconnected_players, "user1")
-      assert Map.has_key?(updated_room.disconnected_players, "user2")
-      refute Map.has_key?(updated_room.disconnected_players, "user3")
+      assert Positions.has_player?(updated_room, "user1")
+      assert Positions.has_player?(updated_room, "user2")
+      assert Positions.has_player?(updated_room, "user3")
     end
   end
 
   describe "handle_player_reconnect/2" do
-    test "successfully reconnects player within grace period" do
+    test "reconnect is not needed for waiting room disconnects" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
-      {:ok, reconnected_room} = RoomManager.handle_player_reconnect(room.code, "user2")
 
-      assert Positions.has_player?(reconnected_room, "user2")
-      refute Map.has_key?(reconnected_room.disconnected_players, "user2")
+      # Waiting rooms don't use seat cascade, so reconnect finds no disconnected seat
+      assert {:error, :player_not_disconnected} =
+               RoomManager.handle_player_reconnect(room.code, "user2")
+
+      # But player is still in the room
+      {:ok, room} = RoomManager.get_room(room.code)
+      assert Positions.has_player?(room, "user2")
     end
 
     test "returns error when player not disconnected" do
@@ -253,7 +251,7 @@ defmodule PidroServer.Games.RoomManagerTest do
                RoomManager.handle_player_reconnect("ZZZZ", "user1")
     end
 
-    test "multiple players can reconnect independently" do
+    test "reconnect returns error for waiting room disconnects" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
       {:ok, _, _} = RoomManager.join_room(room.code, "user3")
@@ -261,68 +259,57 @@ defmodule PidroServer.Games.RoomManagerTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
-      {:ok, room_after_first} = RoomManager.handle_player_reconnect(room.code, "user1")
-      refute Map.has_key?(room_after_first.disconnected_players, "user1")
-      assert Map.has_key?(room_after_first.disconnected_players, "user2")
+      # Waiting rooms don't track disconnects via seats
+      assert {:error, :player_not_disconnected} =
+               RoomManager.handle_player_reconnect(room.code, "user1")
 
-      {:ok, room_after_second} = RoomManager.handle_player_reconnect(room.code, "user2")
-      refute Map.has_key?(room_after_second.disconnected_players, "user1")
-      refute Map.has_key?(room_after_second.disconnected_players, "user2")
+      assert {:error, :player_not_disconnected} =
+               RoomManager.handle_player_reconnect(room.code, "user2")
+
+      # But all players are still in the room
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+      assert Positions.has_player?(updated_room, "user1")
+      assert Positions.has_player?(updated_room, "user2")
+      assert Positions.has_player?(updated_room, "user3")
     end
   end
 
   describe "disconnect timeout and grace period" do
     # Tests use configured grace period (50ms in test.exs)
 
-    test "player remains in room during grace period" do
+    test "player remains in waiting room after disconnect" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
-      # Wait a very short time (less than 50ms)
+      # Wait a short time
       Process.sleep(10)
 
+      # Waiting rooms don't use seat cascade — player stays in positions
       {:ok, updated_room} = RoomManager.get_room(room.code)
       assert Positions.has_player?(updated_room, "user2")
-      assert Map.has_key?(updated_room.disconnected_players, "user2")
     end
 
-    test "player is removed after grace period expires" do
+    test "player is NOT removed from waiting room after disconnect" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
-      # Verify player is disconnected
+      # Verify player is still in positions
       {:ok, disconnected_room} = RoomManager.get_room(room.code)
-      assert Map.has_key?(disconnected_room.disconnected_players, "user2")
       assert Positions.has_player?(disconnected_room, "user2")
 
-      # Wait for grace period (50ms) plus buffer
+      # Wait well past any legacy grace period
       Process.sleep(100)
 
-      # Use retry pattern to wait for GenServer to process the timeout message
-      # Wait up to 1 second for the player to be removed
-      result =
-        Enum.reduce_while(1..10, nil, fn _, _acc ->
-          {:ok, current_room} = RoomManager.get_room(room.code)
-
-          if Positions.has_player?(current_room, "user2") do
-            Process.sleep(50)
-            {:cont, nil}
-          else
-            {:halt, {:ok, current_room}}
-          end
-        end)
-
-      # Player should now be removed
-      assert {:ok, final_room} = result
-      refute Positions.has_player?(final_room, "user2")
-      refute Map.has_key?(final_room.disconnected_players, "user2")
+      # Waiting rooms don't remove players on disconnect — no seat cascade
+      {:ok, final_room} = RoomManager.get_room(room.code)
+      assert Positions.has_player?(final_room, "user2")
     end
 
-    test "reconnecting cancels timeout removal" do
+    test "player stays in waiting room after disconnect without reconnect" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
 
@@ -331,19 +318,15 @@ defmodule PidroServer.Games.RoomManagerTest do
       # Wait a bit
       Process.sleep(10)
 
-      # Reconnect before grace period
-      {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user2")
-
-      # Wait past when timeout would have fired (50ms)
+      # No reconnect needed for waiting rooms — player persists
       Process.sleep(100)
 
       # Player should still be in room
       {:ok, final_room} = RoomManager.get_room(room.code)
       assert Positions.has_player?(final_room, "user2")
-      refute Map.has_key?(final_room.disconnected_players, "user2")
     end
 
-    test "multiple disconnected players removed after grace period" do
+    test "multiple disconnected players stay in waiting room" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
       {:ok, _, _} = RoomManager.join_room(room.code, "user3")
@@ -354,29 +337,14 @@ defmodule PidroServer.Games.RoomManagerTest do
       Process.sleep(10)
       :ok = RoomManager.handle_player_disconnect(room.code, "user3")
 
-      # Wait for grace period
+      # Wait past any legacy grace period
       Process.sleep(100)
 
-      # Use retry pattern to wait for GenServer to process the timeout messages
-      # Wait up to 1 second for both players to be removed
-      result =
-        Enum.reduce_while(1..10, nil, fn _, _acc ->
-          {:ok, current_room} = RoomManager.get_room(room.code)
-
-          if Positions.has_player?(current_room, "user2") or
-               Positions.has_player?(current_room, "user3") do
-            Process.sleep(50)
-            {:cont, nil}
-          else
-            {:halt, {:ok, current_room}}
-          end
-        end)
-
-      # Both should be removed
-      assert {:ok, final_room} = result
-      refute Positions.has_player?(final_room, "user2")
-      refute Positions.has_player?(final_room, "user3")
+      # Waiting rooms don't remove players — all should still be present
+      {:ok, final_room} = RoomManager.get_room(room.code)
       assert Positions.has_player?(final_room, "user1")
+      assert Positions.has_player?(final_room, "user2")
+      assert Positions.has_player?(final_room, "user3")
       assert Positions.has_player?(final_room, "user4")
     end
 
@@ -524,7 +492,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       refute Positions.has_player?(updated_room, "user2")
     end
 
-    test "handles room state correctly with disconnected players count" do
+    test "handles room state correctly after disconnect in waiting room" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
       {:ok, _, _} = RoomManager.join_room(room.code, "user3")
@@ -533,25 +501,22 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       {:ok, updated_room} = RoomManager.get_room(room.code)
 
-      # Should have 3 players total
+      # Should have 3 players total — waiting room disconnect doesn't change positions
       assert Positions.count(updated_room) == 3
-      # But one is disconnected
-      assert map_size(updated_room.disconnected_players) == 1
     end
 
-    test "reconnect after already reconnected does nothing harmful" do
+    test "reconnect after disconnect in waiting room returns not_disconnected" do
       {:ok, room} = RoomManager.create_room("user1", %{})
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
-      {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user1")
 
-      # Try to reconnect again
+      # Waiting rooms don't use seat cascade, so reconnect is a no-op
       assert {:error, :player_not_disconnected} =
                RoomManager.handle_player_reconnect(room.code, "user1")
 
+      # Player should still be in the room
       {:ok, final_room} = RoomManager.get_room(room.code)
       assert Positions.has_player?(final_room, "user1")
-      refute Map.has_key?(final_room.disconnected_players, "user1")
     end
   end
 
@@ -586,17 +551,18 @@ defmodule PidroServer.Games.RoomManagerTest do
   end
 
   describe "abandoned room cleanup" do
-    test "removes abandoned room (inactive + all players disconnected)" do
+    test "removes abandoned room (inactive + no players)" do
       {:ok, room} = RoomManager.create_room("user1", %{})
 
-      # Disconnect the only player
-      :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+      # Clear the host's position to make the room empty
+      # (host is auto-assigned to :north)
+      {:ok, _} = RoomManager.dev_set_position(room.code, :north, nil)
 
-      # Verify room still exists
-      assert {:ok, _} = RoomManager.get_room(room.code)
+      # Verify room still exists but has no players
+      assert {:ok, empty_room} = RoomManager.get_room(room.code)
+      assert Positions.count(empty_room) == 0
 
       # Set activity to > 5 minutes ago
-      # 5 mins + 1 sec
       old_time = DateTime.utc_now() |> DateTime.add(-301, :second)
       :ok = RoomManager.set_last_activity_for_test(room.code, old_time)
 

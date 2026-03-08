@@ -35,5 +35,16 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :pidro_server, PidroServer.Games.RoomManager, grace_period_ms: 200
 
+# Use short lifecycle timeouts in tests to avoid slow test runs
+config :pidro_server, PidroServer.Games.Lifecycle,
+  hiccup_timeout_ms: 100,
+  grace_timeout_ms: 200,
+  empty_room_ttl_ms: 100,
+  finished_room_ttl_ms: 500,
+  idle_waiting_ttl_ms: 500,
+  reconnect_turn_extension_ms: 50,
+  health_check_interval_ms: 500,
+  presence_debounce_ms: 50
+
 # Compile dev-only LiveView routes in test to satisfy verified route checks
 config :pidro_server, dev_routes: true

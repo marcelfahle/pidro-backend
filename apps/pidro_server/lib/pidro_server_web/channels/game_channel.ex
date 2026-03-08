@@ -50,7 +50,8 @@ defmodule PidroServerWeb.GameChannel do
   use PidroServerWeb, :channel
   require Logger
 
-  alias PidroServer.Games.{GameAdapter, RoomManager}
+  alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
+  alias PidroServer.Games.Room.Seat
   alias PidroServer.Stats
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
@@ -63,7 +64,7 @@ defmodule PidroServerWeb.GameChannel do
   }
 
   # Intercept presence_diff, player_ready, and player_reconnected broadcasts to handle them explicitly
-  intercept ["presence_diff", "player_ready", "player_reconnected"]
+  intercept ["presence_diff", "player_ready", "player_reconnected", "player_disconnected"]
 
   @doc """
   Authorizes and joins a player or spectator to the game channel.
@@ -92,8 +93,8 @@ defmodule PidroServerWeb.GameChannel do
       case role do
         :player ->
           # Check if player is in disconnected list
-          if Map.has_key?(room.disconnected_players || %{}, user_id) do
-            # Attempt reconnection
+          if is_reconnection?(room, user_id) do
+            # Attempt reconnection (handles Phase 1, 2, and 3)
             case RoomManager.handle_player_reconnect(room_code, user_id) do
               {:ok, updated_room} ->
                 Logger.info("Player #{user_id} reconnected to room #{room_code}")
@@ -107,16 +108,30 @@ defmodule PidroServerWeb.GameChannel do
                 # Continue with normal join flow
                 proceed_with_join(room_code, user_id, socket, :reconnect, :player)
 
+              {:error, :seat_permanently_filled} ->
+                {:error, %{reason: "seat permanently filled by bot"}}
+
               {:error, :grace_period_expired} ->
                 {:error, %{reason: "reconnection grace period expired"}}
 
               {:error, reason} ->
                 Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
-                {:error, %{reason: "reconnection failed: #{inspect(reason)}"}}
+                {:error, %{reason: "reconnection failed: #{format_error(reason)}"}}
             end
           else
             # Not a reconnection, proceed with normal join
             proceed_with_join(room_code, user_id, socket, :new, :player)
+          end
+
+        :substitute ->
+          # Stranger joining a :playing room with a vacant seat
+          case RoomManager.join_as_substitute(room_code, user_id) do
+            {:ok, _updated_room, _position} ->
+              proceed_with_join(room_code, user_id, socket, :new, :player)
+
+            {:error, reason} ->
+              Logger.warning("Substitute join failed for #{user_id}: #{inspect(reason)}")
+              {:error, %{reason: "substitute join failed: #{format_error(reason)}"}}
           end
 
         :spectator ->
@@ -311,6 +326,40 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
+  def handle_in("open_seat", %{"position" => position}, socket) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
+    else
+      case parse_position(position) do
+        {:ok, pos_atom} ->
+          case RoomManager.open_seat(socket.assigns.room_code, pos_atom, socket.assigns.user_id) do
+            {:ok, _room} -> {:reply, :ok, socket}
+            {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+          end
+
+        :error ->
+          {:reply, {:error, %{reason: "invalid position"}}, socket}
+      end
+    end
+  end
+
+  def handle_in("close_seat", %{"position" => position}, socket) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
+    else
+      case parse_position(position) do
+        {:ok, pos_atom} ->
+          case RoomManager.close_seat(socket.assigns.room_code, pos_atom, socket.assigns.user_id) do
+            {:ok, _room} -> {:reply, :ok, socket}
+            {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+          end
+
+        :error ->
+          {:reply, {:error, %{reason: "invalid position"}}, socket}
+      end
+    end
+  end
+
   @doc """
   Handles internal messages and game events.
 
@@ -357,6 +406,64 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  # Disconnect cascade PubSub events — push to client for UI updates
+  def handle_info({:player_reconnecting, %{user_id: user_id, position: position}}, socket) do
+    push(socket, "player_reconnecting", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:player_reconnected, %{user_id: user_id, position: position}}, socket) do
+    push(socket, "player_reconnected", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:player_reclaimed_seat, %{user_id: user_id, position: position}}, socket) do
+    push(socket, "player_reclaimed_seat", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:bot_substitute_active, %{position: position, user_id: user_id}}, socket) do
+    push(socket, "bot_substitute_active", %{position: position, user_id: user_id})
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_permanently_botted, %{position: position}}, socket) do
+    push(socket, "seat_permanently_botted", %{position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:owner_decision_available, %{position: position, owner_id: owner_id}}, socket) do
+    push(socket, "owner_decision_available", %{position: position, owner_id: owner_id})
+    {:noreply, socket}
+  end
+
+  def handle_info(
+        {:owner_changed, %{new_owner_id: new_owner_id, new_owner_position: new_owner_position}},
+        socket
+      ) do
+    push(socket, "owner_changed", %{
+      new_owner_id: new_owner_id,
+      new_owner_position: new_owner_position
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:substitute_available, %{position: position}}, socket) do
+    push(socket, "substitute_available", %{position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:substitute_seat_closed, %{position: position}}, socket) do
+    push(socket, "substitute_seat_closed", %{position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:substitute_joined, %{position: position, user_id: user_id}}, socket) do
+    push(socket, "substitute_joined", %{position: position, user_id: user_id})
+    {:noreply, socket}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,
@@ -385,6 +492,9 @@ defmodule PidroServerWeb.GameChannel do
 
     {:ok, _} = Presence.track(socket, user_id, presence_data)
 
+    activity = if role == :spectator, do: :spectating, else: :playing
+    PresenceAggregator.track(user_id, activity)
+
     push(socket, "presence_state", Presence.list(socket))
     {:noreply, socket}
   end
@@ -408,6 +518,11 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_out("player_reconnected", msg, socket) do
     push(socket, "player_reconnected", msg)
+    {:noreply, socket}
+  end
+
+  def handle_out("player_disconnected", msg, socket) do
+    push(socket, "player_disconnected", msg)
     {:noreply, socket}
   end
 
@@ -516,8 +631,19 @@ defmodule PidroServerWeb.GameChannel do
     Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end)
   end
 
+  @spec is_reconnection?(RoomManager.Room.t(), String.t()) :: boolean()
+  defp is_reconnection?(room, user_id) do
+    # Check seat-based disconnect cascade:
+    # Phase 1 (:reconnecting) — user_id still on seat
+    # Phase 2/3 (:bot_substitute with reserved_for) — user_id cleared from seat but reserved_for still set
+    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
+      seat.reserved_for == user_id ||
+        (seat.status == :reconnecting && seat.user_id == user_id)
+    end)
+  end
+
   @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
-          :player | :spectator | :unauthorized
+          :player | :substitute | :spectator | :unauthorized
   defp determine_user_role(room, user_id) do
     alias PidroServer.Games.Room.Positions
     user_id_str = to_string(user_id)
@@ -525,6 +651,15 @@ defmodule PidroServerWeb.GameChannel do
     cond do
       Positions.has_player?(room, user_id_str) ->
         :player
+
+      # Player whose seat was taken by a bot still has reserved_for set
+      Seat.reserved_for_user?(room.seats || %{}, user_id_str) ->
+        :player
+
+      # In a :playing room, vacant seats can only exist via Seat.open_for_substitute/1,
+      # which requires the owner to explicitly open them. Safe to grant :substitute role.
+      room.status == :playing && Seat.any_vacant?(room.seats || %{}) ->
+        :substitute
 
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
         :spectator
@@ -559,6 +694,18 @@ defmodule PidroServerWeb.GameChannel do
     else
       []
     end
+  end
+
+  @position_map %{
+    "north" => :north,
+    "south" => :south,
+    "east" => :east,
+    "west" => :west
+  }
+
+  @spec parse_position(String.t()) :: {:ok, atom()} | :error
+  defp parse_position(position) when is_binary(position) do
+    Map.fetch(@position_map, position)
   end
 
   @spec parse_suit(String.t()) :: {:ok, atom()} | :error
@@ -618,6 +765,7 @@ defmodule PidroServerWeb.GameChannel do
 
         # Prepare stats attributes
         player_ids = PidroServer.Games.Room.Positions.player_ids(room)
+        player_results = Stats.build_player_results(room.seats, winner)
 
         stats_attrs = %{
           room_code: room_code,
@@ -627,7 +775,8 @@ defmodule PidroServerWeb.GameChannel do
           bid_team: bid_info.bid_team,
           duration_seconds: duration_seconds,
           completed_at: DateTime.utc_now(),
-          player_ids: player_ids
+          player_ids: player_ids,
+          player_results: player_results
         }
 
         # Save to database

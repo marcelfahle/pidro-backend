@@ -14,6 +14,8 @@ defmodule PidroServer.Application do
       {Phoenix.PubSub, name: PidroServer.PubSub},
       # Presence tracking for connected users
       PidroServerWeb.Presence,
+      # Aggregate online user count across all channels
+      PidroServer.Games.PresenceAggregator,
       # Games domain supervisor - manages rooms and game processes
       PidroServer.Games.Supervisor,
       # Bot infrastructure - available in all environments

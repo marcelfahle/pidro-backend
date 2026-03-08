@@ -45,7 +45,6 @@ defmodule PidroServerWeb.Router do
     # Room routes without authentication
     get "/rooms", RoomController, :index
     get "/rooms/:code", RoomController, :show
-    get "/rooms/:code/state", RoomController, :state
   end
 
   # API v1 authenticated routes
@@ -54,13 +53,21 @@ defmodule PidroServerWeb.Router do
 
     get "/auth/me", AuthController, :me
 
+    # Game state route (authenticated to prevent hand exposure)
+    get "/rooms/:code/state", RoomController, :state
+
     # User routes with authentication
     get "/users/me/stats", UserController, :stats
+
+    # Lobby route with authentication (needs user_id for rejoinable rooms)
+    get "/lobby", RoomController, :lobby
 
     # Room routes with authentication
     post "/rooms", RoomController, :create
     post "/rooms/:code/join", RoomController, :join
     delete "/rooms/:code/leave", RoomController, :leave
+    post "/rooms/:code/open-seat", RoomController, :open_seat
+    post "/rooms/:code/close-seat", RoomController, :close_seat
 
     # Spectator routes with authentication
     post "/rooms/:code/watch", RoomController, :watch

@@ -7,6 +7,18 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
   """
 
   @doc """
+  Serializes game state with all player hands hidden (card counts only).
+
+  Used by REST endpoints where exposing hands would enable cheating.
+  Each player's hand is replaced with a card_count field.
+  """
+  @spec serialize_public(map()) :: map()
+  def serialize_public(state) when is_map(state) do
+    result = serialize(state)
+    %{result | players: serialize_players_public(Map.get(state, :players, %{}))}
+  end
+
+  @doc """
   Serializes a Pidro game state struct into a JSON-safe map.
 
   Converts complex Elixir structs and tuples (cards, bids, tricks) into
@@ -49,6 +61,17 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
     players
     |> Enum.map(fn {position, player} ->
       {position, serialize_player(player)}
+    end)
+    |> Enum.into(%{})
+  end
+
+  @doc false
+  defp serialize_players_public(players) when is_map(players) do
+    players
+    |> Enum.map(fn {position, player} ->
+      base = serialize_player(player)
+      hand = Map.get(player, :hand, [])
+      {position, %{base | hand: nil} |> Map.put(:card_count, length(hand))}
     end)
     |> Enum.into(%{})
   end

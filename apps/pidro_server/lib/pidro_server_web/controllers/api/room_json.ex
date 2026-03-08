@@ -7,7 +7,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   single room responses, room lists, and room creation responses.
   """
 
-  alias PidroServer.Games.Room.Positions
+  alias PidroServer.Games.Room.{Positions, Seat}
   alias PidroServerWeb.Serializers.GameStateSerializer
 
   @doc """
@@ -61,6 +61,23 @@ defmodule PidroServerWeb.API.RoomJSON do
   end
 
   @doc """
+  Renders categorized lobby data.
+
+  Returns rooms grouped into four categories: my_rejoinable, open_tables,
+  substitute_needed, and spectatable. Each category contains serialized room data.
+  """
+  def lobby(%{lobby: lobby}) do
+    %{
+      data: %{
+        my_rejoinable: Enum.map(lobby.my_rejoinable, &room/1),
+        open_tables: Enum.map(lobby.open_tables, &room/1),
+        substitute_needed: Enum.map(lobby.substitute_needed, &room/1),
+        spectatable: Enum.map(lobby.spectatable, &room/1)
+      }
+    }
+  end
+
+  @doc """
   Renders the game state for a room.
 
   Takes a map with a :state key and returns the serialized game state
@@ -73,7 +90,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{state: serialized_state}}
   """
   def state(%{state: game_state}) do
-    %{data: %{state: GameStateSerializer.serialize(game_state)}}
+    %{data: %{state: GameStateSerializer.serialize_public(game_state)}}
   end
 
   @doc """
@@ -107,8 +124,15 @@ defmodule PidroServerWeb.API.RoomJSON do
       status: room.status,
       max_players: room.max_players,
       max_spectators: room.max_spectators || 10,
-      created_at: DateTime.to_iso8601(room.created_at)
+      created_at: DateTime.to_iso8601(room.created_at),
+      seats: serialize_room_seats(Map.get(room, :seats, %{}))
     }
+  end
+
+  defp serialize_room_seats(seats) when map_size(seats) == 0, do: %{}
+
+  defp serialize_room_seats(seats) do
+    Map.new(seats, fn {position, seat} -> {position, Seat.serialize(seat)} end)
   end
 
   @doc false

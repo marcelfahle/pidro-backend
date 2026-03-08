@@ -16,7 +16,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
   use GenServer
   require Logger
-  alias Pidro.Game.DealerRob
+  alias PidroServer.Games.Bots.BotBrain
   alias PidroServer.Games.Bots.Strategies.RandomStrategy
   alias PidroServer.Games.GameAdapter
 
@@ -98,7 +98,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
         if should_make_move?(game_state, state) do
-          schedule_move(state.delay_ms)
+          BotBrain.schedule_move(state.delay_ms)
         end
 
       {:error, _} ->
@@ -111,7 +111,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   @impl true
   def handle_info({:state_update, game_state}, state) do
     if should_make_move?(game_state, state) do
-      schedule_move(state.delay_ms)
+      BotBrain.schedule_move(state.delay_ms)
     end
 
     {:noreply, state}
@@ -134,7 +134,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
   @impl true
   def handle_info(:make_move, state) do
-    execute_move(state)
+    BotBrain.execute_move(state, "BotPlayer")
     {:noreply, state}
   end
 
@@ -150,7 +150,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
         if should_make_move?(game_state, new_state) do
-          schedule_move(new_state.delay_ms)
+          BotBrain.schedule_move(new_state.delay_ms)
         end
 
       {:error, _reason} ->
@@ -174,7 +174,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
         if should_make_move?(game_state, new_state) do
-          schedule_move(new_state.delay_ms)
+          BotBrain.schedule_move(new_state.delay_ms)
         end
 
         {:noreply, new_state}
@@ -195,92 +195,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   ## Private Functions
 
   defp should_make_move?(game_state, state) do
-    phase = Map.get(game_state, :phase)
-
-    not state.paused? and
-      phase not in [:complete, nil] and
-      (Map.get(game_state, :current_turn) == state.position or
-         phase == :dealer_selection)
-  end
-
-  defp schedule_move(delay_ms) do
-    Process.send_after(self(), :make_move, delay_ms)
-  end
-
-  defp execute_move(state) do
-    case GameAdapter.get_legal_actions(state.room_code, state.position) do
-      {:ok, legal_actions} when legal_actions != [] ->
-        game_state = get_game_state(state.room_code)
-
-        case state.strategy.pick_action(legal_actions, game_state) do
-          {:ok, action, reasoning} ->
-            action = resolve_action(action, game_state, state.position)
-
-            Logger.debug(
-              "BotPlayer (#{state.room_code}/#{state.position}) executing: #{inspect(action)} - #{reasoning}"
-            )
-
-            case GameAdapter.apply_action(state.room_code, state.position, action) do
-              {:ok, _new_state} ->
-                :ok
-
-              {:error, reason} ->
-                Logger.warning(
-                  "BotPlayer (#{state.room_code}/#{state.position}) action failed: #{inspect(reason)}"
-                )
-            end
-
-          action ->
-            # Fallback for strategies that don't return {:ok, action, reasoning}
-            action = resolve_action(action, game_state, state.position)
-
-            Logger.debug(
-              "BotPlayer (#{state.room_code}/#{state.position}) executing: #{inspect(action)} (legacy)"
-            )
-
-            case GameAdapter.apply_action(state.room_code, state.position, action) do
-              {:ok, _new_state} ->
-                :ok
-
-              {:error, reason} ->
-                Logger.warning(
-                  "BotPlayer (#{state.room_code}/#{state.position}) action failed: #{inspect(reason)}"
-                )
-            end
-        end
-
-      {:ok, []} ->
-        Logger.debug("BotPlayer (#{state.room_code}/#{state.position}) has no legal actions")
-
-      {:error, :not_found} ->
-        Logger.warning("BotPlayer (#{state.room_code}/#{state.position}) - game not found")
-
-      {:error, reason} ->
-        Logger.warning(
-          "BotPlayer (#{state.room_code}/#{state.position}) error: #{inspect(reason)}"
-        )
-    end
-  end
-
-  # Resolve placeholder actions into concrete actions.
-  # {:select_hand, :choose_6_cards} is a marker — bots must compute actual card selection.
-  defp resolve_action({:select_hand, :choose_6_cards}, game_state, position) do
-    player = Map.get(game_state.players, position, %{})
-    hand = Map.get(player, :hand, [])
-    deck = Map.get(game_state, :deck, [])
-    trump = Map.get(game_state, :trump_suit)
-    pool = hand ++ deck
-    selected = DealerRob.select_best_cards(pool, trump)
-    {:select_hand, selected}
-  end
-
-  defp resolve_action(action, _game_state, _position), do: action
-
-  defp get_game_state(room_code) do
-    case GameAdapter.get_state(room_code) do
-      {:ok, state} -> state
-      {:error, _} -> %{}
-    end
+    not state.paused? and BotBrain.should_make_move?(game_state, state.position)
   end
 
   defp resolve_strategy(:random), do: RandomStrategy

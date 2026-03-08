@@ -275,6 +275,62 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :not_owner}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{
+      errors: [
+        %{
+          code: "NOT_OWNER",
+          title: "Not owner",
+          detail: "Only the room owner can perform this action"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :room_not_playing}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "ROOM_NOT_PLAYING",
+          title: "Room not playing",
+          detail: "Room must be in playing status for this action"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :seat_not_bot_substitute}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "SEAT_NOT_BOT_SUBSTITUTE",
+          title: "Seat not bot substitute",
+          detail: "The seat must be occupied by a substitute bot"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :seat_not_vacant}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "SEAT_NOT_VACANT",
+          title: "Seat not vacant",
+          detail: "The seat must be vacant to close it"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :already_seated}) do
     conn
     |> put_status(:unprocessable_entity)
@@ -284,6 +340,34 @@ defmodule PidroServerWeb.API.FallbackController do
           code: "ALREADY_SEATED",
           title: "Already seated",
           detail: "Player is already seated in this room"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :no_vacant_seat}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "NO_VACANT_SEAT",
+          title: "No vacant seat",
+          detail: "No vacant seat is available for joining"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, reason}) when is_atom(reason) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: String.upcase(Atom.to_string(reason)),
+          title: reason |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize(),
+          detail: "Operation failed: #{Atom.to_string(reason)}"
         }
       ]
     })

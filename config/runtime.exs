@@ -20,6 +20,32 @@ if System.get_env("PHX_SERVER") do
   config :pidro_server, PidroServerWeb.Endpoint, server: true
 end
 
+# Lifecycle timeout overrides via environment variables.
+# These apply in all environments but are primarily useful in production
+# to tune disconnect cascade and room lifecycle timers without redeploying.
+lifecycle_overrides =
+  [
+    {:hiccup_timeout_ms, "LIFECYCLE_HICCUP_TIMEOUT_MS"},
+    {:grace_timeout_ms, "LIFECYCLE_GRACE_TIMEOUT_MS"},
+    {:empty_room_ttl_ms, "LIFECYCLE_EMPTY_ROOM_TTL_MS"},
+    {:finished_room_ttl_ms, "LIFECYCLE_FINISHED_ROOM_TTL_MS"},
+    {:idle_waiting_ttl_ms, "LIFECYCLE_IDLE_WAITING_TTL_MS"},
+    {:reconnect_turn_extension_ms, "LIFECYCLE_RECONNECT_TURN_EXTENSION_MS"},
+    {:health_check_interval_ms, "LIFECYCLE_HEALTH_CHECK_INTERVAL_MS"},
+    {:presence_debounce_ms, "LIFECYCLE_PRESENCE_DEBOUNCE_MS"}
+  ]
+  |> Enum.reduce([], fn {key, env_var}, acc ->
+    case System.get_env(env_var) do
+      nil -> acc
+      val -> [{key, String.to_integer(val)} | acc]
+    end
+  end)
+
+if lifecycle_overrides != [] do
+  existing = Application.get_env(:pidro_server, PidroServer.Games.Lifecycle, [])
+  config :pidro_server, PidroServer.Games.Lifecycle, Keyword.merge(existing, lifecycle_overrides)
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
