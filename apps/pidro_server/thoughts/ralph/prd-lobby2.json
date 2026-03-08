@@ -440,7 +440,7 @@
             "This data is stored but not acted upon yet — future work will use it for matchmaking penalties and profile badges",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "7.3",

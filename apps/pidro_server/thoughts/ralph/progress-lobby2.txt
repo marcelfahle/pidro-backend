@@ -948,3 +948,49 @@ alongside existing game stats.
 - Feature 7.2: Track abandonment per user when Phase 3 fires (PID-35)
 - Feature 7.3: Test score recording with disconnected players (PID-35)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 7.2: Track Abandonment Per User at Phase 3
+
+Implemented abandonment recording when Phase 3 fires and a player's seat becomes
+permanently bot-filled. Logs the abandonment event with a TODO for database
+persistence.
+
+### What was done:
+
+**Stats module (stats.ex):**
+- Added `record_abandonment/3` public function that logs abandonment events with
+  user_id, room_code, and position
+- Added `require Logger` to the module
+- Full @doc and @spec following existing patterns
+- TODO comment documenting the future schema: `games_abandoned` (integer) and
+  `last_abandoned_at` (utc_datetime) on a user_stats table
+- Data will power matchmaking penalties and profile badges in future phases
+
+**RoomManager (room_manager.ex):**
+- Wired `PidroServer.Stats.record_abandonment/3` into the Phase 3 handler
+  (`handle_info({:phase3_gone, ...})`)
+- Called BEFORE `Seat.make_permanent_bot/1` so `reserved_for` (the abandoning
+  user's ID) is still available
+- Only fires when the guard condition is met: seat is `:bot_substitute` with
+  non-nil `reserved_for`
+
+### Design decisions:
+- No database migration — the PRD specifies "If no user stats table exists yet,
+  log the abandonment and add a TODO for persistence." Since there's no per-user
+  stats table, logging is the correct approach.
+- Used `PidroServer.Stats.record_abandonment/3` (fully qualified) rather than
+  adding an alias, since it's a single call site and doesn't justify polluting
+  RoomManager's alias list
+- Recording happens before `make_permanent_bot` to capture `reserved_for` while
+  it's still set (make_permanent_bot clears it to nil)
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 316 tests, 0 failures, 1 skipped
+  (1 pre-existing flaky LoadTest performance failure)
+
+### Next up:
+- Feature 7.3: Test score recording with disconnected players (PID-35)
+- Phase 8: Substitute Seat Opening (PID-34)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

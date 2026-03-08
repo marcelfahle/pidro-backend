@@ -4,6 +4,7 @@ defmodule PidroServer.Stats do
   Handles saving game results and aggregating user stats.
   """
 
+  require Logger
   import Ecto.Query, warn: false
   alias PidroServer.Repo
   alias PidroServer.Stats.GameStats
@@ -188,6 +189,32 @@ defmodule PidroServer.Stats do
   end
 
   def build_player_results(_seats, _winner), do: %{}
+
+  @doc """
+  Records a player abandonment when Phase 3 fires.
+
+  Called when a disconnected player's seat becomes permanently bot-filled
+  (grace period expired without reconnection). Logs the abandonment event
+  for observability.
+
+  This data will be used for matchmaking penalties and profile badges
+  in a future phase.
+
+  ## Parameters
+
+    * `user_id` - The ID of the player who abandoned the game
+    * `room_code` - The room code where the abandonment occurred
+    * `position` - The seat position that was abandoned
+  """
+  @spec record_abandonment(String.t(), String.t(), atom()) :: :ok
+  def record_abandonment(user_id, room_code, position) do
+    # TODO: Persist to database when a user_stats table is created.
+    # Future schema should include: games_abandoned (integer), last_abandoned_at (utc_datetime).
+    # This data will power matchmaking penalties and profile badges.
+    Logger.info("Abandonment recorded: user=#{user_id} room=#{room_code} position=#{position}")
+
+    :ok
+  end
 
   # Private helpers
 

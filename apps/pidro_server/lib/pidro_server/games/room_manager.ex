@@ -1301,6 +1301,9 @@ defmodule PidroServer.Games.RoomManager do
         seat = Map.get(room.seats, position)
 
         if seat && seat.status == :bot_substitute && seat.reserved_for != nil do
+          # Record abandonment before clearing reserved_for
+          PidroServer.Stats.record_abandonment(seat.reserved_for, room_code, position)
+
           # Make bot permanent — player can no longer reclaim
           {:ok, permanent_seat} = Seat.make_permanent_bot(seat)
 
