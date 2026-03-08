@@ -473,7 +473,7 @@
             "Add close_seat/3: same owner check, seat must be :vacant. Spawn a new bot, set seat to :bot_substitute, remove from lobby substitute list",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "8.2",

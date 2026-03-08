@@ -1042,3 +1042,57 @@ All 3 features (7.1–7.3) now pass. Phase 7 (Score Protection) is fully complet
 ### Next up:
 - Phase 8: Substitute Seat Opening (PID-34) — owner opens bot seats for humans
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 8.1: Implement open_seat and close_seat
+
+Implemented `open_seat/3` and `close_seat/3` in RoomManager — the owner can now
+open bot-filled seats for human substitutes and close them back to bots.
+
+### What was done:
+
+**RoomManager (room_manager.ex):**
+- Added `open_seat/3` public API: takes room_code, position, requesting_user_id.
+  Validates requester is owner, room is :playing, target seat is :bot_substitute.
+  Terminates the bot process via `DynamicSupervisor.terminate_child`, calls
+  `Seat.open_for_substitute/1` to transition seat to vacant. Broadcasts
+  `{:substitute_available, %{position: position}}` on game PubSub topic and
+  `{:room_updated, room}` on lobby topic.
+- Added `close_seat/3` public API: same owner/playing validation, seat must be
+  :vacant. Spawns a new SubstituteBot via `SubstituteBot.start/2`, creates a
+  `:bot_substitute` seat directly (no reserved_for since this is a fresh bot,
+  not a disconnect cascade). Broadcasts `{:substitute_seat_closed, %{position}}`
+  on game topic.
+- Added 4 validation helpers: `ensure_owner/2`, `ensure_playing/1`,
+  `ensure_seat_bot_substitute/2`, `ensure_seat_vacant/2`
+- Both functions use `with` chains for clean validation flow, following existing
+  codebase patterns
+
+**GameChannel (game_channel.ex):**
+- Added `handle_info` clauses for `{:substitute_available, _}` and
+  `{:substitute_seat_closed, _}` — pushes events to connected clients
+
+**SubstituteBot (substitute_bot.ex):**
+- Added no-op `handle_info` clauses for `{:substitute_available, _}` and
+  `{:substitute_seat_closed, _}` to prevent crashes from PubSub messages
+
+### Design decisions:
+- `close_seat` builds a `%Seat{}` struct directly instead of using the
+  transition chain (vacant → connected → bot_substitute), because the Seat
+  module doesn't have a direct vacant → bot path. The seat has no reserved_for
+  since it's a fresh bot, not part of a disconnect cascade.
+- Owner validation uses `room.host_id` comparison — consistent with how
+  ownership is tracked elsewhere in RoomManager
+- Both functions touch last_activity and broadcast room + lobby updates
+- Error atoms are descriptive: :not_owner, :room_not_playing,
+  :seat_not_bot_substitute, :seat_not_vacant
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 328 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 8.2: Allow strangers to join :playing rooms with vacant seats (PID-34)
+- Feature 8.3: Channel events and REST endpoint for seat management (PID-34)
+- Feature 8.4: Test the full substitute seat flow (PID-34)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

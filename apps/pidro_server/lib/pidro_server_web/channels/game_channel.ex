@@ -403,6 +403,16 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:substitute_available, %{position: position}}, socket) do
+    push(socket, "substitute_available", %{position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:substitute_seat_closed, %{position: position}}, socket) do
+    push(socket, "substitute_seat_closed", %{position: position})
+    {:noreply, socket}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,

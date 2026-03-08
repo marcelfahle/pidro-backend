@@ -544,6 +544,76 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Opens a bot-substitute seat for a human substitute to join.
+
+  Only the room owner can open seats. The target seat must be a `:bot_substitute`
+  in a `:playing` room. The bot is terminated and the seat becomes vacant,
+  appearing in the lobby's `substitute_needed` category.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `position` - The seat position to open (`:north`, `:east`, `:south`, `:west`)
+  - `requesting_user_id` - User ID of the requester (must be the owner)
+
+  ## Returns
+
+  - `{:ok, room}` - Seat opened successfully
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :not_owner}` - Requester is not the room owner
+  - `{:error, :room_not_playing}` - Room is not in `:playing` status
+  - `{:error, :seat_not_bot_substitute}` - Seat is not a bot substitute
+
+  ## Examples
+
+      {:ok, room} = RoomManager.open_seat("A1B2", :east, "owner-user-id")
+  """
+  @spec open_seat(String.t(), Positions.position(), String.t()) ::
+          {:ok, Room.t()}
+          | {:error, :room_not_found | :not_owner | :room_not_playing | :seat_not_bot_substitute}
+  def open_seat(room_code, position, requesting_user_id) do
+    GenServer.call(
+      __MODULE__,
+      {:open_seat, String.upcase(room_code), position, requesting_user_id}
+    )
+  end
+
+  @doc """
+  Closes a vacant seat by spawning a new bot to fill it.
+
+  Only the room owner can close seats. The target seat must be vacant in a
+  `:playing` room. A new substitute bot is spawned and the seat becomes
+  `:bot_substitute`.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `position` - The seat position to close (`:north`, `:east`, `:south`, `:west`)
+  - `requesting_user_id` - User ID of the requester (must be the owner)
+
+  ## Returns
+
+  - `{:ok, room}` - Seat closed successfully (bot spawned)
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :not_owner}` - Requester is not the room owner
+  - `{:error, :room_not_playing}` - Room is not in `:playing` status
+  - `{:error, :seat_not_vacant}` - Seat is not vacant
+
+  ## Examples
+
+      {:ok, room} = RoomManager.close_seat("A1B2", :east, "owner-user-id")
+  """
+  @spec close_seat(String.t(), Positions.position(), String.t()) ::
+          {:ok, Room.t()}
+          | {:error, :room_not_found | :not_owner | :room_not_playing | :seat_not_vacant}
+  def close_seat(room_code, position, requesting_user_id) do
+    GenServer.call(
+      __MODULE__,
+      {:close_seat, String.upcase(room_code), position, requesting_user_id}
+    )
+  end
+
+  @doc """
   Resets the RoomManager state for testing purposes.
 
   This function is only intended for use in tests to clear all rooms and
@@ -1138,6 +1208,99 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  @impl true
+  def handle_call({:open_seat, room_code, position, requesting_user_id}, _from, %State{} = state) do
+    with {:ok, room} <- fetch_room(state, room_code),
+         :ok <- ensure_owner(room, requesting_user_id),
+         :ok <- ensure_playing(room),
+         :ok <- ensure_seat_bot_substitute(room, position) do
+      seat = Map.get(room.seats, position)
+
+      # Terminate the bot process
+      if seat.bot_pid && Process.alive?(seat.bot_pid) do
+        DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, seat.bot_pid)
+      end
+
+      # Transition seat to vacant
+      {:ok, vacant_seat} = Seat.open_for_substitute(seat)
+
+      updated_room =
+        %{room | seats: Map.put(room.seats, position, vacant_seat)}
+        |> touch_last_activity()
+
+      updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+      Logger.info(
+        "Seat at #{position} opened for substitute in room #{room_code} by owner #{requesting_user_id}"
+      )
+
+      # Broadcast to lobby so the room appears in substitute_needed
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+
+      # Broadcast on game channel so clients know a seat is available
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:substitute_available, %{position: position}}
+      )
+
+      {:reply, {:ok, updated_room}, updated_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:close_seat, room_code, position, requesting_user_id}, _from, %State{} = state) do
+    with {:ok, room} <- fetch_room(state, room_code),
+         :ok <- ensure_owner(room, requesting_user_id),
+         :ok <- ensure_playing(room),
+         :ok <- ensure_seat_vacant(room, position) do
+      # Spawn a new substitute bot for this position
+      {:ok, bot_pid} = SubstituteBot.start(room_code, position)
+
+      seat = Map.get(room.seats, position)
+
+      # Fill seat then transition to bot_substitute (vacant -> connected -> bot path
+      # doesn't exist, so we build a bot_substitute seat directly)
+      bot_seat = %Seat{
+        position: position,
+        occupant_type: :bot,
+        bot_pid: bot_pid,
+        status: :bot_substitute,
+        user_id: nil,
+        reserved_for: nil,
+        is_owner: seat.is_owner
+      }
+
+      updated_room =
+        %{room | seats: Map.put(room.seats, position, bot_seat)}
+        |> touch_last_activity()
+
+      updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+      Logger.info(
+        "Seat at #{position} closed (bot spawned) in room #{room_code} by owner #{requesting_user_id}"
+      )
+
+      # Broadcast room update — room no longer has a vacant seat
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+
+      # Broadcast on game channel
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:substitute_seat_closed, %{position: position}}
+      )
+
+      {:reply, {:ok, updated_room}, updated_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   if Mix.env() == :test do
     @impl true
     def handle_call({:set_last_activity_for_test, room_code, datetime}, _from, %State{} = state) do
@@ -1487,6 +1650,30 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   defp ensure_room_joinable(%Room{status: status}) when status in [:waiting, :ready], do: :ok
   defp ensure_room_joinable(_), do: {:error, :room_not_available}
+
+  @doc false
+  defp ensure_owner(%Room{host_id: host_id}, user_id) when host_id == user_id, do: :ok
+  defp ensure_owner(_, _), do: {:error, :not_owner}
+
+  @doc false
+  defp ensure_playing(%Room{status: :playing}), do: :ok
+  defp ensure_playing(_), do: {:error, :room_not_playing}
+
+  @doc false
+  defp ensure_seat_bot_substitute(%Room{seats: seats}, position) do
+    case Map.get(seats, position) do
+      %Seat{status: :bot_substitute} -> :ok
+      _ -> {:error, :seat_not_bot_substitute}
+    end
+  end
+
+  @doc false
+  defp ensure_seat_vacant(%Room{seats: seats}, position) do
+    case Map.get(seats, position) do
+      %Seat{occupant_type: :vacant, status: nil} -> :ok
+      _ -> {:error, :seat_not_vacant}
+    end
+  end
 
   @doc false
   defp maybe_set_ready(%Room{} = room) do
