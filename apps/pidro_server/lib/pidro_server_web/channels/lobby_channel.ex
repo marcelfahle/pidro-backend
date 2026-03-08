@@ -43,6 +43,7 @@ defmodule PidroServerWeb.LobbyChannel do
   require Logger
 
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.PresenceAggregator
   alias PidroServer.Games.Room.Seat
   alias PidroServerWeb.Presence
   alias PidroServer.Accounts.Auth
@@ -75,7 +76,8 @@ defmodule PidroServerWeb.LobbyChannel do
     {:ok,
      %{
        rooms: serialize_rooms(rooms),
-       lobby: serialize_lobby(lobby)
+       lobby: serialize_lobby(lobby),
+       online_count: PresenceAggregator.get_count()
      }, socket}
   end
 
@@ -136,6 +138,11 @@ defmodule PidroServerWeb.LobbyChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:online_count_updated, payload}, socket) do
+    push(socket, "online_count_updated", payload)
+    {:noreply, socket}
+  end
+
   def handle_info(:after_join, socket) do
     user_id = socket.assigns.user_id
 
@@ -143,6 +150,8 @@ defmodule PidroServerWeb.LobbyChannel do
       Presence.track(socket, user_id, %{
         online_at: DateTime.utc_now() |> DateTime.to_unix()
       })
+
+    PresenceAggregator.track(user_id, :lobby)
 
     push(socket, "presence_state", Presence.list(socket))
     {:noreply, socket}

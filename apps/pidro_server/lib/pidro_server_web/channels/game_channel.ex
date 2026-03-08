@@ -50,7 +50,7 @@ defmodule PidroServerWeb.GameChannel do
   use PidroServerWeb, :channel
   require Logger
 
-  alias PidroServer.Games.{GameAdapter, RoomManager}
+  alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
   alias PidroServer.Stats
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
@@ -490,6 +490,9 @@ defmodule PidroServerWeb.GameChannel do
       end
 
     {:ok, _} = Presence.track(socket, user_id, presence_data)
+
+    activity = if role == :spectator, do: :spectating, else: :playing
+    PresenceAggregator.track(user_id, activity)
 
     push(socket, "presence_state", Presence.list(socket))
     {:noreply, socket}

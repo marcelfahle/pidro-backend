@@ -27,6 +27,13 @@ defmodule PidroServer.Games.LifecycleTest do
 
   describe "config/1" do
     test "returns default values when no config override is set" do
+      original = Application.get_env(:pidro_server, Lifecycle)
+      Application.delete_env(:pidro_server, Lifecycle)
+
+      on_exit(fn ->
+        if original, do: Application.put_env(:pidro_server, Lifecycle, original)
+      end)
+
       for key <- @all_keys do
         assert Lifecycle.config(key) == @expected_defaults[key],
                "expected default for #{key} to be #{@expected_defaults[key]}, got #{Lifecycle.config(key)}"
@@ -34,20 +41,26 @@ defmodule PidroServer.Games.LifecycleTest do
     end
 
     test "returns overridden value when Application config is set" do
+      original = Application.get_env(:pidro_server, Lifecycle)
       Application.put_env(:pidro_server, Lifecycle, hiccup_timeout_ms: 5_000)
 
       on_exit(fn ->
-        Application.delete_env(:pidro_server, Lifecycle)
+        if original,
+          do: Application.put_env(:pidro_server, Lifecycle, original),
+          else: Application.delete_env(:pidro_server, Lifecycle)
       end)
 
       assert Lifecycle.config(:hiccup_timeout_ms) == 5_000
     end
 
     test "non-overridden keys still return defaults when some keys are overridden" do
+      original = Application.get_env(:pidro_server, Lifecycle)
       Application.put_env(:pidro_server, Lifecycle, grace_timeout_ms: 60_000)
 
       on_exit(fn ->
-        Application.delete_env(:pidro_server, Lifecycle)
+        if original,
+          do: Application.put_env(:pidro_server, Lifecycle, original),
+          else: Application.delete_env(:pidro_server, Lifecycle)
       end)
 
       assert Lifecycle.config(:grace_timeout_ms) == 60_000

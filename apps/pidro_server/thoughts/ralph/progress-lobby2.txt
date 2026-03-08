@@ -1295,5 +1295,73 @@ variable overrides in runtime.exs for production tuning.
 ### Phase 1 Complete!
 All 3 features (1.1–1.3) now pass. Phase 1 (Lifecycle Config) is fully complete.
 
-### Next up:
-- Phase 9: Global Online Presence (PID-39) — PresenceAggregator
+## 2026-03-08 — Features 9.1 + 9.2 + 9.3: Global Online Presence (Complete Phase)
+
+Implemented the PresenceAggregator GenServer, wired it into the supervision tree
+and channels, and added comprehensive tests. All three features were implemented
+together since they're small and interdependent.
+
+### What was done:
+
+**PresenceAggregator GenServer (lib/pidro_server/games/presence_aggregator.ex):**
+- GenServer that tracks unique online users across lobby and game channels
+- Channels call `track/2` (cast) on join; aggregator monitors the calling process
+  and auto-cleans up when it exits (disconnect)
+- State: `connections` (pid → {user_id, activity, monitor_ref}), `user_pids`
+  (user_id → MapSet of pids) for deduplication
+- Bot user IDs (starting with "bot_") are excluded from tracking
+- `get_count/0` returns unique user count, `get_breakdown/0` returns
+  %{lobby: n, playing: n, spectating: n}
+- Breakdown uses activity priority: playing > spectating > lobby (user in
+  multiple channels categorized by highest priority)
+- Debounced broadcasts: on count change, schedules broadcast after
+  `Lifecycle.config(:presence_debounce_ms)`. Skips broadcast if count unchanged.
+- Broadcasts `{:online_count_updated, %{count, breakdown}}` on "lobby:updates"
+  PubSub topic
+- `reset_for_test/0` for test isolation (demonitors all, resets state)
+
+**Supervision tree (application.ex):**
+- Added PresenceAggregator right after Presence in the children list
+
+**LobbyChannel (lobby_channel.ex):**
+- Added `PresenceAggregator.track(user_id, :lobby)` in `:after_join`
+- Added `online_count` from `PresenceAggregator.get_count()` in join reply
+- Added `handle_info({:online_count_updated, payload})` to push count updates
+  to connected lobby clients
+
+**GameChannel (game_channel.ex):**
+- Added `PresenceAggregator.track(user_id, activity)` in `:after_join`
+  where activity is `:playing` or `:spectating` based on role
+
+**Tests (test/pidro_server/games/presence_aggregator_test.exs):**
+- 10 tests across 3 describe blocks:
+  - tracking (5): unique users, dedup same user, bot exclusion, cleanup on
+    process exit, partial cleanup with multiple connections
+  - breakdown (3): correct breakdown by activity, priority resolution for
+    multi-channel users, empty state returns zeroes
+  - broadcasts (2): count broadcast on lobby:updates, no broadcast when
+    count unchanged
+
+**Bug fix — Lifecycle config test (lifecycle_test.exs):**
+- Fixed pre-existing issue where "default values" test expected module defaults
+  but test.exs config overrode them. Tests now save/restore Application config
+  in setup/on_exit blocks.
+
+### Design decisions:
+- Process monitoring (not explicit untrack) for automatic cleanup — channels
+  die on disconnect, so no manual cleanup needed
+- Cast for track (fire-and-forget from channel), call for get_count/get_breakdown
+  (synchronous query)
+- Single debounce timer (not cancel+reschedule) — first change schedules a
+  broadcast, subsequent changes are picked up when it fires
+- Bot detection via `String.starts_with?(user_id, "bot_")` — matches the
+  existing bot_player naming convention ("bot_#{room_code}_#{position}")
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 354 tests, 0 failures, 1 skipped
+
+### PRD COMPLETE!
+All 9 phases (27 features) now pass. The Lobby & Multiplayer Lifecycle PRD
+is fully implemented.
