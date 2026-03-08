@@ -773,6 +773,12 @@ defmodule PidroServer.Games.RoomManager do
               broadcast_room(room_code, final_room)
               broadcast_lobby_event({:room_updated, final_room})
 
+              # If this was a :playing room and no connected humans remain,
+              # schedule auto-close (bots may still be playing)
+              if room.status == :playing do
+                maybe_schedule_empty_room_close(final_room, room_code)
+              end
+
               {:reply, :ok, new_state}
             end
         end
@@ -1354,10 +1360,43 @@ defmodule PidroServer.Games.RoomManager do
           # If the current owner is a connected human, notify them they can open the seat
           maybe_notify_owner_decision(updated_room, room_code, position)
 
+          # Check if zero connected humans remain — schedule auto-close
+          maybe_schedule_empty_room_close(updated_room, room_code)
+
           {:noreply, updated_state}
         else
           # Player already reclaimed or seat state changed, skip
           {:noreply, state}
+        end
+    end
+  end
+
+  # Auto-close handler — fires after empty_room_ttl when zero humans remain.
+  @impl true
+  def handle_info({:auto_close_empty_room, room_code}, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:noreply, state}
+
+      %Room{} = room ->
+        if has_connected_human?(room) do
+          # A human joined since the timer was scheduled, do nothing
+          {:noreply, state}
+        else
+          Logger.info("Auto-closing room #{room_code}: zero connected humans after TTL")
+
+          # Terminate all substitute bot processes
+          terminate_room_bots(room)
+
+          # Stop the game process
+          GameSupervisor.stop_game(room_code)
+
+          # Cancel any remaining phase timers
+          cancel_all_phase_timers(room)
+
+          # Remove the room from state
+          new_state = remove_room(state, room_code)
+          {:noreply, new_state}
         end
     end
   end
@@ -1592,6 +1631,39 @@ defmodule PidroServer.Games.RoomManager do
         Process.cancel_timer(timer_ref)
         %{room | phase_timers: Map.delete(room.phase_timers, position)}
     end
+  end
+
+  # Empty room auto-close helpers
+
+  @doc false
+  # Checks if zero connected humans remain in the room.
+  # If so, schedules an auto-close after the empty_room_ttl.
+  defp maybe_schedule_empty_room_close(%Room{} = room, room_code) do
+    unless has_connected_human?(room) do
+      ttl = Lifecycle.config(:empty_room_ttl_ms)
+
+      Logger.info("Zero connected humans in room #{room_code}, scheduling auto-close in #{ttl}ms")
+
+      Process.send_after(self(), {:auto_close_empty_room, room_code}, ttl)
+    end
+
+    :ok
+  end
+
+  @doc false
+  # Terminates all substitute bot processes in a room's seats.
+  defp terminate_room_bots(%Room{seats: seats}) do
+    Enum.each(seats, fn {_pos, seat} ->
+      if seat.bot_pid && Process.alive?(seat.bot_pid) do
+        DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, seat.bot_pid)
+      end
+    end)
+  end
+
+  @doc false
+  # Cancels all phase timers in a room (used during room cleanup).
+  defp cancel_all_phase_timers(%Room{phase_timers: timers}) do
+    Enum.each(timers, fn {_pos, timer_ref} -> Process.cancel_timer(timer_ref) end)
   end
 
   @doc false

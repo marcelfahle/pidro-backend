@@ -759,3 +759,54 @@ complete.
 ### Next up:
 - Phase 6: Stale Room Cleanup (PID-33)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 6.1: Zero-Human Room Auto-Close
+
+Implemented auto-close for rooms with zero connected humans. When all humans
+disconnect permanently (Phase 3) or explicitly leave a :playing room, the room
+is automatically closed after the empty_room_ttl.
+
+### What was done:
+
+**RoomManager (room_manager.ex):**
+- Added `handle_info({:auto_close_empty_room, room_code})` handler:
+  - Re-checks `has_connected_human?` (someone might have joined since timer)
+  - If still zero humans: terminates all substitute bots via
+    `DynamicSupervisor.terminate_child`, stops the game process via
+    `GameSupervisor.stop_game`, cancels all phase timers, calls `remove_room`
+  - If a human joined: no-op (timer is safe to fire repeatedly)
+- Added `maybe_schedule_empty_room_close/2` helper:
+  - Checks `has_connected_human?` — if false, schedules
+    `{:auto_close_empty_room, room_code}` after `Lifecycle.config(:empty_room_ttl_ms)`
+  - Logs the scheduling with TTL value for observability
+- Added `terminate_room_bots/1` helper:
+  - Iterates all seats, terminates any with live `bot_pid` via
+    `DynamicSupervisor.terminate_child` (with `Process.alive?` guard)
+- Added `cancel_all_phase_timers/1` helper:
+  - Cancels all timer refs in `room.phase_timers`
+- Wired into Phase 3 handler (`handle_info({:phase3_gone, ...})`):
+  - After ownership promotion logic, calls `maybe_schedule_empty_room_close`
+- Wired into non-owner leave path (`leave_room` true branch):
+  - After player removal, if the room was `:playing`, calls
+    `maybe_schedule_empty_room_close`
+
+### Design decisions:
+- No stored timer ref — the handler re-checks `has_connected_human?`, so
+  duplicate timers are harmless (second fire is a no-op or room already gone)
+- Uses `Lifecycle.config(:empty_room_ttl_ms)` (30s default) for the TTL
+- Owner leave of a :playing room already handles `{:no_humans, room}` by
+  closing immediately via `remove_room` — no change needed there
+- Proper cleanup: terminates substitute bots, stops game process, cancels
+  phase timers, then removes room from state
+- Logging follows existing patterns: "Auto-closing room #{code}: ..." and
+  "Zero connected humans in room #{code}, scheduling auto-close in #{ttl}ms"
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 310 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 6.2: Startup sweep and periodic health check (PID-33)
+- Feature 6.3: Test stale room cleanup (PID-33)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

@@ -378,7 +378,7 @@
             "Add proper logging for room closures with the reason",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "6.2",
