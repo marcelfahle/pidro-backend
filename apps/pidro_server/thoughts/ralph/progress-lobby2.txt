@@ -21,3 +21,23 @@ all timeout values for the disconnect cascade and room lifecycle.
 - Feature 1.2: Wire Lifecycle config into config.exs and runtime.exs
 - Feature 1.3: Tests for Lifecycle config
 - Then Phase 2 (Seat State Machine) is the next major milestone
+
+## 2026-03-08 — Feature 1.3: Lifecycle Config Tests
+
+Created `test/pidro_server/games/lifecycle_test.exs` — unit tests for the Lifecycle config module.
+
+### What was done:
+- 7 tests across 2 describe blocks (config/1 and defaults/0)
+- config/1 tests: default values, overridden values via Application.put_env (with on_exit cleanup),
+  partial overrides (non-overridden keys still return defaults), FunctionClauseError for unknown keys
+- defaults/0 tests: returns all 8 keys, matches expected values, all values are positive integers
+- Follows existing pure-function test pattern (async: true, no GenServer dependency)
+
+### Verification:
+- mix format --check-formatted: passes
+- mix test (lifecycle_test.exs): 7 tests, 0 failures
+- mix test (full pidro_server suite): 211 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 1.2: Wire Lifecycle config into config.exs and runtime.exs
+- Then Phase 2 (Seat State Machine) — the next major milestone

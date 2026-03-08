@@ -47,7 +47,7 @@
             "Test: returns overridden values when Application.put_env is used (clean up in on_exit)",
             "Run the test file — verify all tests pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },
