@@ -1214,3 +1214,42 @@ and close substitute seats during live games.
 - Feature 8.4: Test the full substitute seat flow (PID-34)
 - Phase 9: Global Online Presence (PID-39)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 8.4: Test Full Substitute Seat Flow
+
+Created `test/pidro_server/games/substitute_seat_test.exs` — 16 tests covering
+the full substitute seat lifecycle: open_seat, close_seat, join_as_substitute,
+validation errors, and PubSub broadcasts.
+
+### What was done:
+
+**Tests (substitute_seat_test.exs):**
+- 4 describe blocks covering all PRD test requirements:
+  - open_seat (5 tests): owner can open bot_substitute seat to vacant, non-owner
+    gets :not_owner error, cannot open non-bot_substitute seat, cannot open seat
+    in non-playing room, opening terminates the bot process
+  - join_as_substitute (4 tests): stranger joins playing room with vacant seat,
+    substitute placed in correct position in positions map, cannot join with no
+    vacant seat, cannot join non-playing room
+  - close_seat (3 tests): owner can close vacant seat back to bot with live
+    bot_pid, non-owner cannot close, cannot close non-vacant seat
+  - full end-to-end flow (4 tests): disconnect → bot → open → substitute joins,
+    substitute_available PubSub broadcast, substitute_seat_closed PubSub
+    broadcast, substitute_joined PubSub broadcast
+- Helper `make_seat_bot_substitute/2`: disconnects player and triggers Phase 2
+  manually to create a bot_substitute seat for testing
+- Follows existing test patterns (async: false, BotSupervisor setup, manual
+  Phase 2 message sending)
+
+### Verification:
+- mix format --check-formatted: passes
+- mix test (substitute_seat_test.exs): 16 tests, 0 failures
+- mix test (full pidro_server suite): 344 tests, 0 failures, 1 skipped
+
+### Phase 8 Complete!
+All 4 features (8.1–8.4) now pass. Phase 8 (Substitute Seat Opening) is fully
+complete.
+
+### Next up:
+- Phase 9: Global Online Presence (PID-39) — PresenceAggregator
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

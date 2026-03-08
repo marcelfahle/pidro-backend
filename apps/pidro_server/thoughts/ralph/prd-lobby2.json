@@ -513,7 +513,7 @@
             "Test: cannot open a seat that isn't :bot_substitute",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },
