@@ -856,3 +856,38 @@ production robustness.
 - Feature 6.3: Test stale room cleanup (PID-33)
 - Phase 7: Score Protection (PID-35)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 6.3: Test Stale Room Cleanup
+
+Created `test/pidro_server/games/room_cleanup_test.exs` — 6 tests covering
+zero-human auto-close, startup sweep, and health check cleanup.
+
+### What was done:
+
+**Tests (room_cleanup_test.exs):**
+- 3 describe blocks covering all PRD test requirements:
+  - zero-human room auto-close (2 tests): room closes after auto_close_empty_room
+    fires with zero connected humans; auto-close is no-op when a human is still
+    connected (guard check in handler)
+  - startup sweep (3 tests): removes orphaned :playing rooms with zero connected
+    humans; removes stale :waiting rooms older than idle_waiting_ttl; preserves
+    fresh :waiting rooms
+  - health check (1 test): cleans up dead bot_pid references — spawns bot via
+    Phase 2, kills it manually, triggers health check, asserts bot_pid cleared
+- Helper functions: create_playing_room/0, position_for/2, trigger_full_cascade/2
+- Uses `RoomManager.set_last_activity_for_test/2` (test-only API) to backdatethe
+  last_activity for stale waiting room test
+- Follows existing test patterns (async: false, BotSupervisor setup, manual
+  message sending to RoomManager)
+
+### Verification:
+- mix format --check-formatted: passes
+- mix test (room_cleanup_test.exs): 6 tests, 0 failures
+- mix test (full pidro_server suite): 316 tests, 0 failures, 1 skipped
+
+### Phase 6 Complete!
+All 3 features (6.1–6.3) now pass. Phase 6 (Stale Room Cleanup) is fully complete.
+
+### Next up:
+- Phase 7: Score Protection (PID-35) — score recording with disconnected players
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

@@ -404,7 +404,7 @@
             "Test: health check cleans up dead bot pids",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },
