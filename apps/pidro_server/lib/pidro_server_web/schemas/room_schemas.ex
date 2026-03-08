@@ -11,6 +11,69 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Room Schemas ====================
 
+  # Schema for a Seat at the table.
+  defmodule Seat do
+    OpenApiSpex.schema(%{
+      title: "Seat",
+      description: "A seat at the table with occupant and connection state",
+      type: :object,
+      properties: %{
+        position: %Schema{
+          type: :string,
+          enum: [:north, :south, :east, :west],
+          description: "Table position"
+        },
+        occupant_type: %Schema{
+          type: :string,
+          enum: [:human, :bot, :vacant],
+          description: "Type of occupant"
+        },
+        user_id: %Schema{
+          type: :string,
+          nullable: true,
+          description: "User ID of human occupant"
+        },
+        status: %Schema{
+          type: :string,
+          enum: [:connected, :reconnecting, :grace, :bot_substitute],
+          nullable: true,
+          description: "Connection status"
+        },
+        is_owner: %Schema{
+          type: :boolean,
+          description: "Whether this seat belongs to the room owner"
+        },
+        substitute: %Schema{
+          type: :boolean,
+          description: "Whether this human joined as a substitute"
+        },
+        disconnected_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          nullable: true,
+          description: "When the player disconnected"
+        },
+        grace_expires_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          nullable: true,
+          description: "When the grace period expires"
+        },
+        has_reservation: %Schema{
+          type: :boolean,
+          description: "Whether the original player can still reclaim this seat"
+        },
+        joined_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          nullable: true,
+          description: "When the player joined"
+        }
+      },
+      required: [:position, :occupant_type, :is_owner, :substitute, :has_reservation]
+    })
+  end
+
   # Schema for a Room object representing a game room.
   defmodule Room do
     OpenApiSpex.schema(%{
@@ -30,15 +93,14 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           description: "User ID of the room host/creator",
           example: "user123"
         },
-        player_ids: %Schema{
-          type: :array,
-          items: %Schema{type: :string},
-          description: "List of user IDs currently in the room",
-          example: ["user123", "user456", "user789"]
+        player_count: %Schema{
+          type: :integer,
+          description: "Number of human players currently in the room",
+          example: 2
         },
         status: %Schema{
           type: :string,
-          enum: [:waiting, :ready, :in_progress, :finished],
+          enum: [:waiting, :playing, :finished],
           description: "Current status of the room",
           example: "waiting"
         },
@@ -47,6 +109,18 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           description: "Maximum number of players allowed",
           example: 4
         },
+        metadata: %Schema{
+          type: :object,
+          properties: %{
+            name: %Schema{type: :string, description: "Optional room name"}
+          },
+          description: "Room metadata"
+        },
+        seats: %Schema{
+          type: :object,
+          additionalProperties: Seat,
+          description: "Map of position names to seat objects"
+        },
         created_at: %Schema{
           type: :string,
           format: :"date-time",
@@ -54,13 +128,51 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           example: "2024-11-02T10:30:00Z"
         }
       },
-      required: [:code, :host_id, :player_ids, :status, :max_players, :created_at],
+      required: [:code, :host_id, :player_count, :status, :max_players, :created_at, :seats],
       example: %{
         "code" => "A1B2",
         "host_id" => "user123",
-        "player_ids" => ["user123", "user456"],
+        "player_count" => 2,
         "status" => "waiting",
         "max_players" => 4,
+        "seats" => %{
+          "north" => %{
+            "position" => "north",
+            "occupant_type" => "human",
+            "user_id" => "user123",
+            "status" => "connected",
+            "is_owner" => true,
+            "substitute" => false,
+            "has_reservation" => false,
+            "joined_at" => "2024-11-02T10:30:00Z"
+          },
+          "south" => %{
+            "position" => "south",
+            "occupant_type" => "human",
+            "user_id" => "user456",
+            "status" => "connected",
+            "is_owner" => false,
+            "substitute" => false,
+            "has_reservation" => false,
+            "joined_at" => "2024-11-02T10:31:00Z"
+          },
+          "east" => %{
+            "position" => "east",
+            "occupant_type" => "vacant",
+            "user_id" => nil,
+            "is_owner" => false,
+            "substitute" => false,
+            "has_reservation" => false
+          },
+          "west" => %{
+            "position" => "west",
+            "occupant_type" => "vacant",
+            "user_id" => nil,
+            "is_owner" => false,
+            "substitute" => false,
+            "has_reservation" => false
+          }
+        },
         "created_at" => "2024-11-02T10:30:00Z"
       }
     })
@@ -87,9 +199,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           "room" => %{
             "code" => "A1B2",
             "host_id" => "user123",
-            "player_ids" => ["user123", "user456"],
+            "player_count" => 2,
             "status" => "waiting",
             "max_players" => 4,
+            "seats" => %{
+              "north" => %{
+                "position" => "north",
+                "occupant_type" => "human",
+                "user_id" => "user123",
+                "is_owner" => true,
+                "substitute" => false,
+                "has_reservation" => false
+              }
+            },
             "created_at" => "2024-11-02T10:30:00Z"
           }
         }
@@ -123,17 +245,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             %{
               "code" => "A1B2",
               "host_id" => "user123",
-              "player_ids" => ["user123", "user456"],
+              "player_count" => 2,
               "status" => "waiting",
               "max_players" => 4,
+              "seats" => %{},
               "created_at" => "2024-11-02T10:30:00Z"
             },
             %{
               "code" => "X9Z8",
               "host_id" => "user789",
-              "player_ids" => ["user789"],
+              "player_count" => 1,
               "status" => "waiting",
               "max_players" => 4,
+              "seats" => %{},
               "created_at" => "2024-11-02T10:35:00Z"
             }
           ]
@@ -169,9 +293,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           "room" => %{
             "code" => "A1B2",
             "host_id" => "user123",
-            "player_ids" => ["user123"],
+            "player_count" => 1,
             "status" => "waiting",
             "max_players" => 4,
+            "seats" => %{
+              "north" => %{
+                "position" => "north",
+                "occupant_type" => "human",
+                "user_id" => "user123",
+                "is_owner" => true,
+                "substitute" => false,
+                "has_reservation" => false
+              }
+            },
             "created_at" => "2024-11-02T10:30:00Z"
           },
           "code" => "A1B2"
@@ -400,11 +534,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         hand: %Schema{
           type: :array,
           items: Card,
-          description: "Cards currently held by the player",
+          description: "Cards currently held by the player (nil for opponents in public view)",
+          nullable: true,
           example: [
             %{"rank" => 14, "suit" => "hearts"},
             %{"rank" => 13, "suit" => "hearts"}
           ]
+        },
+        card_count: %Schema{
+          type: :integer,
+          description: "Number of cards in hand (shown for opponents in public view)",
+          minimum: 0,
+          nullable: true,
+          example: 9
         },
         tricks_won: %Schema{
           type: :integer,

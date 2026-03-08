@@ -33,12 +33,12 @@ The Pidro Server API provides a complete backend for building multiplayer Finnis
 - **Room System**: Create and join game rooms with up to 4 players
 - **Real-time Gameplay**: WebSocket channels for live game updates
 - **Statistics Tracking**: Track wins, losses, and game performance
-- **Admin Panel**: LiveView-powered monitoring and management tools
+- **Dev Dashboard**: LiveView-powered monitoring tools (development only)
 - **OpenAPI Documentation**: Interactive API explorer and reference
 
 ### Technology Stack
 
-- **Framework**: Phoenix 1.7 (Elixir)
+- **Framework**: Phoenix 1.8 (Elixir)
 - **Database**: PostgreSQL
 - **Real-time**: Phoenix Channels (WebSockets)
 - **Authentication**: Guardian (JWT)
@@ -219,12 +219,15 @@ http://localhost:4000/api/v1
 - `GET /rooms` - List all available rooms
 - `GET /rooms?filter=waiting` - List rooms waiting for players
 - `GET /rooms/:code` - Get specific room details
-- `GET /rooms/:code/state` - Get current game state for a room
+- `GET /lobby` - Get categorized lobby data (requires auth)
+- `GET /rooms/:code/state` - Get current game state for a room (requires auth)
 - `POST /rooms` - Create a new room (requires auth)
 - `POST /rooms/:code/join` - Join a room with optional seat selection (requires auth)
 - `DELETE /rooms/:code/leave` - Leave a room (requires auth)
 - `POST /rooms/:code/watch` - Join as spectator (requires auth)
 - `DELETE /rooms/:code/unwatch` - Leave spectating (requires auth)
+- `POST /rooms/:code/open-seat` - Open a bot seat for substitute (requires auth)
+- `POST /rooms/:code/close-seat` - Close a vacant seat back to bot (requires auth)
 
 ### Example: Creating and Joining a Room
 
@@ -251,9 +254,23 @@ curl -X POST http://localhost:4000/api/v1/rooms \
       "available_positions": ["north", "east", "south"],
       "player_count": 1,
       "player_ids": ["user123"],
+      "spectator_ids": [],
       "status": "waiting",
       "max_players": 4,
-      "created_at": "2025-11-02T10:30:00Z"
+      "max_spectators": 10,
+      "created_at": "2025-11-02T10:30:00Z",
+      "seats": {
+        "west": {
+          "position": "west",
+          "occupant_type": "human",
+          "user_id": "user123",
+          "status": "connected",
+          "is_owner": true,
+          "substitute": false,
+          "has_reservation": false,
+          "joined_at": "2025-11-02T10:30:00Z"
+        }
+      }
     },
     "code": "A1B2"
   }
@@ -414,9 +431,18 @@ The game channel handles real-time gameplay for a specific room.
 const gameChannel = socket.channel("game:A1B2", {})
 
 gameChannel.join()
-  .receive("ok", ({ state, position }) => {
-    console.log("Joined game as", position)
-    console.log("Game state:", state)
+  .receive("ok", (response) => {
+    // response contains:
+    // {
+    //   role: "player",        // "player" or "spectator"
+    //   reconnected: false,     // true if this was a reconnection
+    //   legal_actions: [],      // available actions for this player
+    //   state: { /* ... */ },   // game state (if game has started)
+    //   position: "north"       // player's position (players only)
+    // }
+    console.log("Joined game as", response.role)
+    console.log("Position:", response.position)
+    console.log("Game state:", response.state)
   })
   .receive("error", (error) => {
     console.error("Failed to join game:", error)
@@ -481,13 +507,19 @@ gameChannel.on("game_over", ({ winner, scores }) => {
   "hand_number": 1,
   "current_turn": "north",
   "current_dealer": "west",
+  "trump_suit": null,           // null during bidding, e.g. "hearts" after declaration
+  "highest_bid": {              // null if no bids yet
+    "position": "north",
+    "amount": 8
+  },
+  "bidding_team": null,         // e.g. "north_south" after bid is won
   "players": {
     "north": {
       "position": "north",
       "team": "north_south",
-      "hand": [[14, "hearts"], [13, "hearts"], ...],
+      "hand": [{"rank": 14, "suit": "hearts"}, {"rank": 13, "suit": "hearts"}],
       "tricks_won": 0
-    },
+    }
     // ... other players
   },
   "bids": [
@@ -495,6 +527,14 @@ gameChannel.on("game_over", ({ winner, scores }) => {
     {"position": "north", "amount": 8}
   ],
   "tricks": [],
+  "hand_points": {
+    "north_south": 0,
+    "east_west": 0
+  },
+  "scores": {
+    "north_south": 0,
+    "east_west": 0
+  },
   "cumulative_scores": {
     "north_south": 0,
     "east_west": 0
@@ -522,15 +562,6 @@ http://localhost:4000/api/swagger
 - Try out API calls directly from your browser
 - View request/response schemas
 - Test authentication flows
-
-#### Redoc (API Reference)
-```
-http://localhost:4000/api/redoc
-```
-- Clean, readable API reference documentation
-- Complete endpoint specifications
-- Request/response examples
-- Schema definitions
 
 #### OpenAPI Specification (JSON)
 ```
@@ -644,7 +675,7 @@ A typical flow for a new user starting a game:
 
 ### Workflow 3: Spectating a Game
 
-1. **Login** (if authenticated) or **browse public rooms**:
+1. **Login** and **browse rooms**:
    ```bash
    GET /api/v1/rooms
    ```
@@ -654,9 +685,10 @@ A typical flow for a new user starting a game:
    GET /api/v1/rooms/A1B2
    ```
 
-3. **Get current game state**:
+3. **Get current game state** (requires auth):
    ```bash
    GET /api/v1/rooms/A1B2/state
+   Authorization: Bearer <token>
    ```
 
 4. Optionally **join game channel** to watch real-time updates (if permissions allow)
@@ -870,7 +902,6 @@ If you need assistance with the Pidro Server API:
 
 - Review this API documentation thoroughly
 - Check the [interactive Swagger UI](http://localhost:4000/api/swagger) for endpoint details
-- Consult the [Redoc reference](http://localhost:4000/api/redoc) for schemas
 - Read module documentation: `mix docs` and open `doc/index.html`
 
 #### Common Issues
@@ -918,22 +949,19 @@ For bugs or feature requests:
 
 ---
 
-## Admin Panel
+## Dev Dashboard (Development Only)
 
-The Pidro Server includes a LiveView-based admin panel for monitoring and management.
+In development mode, the Pidro Server includes monitoring tools:
 
-**Access**: `http://localhost:4000/admin`
-
-**Authentication**: Basic auth (configure in `config/` files)
-- Default username: `admin`
-- Default password: `secret` (change in production!)
+**Access**: `http://localhost:4000/dev`
 
 **Features**:
-- **Lobby Monitor** (`/admin/lobby`) - View all active rooms and players
-- **Game Monitor** (`/admin/games/:code`) - Watch live game state
-- **Statistics** (`/admin/stats`) - View server-wide statistics
+- **Game List** (`/dev/games`) - View all active rooms and games
+- **Game Detail** (`/dev/games/:code`) - Watch live game state
+- **Analytics** (`/dev/analytics`) - View server-wide analytics
+- **LiveDashboard** (`/dev/dashboard`) - Phoenix telemetry and metrics
 
-**Note**: The admin panel is protected and should use strong credentials in production.
+**Note**: These routes are only available in development mode.
 
 ---
 

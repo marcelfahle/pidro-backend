@@ -97,20 +97,14 @@ The lobby channel provides real-time updates about available game rooms. All aut
 
 ```javascript
 {
-  rooms: [
-    {
-      code: "A3F9",
-      host_id: "user123",
-      player_count: 2,
-      max_players: 4,
-      status: "waiting", // "waiting" | "ready" | "playing" | "finished"
-      created_at: "2025-01-15T10:30:00Z",
-      metadata: {
-        name: "Friday Night Game" // Optional room name
-      }
-    },
-    // ... more rooms
-  ]
+  rooms: [/* flat list of available rooms */],
+  lobby: {
+    my_rejoinable: [/* rooms where user has a reserved seat */],
+    open_tables: [/* waiting rooms */],
+    substitute_needed: [/* playing rooms with vacant seats */],
+    spectatable: [/* playing rooms available to watch */]
+  },
+  online_count: 42  // number of users currently online
 }
 ```
 
@@ -130,29 +124,55 @@ lobbyChannel
   });
 ```
 
+Room status values are: `"waiting"` | `"playing"` | `"finished"` (NOT `"ready"` or `"in_progress"`)
+
 ### Lobby Events
 
-The lobby channel broadcasts the following events to keep clients synchronized:
+The lobby channel broadcasts the following incremental events to keep clients synchronized:
 
-#### `lobby_update`
+#### `room_created`
 
-Sent when the room list changes (room created, updated, or closed).
-
-**Payload:**
+Sent when a new room is created.
 
 ```javascript
 {
-  rooms: [/* array of room objects */]
+  room: { /* room object */ },
+  category: "open_tables",  // which lobby category this belongs to
+  action: "added"
 }
 ```
 
-**Example Handler:**
+#### `room_updated`
+
+Sent when a room's state changes (player joined/left, status changed).
 
 ```javascript
-lobbyChannel.on("lobby_update", (payload) => {
-  console.log("Room list updated:", payload.rooms);
-  updateRoomListUI(payload.rooms);
-});
+{
+  room: { /* room object */ },
+  category: "open_tables",  // category for this user
+  action: "updated"
+}
+```
+
+#### `room_closed`
+
+Sent when a room is closed/removed.
+
+```javascript
+{
+  room_code: "A3F9",
+  action: "removed"
+}
+```
+
+#### `online_count_updated`
+
+Sent when the global online user count changes.
+
+```javascript
+{
+  count: 43
+}
 ```
 
 #### `presence_state`
@@ -266,14 +286,19 @@ Game channels handle real-time gameplay for specific rooms. Each game has its ow
 
 ```javascript
 {
-  state: {
-    // Full game state (see Game State section)
+  role: "player",          // "player" | "spectator"
+  reconnected: false,       // true if this was a reconnection
+  legal_actions: [          // available actions for this player
+    { type: "bid", amount: 8 },
+    { type: "bid", amount: 9 },
+    { type: "pass" }
+  ],
+  state: {                  // game state (only if game has started)
     phase: "bidding",
-    current_player: "north",
-    players: { /* ... */ },
-    // ... more state
+    current_turn: "north",
+    // ... full game state
   },
-  position: "north" // Player's position: "north" | "east" | "south" | "west"
+  position: "north"         // player's position (players only, absent for spectators)
 }
 ```
 
@@ -321,7 +346,7 @@ Make a bid or pass during the bidding phase.
 
 ```javascript
 {
-  amount: 8  // Number between 5-14
+  amount: 8  // Number between 8-13
 }
 ```
 
@@ -353,7 +378,7 @@ gameChannel
 - Must be your turn
 - Must be in bidding phase
 - Bid must be higher than current bid
-- Bid must be between 5-14
+- Bid must be between 8-13
 
 #### `declare_trump`
 
@@ -423,6 +448,47 @@ Signal that you're ready to start (optional, for UI coordination).
 gameChannel
   .push("ready", {})
   .receive("ok", () => console.log("Ready status sent"));
+```
+
+#### `pass`
+
+Alias for `bid` with pass. Sends a pass action directly.
+
+```javascript
+gameChannel.push("pass", {})
+```
+
+#### `select_hand`
+
+During the dealer rob phase, select which cards to keep.
+
+```javascript
+{
+  cards: [
+    { rank: 14, suit: "hearts" },
+    { rank: 5, suit: "hearts" }
+  ]
+}
+```
+
+#### `open_seat`
+
+Room owner opens a bot seat for a human substitute.
+
+```javascript
+{
+  position: "east"  // "north" | "east" | "south" | "west"
+}
+```
+
+#### `close_seat`
+
+Room owner closes a vacant seat back to a bot.
+
+```javascript
+{
+  position: "east"
+}
 ```
 
 ### Game Events
@@ -502,6 +568,102 @@ gameChannel.on("game_over", (payload) => {
 });
 ```
 
+#### `player_reconnecting`
+
+A player has disconnected and entered Phase 1 reconnection.
+
+```javascript
+{ user_id: "user123", position: "north" }
+```
+
+#### `player_reconnected`
+
+A player has successfully reconnected.
+
+```javascript
+{ user_id: "user123", position: "north" }
+```
+
+#### `player_reclaimed_seat`
+
+A player reclaimed their seat from a bot substitute.
+
+```javascript
+{ user_id: "user123", position: "north" }
+```
+
+#### `bot_substitute_active`
+
+A bot has started playing in place of a disconnected player.
+
+```javascript
+{ position: "north", user_id: "user123" }
+```
+
+#### `seat_permanently_botted`
+
+A seat is permanently controlled by a bot (original player can no longer reclaim).
+
+```javascript
+{ position: "north" }
+```
+
+#### `owner_decision_available`
+
+The room owner can now decide what to do with a bot seat.
+
+```javascript
+{ position: "north", owner_id: "user456" }
+```
+
+#### `owner_changed`
+
+Room ownership has been transferred.
+
+```javascript
+{ new_owner_id: "user456", new_owner_position: "east" }
+```
+
+#### `substitute_available`
+
+A seat has been opened for a human substitute.
+
+```javascript
+{ position: "north" }
+```
+
+#### `substitute_seat_closed`
+
+A vacant seat has been closed and filled with a bot again.
+
+```javascript
+{ position: "north" }
+```
+
+#### `substitute_joined`
+
+A new human player has joined as a substitute.
+
+```javascript
+{ position: "north", user_id: "user789" }
+```
+
+#### `player_disconnected`
+
+A player has disconnected from the game channel.
+
+```javascript
+{ user_id: "user123", position: "north", reason: "left", grace_period: true }
+```
+
+#### `spectator_left`
+
+A spectator has left the game channel.
+
+```javascript
+{ user_id: "user123", reason: "left" }
+```
+
 #### `presence_state` and `presence_diff`
 
 Same as lobby channel, but tracks players in the game. Includes player position in metadata.
@@ -528,69 +690,66 @@ The game state object contains all information about the current game:
 
 ```javascript
 {
-  // Current game phase
-  phase: "bidding" | "trump_declaration" | "playing" | "game_over",
+  phase: "bidding",  // "not_started" | "setup" | "dealing" | "bidding" | "trump_selection" | "playing" | "completed"
+  hand_number: 1,
+  variant: "standard",
+  current_turn: "north",     // NOT "current_player"
+  current_dealer: "west",    // NOT "dealer"
 
-  // Current player's position (who can act)
-  current_player: "north" | "east" | "south" | "west",
-
-  // Player hands (only your hand is visible, others show card count)
   players: {
     north: {
-      hand: [
-        { rank: 14, suit: "spades" },
-        { rank: 13, suit: "hearts" },
-        // ... more cards
-      ]
+      position: "north",
+      team: "north_south",
+      hand: [{ rank: 14, suit: "hearts" }, ...],  // only YOUR hand
+      tricks_won: 0,
+      eliminated: false
     },
     east: {
-      card_count: 9  // For opponents
-    },
-    // ... south, west
+      position: "east",
+      team: "east_west",
+      hand: [{ rank: 13, suit: "spades" }, ...],  // opponent hands visible in channel (hidden in REST)
+      tricks_won: 0,
+      eliminated: false
+    }
   },
 
-  // Bidding information
-  bids: {
-    north: 8,
-    east: "pass",
-    south: 10,
-    west: "pass"
-  },
-  current_bid: 10,
-  bid_winner: "south",
-  bid_team: "north_south",  // Team that won the bid
-
-  // Trump suit (after declaration)
-  trump: "hearts" | "diamonds" | "clubs" | "spades" | null,
-
-  // Current trick
-  current_trick: [
-    { player: "north", card: { rank: 14, suit: "spades" } },
-    { player: "east", card: { rank: 10, suit: "spades" } }
+  bids: [
+    { position: "west", amount: "pass" },
+    { position: "north", amount: 8 }
   ],
+  highest_bid: { position: "north", amount: 8 },  // NOT current_bid/bid_winner
+  bidding_team: "north_south",
 
-  // Trick history
-  tricks: [
+  trump_suit: "hearts",  // NOT "trump"
+
+  current_trick: [        // flat array of plays in current trick
+    { player: "north", position: "north", card: { rank: 14, suit: "hearts" } }
+  ],
+  current_trick_details: { // full trick object (with number, leader, winner, points)
+    number: 3,
+    leader: "north",
+    plays: [...],
+    cards: [...],
+    winner: null,
+    points: 0
+  },
+
+  tricks: [               // completed tricks
     {
-      cards: [
-        { player: "north", card: { rank: 14, suit: "spades" } },
-        { player: "east", card: { rank: 10, suit: "spades" } },
-        { player: "south", card: { rank: 13, suit: "spades" } },
-        { player: "west", card: { rank: 12, suit: "spades" } }
-      ],
-      winner: "north"
+      number: 1,
+      leader: "south",
+      plays: [{ player: "south", position: "south", card: { rank: 14, suit: "spades" } }, ...],
+      cards: [{ player: "south", position: "south", card: { rank: 14, suit: "spades" } }, ...],
+      winner: "south",
+      points: 15
     }
   ],
 
-  // Scores
-  scores: {
-    north_south: 15,
-    east_west: 8
-  },
-
-  // Round information
-  dealer: "north",
-  round_number: 1
+  trick_number: 3,
+  hand_points: { north_south: 15, east_west: 8 },
+  scores: { north_south: 24, east_west: 18 },
+  cumulative_scores: { north_south: 24, east_west: 18 },  // same as scores (legacy alias)
+  winner: null  // team name when game is over
 }
 ```
 
@@ -680,12 +839,13 @@ socket.onClose(() => {
 import { Socket, Channel, Presence } from "phoenix";
 
 interface GameState {
-  phase: "bidding" | "trump_declaration" | "playing" | "game_over";
-  current_player: "north" | "east" | "south" | "west";
+  phase: "not_started" | "setup" | "dealing" | "bidding" | "trump_selection" | "playing" | "completed";
+  current_turn: string | null;
+  current_dealer: string | null;
   players: Record<string, any>;
-  bids?: Record<string, number | "pass">;
-  current_bid?: number;
-  trump?: "hearts" | "diamonds" | "clubs" | "spades" | null;
+  bids: Array<{ position: string; amount: number | "pass" }>;
+  highest_bid: { position: string; amount: number } | null;
+  trump_suit: "hearts" | "diamonds" | "clubs" | "spades" | null;
   current_trick: Array<any>;
   scores: Record<string, number>;
 }
@@ -742,9 +902,20 @@ class PidroClient {
   private setupLobbyHandlers() {
     if (!this.lobbyChannel) return;
 
-    this.lobbyChannel.on("lobby_update", (payload) => {
-      console.log("Lobby updated:", payload.rooms);
-      this.onLobbyUpdate?.(payload.rooms);
+    this.lobbyChannel.on("room_created", (payload) => {
+      this.onRoomCreated?.(payload.room, payload.category);
+    });
+
+    this.lobbyChannel.on("room_updated", (payload) => {
+      this.onRoomUpdated?.(payload.room, payload.category);
+    });
+
+    this.lobbyChannel.on("room_closed", (payload) => {
+      this.onRoomClosed?.(payload.room_code);
+    });
+
+    this.lobbyChannel.on("online_count_updated", (payload) => {
+      this.onOnlineCountUpdated?.(payload.count);
     });
 
     this.lobbyChannel.on("presence_state", (state) => {
@@ -764,7 +935,7 @@ class PidroClient {
   }
 
   // Game methods
-  joinGame(roomCode: string): Promise<{ state: GameState; position: string }> {
+  joinGame(roomCode: string): Promise<{ role: string; reconnected: boolean; legal_actions: any[]; state: GameState; position?: string }> {
     return new Promise((resolve, reject) => {
       this.gameChannel = this.socket.channel(`game:${roomCode}`, {});
 
@@ -854,7 +1025,10 @@ class PidroClient {
   }
 
   // Event callbacks (set these to handle events)
-  onLobbyUpdate?: (rooms: any[]) => void;
+  onRoomCreated?: (room: any, category: string) => void;
+  onRoomUpdated?: (room: any, category: string) => void;
+  onRoomClosed?: (roomCode: string) => void;
+  onOnlineCountUpdated?: (count: number) => void;
   onPresenceUpdate?: (presences: any) => void;
   onGameStateUpdate?: (state: GameState) => void;
   onPlayerReady?: (position: string) => void;
@@ -872,8 +1046,16 @@ const token = localStorage.getItem("auth_token");
 const client = new PidroClient(token);
 
 // Set up event handlers
-client.onLobbyUpdate = (rooms) => {
-  updateRoomList(rooms);
+client.onRoomCreated = (room, category) => {
+  addRoomToList(room, category);
+};
+
+client.onRoomUpdated = (room, category) => {
+  updateRoomInList(room, category);
+};
+
+client.onRoomClosed = (roomCode) => {
+  removeRoomFromList(roomCode);
 };
 
 client.onGameStateUpdate = (state) => {
@@ -888,8 +1070,8 @@ client.onGameOver = (winner, scores) => {
 await client.joinLobby();
 
 // Join a game (after creating/joining via REST API)
-const { state, position } = await client.joinGame("A3F9");
-console.log("Playing as:", position);
+const { role, reconnected, legal_actions, state, position } = await client.joinGame("A3F9");
+console.log("Role:", role, "Playing as:", position);
 
 // Make game actions
 await client.makeBid(10);
@@ -921,8 +1103,16 @@ socket.connect();
 const lobbyChannel = socket.channel("lobby", {});
 await lobbyChannel.join();
 
-lobbyChannel.on("lobby_update", ({ rooms }) => {
-  console.log("Available rooms:", rooms);
+lobbyChannel.on("room_created", ({ room, category }) => {
+  console.log("New room:", room, "Category:", category);
+});
+
+lobbyChannel.on("room_updated", ({ room, category }) => {
+  console.log("Room updated:", room, "Category:", category);
+});
+
+lobbyChannel.on("room_closed", ({ room_code }) => {
+  console.log("Room closed:", room_code);
 });
 
 // 4. Create room (REST API)
@@ -955,15 +1145,15 @@ console.log("Initial state:", state);
 // 7. Listen for state updates
 gameChannel.on("game_state", ({ state }) => {
   console.log("Phase:", state.phase);
-  console.log("Current player:", state.current_player);
+  console.log("Current turn:", state.current_turn);
 
-  if (state.current_player === position) {
+  if (state.current_turn === position) {
     console.log("It's your turn!");
 
     if (state.phase === "bidding") {
       // Make a bid
       gameChannel.push("bid", { amount: 10 });
-    } else if (state.phase === "trump_declaration") {
+    } else if (state.phase === "trump_selection") {
       // Declare trump
       gameChannel.push("declare_trump", { suit: "hearts" });
     } else if (state.phase === "playing") {
@@ -990,7 +1180,10 @@ gameChannel.on("game_over", ({ winner, scores }) => {
 | Event | Direction | Description | Payload |
 |-------|-----------|-------------|---------|
 | `join` | Client → Server | Join the lobby | `{}` |
-| `lobby_update` | Server → Client | Room list changed | `{rooms: Room[]}` |
+| `room_created` | Server → Client | New room created | `{room: Room, category: string, action: "added"}` |
+| `room_updated` | Server → Client | Room state changed | `{room: Room, category: string, action: "updated"}` |
+| `room_closed` | Server → Client | Room removed | `{room_code: string, action: "removed"}` |
+| `online_count_updated` | Server → Client | Online user count changed | `{count: number}` |
 | `presence_state` | Server → Client | Current presence state | `{[user_id]: {metas: Meta[]}}` |
 | `presence_diff` | Server → Client | Presence changes | `{joins: {...}, leaves: {...}}` |
 
@@ -1000,44 +1193,60 @@ gameChannel.on("game_over", ({ winner, scores }) => {
 |-------|-----------|-------------|---------|
 | `join` | Client → Server | Join a game | `{}` |
 | `bid` | Client → Server | Make a bid or pass | `{amount: number \| "pass"}` |
+| `pass` | Client → Server | Pass (alias for bid) | `{}` |
 | `declare_trump` | Client → Server | Declare trump suit | `{suit: string}` |
 | `play_card` | Client → Server | Play a card | `{card: {rank: number, suit: string}}` |
+| `select_hand` | Client → Server | Select cards to keep (dealer rob) | `{cards: Card[]}` |
 | `ready` | Client → Server | Signal ready status | `{}` |
+| `open_seat` | Client → Server | Open bot seat for substitute | `{position: string}` |
+| `close_seat` | Client → Server | Close vacant seat to bot | `{position: string}` |
 | `game_state` | Server → Client | Game state update | `{state: GameState}` |
 | `player_ready` | Server → Client | Player is ready | `{position: string}` |
 | `game_over` | Server → Client | Game ended | `{winner: string, scores: object}` |
+| `player_reconnecting` | Server → Client | Player entered reconnection | `{user_id: string, position: string}` |
+| `player_reconnected` | Server → Client | Player reconnected | `{user_id: string, position: string}` |
+| `player_reclaimed_seat` | Server → Client | Player reclaimed seat from bot | `{user_id: string, position: string}` |
+| `bot_substitute_active` | Server → Client | Bot playing for disconnected player | `{position: string, user_id: string}` |
+| `seat_permanently_botted` | Server → Client | Seat permanently bot-controlled | `{position: string}` |
+| `owner_decision_available` | Server → Client | Owner can decide on bot seat | `{position: string, owner_id: string}` |
+| `owner_changed` | Server → Client | Room ownership transferred | `{new_owner_id: string, new_owner_position: string}` |
+| `substitute_available` | Server → Client | Seat opened for substitute | `{position: string}` |
+| `substitute_seat_closed` | Server → Client | Vacant seat filled with bot | `{position: string}` |
+| `substitute_joined` | Server → Client | Substitute player joined | `{position: string, user_id: string}` |
+| `player_disconnected` | Server → Client | Player disconnected | `{user_id: string, position: string, reason: string, grace_period: boolean}` |
+| `spectator_left` | Server → Client | Spectator left | `{user_id: string, reason: string}` |
 | `presence_state` | Server → Client | Current presence state | `{[user_id]: {metas: Meta[]}}` |
 | `presence_diff` | Server → Client | Presence changes | `{joins: {...}, leaves: {...}}` |
 
 ### Room Object Schema
-(Updated 2025-11-24: Added detailed `seats` information)
 
 ```typescript
 interface Room {
-  code: string;              // 4-character alphanumeric code
-  host_id: string;           // User ID of room creator
-  player_count: number;      // Current number of players (1-4)
-  max_players: number;       // Maximum players (always 4)
-  status: "waiting" | "ready" | "playing" | "finished";
-  created_at: string;        // ISO 8601 timestamp
-  metadata: {
-    name?: string;           // Optional room name
-    [key: string]: any;      // Other custom metadata
-  };
-  seats: Seat[];             // Detailed seat information
+  code: string;
+  host_id: string;
+  positions: Record<string, string | null>;
+  available_positions: string[];
+  player_count: number;
+  player_ids: string[];  // legacy, derived from positions
+  spectator_ids: string[];
+  status: "waiting" | "playing" | "finished";  // NOT "ready" or "in_progress"
+  max_players: number;
+  max_spectators: number;
+  created_at: string;
+  seats: Record<string, Seat>;
 }
 
 interface Seat {
-  seat_index: number;        // 0-3
-  status: "occupied" | "free";
-  player?: PlayerSummary | null;
-}
-
-interface PlayerSummary {
-  id: string;
-  username: string;
-  is_bot: boolean;
-  avatar_url?: string | null;
+  position: string;
+  occupant_type: "human" | "bot" | "vacant";
+  user_id: string | null;
+  status: "connected" | "reconnecting" | "grace" | "bot_substitute" | null;
+  is_owner: boolean;
+  substitute: boolean;
+  disconnected_at: string | null;
+  grace_expires_at: string | null;
+  has_reservation: boolean;
+  joined_at: string | null;
 }
 ```
 
@@ -1045,49 +1254,62 @@ interface PlayerSummary {
 
 ```typescript
 interface GameState {
-  phase: "bidding" | "trump_declaration" | "playing" | "game_over";
-  current_player: "north" | "east" | "south" | "west";
+  phase: "not_started" | "setup" | "dealing" | "bidding" | "trump_selection" | "playing" | "completed";
+  hand_number: number;
+  variant: string | null;
+  current_turn: string | null;      // NOT current_player
+  current_dealer: string | null;     // NOT dealer
 
-  players: {
-    [position: string]: {
-      hand?: Card[];         // Only visible for your position
-      card_count?: number;   // For other players
-    };
-  };
+  players: Record<string, Player>;
 
-  bids?: {
-    [position: string]: number | "pass";
-  };
-  current_bid?: number;
-  bid_winner?: "north" | "east" | "south" | "west";
-  bid_team?: "north_south" | "east_west";
+  bids: Bid[];
+  highest_bid: { position: string; amount: number } | null;
+  bidding_team: "north_south" | "east_west" | null;
 
-  trump?: "hearts" | "diamonds" | "clubs" | "spades" | null;
+  trump_suit: "hearts" | "diamonds" | "clubs" | "spades" | null;
 
-  current_trick: Array<{
-    player: string;
-    card: Card;
-  }>;
+  current_trick: Play[];
+  current_trick_details: Trick | null;
+  tricks: Trick[];
+  trick_number: number | null;
 
-  tricks: Array<{
-    cards: Array<{
-      player: string;
-      card: Card;
-    }>;
-    winner: string;
-  }>;
+  hand_points: Record<string, number>;
+  scores: Record<string, number>;
+  cumulative_scores: Record<string, number>;  // legacy alias for scores
+  winner: string | null;
+}
 
-  scores: {
-    north_south: number;
-    east_west: number;
-  };
+interface Player {
+  position: string;
+  team: "north_south" | "east_west";
+  hand: Card[] | null;
+  card_count?: number;    // present in REST public view instead of hand
+  tricks_won: number;
+  eliminated: boolean;
+}
 
-  dealer: "north" | "east" | "south" | "west";
-  round_number: number;
+interface Bid {
+  position: string;
+  amount: number | "pass";
+}
+
+interface Play {
+  player: string;
+  position: string;
+  card: Card;
+}
+
+interface Trick {
+  number: number;
+  leader: string;
+  plays: Play[];
+  cards: Play[];       // same as plays (frontend convenience)
+  winner: string | null;
+  points: number;
 }
 
 interface Card {
-  rank: number;    // 2-14 (11=Jack, 12=Queen, 13=King, 14=Ace)
+  rank: number;
   suit: "hearts" | "diamonds" | "clubs" | "spades";
 }
 ```
@@ -1130,7 +1352,7 @@ Before sending actions to the server, validate them client-side to provide immed
 
 ```javascript
 function playCard(card) {
-  if (gameState.current_player !== myPosition) {
+  if (gameState.current_turn !== myPosition) {
     showError("It's not your turn");
     return;
   }
@@ -1234,7 +1456,7 @@ async function makeBid(amount) {
 **Problem:** Game actions are rejected by the server
 
 **Solutions:**
-- Verify it's your turn (`state.current_player === myPosition`)
+- Verify it's your turn (`state.current_turn === myPosition`)
 - Check you're in the correct game phase for the action
 - Ensure action payload format is correct
 - Check server error message for specific validation failures
@@ -1260,4 +1482,4 @@ For additional help:
 ---
 
 **API Version:** 1.0
-**Last Updated:** January 2025
+**Last Updated:** March 2026
