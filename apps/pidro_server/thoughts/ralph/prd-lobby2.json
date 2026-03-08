@@ -498,7 +498,7 @@
             "In the room controller: add an action for POST /api/v1/rooms/:code/open-seat. Add the route following existing patterns",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "8.4",

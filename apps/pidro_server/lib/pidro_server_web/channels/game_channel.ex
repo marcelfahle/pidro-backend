@@ -325,6 +325,40 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
+  def handle_in("open_seat", %{"position" => position}, socket) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
+    else
+      case parse_position(position) do
+        {:ok, pos_atom} ->
+          case RoomManager.open_seat(socket.assigns.room_code, pos_atom, socket.assigns.user_id) do
+            {:ok, _room} -> {:reply, :ok, socket}
+            {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+          end
+
+        :error ->
+          {:reply, {:error, %{reason: "invalid position"}}, socket}
+      end
+    end
+  end
+
+  def handle_in("close_seat", %{"position" => position}, socket) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
+    else
+      case parse_position(position) do
+        {:ok, pos_atom} ->
+          case RoomManager.close_seat(socket.assigns.room_code, pos_atom, socket.assigns.user_id) do
+            {:ok, _room} -> {:reply, :ok, socket}
+            {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+          end
+
+        :error ->
+          {:reply, {:error, %{reason: "invalid position"}}, socket}
+      end
+    end
+  end
+
   @doc """
   Handles internal messages and game events.
 
@@ -668,6 +702,18 @@ defmodule PidroServerWeb.GameChannel do
     else
       []
     end
+  end
+
+  @position_map %{
+    "north" => :north,
+    "south" => :south,
+    "east" => :east,
+    "west" => :west
+  }
+
+  @spec parse_position(String.t()) :: {:ok, atom()} | :error
+  defp parse_position(position) when is_binary(position) do
+    Map.fetch(@position_map, position)
   end
 
   @spec parse_suit(String.t()) :: {:ok, atom()} | :error

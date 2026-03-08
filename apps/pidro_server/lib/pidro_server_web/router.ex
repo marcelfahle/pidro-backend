@@ -64,6 +64,8 @@ defmodule PidroServerWeb.Router do
     post "/rooms", RoomController, :create
     post "/rooms/:code/join", RoomController, :join
     delete "/rooms/:code/leave", RoomController, :leave
+    post "/rooms/:code/open-seat", RoomController, :open_seat
+    post "/rooms/:code/close-seat", RoomController, :close_seat
 
     # Spectator routes with authentication
     post "/rooms/:code/watch", RoomController, :watch

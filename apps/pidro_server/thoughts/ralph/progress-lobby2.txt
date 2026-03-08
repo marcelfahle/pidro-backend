@@ -1156,3 +1156,61 @@ via the GameChannel or directly through `RoomManager.join_as_substitute/2`.
 - Feature 8.3: Channel events and REST endpoint for seat management (PID-34)
 - Feature 8.4: Test the full substitute seat flow (PID-34)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 8.3: Channel Events and REST Endpoint for Seat Management
+
+Added WebSocket channel events and REST API endpoints for the owner to open
+and close substitute seats during live games.
+
+### What was done:
+
+**GameChannel (game_channel.ex):**
+- Added `handle_in("open_seat", ...)` — extracts position from payload, calls
+  `RoomManager.open_seat/3`, replies with `:ok` or `{:error, %{reason: ...}}`
+- Added `handle_in("close_seat", ...)` — same pattern, calls
+  `RoomManager.close_seat/3`
+- Both guard against spectators ("spectators cannot manage seats")
+- Added `@position_map` module attribute and `parse_position/1` helper for
+  converting string positions to atoms (returns `{:ok, atom}` or `:error`)
+
+**Router (router.ex):**
+- Added `POST /api/v1/rooms/:code/open-seat` → `RoomController.open_seat`
+- Added `POST /api/v1/rooms/:code/close-seat` → `RoomController.close_seat`
+- Both in the `:api_authenticated` scope (requires Bearer token)
+
+**RoomController (room_controller.ex):**
+- Added `open_seat/2` action: validates position via `parse_position_strict/1`,
+  calls `RoomManager.open_seat/3`, renders room on success
+- Added `close_seat/2` action: same pattern with `RoomManager.close_seat/3`
+- Added `parse_position_strict/1` helper returning `{:ok, atom}` or
+  `{:error, :invalid_position}` for use in `with` chains
+- Added OpenAPI operation specs for both new endpoints
+- Both handle missing position param gracefully
+
+**FallbackController (fallback_controller.ex):**
+- Added error handlers for 4 new error atoms from RoomManager:
+  - `:not_owner` → 403 Forbidden
+  - `:room_not_playing` → 422 Unprocessable Entity
+  - `:seat_not_bot_substitute` → 422 Unprocessable Entity
+  - `:seat_not_vacant` → 422 Unprocessable Entity
+
+### Design decisions:
+- Channel events follow existing pattern: spectator guard → parse input →
+  call RoomManager → reply ok/error. State updates arrive via PubSub.
+- REST endpoints use `with` chains and FallbackController, consistent with
+  all other RoomController actions
+- `:not_owner` uses 403 (Forbidden) instead of 422 since it's an authorization
+  error, not a validation error
+- Both REST endpoints return the updated room on success (like join/watch)
+- Also added POST /close-seat REST endpoint (not in PRD but symmetric with
+  open-seat and needed for feature completeness)
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 328 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 8.4: Test the full substitute seat flow (PID-34)
+- Phase 9: Global Online Presence (PID-39)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

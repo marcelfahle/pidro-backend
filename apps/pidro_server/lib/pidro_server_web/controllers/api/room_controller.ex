@@ -243,6 +243,120 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc false
+  def open_api_operation(:open_seat) do
+    %Operation{
+      summary: "Open a bot seat for a human substitute",
+      description: """
+      Room owner can open a bot-substitute seat so a stranger can join the
+      playing game. The bot is terminated and the seat becomes vacant.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.open_seat",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{type: :string, minLength: 4, maxLength: 4},
+          "The unique room code",
+          required: true
+        )
+      ],
+      requestBody:
+        Operation.request_body(
+          "Seat position",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:position],
+            properties: %{
+              position: %OpenApiSpex.Schema{
+                type: :string,
+                enum: ["north", "south", "east", "west"]
+              }
+            }
+          }
+        ),
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.RoomResponse),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        403 =>
+          Operation.response("Not owner", "application/json", ErrorSchemas.validation_error()),
+        422 =>
+          Operation.response(
+            "Invalid request",
+            "application/json",
+            ErrorSchemas.validation_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:close_seat) do
+    %Operation{
+      summary: "Close a vacant seat back to a bot",
+      description: """
+      Room owner can close a vacant seat (previously opened via open_seat),
+      spawning a new bot to fill the position.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.close_seat",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        Operation.parameter(
+          :code,
+          :path,
+          %OpenApiSpex.Schema{type: :string, minLength: 4, maxLength: 4},
+          "The unique room code",
+          required: true
+        )
+      ],
+      requestBody:
+        Operation.request_body(
+          "Seat position",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:position],
+            properties: %{
+              position: %OpenApiSpex.Schema{
+                type: :string,
+                enum: ["north", "south", "east", "west"]
+              }
+            }
+          }
+        ),
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.RoomResponse),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        403 =>
+          Operation.response("Not owner", "application/json", ErrorSchemas.validation_error()),
+        422 =>
+          Operation.response(
+            "Invalid request",
+            "application/json",
+            ErrorSchemas.validation_error()
+          )
+      }
+    }
+  end
+
+  @doc false
   def open_api_operation(:leave) do
     %Operation{
       summary: "Leave a room",
@@ -639,6 +753,13 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_position("east_west"), do: :east_west
   defp parse_position(_), do: nil
 
+  @spec parse_position_strict(String.t() | nil) :: {:ok, atom()} | {:error, :invalid_position}
+  defp parse_position_strict("north"), do: {:ok, :north}
+  defp parse_position_strict("east"), do: {:ok, :east}
+  defp parse_position_strict("south"), do: {:ok, :south}
+  defp parse_position_strict("west"), do: {:ok, :west}
+  defp parse_position_strict(_), do: {:error, :invalid_position}
+
   @doc """
   Removes the authenticated player from their current room.
 
@@ -701,6 +822,59 @@ defmodule PidroServerWeb.API.RoomController do
       |> put_status(:no_content)
       |> send_resp(:no_content, "")
     end
+  end
+
+  @doc """
+  Opens a bot-filled seat for a human substitute.
+
+  The room owner can open a bot-substitute seat so a stranger can join the
+  playing game. The bot is terminated and the seat becomes vacant.
+
+  Requires authentication via Bearer token.
+
+  Returns HTTP 200 (OK) on success.
+  """
+  @spec open_seat(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def open_seat(conn, %{"code" => code, "position" => position}) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, pos_atom} <- parse_position_strict(position),
+         {:ok, room} <- RoomManager.open_seat(code, pos_atom, user.id) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
+  def open_seat(conn, %{"code" => code}) do
+    # Position is required
+    open_seat(conn, %{"code" => code, "position" => nil})
+  end
+
+  @doc """
+  Closes a vacant seat back to a bot.
+
+  The room owner can close a vacant seat (previously opened via open_seat),
+  spawning a new bot to fill the position.
+
+  Requires authentication via Bearer token.
+
+  Returns HTTP 200 (OK) on success.
+  """
+  @spec close_seat(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def close_seat(conn, %{"code" => code, "position" => position}) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, pos_atom} <- parse_position_strict(position),
+         {:ok, room} <- RoomManager.close_seat(code, pos_atom, user.id) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
+  def close_seat(conn, %{"code" => code}) do
+    close_seat(conn, %{"code" => code, "position" => nil})
   end
 
   @doc """
