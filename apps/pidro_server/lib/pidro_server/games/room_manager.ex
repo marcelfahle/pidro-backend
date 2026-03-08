@@ -44,6 +44,7 @@ defmodule PidroServer.Games.RoomManager do
   require Logger
 
   alias PidroServer.Games.GameSupervisor
+  alias PidroServer.Games.Lifecycle
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.Room.Seat
 
@@ -67,6 +68,7 @@ defmodule PidroServer.Games.RoomManager do
     - `:created_at` - DateTime when the room was created
     - `:metadata` - Additional room metadata (e.g., room name)
     - `:disconnected_players` - Map of disconnected players with their disconnect timestamps (%{user_id => DateTime.t()})
+    - `:phase_timers` - Map of position to timer reference for the disconnect cascade (%{position => reference()})
 
     ## Derived Data
 
@@ -87,6 +89,7 @@ defmodule PidroServer.Games.RoomManager do
             created_at: DateTime.t(),
             metadata: map(),
             disconnected_players: %{String.t() => DateTime.t()},
+            phase_timers: %{Positions.position() => reference()},
             seats: map(),
             last_activity: DateTime.t()
           }
@@ -103,6 +106,7 @@ defmodule PidroServer.Games.RoomManager do
       spectator_ids: [],
       max_spectators: 10,
       disconnected_players: %{},
+      phase_timers: %{},
       seats: %{}
     ]
   end
@@ -916,13 +920,22 @@ defmodule PidroServer.Games.RoomManager do
       %Room{} = room ->
         # Only track disconnect if player is actually in the room
         if Positions.has_player?(room, user_id) do
+          now = DateTime.utc_now()
+
           %Room{} =
             updated_room = %Room{
               room
-              | disconnected_players:
-                  Map.put(room.disconnected_players, user_id, DateTime.utc_now()),
-                last_activity: DateTime.utc_now()
+              | disconnected_players: Map.put(room.disconnected_players, user_id, now),
+                last_activity: now
             }
+
+          # For :playing rooms, also update seat and start hiccup cascade
+          updated_room =
+            if room.status == :playing do
+              start_hiccup_cascade(updated_room, room_code, user_id)
+            else
+              updated_room
+            end
 
           %State{} =
             updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
@@ -935,7 +948,7 @@ defmodule PidroServer.Games.RoomManager do
           broadcast_room(room_code, updated_room)
           broadcast_lobby_event({:room_updated, updated_room})
 
-          # Schedule cleanup check after grace period
+          # Schedule cleanup check after full grace period (legacy fallback)
           grace_period = get_grace_period_ms()
 
           Process.send_after(
@@ -972,6 +985,9 @@ defmodule PidroServer.Games.RoomManager do
                 | disconnected_players: Map.delete(room.disconnected_players, user_id),
                   last_activity: DateTime.utc_now()
               }
+
+            # Cancel phase timer and reclaim seat if in hiccup cascade
+            updated_room = cancel_hiccup_and_reclaim(updated_room, user_id)
 
             %State{} =
               updated_state = %State{
@@ -1092,6 +1108,14 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  # Phase 2 handler — stub until Feature 3.2 implements bot substitution.
+  # Without this clause the timer message crashes the GenServer.
+  @impl true
+  def handle_info({:phase2_start, _room_code, _position}, state) do
+    # TODO: Feature 3.2 — spawn substitute bot and start grace countdown
+    {:noreply, state}
+  end
+
   ## Private Helper Functions
 
   @doc false
@@ -1140,6 +1164,74 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   defp touch_last_activity(%Room{} = room) do
     %{room | last_activity: DateTime.utc_now()}
+  end
+
+  # Disconnect cascade helpers
+
+  @doc false
+  # Starts the hiccup cascade for a disconnected player in a :playing room.
+  # Updates the seat to :reconnecting and schedules the Phase 2 timer.
+  defp start_hiccup_cascade(%Room{} = room, room_code, user_id) do
+    position = Positions.get_position(room, user_id)
+    seat = Map.get(room.seats, position)
+
+    case seat && Seat.disconnect(seat) do
+      {:ok, disconnected_seat} ->
+        hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
+
+        timer_ref =
+          Process.send_after(self(), {:phase2_start, room_code, position}, hiccup_ms)
+
+        # Broadcast player_reconnecting on game PubSub topic
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "game:#{room_code}",
+          {:player_reconnecting, %{user_id: user_id, position: position}}
+        )
+
+        %{
+          room
+          | seats: Map.put(room.seats, position, disconnected_seat),
+            phase_timers: Map.put(room.phase_timers, position, timer_ref)
+        }
+
+      _ ->
+        # Seat not in :connected state or missing, skip cascade
+        room
+    end
+  end
+
+  @doc false
+  # Cancels the Phase 1 timer and reclaims the seat when a player reconnects
+  # during the hiccup phase.
+  defp cancel_hiccup_and_reclaim(%Room{} = room, user_id) do
+    position = Positions.get_position(room, user_id)
+
+    # Cancel phase timer if one exists for this position
+    room =
+      case Map.get(room.phase_timers, position) do
+        nil ->
+          room
+
+        timer_ref ->
+          Process.cancel_timer(timer_ref)
+          %{room | phase_timers: Map.delete(room.phase_timers, position)}
+      end
+
+    # Reclaim seat if it's in :reconnecting state
+    case Map.get(room.seats, position) do
+      %Seat{status: :reconnecting} = seat ->
+        case Seat.reclaim(seat, user_id) do
+          {:ok, reclaimed} ->
+            %{room | seats: Map.put(room.seats, position, reclaimed)}
+
+          {:error, _} ->
+            room
+        end
+
+      _ ->
+        room
+    end
   end
 
   # Seat management helpers

@@ -173,7 +173,7 @@
             "Broadcast a 'player_reconnecting' event on the game channel/PubSub with the position and user_id",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.2",

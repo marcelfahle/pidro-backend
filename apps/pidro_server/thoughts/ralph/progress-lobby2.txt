@@ -186,3 +186,46 @@ All 7 features (2.1–2.7) now pass. Phase 2 (Seat State Machine) is fully compl
 ### Next up:
 - Phase 3: Three-Phase Disconnect Cascade (PID-30) — the core lifecycle feature
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 3.1: Phase 1 (Hiccup) Disconnect Cascade
+
+Implemented the first phase of the three-phase disconnect cascade. When a player
+disconnects from a `:playing` room, their seat transitions to `:reconnecting` and
+a Phase 2 timer is scheduled.
+
+### What was done:
+- Added `:phase_timers` field to Room struct (`%{position => timer_ref}`)
+- Added `Lifecycle` alias to RoomManager for centralized timeout config
+- New `start_hiccup_cascade/3` helper:
+  - Calls `Seat.disconnect/1` to transition seat from `:connected` → `:reconnecting`
+  - Schedules `{:phase2_start, room_code, position}` after `Lifecycle.config(:hiccup_timeout_ms)`
+  - Stores timer reference in `room.phase_timers` for cancellation on reconnect
+  - Broadcasts `{:player_reconnecting, %{user_id, position}}` on `"game:#{room_code}"` PubSub topic
+- Updated `handle_player_disconnect`: for `:playing` rooms, calls `start_hiccup_cascade/3`
+  alongside existing `disconnected_players` mechanism (backward compatible)
+- New `cancel_hiccup_and_reclaim/2` helper:
+  - Cancels phase timer via `Process.cancel_timer/1`
+  - Calls `Seat.reclaim/2` to restore seat from `:reconnecting` → `:connected`
+- Updated `handle_player_reconnect`: calls `cancel_hiccup_and_reclaim/2` for correctness
+  during Phase 1 reconnection
+- Added stub `handle_info({:phase2_start, ...})` — no-op until Feature 3.2 implements
+  bot substitution. Prevents GenServer crash from unhandled timer messages.
+
+### Design decisions:
+- Hiccup cascade only triggers for `:playing` rooms — `:waiting` rooms use existing flow
+- Both `disconnected_players` map AND `seats` are updated — dual tracking for backward
+  compatibility until the legacy flow is fully replaced
+- Phase timer stored per-position, not per-user — positions are stable, users can change
+- PubSub broadcast on game topic (not room topic) since this is game-state-related
+- Graceful handling: if seat isn't in `:connected` state (e.g., already in cascade),
+  `start_hiccup_cascade` is a no-op
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 3.2: Phase 2 (Grace) — spawn substitute bot when hiccup timer fires
+- Feature 3.3: SubstituteBot GenServer — production bot for filling in during games
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
