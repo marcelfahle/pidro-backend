@@ -303,7 +303,7 @@
             "Test: all humans disconnected returns {:no_humans, room}",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },

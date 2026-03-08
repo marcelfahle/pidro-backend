@@ -590,3 +590,39 @@ transfers to the next connected human.
 ### Next up:
 - Feature 4.2: Test ownership promotion scenarios (PID-31)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 4.2: Test Ownership Promotion Scenarios
+
+Created `test/pidro_server/games/ownership_promotion_test.exs` — 6 tests covering
+all ownership promotion scenarios from the PRD.
+
+### What was done:
+- 6 tests across 5 describe blocks:
+  1. Owner disconnect (Phase 3) promotes partner — full cascade on owner,
+     partner becomes new owner, owner_changed PubSub event broadcast
+  2. Owner disconnect promotes opponent if partner also disconnected —
+     partner cascaded first, then owner, promotion skips botted partner
+  3. Owner reconnect during Phase 2 retains ownership — bot substitute
+     preserves is_owner, reclaim restores full owner status
+  4. Explicit leave triggers promotion — leave_room/1 on owner in :playing
+     room promotes next human, broadcasts owner_changed
+  5. All humans disconnected — two tests: (a) all 4 cascade simultaneously,
+     no connected owner remains; (b) non-owners disconnect first, then
+     owner, verifying no promotion target exists
+- Helper functions: create_playing_room/0, position_for/2, owner_position/1,
+  partner_position/1, trigger_full_cascade/2, trigger_phase2/2
+- Follows existing disconnect_cascade_test patterns (async: false,
+  BotSupervisor setup, manual Phase 2/3 message sending)
+
+### Verification:
+- mix format --check-formatted: passes for pidro_server files
+- mix test (ownership_promotion_test.exs): 6 tests, 0 failures
+- mix test (full pidro_server suite): 297 tests, 0 failures, 1 skipped
+
+### Phase 4 Complete!
+All features (4.1–4.2) now pass. Phase 4 (Ownership Auto-Promotion) is fully
+complete.
+
+### Next up:
+- Phase 5: Lobby Room Filtering (PID-32) — categorized lobby data
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
