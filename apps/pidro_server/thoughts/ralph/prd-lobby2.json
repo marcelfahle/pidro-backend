@@ -327,7 +327,7 @@
             "Rooms with zero connected humans should appear in NO category",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "5.2",

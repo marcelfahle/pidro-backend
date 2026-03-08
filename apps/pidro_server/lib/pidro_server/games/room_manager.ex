@@ -266,6 +266,42 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Returns categorized lobby data for the given user.
+
+  ## Categories
+
+  - `:my_rejoinable` - Playing rooms where the user has a reserved seat (can reclaim)
+  - `:open_tables` - Waiting rooms with vacant seats
+  - `:substitute_needed` - Playing rooms with vacant seats opened by owner
+  - `:spectatable` - Playing rooms with spectator capacity remaining
+
+  Rooms with zero connected humans appear in no category.
+
+  ## Parameters
+
+  - `user_id` - The user's ID (can be nil for anonymous browsing)
+
+  ## Returns
+
+  A map with four category keys, each containing a list of room structs.
+
+  ## Examples
+
+      lobby = RoomManager.list_lobby("user-123")
+      lobby.my_rejoinable  # rooms where user can reclaim their seat
+      lobby.open_tables    # waiting rooms to join
+  """
+  @spec list_lobby(String.t() | nil) :: %{
+          my_rejoinable: [Room.t()],
+          open_tables: [Room.t()],
+          substitute_needed: [Room.t()],
+          spectatable: [Room.t()]
+        }
+  def list_lobby(user_id \\ nil) do
+    GenServer.call(__MODULE__, {:list_lobby, user_id})
+  end
+
+  @doc """
   Gets details of a specific room.
 
   ## Parameters
@@ -751,6 +787,13 @@ defmodule PidroServer.Games.RoomManager do
       |> filter_rooms(filter)
 
     {:reply, rooms, state}
+  end
+
+  @impl true
+  def handle_call({:list_lobby, user_id}, _from, %State{} = state) do
+    rooms = Map.values(state.rooms)
+    lobby = categorize_lobby(rooms, user_id)
+    {:reply, lobby, state}
   end
 
   @impl true
@@ -1770,6 +1813,66 @@ defmodule PidroServer.Games.RoomManager do
 
   defp filter_rooms(rooms, :available) do
     Enum.filter(rooms, &(&1.status in [:waiting, :ready, :playing]))
+  end
+
+  @spec categorize_lobby([Room.t()], String.t() | nil) :: %{
+          my_rejoinable: [Room.t()],
+          open_tables: [Room.t()],
+          substitute_needed: [Room.t()],
+          spectatable: [Room.t()]
+        }
+  defp categorize_lobby(rooms, user_id) do
+    # Only consider rooms with at least one connected human
+    active_rooms = Enum.filter(rooms, &has_connected_human?/1)
+
+    %{
+      my_rejoinable: lobby_rejoinable(active_rooms, user_id),
+      open_tables: lobby_open_tables(active_rooms),
+      substitute_needed: lobby_substitute_needed(active_rooms),
+      spectatable: lobby_spectatable(active_rooms)
+    }
+  end
+
+  defp has_connected_human?(%Room{seats: seats}) when map_size(seats) == 0, do: false
+
+  defp has_connected_human?(%Room{seats: seats}) do
+    Enum.any?(seats, fn {_pos, seat} -> Seat.connected_human?(seat) end)
+  end
+
+  # Playing rooms where the user has a reserved seat (reconnecting or grace)
+  defp lobby_rejoinable(_rooms, nil), do: []
+
+  defp lobby_rejoinable(rooms, user_id) do
+    Enum.filter(rooms, fn room ->
+      room.status == :playing and
+        Enum.any?(room.seats, fn {_pos, seat} ->
+          seat.reserved_for == user_id and seat.status in [:reconnecting, :grace, :bot_substitute]
+        end)
+    end)
+  end
+
+  # Waiting rooms with vacant seats
+  defp lobby_open_tables(rooms) do
+    Enum.filter(rooms, fn room ->
+      room.status == :waiting and
+        Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end)
+    end)
+  end
+
+  # Playing rooms with vacant seats (explicitly opened by owner)
+  defp lobby_substitute_needed(rooms) do
+    Enum.filter(rooms, fn room ->
+      room.status == :playing and
+        Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end)
+    end)
+  end
+
+  # Playing rooms with spectator capacity remaining
+  defp lobby_spectatable(rooms) do
+    Enum.filter(rooms, fn room ->
+      room.status == :playing and
+        length(room.spectator_ids) < room.max_spectators
+    end)
   end
 
   @doc false

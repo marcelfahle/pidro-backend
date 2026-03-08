@@ -626,3 +626,44 @@ complete.
 ### Next up:
 - Phase 5: Lobby Room Filtering (PID-32) — categorized lobby data
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 5.1: Categorized Lobby Data (list_lobby/1)
+
+Implemented `list_lobby/1` in RoomManager — returns four categorized room lists
+for the lobby UI to display.
+
+### What was done:
+- Added `list_lobby/1` public API to RoomManager with full @doc and @spec
+- Added `handle_call({:list_lobby, user_id})` GenServer handler
+- Added `categorize_lobby/2` private helper that filters rooms into 4 categories:
+  - `my_rejoinable`: :playing rooms where user has a reserved seat (status in
+    [:reconnecting, :grace, :bot_substitute] with reserved_for == user_id)
+  - `open_tables`: :waiting rooms with at least one vacant seat
+  - `substitute_needed`: :playing rooms with vacant seats (opened by owner)
+  - `spectatable`: :playing rooms with spectator capacity remaining
+- Added `has_connected_human?/1` helper — rooms with zero connected humans
+  appear in no category (filtered out before categorization)
+- Category helpers: `lobby_rejoinable/2`, `lobby_open_tables/1`,
+  `lobby_substitute_needed/1`, `lobby_spectatable/1`
+- `list_lobby(nil)` returns empty `my_rejoinable` (anonymous users)
+
+### Design decisions:
+- Returns full Room structs (not serialized) — follows existing `list_rooms`
+  pattern. Serialization happens in the channel/controller layer.
+- Rooms can appear in multiple categories (e.g., a playing room can be both
+  spectatable and substitute_needed if it has a vacant seat)
+- `my_rejoinable` checks `reserved_for` field (set during disconnect cascade)
+  and includes :bot_substitute status — this catches Phase 2 (grace period)
+  where the bot is playing but the human can still reclaim
+- `has_connected_human?` returns false for rooms with empty seats map
+  (backward compat for rooms created before the Seat integration)
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 297 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 5.2: REST endpoint and LobbyChannel updates for categorized lobby
+- Feature 5.3: Tests for lobby filtering
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
