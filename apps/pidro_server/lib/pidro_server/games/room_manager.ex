@@ -614,6 +614,44 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Joins a `:playing` room as a substitute player, filling a vacant seat.
+
+  The room must be `:playing` and have a vacant seat (opened by the owner via
+  `open_seat/3`). The player is placed in the vacant seat's position and
+  receives the current game state. The engine doesn't need changes — the
+  position already exists, a bot was playing it, now the human takes over.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `player_id` - The user ID of the joining player
+
+  ## Returns
+
+  - `{:ok, room, position}` - Joined successfully at the given position
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :already_in_room}` - Player is already in another room
+  - `{:error, :already_seated}` - Player is already in this room
+  - `{:error, :room_not_playing}` - Room is not in `:playing` status
+  - `{:error, :no_vacant_seat}` - No vacant seat available
+
+  ## Examples
+
+      {:ok, room, :east} = RoomManager.join_as_substitute("A1B2", "new-player-id")
+  """
+  @spec join_as_substitute(String.t(), String.t()) ::
+          {:ok, Room.t(), Positions.position()}
+          | {:error,
+             :room_not_found
+             | :already_in_room
+             | :already_seated
+             | :room_not_playing
+             | :no_vacant_seat}
+  def join_as_substitute(room_code, player_id) do
+    GenServer.call(__MODULE__, {:join_as_substitute, String.upcase(room_code), player_id})
+  end
+
+  @doc """
   Resets the RoomManager state for testing purposes.
 
   This function is only intended for use in tests to clear all rooms and
@@ -1301,6 +1339,44 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  @impl true
+  def handle_call({:join_as_substitute, room_code, player_id}, _from, %State{} = state) do
+    with {:ok, room} <- fetch_room(state, room_code),
+         :ok <- ensure_not_in_other_room(state, player_id, room_code),
+         :ok <- ensure_playing(room),
+         {:ok, position} <- find_vacant_seat_position(room) do
+      # Fill the vacant seat with the new human player
+      {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
+
+      # Update the positions map so the engine sees this player at the position
+      updated_positions = Map.put(room.positions, position, player_id)
+
+      updated_room =
+        %{room | seats: Map.put(room.seats, position, filled_seat), positions: updated_positions}
+        |> touch_last_activity()
+
+      new_state = put_room_and_player(state, updated_room, player_id)
+
+      Logger.info(
+        "Substitute player #{player_id} joined room #{room_code} at position #{position}"
+      )
+
+      # Broadcast to game channel and lobby
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:substitute_joined, %{position: position, user_id: player_id}}
+      )
+
+      {:reply, {:ok, updated_room, position}, new_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   if Mix.env() == :test do
     @impl true
     def handle_call({:set_last_activity_for_test, room_code, datetime}, _from, %State{} = state) do
@@ -1672,6 +1748,14 @@ defmodule PidroServer.Games.RoomManager do
     case Map.get(seats, position) do
       %Seat{occupant_type: :vacant, status: nil} -> :ok
       _ -> {:error, :seat_not_vacant}
+    end
+  end
+
+  @doc false
+  defp find_vacant_seat_position(%Room{seats: seats}) do
+    case Enum.find(seats, fn {_pos, seat} -> Seat.vacant?(seat) end) do
+      {position, _seat} -> {:ok, position}
+      nil -> {:error, :no_vacant_seat}
     end
   end
 

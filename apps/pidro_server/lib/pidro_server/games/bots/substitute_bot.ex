@@ -120,6 +120,8 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   def handle_info({:substitute_available, _}, state), do: {:noreply, state}
   @impl true
   def handle_info({:substitute_seat_closed, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:substitute_joined, _}, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do

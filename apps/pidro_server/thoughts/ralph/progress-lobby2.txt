@@ -1096,3 +1096,63 @@ open bot-filled seats for human substitutes and close them back to bots.
 - Feature 8.3: Channel events and REST endpoint for seat management (PID-34)
 - Feature 8.4: Test the full substitute seat flow (PID-34)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 8.2: Allow Strangers to Join :playing Rooms with Vacant Seats
+
+Implemented substitute player joining for `:playing` rooms. When the owner opens
+a bot seat via `open_seat/3`, strangers can now join that specific vacant seat
+via the GameChannel or directly through `RoomManager.join_as_substitute/2`.
+
+### What was done:
+
+**RoomManager (room_manager.ex):**
+- Added `join_as_substitute/2` public API: takes room_code and player_id.
+  Validates: room exists, player not in another room, room is `:playing`, has
+  a vacant seat. Fills the seat via `Seat.fill_seat/2`, updates the positions
+  map so the engine sees the new player at the position, broadcasts
+  `{:substitute_joined, %{position, user_id}}` on game PubSub topic and
+  lobby update.
+- Added `find_vacant_seat_position/1` private helper: searches room seats for
+  the first vacant seat and returns `{:ok, position}` or `{:error, :no_vacant_seat}`.
+- GenServer handler validates with `with` chain using existing helpers:
+  `fetch_room`, `ensure_not_in_other_room`, `ensure_playing`, `find_vacant_seat_position`.
+
+**GameChannel (game_channel.ex):**
+- Updated `determine_user_role/2` to return `:substitute` when: user is not in
+  positions, has no reserved seat, is not a spectator, BUT the room is `:playing`
+  and has a vacant seat. This check comes before `:unauthorized`.
+- Added `:substitute` case in `join/3`: calls `RoomManager.join_as_substitute/2`,
+  then proceeds with normal join flow (subscribes to PubSub, fetches game state,
+  returns position and legal actions to the client).
+- Added `handle_info({:substitute_joined, _})` clause to push the event to clients.
+- Added `has_vacant_seat?/1` private helper for the role check.
+
+**SubstituteBot (substitute_bot.ex):**
+- Added no-op `handle_info({:substitute_joined, _})` clause to prevent crashes
+  from PubSub messages.
+
+### Design decisions:
+- Separate `join_as_substitute` function (not modifying existing `join_room`) because
+  the code paths are fundamentally different: `join_room` uses `Positions.assign`
+  (which checks room_full/already_seated), while substitute joining directly places
+  the player at a specific vacant seat position.
+- Positions map is updated directly (`Map.put`) since `Positions.assign` would
+  fail with `:room_full` (all 4 positions are occupied in a `:playing` room, even
+  if one has a bot). The position already exists in the engine — the human just
+  takes over from the bot.
+- The engine doesn't need changes — position is already in the game. The new player
+  subscribes via PubSub and receives game state + legal actions through the
+  normal `proceed_with_join` flow.
+- `determine_user_role` returns `:substitute` (not `:player`) so the channel knows
+  to call `join_as_substitute` before `proceed_with_join`. After joining, the role
+  becomes `:player` in the socket assigns.
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 328 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 8.3: Channel events and REST endpoint for seat management (PID-34)
+- Feature 8.4: Test the full substitute seat flow (PID-34)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

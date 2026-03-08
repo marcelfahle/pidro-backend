@@ -487,7 +487,7 @@
             "Return current game state to the joining player",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "8.3",

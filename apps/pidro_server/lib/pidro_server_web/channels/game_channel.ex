@@ -122,6 +122,17 @@ defmodule PidroServerWeb.GameChannel do
             proceed_with_join(room_code, user_id, socket, :new, :player)
           end
 
+        :substitute ->
+          # Stranger joining a :playing room with a vacant seat
+          case RoomManager.join_as_substitute(room_code, user_id) do
+            {:ok, _updated_room, _position} ->
+              proceed_with_join(room_code, user_id, socket, :new, :player)
+
+            {:error, reason} ->
+              Logger.warning("Substitute join failed for #{user_id}: #{inspect(reason)}")
+              {:error, %{reason: "substitute join failed: #{inspect(reason)}"}}
+          end
+
         :spectator ->
           # Spectators join directly without reconnection logic
           proceed_with_join(room_code, user_id, socket, :new, :spectator)
@@ -413,6 +424,11 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:substitute_joined, %{position: position, user_id: user_id}}, socket) do
+    push(socket, "substitute_joined", %{position: position, user_id: user_id})
+    {:noreply, socket}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,
@@ -588,7 +604,7 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
-          :player | :spectator | :unauthorized
+          :player | :substitute | :spectator | :unauthorized
   defp determine_user_role(room, user_id) do
     alias PidroServer.Games.Room.Positions
     user_id_str = to_string(user_id)
@@ -601,12 +617,23 @@ defmodule PidroServerWeb.GameChannel do
       has_reserved_seat?(room, user_id_str) ->
         :player
 
+      # Stranger joining a :playing room with a vacant seat opened by owner
+      room.status == :playing && has_vacant_seat?(room) ->
+        :substitute
+
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
         :spectator
 
       true ->
         :unauthorized
     end
+  end
+
+  @spec has_vacant_seat?(RoomManager.Room.t()) :: boolean()
+  defp has_vacant_seat?(room) do
+    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
+      seat.occupant_type == :vacant && seat.status == nil
+    end)
   end
 
   @spec has_reserved_seat?(RoomManager.Room.t(), String.t()) :: boolean()
