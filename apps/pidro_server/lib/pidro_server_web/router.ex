@@ -57,6 +57,9 @@ defmodule PidroServerWeb.Router do
     # User routes with authentication
     get "/users/me/stats", UserController, :stats
 
+    # Lobby route with authentication (needs user_id for rejoinable rooms)
+    get "/lobby", RoomController, :lobby
+
     # Room routes with authentication
     post "/rooms", RoomController, :create
     post "/rooms/:code/join", RoomController, :join

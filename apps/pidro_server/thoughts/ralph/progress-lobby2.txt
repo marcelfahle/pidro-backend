@@ -701,3 +701,61 @@ four lobby categories and room state transitions.
 - Feature 5.2: REST endpoint and LobbyChannel updates for categorized lobby (PID-32)
 - Phase 6: Stale Room Cleanup (PID-33)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 5.2: REST Endpoint & LobbyChannel for Categorized Lobby
+
+Added REST endpoint and updated LobbyChannel to expose the categorized lobby
+data (`list_lobby/1`) to clients via both REST API and WebSocket.
+
+### What was done:
+
+**Router (router.ex):**
+- Added `GET /api/v1/lobby` route in the authenticated scope, mapped to
+  `RoomController.lobby`
+
+**RoomController (room_controller.ex):**
+- Added `lobby/2` action: gets authenticated user, calls `RoomManager.list_lobby/1`,
+  renders via `RoomJSON.lobby/1`
+- Added OpenAPI operation spec for the new endpoint
+
+**RoomJSON (room_json.ex):**
+- Added `lobby/1` function that serializes the 4-category lobby map
+  (`my_rejoinable`, `open_tables`, `substitute_needed`, `spectatable`) using
+  the existing `room/1` serializer for each room in each category
+
+**LobbyChannel (lobby_channel.ex):**
+- Updated `join/3` to return both `rooms` (flat list, backward compat) and
+  `lobby` (categorized map) in the join reply
+- Updated `handle_info({:lobby_update, ...})` to include categorized lobby
+  data alongside the flat room list
+- Updated `handle_info({:room_created, ...})` and `handle_info({:room_updated, ...})`
+  to include `category` and `action` fields in the push payload
+- Updated `handle_info({:room_closed, ...})` to include `action: "removed"`
+- Added `serialize_lobby/1` helper that serializes each category's rooms
+- Added `determine_category/2` helper that classifies a room into
+  `open_tables`, `my_rejoinable`, `substitute_needed`, or `spectatable`
+- Added `has_reserved_seat?/2` and `has_vacant_seat?/1` helpers for category
+  determination
+
+### Design decisions:
+- REST endpoint requires authentication (in `:api_authenticated` scope) because
+  `list_lobby/1` needs the user_id for `my_rejoinable` filtering
+- LobbyChannel join returns BOTH flat `rooms` and categorized `lobby` for
+  backward compatibility — existing clients can ignore the `lobby` key
+- `determine_category/2` returns the primary category for a room (first match
+  wins: waiting→open_tables, playing+reserved→my_rejoinable, playing+vacant→
+  substitute_needed, playing→spectatable)
+- Category is user-specific for `my_rejoinable` (checks socket's user_id)
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 310 tests, 0 failures, 1 skipped
+
+### Phase 5 Complete!
+All 3 features (5.1–5.3) now pass. Phase 5 (Lobby Room Filtering) is fully
+complete.
+
+### Next up:
+- Phase 6: Stale Room Cleanup (PID-33)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

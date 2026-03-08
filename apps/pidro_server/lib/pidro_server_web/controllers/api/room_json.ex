@@ -61,6 +61,23 @@ defmodule PidroServerWeb.API.RoomJSON do
   end
 
   @doc """
+  Renders categorized lobby data.
+
+  Returns rooms grouped into four categories: my_rejoinable, open_tables,
+  substitute_needed, and spectatable. Each category contains serialized room data.
+  """
+  def lobby(%{lobby: lobby}) do
+    %{
+      data: %{
+        my_rejoinable: Enum.map(lobby.my_rejoinable, &room/1),
+        open_tables: Enum.map(lobby.open_tables, &room/1),
+        substitute_needed: Enum.map(lobby.substitute_needed, &room/1),
+        spectatable: Enum.map(lobby.spectatable, &room/1)
+      }
+    }
+  end
+
+  @doc """
   Renders the game state for a room.
 
   Takes a map with a :state key and returns the serialized game state

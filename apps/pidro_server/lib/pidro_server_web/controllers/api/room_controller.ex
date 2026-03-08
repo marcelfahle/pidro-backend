@@ -76,6 +76,31 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc false
+  def open_api_operation(:lobby) do
+    %Operation{
+      summary: "Get categorized lobby data",
+      description: """
+      Returns rooms grouped into four categories for the lobby UI:
+      my_rejoinable, open_tables, substitute_needed, and spectatable.
+
+      Requires authentication to identify which rooms the user can rejoin.
+      """,
+      operationId: "RoomController.lobby",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.RoomsResponse),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          )
+      }
+    }
+  end
+
+  @doc false
   def open_api_operation(:create) do
     %Operation{
       summary: "Create a new room",
@@ -361,6 +386,29 @@ defmodule PidroServerWeb.API.RoomController do
     conn
     |> put_view(RoomJSON)
     |> render(:index, %{rooms: rooms})
+  end
+
+  @doc """
+  Returns categorized lobby data.
+
+  Returns rooms grouped into four categories:
+  - `my_rejoinable` - Playing rooms where the user has a reserved seat
+  - `open_tables` - Waiting rooms with vacant seats
+  - `substitute_needed` - Playing rooms with vacant seats opened by the owner
+  - `spectatable` - Playing rooms with spectator capacity remaining
+
+  Requires authentication via Bearer token.
+
+  Returns HTTP 200 (OK) on success.
+  """
+  @spec lobby(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def lobby(conn, _params) do
+    user = conn.assigns[:current_user]
+    lobby = RoomManager.list_lobby(user.id)
+
+    conn
+    |> put_view(RoomJSON)
+    |> render(:lobby, %{lobby: lobby})
   end
 
   @doc """

@@ -61,13 +61,22 @@ defmodule PidroServerWeb.LobbyChannel do
     # Subscribe to lobby updates
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
+    user_id = socket.assigns.user_id
+
     # Get current available room list (excludes finished and closed)
     rooms = RoomManager.list_rooms(:available)
+
+    # Get categorized lobby data for this user
+    lobby = RoomManager.list_lobby(user_id)
 
     # Track presence after join
     send(self(), :after_join)
 
-    {:ok, %{rooms: serialize_rooms(rooms)}, socket}
+    {:ok,
+     %{
+       rooms: serialize_rooms(rooms),
+       lobby: serialize_lobby(lobby)
+     }, socket}
   end
 
   @doc """
@@ -81,22 +90,49 @@ defmodule PidroServerWeb.LobbyChannel do
   def handle_info(msg, socket)
 
   def handle_info({:lobby_update, rooms}, socket) do
-    push(socket, "lobby_update", %{rooms: serialize_rooms(rooms)})
+    user_id = socket.assigns.user_id
+    lobby = RoomManager.list_lobby(user_id)
+
+    push(socket, "lobby_update", %{
+      rooms: serialize_rooms(rooms),
+      lobby: serialize_lobby(lobby)
+    })
+
     {:noreply, socket}
   end
 
   def handle_info({:room_created, room}, socket) do
-    push(socket, "room_created", %{room: serialize_room_with_users(room)})
+    serialized = serialize_room_with_users(room)
+    category = determine_category(room, socket.assigns.user_id)
+
+    push(socket, "room_created", %{
+      room: serialized,
+      category: category,
+      action: "added"
+    })
+
     {:noreply, socket}
   end
 
   def handle_info({:room_updated, room}, socket) do
-    push(socket, "room_updated", %{room: serialize_room_with_users(room)})
+    serialized = serialize_room_with_users(room)
+    category = determine_category(room, socket.assigns.user_id)
+
+    push(socket, "room_updated", %{
+      room: serialized,
+      category: category,
+      action: "updated"
+    })
+
     {:noreply, socket}
   end
 
   def handle_info({:room_closed, room_code}, socket) do
-    push(socket, "room_closed", %{room_code: room_code})
+    push(socket, "room_closed", %{
+      room_code: room_code,
+      action: "removed"
+    })
+
     {:noreply, socket}
   end
 
@@ -189,6 +225,50 @@ defmodule PidroServerWeb.LobbyChannel do
         nil ->
           base
       end
+    end)
+  end
+
+  defp serialize_lobby(lobby) do
+    %{
+      my_rejoinable: serialize_rooms(lobby.my_rejoinable),
+      open_tables: serialize_rooms(lobby.open_tables),
+      substitute_needed: serialize_rooms(lobby.substitute_needed),
+      spectatable: serialize_rooms(lobby.spectatable)
+    }
+  end
+
+  defp determine_category(room, user_id) do
+    cond do
+      room.status == :waiting ->
+        "open_tables"
+
+      room.status == :playing && has_reserved_seat?(room, user_id) ->
+        "my_rejoinable"
+
+      room.status == :playing && has_vacant_seat?(room) ->
+        "substitute_needed"
+
+      room.status == :playing ->
+        "spectatable"
+
+      true ->
+        nil
+    end
+  end
+
+  defp has_reserved_seat?(room, user_id) do
+    Enum.any?(room.seats, fn {_pos, seat} ->
+      case seat do
+        %Seat{status: :reconnecting, user_id: ^user_id} -> true
+        %Seat{reserved_for: ^user_id} when not is_nil(user_id) -> true
+        _ -> false
+      end
+    end)
+  end
+
+  defp has_vacant_seat?(room) do
+    Enum.any?(room.seats, fn {_pos, seat} ->
+      match?(%Seat{occupant_type: :vacant}, seat)
     end)
   end
 

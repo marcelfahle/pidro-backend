@@ -341,7 +341,7 @@
             "Update LobbyChannel broadcast handlers: when room events come in from PubSub, broadcast a 'lobby_update' event with category, action (added/removed/updated), and room data. Create a helper to determine which category a room belongs to",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "5.3",
