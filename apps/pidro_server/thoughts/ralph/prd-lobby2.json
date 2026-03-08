@@ -250,7 +250,7 @@
             "Test: phase transition timer is scheduled on disconnect",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.7",
