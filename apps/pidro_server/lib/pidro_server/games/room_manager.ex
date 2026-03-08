@@ -1256,7 +1256,7 @@ defmodule PidroServer.Games.RoomManager do
     Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
     case GameSupervisor.start_game(room.code) do
-      {:ok, _pid} ->
+      {:ok, pid} ->
         Logger.info("Game started successfully for room #{room.code}")
         # Update room status to :playing
         %Room{} = updated_room = %Room{room | status: :playing}
@@ -1267,11 +1267,35 @@ defmodule PidroServer.Games.RoomManager do
         broadcast_room(room.code, updated_room)
         broadcast_lobby_event({:room_updated, updated_room})
 
+        # Broadcast initial game state so bots and channels that joined
+        # before the game started receive the first state update.
+        broadcast_initial_game_state(room.code, pid)
+
         new_state
 
       {:error, reason} ->
         Logger.error("Failed to start game for room #{room.code}: #{inspect(reason)}")
         state
+    end
+  end
+
+  @spec broadcast_initial_game_state(String.t(), pid()) :: :ok
+  defp broadcast_initial_game_state(room_code, pid) do
+    try do
+      game_state = Pidro.Server.get_state(pid)
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:state_update, game_state}
+      )
+    rescue
+      e ->
+        Logger.error(
+          "Failed to broadcast initial game state for room #{room_code}: #{Exception.message(e)}"
+        )
+
+        :ok
     end
   end
 end

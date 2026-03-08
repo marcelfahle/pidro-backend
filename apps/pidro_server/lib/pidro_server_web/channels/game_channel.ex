@@ -134,13 +134,16 @@ defmodule PidroServerWeb.GameChannel do
   # Extract the common join logic into a helper function
   defp proceed_with_join(room_code, user_id, socket, join_type, role) do
     with {:ok, room} <- RoomManager.get_room(room_code),
-         true <- user_authorized?(user_id, room, role),
-         {:ok, _pid} <- GameAdapter.get_game(room_code),
-         :ok <- GameAdapter.subscribe(room_code) do
+         true <- user_authorized?(user_id, room, role) do
+      # Subscribe to game PubSub eagerly - works even if game hasn't started yet.
+      # When the game starts later, state updates will arrive via this subscription.
+      :ok = GameAdapter.subscribe(room_code)
+
       # Position only applies to players, not spectators
       position = if role == :player, do: get_player_position(room, user_id), else: nil
-      {:ok, state} = GameAdapter.get_state(room_code)
-      serialized_state = GameStateSerializer.serialize(state)
+
+      # Try to get current game state (may not exist if game hasn't started)
+      {serialized_state, legal_actions} = fetch_game_state(room_code, position)
 
       socket =
         socket
@@ -152,22 +155,15 @@ defmodule PidroServerWeb.GameChannel do
       # Track presence after join
       send(self(), :after_join)
 
-      legal_actions =
-        if position do
-          case GameAdapter.get_legal_actions(room_code, position) do
-            {:ok, actions} -> GameStateSerializer.serialize_legal_actions(actions)
-            _ -> []
-          end
-        else
-          []
-        end
-
       reply_data = %{
-        state: serialized_state,
         role: role,
         reconnected: join_type == :reconnect,
         legal_actions: legal_actions
       }
+
+      # Add state only if game has started
+      reply_data =
+        if serialized_state, do: Map.put(reply_data, :state, serialized_state), else: reply_data
 
       # Add position only for players
       reply_data = if position, do: Map.put(reply_data, :position, position), else: reply_data
@@ -177,15 +173,35 @@ defmodule PidroServerWeb.GameChannel do
       {:error, :room_not_found} ->
         {:error, %{reason: "Room not found"}}
 
-      {:error, :not_found} ->
-        {:error, %{reason: "Game not started yet"}}
-
       false ->
         {:error, %{reason: "Not authorized for this room"}}
 
       error ->
         Logger.error("Error joining game channel: #{inspect(error)}")
         {:error, %{reason: "Failed to join game"}}
+    end
+  end
+
+  defp fetch_game_state(room_code, position) do
+    case GameAdapter.get_game(room_code) do
+      {:ok, _pid} ->
+        {:ok, state} = GameAdapter.get_state(room_code)
+        serialized = GameStateSerializer.serialize(state)
+
+        actions =
+          if position do
+            case GameAdapter.get_legal_actions(room_code, position) do
+              {:ok, a} -> GameStateSerializer.serialize_legal_actions(a)
+              _ -> []
+            end
+          else
+            []
+          end
+
+        {serialized, actions}
+
+      {:error, :not_found} ->
+        {nil, []}
     end
   end
 
