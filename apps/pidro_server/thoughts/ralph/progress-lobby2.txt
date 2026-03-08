@@ -667,3 +667,37 @@ for the lobby UI to display.
 - Feature 5.2: REST endpoint and LobbyChannel updates for categorized lobby
 - Feature 5.3: Tests for lobby filtering
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 5.3: Test Lobby Filtering
+
+Created `test/pidro_server/games/lobby_filtering_test.exs` — 13 tests covering all
+four lobby categories and room state transitions.
+
+### What was done:
+
+**Tests (lobby_filtering_test.exs):**
+- 5 describe blocks covering all PRD test requirements:
+  - open_tables (3 tests): waiting rooms with vacant seats appear, playing rooms don't,
+    multiple waiting rooms all appear
+  - my_rejoinable (5 tests): reconnecting seat (Phase 1), bot_substitute seat (Phase 2),
+    different user can't see others' seats, Phase 3 permanent bot not rejoinable,
+    nil user gets empty list
+  - spectatable (3 tests): playing rooms appear, multiple playing rooms, waiting rooms don't
+  - zero connected humans (1 test): all-bot rooms appear in no category
+  - room state transitions (1 test): room moves from open_tables to spectatable when filled
+
+**Bug fix — lobby_rejoinable filter (room_manager.ex):**
+- `lobby_rejoinable/2` only checked `reserved_for == user_id`, but during Phase 1
+  (`:reconnecting`), `reserved_for` isn't set yet — it's only assigned in `start_grace`.
+- Fix: added `seat_reserved_for_user?/2` helper that checks `user_id` for `:reconnecting`
+  seats and `reserved_for` for `:grace`/`:bot_substitute` seats.
+
+### Verification:
+- mix format --check-formatted: passes for pidro_server files
+- mix test (lobby_filtering_test.exs): 13 tests, 0 failures
+- mix test (full pidro_server suite): 310 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 5.2: REST endpoint and LobbyChannel updates for categorized lobby (PID-32)
+- Phase 6: Stale Room Cleanup (PID-33)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

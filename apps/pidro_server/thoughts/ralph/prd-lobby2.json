@@ -356,7 +356,7 @@
             "Test: room transitioning from waiting to playing moves from open_tables to spectatable",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },

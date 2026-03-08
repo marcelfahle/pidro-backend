@@ -1846,10 +1846,22 @@ defmodule PidroServer.Games.RoomManager do
     Enum.filter(rooms, fn room ->
       room.status == :playing and
         Enum.any?(room.seats, fn {_pos, seat} ->
-          seat.reserved_for == user_id and seat.status in [:reconnecting, :grace, :bot_substitute]
+          seat_reserved_for_user?(seat, user_id)
         end)
     end)
   end
+
+  # Phase 1: seat is :reconnecting with user_id still set (reserved_for not yet assigned)
+  # Phase 2/3: seat is :bot_substitute with reserved_for set by start_grace
+  defp seat_reserved_for_user?(%Seat{status: :reconnecting, user_id: uid}, user_id)
+       when uid == user_id,
+       do: true
+
+  defp seat_reserved_for_user?(%Seat{reserved_for: rf, status: status}, user_id)
+       when rf == user_id and status in [:grace, :bot_substitute],
+       do: true
+
+  defp seat_reserved_for_user?(_, _), do: false
 
   # Waiting rooms with vacant seats
   defp lobby_open_tables(rooms) do
