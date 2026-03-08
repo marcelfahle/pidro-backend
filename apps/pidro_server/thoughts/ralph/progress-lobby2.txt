@@ -41,3 +41,39 @@ Created `test/pidro_server/games/lifecycle_test.exs` — unit tests for the Life
 ### Next up:
 - Feature 1.2: Wire Lifecycle config into config.exs and runtime.exs
 - Then Phase 2 (Seat State Machine) — the next major milestone
+
+## 2026-03-08 — Feature 2.1: Seat Struct Definition
+
+Created `lib/pidro_server/games/room/seat.ex` — the core Seat struct that models each
+position at the table as a swappable entity (human, bot, or vacant).
+
+### What was done:
+- Created `PidroServer.Games.Room.Seat` module alongside `Positions` in room/ subdirectory
+- Struct fields: position, occupant_type, user_id, bot_pid, status, disconnected_at,
+  grace_expires_at, reserved_for, is_owner, joined_at
+- 3 constructors: new_human/3 (with opts for is_owner/joined_at), new_bot/2, new_vacant/1
+- 7 state transitions with validation (disconnect, start_grace, substitute_bot,
+  make_permanent_bot, reclaim, open_for_substitute, fill_seat) — each returns
+  {:ok, seat} or {:error, reason}
+- reclaim/2 handles both Phase 1 (reconnecting) and Phase 2 (grace) with user_id matching
+- 5 boolean query functions: connected_human?, active_bot?, can_reclaim?, vacant?, owner?
+- serialize/1 converts to JSON-safe map (no pids, DateTimes as ISO 8601 strings)
+- Full @moduledoc with valid state transition diagram, @spec on every public function
+
+### Design decisions:
+- Placed in Room namespace (PidroServer.Games.Room.Seat) following Positions pattern
+- Vacant seats have status: nil (not a status atom) since they're not in the cascade
+- reclaim/2 from :grace clears bot_pid/grace fields and restores human occupant
+- open_for_substitute/1 resets to vacant state (clears all cascade fields)
+- Invalid transitions return {:error, :invalid_transition}, wrong user returns {:error, :user_mismatch}
+
+### Verification:
+- mix compile: clean, no warnings
+- mix format --check-formatted: passes for new file
+- mix test (full pidro_server suite): 211 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 2.2: Validated state transitions on Seat (already included in 2.1 — may be marked done)
+- Feature 2.3: Query helpers and serialization (already included in 2.1 — may be marked done)
+- Feature 2.4: Comprehensive tests for Seat
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

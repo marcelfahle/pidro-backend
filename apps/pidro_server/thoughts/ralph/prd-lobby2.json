@@ -68,7 +68,7 @@
             "Add @moduledoc and typespecs",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "2.2",
