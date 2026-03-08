@@ -1164,11 +1164,51 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  # Phase 3 handler — stub until Feature 3.4 implements permanent bot.
+  # Phase 3 handler — grace period expired, make bot permanent.
   @impl true
-  def handle_info({:phase3_gone, _room_code, _position}, state) do
-    # TODO: Feature 3.4 — make bot permanent, notify owner
-    {:noreply, state}
+  def handle_info({:phase3_gone, room_code, position}, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:noreply, state}
+
+      %Room{} = room ->
+        seat = Map.get(room.seats, position)
+
+        if seat && seat.status == :bot_substitute && seat.reserved_for != nil do
+          # Make bot permanent — player can no longer reclaim
+          {:ok, permanent_seat} = Seat.make_permanent_bot(seat)
+
+          # Clean up phase timer for this position
+          updated_room = %{
+            room
+            | seats: Map.put(room.seats, position, permanent_seat),
+              phase_timers: Map.delete(room.phase_timers, position)
+          }
+
+          updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+          # Broadcast seat permanently botted
+          Phoenix.PubSub.broadcast(
+            PidroServer.PubSub,
+            "game:#{room_code}",
+            {:seat_permanently_botted, %{position: position}}
+          )
+
+          Logger.info(
+            "Phase 3 (Gone): Seat at #{position} in room #{room_code} permanently bot-filled"
+          )
+
+          # TODO: Phase 4 (PID-31) — if this seat was the owner, trigger ownership promotion
+
+          # If the current owner is a connected human, notify them they can open the seat
+          maybe_notify_owner_decision(updated_room, room_code, position)
+
+          {:noreply, updated_state}
+        else
+          # Player already reclaimed or seat state changed, skip
+          {:noreply, state}
+        end
+    end
   end
 
   ## Private Helper Functions
@@ -1287,6 +1327,28 @@ defmodule PidroServer.Games.RoomManager do
       _ ->
         room
     end
+  end
+
+  @doc false
+  # Notifies the room owner that they can open a permanently-botted seat for a
+  # human substitute. Only broadcasts if the owner is a different connected human.
+  defp maybe_notify_owner_decision(%Room{} = room, room_code, botted_position) do
+    owner_seat =
+      room.seats
+      |> Map.values()
+      |> Enum.find(&Seat.owner?/1)
+
+    if owner_seat &&
+         Seat.connected_human?(owner_seat) &&
+         owner_seat.position != botted_position do
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:owner_decision_available, %{position: botted_position, owner_id: owner_seat.user_id}}
+      )
+    end
+
+    :ok
   end
 
   # Seat management helpers

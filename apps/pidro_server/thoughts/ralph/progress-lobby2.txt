@@ -320,3 +320,44 @@ that fills in for disconnected players during live games.
 - Feature 3.6: Test Phase 1 disconnect cascade
 - Feature 3.7: Test Phase 2 and Phase 3
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 3.4: Phase 3 (Gone) — Make Bot Permanent
+
+Replaced the Phase 3 stub in RoomManager with the real implementation. When the
+grace period expires and the seat is still `:bot_substitute` with `reserved_for`
+set, the bot becomes permanent and the player can no longer reclaim.
+
+### What was done:
+- Replaced stub `handle_info({:phase3_gone, ...})` with full Phase 3 logic:
+  - Guard: if seat is no longer `:bot_substitute` with `reserved_for` (player
+    reconnected), does nothing
+  - Calls `Seat.make_permanent_bot/1` to clear `reserved_for` — seat is no
+    longer reclaimable
+  - Cleans up phase timer reference from `room.phase_timers`
+  - Broadcasts `{:seat_permanently_botted, %{position: position}}` on game
+    PubSub topic
+- Added `maybe_notify_owner_decision/3` private helper:
+  - Finds the owner seat among all room seats
+  - If owner is a connected human at a different position, broadcasts
+    `{:owner_decision_available, %{position, owner_id}}` so the client can
+    show a non-blocking banner to open the seat for a human substitute
+- Added TODO comment for Phase 4 (PID-31) ownership promotion when the
+  permanently-botted seat was the owner
+
+### Design decisions:
+- Guard checks both `status == :bot_substitute` AND `reserved_for != nil` —
+  if reserved_for is already nil, the bot was already made permanent (idempotency)
+- Owner notification only fires if the owner is at a DIFFERENT position than
+  the botted seat (if the owner's own seat was botted, Phase 4 handles that)
+- Phase timer cleanup happens inline (Map.delete) — no separate cleanup function
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 3.5: Reconnection during Phase 2 and Phase 3
+- Feature 3.6: Test Phase 1 disconnect cascade
+- Feature 3.7: Test Phase 2 and Phase 3
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
