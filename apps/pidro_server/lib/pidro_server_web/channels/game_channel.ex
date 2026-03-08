@@ -690,6 +690,7 @@ defmodule PidroServerWeb.GameChannel do
 
         # Prepare stats attributes
         player_ids = PidroServer.Games.Room.Positions.player_ids(room)
+        player_results = Stats.build_player_results(room.seats, winner)
 
         stats_attrs = %{
           room_code: room_code,
@@ -699,7 +700,8 @@ defmodule PidroServerWeb.GameChannel do
           bid_team: bid_info.bid_team,
           duration_seconds: duration_seconds,
           completed_at: DateTime.utc_now(),
-          player_ids: player_ids
+          player_ids: player_ids,
+          player_results: player_results
         }
 
         # Save to database

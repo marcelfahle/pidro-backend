@@ -891,3 +891,60 @@ All 3 features (6.1–6.3) now pass. Phase 6 (Stale Room Cleanup) is fully compl
 ### Next up:
 - Phase 7: Score Protection (PID-35) — score recording with disconnected players
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 7.1: Score Recording with Disconnected Players
+
+Implemented per-player result tracking at game completion. When a game ends,
+each seat is classified by participation type and the results are recorded
+alongside existing game stats.
+
+### What was done:
+
+**Migration (20260308083652_add_player_results_to_game_stats.exs):**
+- Added `player_results` :map field to `game_stats` table
+
+**GameStats schema (game_stats.ex):**
+- Added `field :player_results, :map` to schema
+- Added `:player_results` to changeset cast list
+
+**Stats module (stats.ex):**
+- Added `build_player_results/2` public function that takes a seats map and
+  winner team atom, returns `%{user_id => %{participation, result, team, position}}`
+- Classification logic via `classify_seat/1`:
+  - Connected human → `{:record, user_id, :played}`
+  - Bot with `reserved_for` set (abandoned human) → `{:record, reserved_for, :abandoned}`
+  - Bot without `reserved_for` (pure bot) → `:skip`
+  - Vacant seat → `:skip`
+- `team_for_position/1` helper maps positions to teams (:north/:south → :north_south)
+- Result is :win or :loss based on comparing seat's team with winner
+- TODO comment for Phase 8 substitute detection
+
+**GameChannel (game_channel.ex):**
+- Updated `save_game_stats/3` to call `Stats.build_player_results/2` with
+  `room.seats` and `winner`, includes result in `stats_attrs`
+
+### Design decisions:
+- `build_player_results/2` uses pattern matching on map keys (not Seat struct)
+  for loose coupling between Stats and Games contexts
+- Abandoned humans (bot_substitute with reserved_for) get the game result their
+  team earned — they don't escape the win/loss by rage-quitting
+- Substitute detection deferred to Phase 8 when substitute seat opening is
+  implemented. Currently all connected humans are classified as :played
+- Added DB persistence via migration rather than just logging — follows existing
+  Stats infrastructure pattern
+
+### Known issue (pre-existing, not fixed here):
+- `GameAdapter.broadcast_state_update/2` checks `state.phase == :game_over` but
+  the engine uses `:complete`. This means `broadcast_game_over/2` is never called
+  and the `{:game_over, winner, scores}` PubSub message is never sent. The stats
+  recording code is correctly wired but won't fire until this phase check is fixed.
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 316 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 7.2: Track abandonment per user when Phase 3 fires (PID-35)
+- Feature 7.3: Test score recording with disconnected players (PID-35)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

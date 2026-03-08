@@ -154,7 +154,60 @@ defmodule PidroServer.Stats do
     player_stats
   end
 
+  @doc """
+  Builds per-player results from seat data at game completion.
+
+  Iterates through all seats and classifies each player's participation:
+
+    * Connected human → `:played`
+    * Bot with `reserved_for` set (abandoned human) → `:abandoned`
+    * Bot without `reserved_for` (pure bot) → skipped
+    * Human who joined as substitute → `:substitute` (Phase 8)
+
+  Returns a map of `%{user_id => %{participation, result, team, position}}`.
+  """
+  @spec build_player_results(map(), atom()) :: map()
+  def build_player_results(seats, winner) when is_map(seats) do
+    Enum.reduce(seats, %{}, fn {position, seat}, acc ->
+      case classify_seat(seat) do
+        {:record, user_id, participation} ->
+          team = team_for_position(position)
+          result = if team == winner, do: :win, else: :loss
+
+          Map.put(acc, user_id, %{
+            participation: participation,
+            result: result,
+            team: team,
+            position: position
+          })
+
+        :skip ->
+          acc
+      end
+    end)
+  end
+
+  def build_player_results(_seats, _winner), do: %{}
+
   # Private helpers
+
+  defp classify_seat(%{occupant_type: :human, status: :connected, user_id: user_id})
+       when not is_nil(user_id) do
+    # TODO: Detect substitutes when Phase 8 (substitute seat opening) is implemented.
+    # A substitute is a human who filled a vacant seat in a :playing room.
+    {:record, user_id, :played}
+  end
+
+  defp classify_seat(%{occupant_type: :bot, reserved_for: reserved_for})
+       when not is_nil(reserved_for) do
+    # Abandoned human — bot is playing but the original human can still reclaim
+    {:record, reserved_for, :abandoned}
+  end
+
+  defp classify_seat(_seat), do: :skip
+
+  defp team_for_position(position) when position in [:north, :south], do: :north_south
+  defp team_for_position(position) when position in [:east, :west], do: :east_west
 
   defp count_user_wins(games, user_id) do
     Enum.count(games, fn game ->

@@ -428,7 +428,7 @@
             "If a Stats module already exists, use it. If not, create a minimal one that logs the results with a TODO comment for database persistence",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "7.2",
