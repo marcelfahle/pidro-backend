@@ -127,7 +127,7 @@
             "IMPORTANT: This is additive. Do not remove or rename existing fields. The seats map lives alongside whatever player tracking already exists. Backward compatibility is critical.",
             "Verify: mix compile — no errors, no warnings"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "2.6",

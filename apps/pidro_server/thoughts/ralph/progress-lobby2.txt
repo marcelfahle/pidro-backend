@@ -105,3 +105,38 @@ constructors, state transitions, query helpers, and serialization.
 ### Next up:
 - Feature 2.5: Integrate Seat model into RoomManager (additive, backward-compatible)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 2.5: Integrate Seat Model into RoomManager
+
+Integrated the Seat struct into RoomManager as an additive field alongside existing
+positions map. Full backward compatibility maintained — no existing fields removed or
+renamed.
+
+### What was done:
+- Added `alias PidroServer.Games.Room.Seat` to RoomManager
+- Added `:seats` field to Room struct (type: map(), default: %{})
+- Room creation: initializes all 4 seats as vacant via `init_seats/0`, then fills
+  host seat via `Seat.new_human/3` with `is_owner: true`
+- join_room: fills the assigned seat via `Seat.fill_seat/2` after `Positions.assign`
+- leave_room (non-host): finds player position, vacates seat after `Positions.remove`
+- dev_set_position: rebuilds all seats from updated positions via `build_seats_from_positions/2`
+- 3 private helpers added: `init_seats/0`, `vacate_seat/2`, `build_seats_from_positions/2`
+
+### Design decisions:
+- Seats live alongside `positions` map — both are updated on join/leave
+- For dev_set_position: seats are rebuilt from scratch since direct position manipulation
+  would invalidate any cascade state anyway
+- Host leave closes the room entirely, so no seat updates needed there
+- handle_player_disconnect/reconnect NOT modified — those use the existing
+  disconnected_players mechanism. Seat-based cascade comes in Phase 3
+- `seats` defaults to `%{}` in defstruct, populated properly at room creation time
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 2.6: Update room serialization to include seat status
+- Feature 2.7: Verify all existing tests still pass with Seat model (already verified)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

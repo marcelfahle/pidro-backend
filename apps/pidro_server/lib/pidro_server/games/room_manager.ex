@@ -45,6 +45,7 @@ defmodule PidroServer.Games.RoomManager do
 
   alias PidroServer.Games.GameSupervisor
   alias PidroServer.Games.Room.Positions
+  alias PidroServer.Games.Room.Seat
 
   @max_players 4
   @room_code_length 4
@@ -86,6 +87,7 @@ defmodule PidroServer.Games.RoomManager do
             created_at: DateTime.t(),
             metadata: map(),
             disconnected_players: %{String.t() => DateTime.t()},
+            seats: map(),
             last_activity: DateTime.t()
           }
 
@@ -100,7 +102,8 @@ defmodule PidroServer.Games.RoomManager do
       positions: %{north: nil, east: nil, south: nil, west: nil},
       spectator_ids: [],
       max_spectators: 10,
-      disconnected_players: %{}
+      disconnected_players: %{},
+      seats: %{}
     ]
   end
 
@@ -536,6 +539,7 @@ defmodule PidroServer.Games.RoomManager do
         code: room_code,
         host_id: host_id,
         positions: Positions.empty(),
+        seats: init_seats(),
         status: :waiting,
         max_players: @max_players,
         created_at: now,
@@ -544,7 +548,18 @@ defmodule PidroServer.Games.RoomManager do
       }
 
       # Auto-assign host to first available position
-      {:ok, room_with_host, _pos} = Positions.assign(room, host_id, :auto)
+      {:ok, room_with_host, host_pos} = Positions.assign(room, host_id, :auto)
+
+      # Update seat for host
+      room_with_host = %{
+        room_with_host
+        | seats:
+            Map.put(
+              room_with_host.seats,
+              host_pos,
+              Seat.new_human(host_pos, host_id, is_owner: true)
+            )
+      }
 
       %State{} =
         new_state = %State{
@@ -568,6 +583,14 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_not_in_other_room(state, player_id, room_code),
          :ok <- ensure_room_joinable(room),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
+      # Update seat for the joining player
+      {:ok, filled_seat} = Seat.fill_seat(updated_room.seats[assigned_position], player_id)
+
+      updated_room = %{
+        updated_room
+        | seats: Map.put(updated_room.seats, assigned_position, filled_seat)
+      }
+
       # Update room status and last activity
       final_room =
         updated_room
@@ -616,8 +639,10 @@ defmodule PidroServer.Games.RoomManager do
           new_state = remove_room(state, room_code)
           {:reply, :ok, new_state}
         else
-          # Remove player from their position
+          # Find player's position and remove them
+          player_position = Positions.get_position(room, player_id)
           updated_room = Positions.remove(room, player_id)
+          updated_room = vacate_seat(updated_room, player_position)
 
           # If room becomes empty, delete it
           if Positions.count(updated_room) == 0 do
@@ -823,11 +848,14 @@ defmodule PidroServer.Games.RoomManager do
       # Set the user at the new position
       updated_positions = Map.put(positions_with_user_cleared, position, user_id)
 
-      # Update room with new positions and touch activity
+      # Sync seats with updated positions
+      updated_seats = build_seats_from_positions(updated_positions, room.host_id)
+
+      # Update room with new positions, seats, and touch activity
       # Note: Only auto-set to :ready if room is in :waiting status
       # This preserves :playing, :finished, etc. statuses for dev testing
       updated_room =
-        %{room | positions: updated_positions}
+        %{room | positions: updated_positions, seats: updated_seats}
         |> dev_maybe_set_ready()
         |> touch_last_activity()
 
@@ -1112,6 +1140,37 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   defp touch_last_activity(%Room{} = room) do
     %{room | last_activity: DateTime.utc_now()}
+  end
+
+  # Seat management helpers
+
+  @doc false
+  defp init_seats do
+    %{
+      north: Seat.new_vacant(:north),
+      east: Seat.new_vacant(:east),
+      south: Seat.new_vacant(:south),
+      west: Seat.new_vacant(:west)
+    }
+  end
+
+  @doc false
+  defp vacate_seat(%Room{seats: seats} = room, position) do
+    %{room | seats: Map.put(seats, position, Seat.new_vacant(position))}
+  end
+
+  @doc false
+  defp build_seats_from_positions(positions, host_id) do
+    Map.new(positions, fn {pos, user_id} ->
+      seat =
+        if user_id do
+          Seat.new_human(pos, user_id, is_owner: user_id == host_id)
+        else
+          Seat.new_vacant(pos)
+        end
+
+      {pos, seat}
+    end)
   end
 
   @doc false
