@@ -33,7 +33,8 @@ defmodule PidroServer.Games.Room.Seat do
           grace_expires_at: DateTime.t() | nil,
           reserved_for: String.t() | nil,
           is_owner: boolean(),
-          joined_at: DateTime.t() | nil
+          joined_at: DateTime.t() | nil,
+          substitute: boolean()
         }
 
   defstruct [
@@ -46,7 +47,8 @@ defmodule PidroServer.Games.Room.Seat do
     :grace_expires_at,
     :reserved_for,
     is_owner: false,
-    joined_at: nil
+    joined_at: nil,
+    substitute: false
   ]
 
   # ---------------------------------------------------------------------------
@@ -244,7 +246,8 @@ defmodule PidroServer.Games.Room.Seat do
        | status: :connected,
          occupant_type: :human,
          user_id: user_id,
-         joined_at: DateTime.utc_now()
+         joined_at: DateTime.utc_now(),
+         substitute: true
      }}
   end
 
@@ -283,6 +286,29 @@ defmodule PidroServer.Games.Room.Seat do
   def owner?(%__MODULE__{is_owner: true}), do: true
   def owner?(%__MODULE__{}), do: false
 
+  @doc "Returns true if any seat in the seats map is vacant."
+  @spec any_vacant?(map()) :: boolean()
+  def any_vacant?(seats) when is_map(seats) do
+    Enum.any?(seats, fn {_pos, seat} ->
+      seat.occupant_type == :vacant && seat.status == nil
+    end)
+  end
+
+  @doc """
+  Returns true if any seat in the seats map is reserved for the given user.
+
+  Checks both:
+  - Phase 1: seat in `:reconnecting` status with matching `user_id`
+  - Phase 2: seat with matching `reserved_for` (`:grace` or `:bot_substitute`)
+  """
+  @spec reserved_for_user?(map(), String.t()) :: boolean()
+  def reserved_for_user?(seats, user_id) when is_map(seats) do
+    Enum.any?(seats, fn {_pos, seat} ->
+      seat.reserved_for == user_id ||
+        (seat.status == :reconnecting && seat.user_id == user_id)
+    end)
+  end
+
   # ---------------------------------------------------------------------------
   # Serialization
   # ---------------------------------------------------------------------------
@@ -299,9 +325,10 @@ defmodule PidroServer.Games.Room.Seat do
       user_id: seat.user_id,
       status: seat.status,
       is_owner: seat.is_owner,
+      substitute: seat.substitute,
       disconnected_at: maybe_to_iso8601(seat.disconnected_at),
       grace_expires_at: maybe_to_iso8601(seat.grace_expires_at),
-      reserved_for: seat.reserved_for,
+      has_reservation: seat.reserved_for != nil,
       joined_at: maybe_to_iso8601(seat.joined_at)
     }
   end

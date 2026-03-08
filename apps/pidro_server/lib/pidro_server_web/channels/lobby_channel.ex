@@ -85,23 +85,14 @@ defmodule PidroServerWeb.LobbyChannel do
   Handles internal messages.
 
   Processes the following events:
-  - `:lobby_update` - Room list changed
+  - `:room_created` - New room available
+  - `:room_updated` - Room state changed
+  - `:room_closed` - Room removed
+  - `:online_count_updated` - Online user count changed
   - `:after_join` - Presence tracking after join
   """
   @impl true
   def handle_info(msg, socket)
-
-  def handle_info({:lobby_update, rooms}, socket) do
-    user_id = socket.assigns.user_id
-    lobby = RoomManager.list_lobby(user_id)
-
-    push(socket, "lobby_update", %{
-      rooms: serialize_rooms(rooms),
-      lobby: serialize_lobby(lobby)
-    })
-
-    {:noreply, socket}
-  end
 
   def handle_info({:room_created, room}, socket) do
     serialized = serialize_room_with_users(room)
@@ -227,7 +218,7 @@ defmodule PidroServerWeb.LobbyChannel do
             is_owner: seat_data.is_owner,
             disconnected_at: seat_data.disconnected_at,
             grace_expires_at: seat_data.grace_expires_at,
-            reserved_for: seat_data.reserved_for,
+            has_reservation: seat_data.has_reservation,
             joined_at: seat_data.joined_at
           })
 
@@ -238,11 +229,26 @@ defmodule PidroServerWeb.LobbyChannel do
   end
 
   defp serialize_lobby(lobby) do
+    alias PidroServer.Games.Room.Positions
+
+    # Collect ALL player IDs across all categories in one pass
+    all_player_ids =
+      [:my_rejoinable, :open_tables, :substitute_needed, :spectatable]
+      |> Enum.flat_map(fn key ->
+        Map.get(lobby, key, [])
+        |> Enum.flat_map(&Positions.player_ids/1)
+      end)
+      |> Enum.uniq()
+
+    # Single DB query for all users
+    users_map = Auth.get_users_map(all_player_ids)
+
+    # Serialize all categories with the shared users_map
     %{
-      my_rejoinable: serialize_rooms(lobby.my_rejoinable),
-      open_tables: serialize_rooms(lobby.open_tables),
-      substitute_needed: serialize_rooms(lobby.substitute_needed),
-      spectatable: serialize_rooms(lobby.spectatable)
+      my_rejoinable: Enum.map(lobby.my_rejoinable, &serialize_room(&1, users_map)),
+      open_tables: Enum.map(lobby.open_tables, &serialize_room(&1, users_map)),
+      substitute_needed: Enum.map(lobby.substitute_needed, &serialize_room(&1, users_map)),
+      spectatable: Enum.map(lobby.spectatable, &serialize_room(&1, users_map))
     }
   end
 
@@ -251,10 +257,10 @@ defmodule PidroServerWeb.LobbyChannel do
       room.status == :waiting ->
         "open_tables"
 
-      room.status == :playing && has_reserved_seat?(room, user_id) ->
+      room.status == :playing && Seat.reserved_for_user?(room.seats, user_id) ->
         "my_rejoinable"
 
-      room.status == :playing && has_vacant_seat?(room) ->
+      room.status == :playing && Seat.any_vacant?(room.seats) ->
         "substitute_needed"
 
       room.status == :playing ->
@@ -263,22 +269,6 @@ defmodule PidroServerWeb.LobbyChannel do
       true ->
         nil
     end
-  end
-
-  defp has_reserved_seat?(room, user_id) do
-    Enum.any?(room.seats, fn {_pos, seat} ->
-      case seat do
-        %Seat{status: :reconnecting, user_id: ^user_id} -> true
-        %Seat{reserved_for: ^user_id} when not is_nil(user_id) -> true
-        _ -> false
-      end
-    end)
-  end
-
-  defp has_vacant_seat?(room) do
-    Enum.any?(room.seats, fn {_pos, seat} ->
-      match?(%Seat{occupant_type: :vacant}, seat)
-    end)
   end
 
   defp get_player_summary(player_id, user_map) do

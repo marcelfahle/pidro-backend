@@ -68,7 +68,6 @@ defmodule PidroServer.Games.RoomManager do
     - `:max_spectators` - Maximum number of spectators (default: 10)
     - `:created_at` - DateTime when the room was created
     - `:metadata` - Additional room metadata (e.g., room name)
-    - `:disconnected_players` - Map of disconnected players with their disconnect timestamps (%{user_id => DateTime.t()})
     - `:phase_timers` - Map of position to timer reference for the disconnect cascade (%{position => reference()})
 
     ## Derived Data
@@ -89,7 +88,6 @@ defmodule PidroServer.Games.RoomManager do
             max_spectators: integer(),
             created_at: DateTime.t(),
             metadata: map(),
-            disconnected_players: %{String.t() => DateTime.t()},
             phase_timers: %{Positions.position() => reference()},
             seats: map(),
             last_activity: DateTime.t()
@@ -106,7 +104,6 @@ defmodule PidroServer.Games.RoomManager do
       positions: %{north: nil, east: nil, south: nil, west: nil},
       spectator_ids: [],
       max_spectators: 10,
-      disconnected_players: %{},
       phase_timers: %{},
       seats: %{}
     ]
@@ -482,9 +479,9 @@ defmodule PidroServer.Games.RoomManager do
   @doc """
   Handles a player disconnect and starts the reconnection grace period.
 
-  When a player disconnects, they are tracked in the disconnected_players map
-  with a timestamp. The player has a 2-minute grace period to reconnect before
-  being removed from the room entirely.
+  When a player disconnects during a :playing game, the seat-based disconnect
+  cascade is started (hiccup -> grace -> permanent bot). The player can
+  reconnect during the hiccup or grace phases to reclaim their seat.
 
   ## Parameters
 
@@ -1146,14 +1143,9 @@ defmodule PidroServer.Games.RoomManager do
         if Positions.has_player?(room, user_id) do
           now = DateTime.utc_now()
 
-          %Room{} =
-            updated_room = %Room{
-              room
-              | disconnected_players: Map.put(room.disconnected_players, user_id, now),
-                last_activity: now
-            }
+          updated_room = %Room{room | last_activity: now}
 
-          # For :playing rooms, also update seat and start hiccup cascade
+          # For :playing rooms, update seat and start hiccup cascade
           updated_room =
             if room.status == :playing do
               start_hiccup_cascade(updated_room, room_code, user_id)
@@ -1171,15 +1163,6 @@ defmodule PidroServer.Games.RoomManager do
           # Broadcast room update
           broadcast_room(room_code, updated_room)
           broadcast_lobby_event({:room_updated, updated_room})
-
-          # Schedule cleanup check after full grace period (legacy fallback)
-          grace_period = get_grace_period_ms()
-
-          Process.send_after(
-            self(),
-            {:check_disconnect_timeout, room_code, user_id},
-            grace_period
-          )
 
           {:reply, :ok, updated_state}
         else
@@ -1212,33 +1195,6 @@ defmodule PidroServer.Games.RoomManager do
             )
 
             {:reply, {:error, :seat_permanently_filled}, state}
-
-          # Legacy fallback: check disconnected_players map
-          Map.has_key?(room.disconnected_players, user_id) ->
-            disconnect_time = Map.get(room.disconnected_players, user_id)
-            grace_period_ms = get_grace_period_ms()
-
-            if DateTime.diff(DateTime.utc_now(), disconnect_time, :millisecond) <= grace_period_ms do
-              updated_room = %Room{
-                room
-                | disconnected_players: Map.delete(room.disconnected_players, user_id),
-                  last_activity: DateTime.utc_now()
-              }
-
-              updated_state = %State{
-                state
-                | rooms: Map.put(state.rooms, room_code, updated_room)
-              }
-
-              Logger.info("Player #{user_id} reconnected to room #{room_code} (legacy)")
-
-              broadcast_room(room_code, updated_room)
-              broadcast_lobby_event({:room_updated, updated_room})
-
-              {:reply, {:ok, updated_room}, updated_state}
-            else
-              {:reply, {:error, :grace_period_expired}, state}
-            end
 
           true ->
             {:reply, {:error, :player_not_disconnected}, state}
@@ -1417,61 +1373,6 @@ defmodule PidroServer.Games.RoomManager do
 
     schedule_cleanup()
     {:noreply, updated_state}
-  end
-
-  @impl true
-  def handle_info({:check_disconnect_timeout, room_code, user_id}, %State{} = state) do
-    case Map.get(state.rooms, room_code) do
-      nil ->
-        # Room no longer exists
-        {:noreply, state}
-
-      %Room{} = room ->
-        # Check if player is still disconnected
-        case Map.get(room.disconnected_players, user_id) do
-          nil ->
-            # Already reconnected, nothing to do
-            {:noreply, state}
-
-          disconnect_time ->
-            # Check if grace period expired
-            grace_period_ms = get_grace_period_ms()
-
-            if DateTime.diff(DateTime.utc_now(), disconnect_time, :millisecond) >= grace_period_ms do
-              Logger.info(
-                "Player #{user_id} grace period expired for room #{room_code}, removing from room"
-              )
-
-              # Remove player from their position and from disconnected list
-              updated_room =
-                room
-                |> Positions.remove(user_id)
-                |> Map.put(:disconnected_players, Map.delete(room.disconnected_players, user_id))
-
-              # Update player_rooms
-              updated_player_rooms = Map.delete(state.player_rooms, user_id)
-
-              updated_rooms = Map.put(state.rooms, room_code, updated_room)
-
-              %State{} =
-                updated_state = %State{
-                  state
-                  | rooms: updated_rooms,
-                    player_rooms: updated_player_rooms
-                }
-
-              # Broadcast player removed
-              broadcast_room(room_code, updated_room)
-              broadcast_lobby(updated_state)
-              broadcast_lobby_event({:room_updated, updated_room})
-
-              {:noreply, updated_state}
-            else
-              # Grace period hasn't expired yet (edge case, shouldn't happen)
-              {:noreply, state}
-            end
-        end
-    end
   end
 
   # Phase 2 handler — hiccup timer fired, spawn substitute bot and start grace countdown.
@@ -1871,7 +1772,6 @@ defmodule PidroServer.Games.RoomManager do
               %{
                 room
                 | seats: Map.put(room.seats, position, reclaimed),
-                  disconnected_players: Map.delete(room.disconnected_players, user_id),
                   last_activity: DateTime.utc_now()
               }
 
@@ -1914,7 +1814,6 @@ defmodule PidroServer.Games.RoomManager do
               %{
                 room
                 | seats: Map.put(room.seats, position, reclaimed),
-                  disconnected_players: Map.delete(room.disconnected_players, user_id),
                   last_activity: DateTime.utc_now()
               }
 
@@ -2126,11 +2025,6 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  defp get_grace_period_ms do
-    Application.get_env(:pidro_server, PidroServer.Games.RoomManager)[:grace_period_ms] || 120_000
-  end
-
-  @doc false
   @spec remove_room(State.t(), String.t()) :: State.t()
   defp remove_room(%State{} = state, room_code) do
     case Map.get(state.rooms, room_code) do
@@ -2255,12 +2149,8 @@ defmodule PidroServer.Games.RoomManager do
     grace_period_seconds = grace_period_minutes * 60
     is_idle = DateTime.diff(now, room.last_activity, :second) > grace_period_seconds
 
-    # Check if room is effectively empty (all players disconnected or room empty)
-    # Note: disconnected players are in positions, so we filter them out
-    active_player_count =
-      Positions.player_ids(room)
-      |> Enum.count(fn id -> !Map.has_key?(room.disconnected_players, id) end)
-
+    # Check if room is effectively empty (no players, no spectators)
+    active_player_count = Positions.count(room)
     active_spectator_count = length(room.spectator_ids)
 
     room.status == :waiting && is_idle && active_player_count == 0 && active_spectator_count == 0
@@ -2295,84 +2185,45 @@ defmodule PidroServer.Games.RoomManager do
           spectatable: [Room.t()]
         }
   defp categorize_lobby(rooms, user_id) do
-    # Only consider rooms with at least one connected human
-    active_rooms = Enum.filter(rooms, &has_connected_human?/1)
+    initial = %{my_rejoinable: [], open_tables: [], substitute_needed: [], spectatable: []}
 
-    %{
-      my_rejoinable: lobby_rejoinable(active_rooms, user_id),
-      open_tables: lobby_open_tables(active_rooms),
-      substitute_needed: lobby_substitute_needed(active_rooms),
-      spectatable: lobby_spectatable(active_rooms)
-    }
+    Enum.reduce(rooms, initial, fn room, acc ->
+      # Skip rooms with zero connected humans
+      if not has_connected_human?(room) do
+        acc
+      else
+        cond do
+          # Playing rooms where the user has a reserved seat (reconnecting or grace)
+          room.status == :playing && user_id != nil &&
+              Seat.reserved_for_user?(room.seats, user_id) ->
+            %{acc | my_rejoinable: [room | acc.my_rejoinable]}
+
+          # Waiting rooms with vacant seats
+          room.status == :waiting &&
+              Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end) ->
+            %{acc | open_tables: [room | acc.open_tables]}
+
+          # Playing rooms with vacant seats (explicitly opened by owner)
+          room.status == :playing &&
+              Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end) ->
+            %{acc | substitute_needed: [room | acc.substitute_needed]}
+
+          # Playing rooms with spectator capacity remaining
+          room.status == :playing &&
+              length(room.spectator_ids) < room.max_spectators ->
+            %{acc | spectatable: [room | acc.spectatable]}
+
+          true ->
+            acc
+        end
+      end
+    end)
   end
 
   defp has_connected_human?(%Room{seats: seats}) when map_size(seats) == 0, do: false
 
   defp has_connected_human?(%Room{seats: seats}) do
     Enum.any?(seats, fn {_pos, seat} -> Seat.connected_human?(seat) end)
-  end
-
-  # Playing rooms where the user has a reserved seat (reconnecting or grace)
-  defp lobby_rejoinable(_rooms, nil), do: []
-
-  defp lobby_rejoinable(rooms, user_id) do
-    Enum.filter(rooms, fn room ->
-      room.status == :playing and
-        Enum.any?(room.seats, fn {_pos, seat} ->
-          seat_reserved_for_user?(seat, user_id)
-        end)
-    end)
-  end
-
-  # Phase 1: seat is :reconnecting with user_id still set (reserved_for not yet assigned)
-  # Phase 2/3: seat is :bot_substitute with reserved_for set by start_grace
-  defp seat_reserved_for_user?(%Seat{status: :reconnecting, user_id: uid}, user_id)
-       when uid == user_id,
-       do: true
-
-  defp seat_reserved_for_user?(%Seat{reserved_for: rf, status: status}, user_id)
-       when rf == user_id and status in [:grace, :bot_substitute],
-       do: true
-
-  defp seat_reserved_for_user?(_, _), do: false
-
-  # Waiting rooms with vacant seats
-  defp lobby_open_tables(rooms) do
-    Enum.filter(rooms, fn room ->
-      room.status == :waiting and
-        Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end)
-    end)
-  end
-
-  # Playing rooms with vacant seats (explicitly opened by owner)
-  defp lobby_substitute_needed(rooms) do
-    Enum.filter(rooms, fn room ->
-      room.status == :playing and
-        Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end)
-    end)
-  end
-
-  # Playing rooms with spectator capacity remaining
-  defp lobby_spectatable(rooms) do
-    Enum.filter(rooms, fn room ->
-      room.status == :playing and
-        length(room.spectator_ids) < room.max_spectators
-    end)
-  end
-
-  @doc false
-  @spec broadcast_lobby(State.t()) :: :ok
-  defp broadcast_lobby(state) do
-    # Broadcast available rooms (excludes finished and closed)
-    available_rooms = filter_rooms(Map.values(state.rooms), :available)
-
-    Phoenix.PubSub.broadcast(
-      PidroServer.PubSub,
-      "lobby:updates",
-      {:lobby_update, available_rooms}
-    )
-
-    :ok
   end
 
   @doc false

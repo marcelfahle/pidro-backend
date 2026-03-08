@@ -14,7 +14,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   use GenServer
   require Logger
 
-  alias Pidro.Game.DealerRob
+  alias PidroServer.Games.Bots.BotBrain
   alias PidroServer.Games.Bots.Strategies.RandomStrategy
   alias PidroServer.Games.GameAdapter
 
@@ -64,8 +64,8 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   def handle_continue(:check_initial_move, state) do
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
-        if should_make_move?(game_state, state) do
-          schedule_move()
+        if BotBrain.should_make_move?(game_state, state.position) do
+          BotBrain.schedule_move(@delay_ms)
         end
 
       {:error, _} ->
@@ -77,8 +77,8 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
   @impl true
   def handle_info({:state_update, game_state}, state) do
-    if should_make_move?(game_state, state) do
-      schedule_move()
+    if BotBrain.should_make_move?(game_state, state.position) do
+      BotBrain.schedule_move(@delay_ms)
     end
 
     {:noreply, state}
@@ -97,7 +97,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
   @impl true
   def handle_info(:make_move, state) do
-    execute_move(state)
+    BotBrain.execute_move(state, "SubstituteBot")
     {:noreply, state}
   end
 
@@ -132,90 +132,4 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
     :ok
   end
 
-  ## Private Functions
-
-  defp should_make_move?(game_state, state) do
-    phase = Map.get(game_state, :phase)
-
-    phase not in [:complete, nil] and
-      (Map.get(game_state, :current_turn) == state.position or
-         phase == :dealer_selection)
-  end
-
-  defp schedule_move do
-    Process.send_after(self(), :make_move, @delay_ms)
-  end
-
-  defp execute_move(state) do
-    case GameAdapter.get_legal_actions(state.room_code, state.position) do
-      {:ok, legal_actions} when legal_actions != [] ->
-        game_state = get_game_state(state.room_code)
-
-        case state.strategy.pick_action(legal_actions, game_state) do
-          {:ok, action, reasoning} ->
-            action = resolve_action(action, game_state, state.position)
-
-            Logger.debug(
-              "SubstituteBot (#{state.room_code}/#{state.position}) executing: #{inspect(action)} - #{reasoning}"
-            )
-
-            case GameAdapter.apply_action(state.room_code, state.position, action) do
-              {:ok, _new_state} ->
-                :ok
-
-              {:error, reason} ->
-                Logger.warning(
-                  "SubstituteBot (#{state.room_code}/#{state.position}) action failed: #{inspect(reason)}"
-                )
-            end
-
-          action ->
-            action = resolve_action(action, game_state, state.position)
-
-            Logger.debug(
-              "SubstituteBot (#{state.room_code}/#{state.position}) executing: #{inspect(action)} (legacy)"
-            )
-
-            case GameAdapter.apply_action(state.room_code, state.position, action) do
-              {:ok, _new_state} ->
-                :ok
-
-              {:error, reason} ->
-                Logger.warning(
-                  "SubstituteBot (#{state.room_code}/#{state.position}) action failed: #{inspect(reason)}"
-                )
-            end
-        end
-
-      {:ok, []} ->
-        Logger.debug("SubstituteBot (#{state.room_code}/#{state.position}) has no legal actions")
-
-      {:error, :not_found} ->
-        Logger.warning("SubstituteBot (#{state.room_code}/#{state.position}) - game not found")
-
-      {:error, reason} ->
-        Logger.warning(
-          "SubstituteBot (#{state.room_code}/#{state.position}) error: #{inspect(reason)}"
-        )
-    end
-  end
-
-  defp resolve_action({:select_hand, :choose_6_cards}, game_state, position) do
-    player = Map.get(game_state.players, position, %{})
-    hand = Map.get(player, :hand, [])
-    deck = Map.get(game_state, :deck, [])
-    trump = Map.get(game_state, :trump_suit)
-    pool = hand ++ deck
-    selected = DealerRob.select_best_cards(pool, trump)
-    {:select_hand, selected}
-  end
-
-  defp resolve_action(action, _game_state, _position), do: action
-
-  defp get_game_state(room_code) do
-    case GameAdapter.get_state(room_code) do
-      {:ok, state} -> state
-      {:error, _} -> %{}
-    end
-  end
 end

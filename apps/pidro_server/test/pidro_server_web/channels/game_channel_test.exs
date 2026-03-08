@@ -610,11 +610,9 @@ defmodule PidroServerWeb.GameChannelTest do
 
       {:ok, room} = RoomManager.get_room(room_code)
 
-      # Player should still be in positions (grace period)
+      # Player should still be in positions (disconnect doesn't remove them)
       player_ids = PidroServer.Games.Room.Positions.player_ids(room)
       assert to_string(user.id) in Enum.map(player_ids, &to_string/1)
-      # Player should be in disconnected_players
-      assert Map.has_key?(room.disconnected_players, user.id)
     end
 
     test "terminate broadcasts disconnect to other players", %{

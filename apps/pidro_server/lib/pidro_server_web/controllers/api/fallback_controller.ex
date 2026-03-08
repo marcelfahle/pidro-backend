@@ -345,6 +345,34 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :no_vacant_seat}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "NO_VACANT_SEAT",
+          title: "No vacant seat",
+          detail: "No vacant seat is available for joining"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, reason}) when is_atom(reason) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: String.upcase(Atom.to_string(reason)),
+          title: reason |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize(),
+          detail: "Operation failed: #{Atom.to_string(reason)}"
+        }
+      ]
+    })
+  end
+
   @doc false
   # Convert field names from underscores to human-readable format
   defp humanize_field(field) do

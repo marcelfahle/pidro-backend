@@ -411,12 +411,15 @@ defmodule PidroServerWeb.API.RoomController do
       summary: "Get room game state",
       description: """
       Retrieves the current game state from the Pidro.Server process. This includes
-      the game phase, current turn, player hands, bids, tricks, and scores.
+      the game phase, current turn, player hands (hidden for other players), bids,
+      tricks, and scores.
 
-      This endpoint is publicly accessible and does not require authentication.
+      Requires authentication via Bearer token. Other players' hands are hidden
+      and only card counts are returned.
       """,
       operationId: "RoomController.state",
       tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
       parameters: [
         Operation.parameter(
           :code,
@@ -1009,9 +1012,10 @@ defmodule PidroServerWeb.API.RoomController do
   Gets the current game state for a room.
 
   Retrieves the current game state from the Pidro.Server process. This includes
-  the game phase, current turn, player hands, bids, tricks, and scores.
+  the game phase, current turn, bids, tricks, and scores. Other players' hands
+  are hidden (only card counts returned) to prevent cheating.
 
-  This endpoint is publicly accessible and does not require authentication.
+  Requires authentication via Bearer token.
 
   Returns HTTP 200 (OK) on success.
 
@@ -1075,7 +1079,7 @@ defmodule PidroServerWeb.API.RoomController do
     with {:ok, game_state} <- GameAdapter.get_state(code) do
       conn
       |> put_view(RoomJSON)
-      |> render(:state, %{state: game_state})
+      |> render(:state, %{state: game_state, viewer_user_id: conn.assigns[:current_user_id]})
     end
   end
 
@@ -1136,12 +1140,12 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_metadata(nil), do: %{}
 
   defp parse_metadata(room_params) when is_map(room_params) do
-    room_params
-    |> Map.take(["name"])
-    |> Enum.reduce(%{}, fn {key, value}, acc ->
-      Map.put(acc, String.to_atom(key), value)
-    end)
+    %{}
+    |> maybe_put(:name, room_params["name"])
   end
 
   defp parse_metadata(_), do: %{}
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

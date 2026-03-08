@@ -218,10 +218,13 @@ defmodule PidroServer.Stats do
 
   # Private helpers
 
+  defp classify_seat(%{occupant_type: :human, status: :connected, substitute: true, user_id: user_id})
+       when not is_nil(user_id) do
+    {:record, user_id, :substitute}
+  end
+
   defp classify_seat(%{occupant_type: :human, status: :connected, user_id: user_id})
        when not is_nil(user_id) do
-    # TODO: Detect substitutes when Phase 8 (substitute seat opening) is implemented.
-    # A substitute is a human who filled a vacant seat in a :playing room.
     {:record, user_id, :played}
   end
 

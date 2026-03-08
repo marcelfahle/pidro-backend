@@ -395,7 +395,7 @@ defmodule PidroServer.Games.Room.SeatTest do
       assert serialized.joined_at == "2026-03-08T10:00:00Z"
       assert serialized.disconnected_at == nil
       assert serialized.grace_expires_at == nil
-      assert serialized.reserved_for == nil
+      assert serialized.has_reservation == false
     end
 
     test "serialize excludes bot_pid" do
@@ -434,7 +434,7 @@ defmodule PidroServer.Games.Room.SeatTest do
 
       assert is_binary(serialized.disconnected_at)
       assert serialized.grace_expires_at == "2026-03-08T12:00:00Z"
-      assert serialized.reserved_for == "user-1"
+      assert serialized.has_reservation == true
     end
   end
 

@@ -51,6 +51,7 @@ defmodule PidroServerWeb.GameChannel do
   require Logger
 
   alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
+  alias PidroServer.Games.Room.Seat
   alias PidroServer.Stats
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
@@ -115,7 +116,7 @@ defmodule PidroServerWeb.GameChannel do
 
               {:error, reason} ->
                 Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
-                {:error, %{reason: "reconnection failed: #{inspect(reason)}"}}
+                {:error, %{reason: "reconnection failed: #{format_error(reason)}"}}
             end
           else
             # Not a reconnection, proceed with normal join
@@ -130,7 +131,7 @@ defmodule PidroServerWeb.GameChannel do
 
             {:error, reason} ->
               Logger.warning("Substitute join failed for #{user_id}: #{inspect(reason)}")
-              {:error, %{reason: "substitute join failed: #{inspect(reason)}"}}
+              {:error, %{reason: "substitute join failed: #{format_error(reason)}"}}
           end
 
         :spectator ->
@@ -632,12 +633,13 @@ defmodule PidroServerWeb.GameChannel do
 
   @spec is_reconnection?(RoomManager.Room.t(), String.t()) :: boolean()
   defp is_reconnection?(room, user_id) do
-    # Check legacy disconnected_players map
-    # Check seat reserved_for (Phase 2/3: user_id cleared from seat but reserved_for still set)
-    Map.has_key?(room.disconnected_players || %{}, user_id) ||
-      Enum.any?(room.seats || %{}, fn {_pos, seat} ->
-        seat.reserved_for == user_id
-      end)
+    # Check seat-based disconnect cascade:
+    # Phase 1 (:reconnecting) — user_id still on seat
+    # Phase 2/3 (:bot_substitute with reserved_for) — user_id cleared from seat but reserved_for still set
+    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
+      seat.reserved_for == user_id ||
+        (seat.status == :reconnecting && seat.user_id == user_id)
+    end)
   end
 
   @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
@@ -651,11 +653,12 @@ defmodule PidroServerWeb.GameChannel do
         :player
 
       # Player whose seat was taken by a bot still has reserved_for set
-      has_reserved_seat?(room, user_id_str) ->
+      Seat.reserved_for_user?(room.seats || %{}, user_id_str) ->
         :player
 
-      # Stranger joining a :playing room with a vacant seat opened by owner
-      room.status == :playing && has_vacant_seat?(room) ->
+      # In a :playing room, vacant seats can only exist via Seat.open_for_substitute/1,
+      # which requires the owner to explicitly open them. Safe to grant :substitute role.
+      room.status == :playing && Seat.any_vacant?(room.seats || %{}) ->
         :substitute
 
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
@@ -664,20 +667,6 @@ defmodule PidroServerWeb.GameChannel do
       true ->
         :unauthorized
     end
-  end
-
-  @spec has_vacant_seat?(RoomManager.Room.t()) :: boolean()
-  defp has_vacant_seat?(room) do
-    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
-      seat.occupant_type == :vacant && seat.status == nil
-    end)
-  end
-
-  @spec has_reserved_seat?(RoomManager.Room.t(), String.t()) :: boolean()
-  defp has_reserved_seat?(room, user_id) do
-    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
-      seat.reserved_for == user_id
-    end)
   end
 
   @spec get_player_position(RoomManager.Room.t(), String.t()) :: atom()

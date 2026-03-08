@@ -90,7 +90,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{state: serialized_state}}
   """
   def state(%{state: game_state}) do
-    %{data: %{state: GameStateSerializer.serialize(game_state)}}
+    %{data: %{state: GameStateSerializer.serialize_public(game_state)}}
   end
 
   @doc """
