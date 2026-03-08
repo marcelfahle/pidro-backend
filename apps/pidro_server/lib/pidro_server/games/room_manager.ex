@@ -645,43 +645,100 @@ defmodule PidroServer.Games.RoomManager do
       room_code ->
         %Room{} = room = state.rooms[room_code]
 
-        # If host leaves, close the room entirely
-        if room.host_id == player_id do
-          Logger.info("Host #{player_id} left room #{room_code}, closing room")
-          new_state = remove_room(state, room_code)
-          {:reply, :ok, new_state}
-        else
-          # Find player's position and remove them
-          player_position = Positions.get_position(room, player_id)
-          updated_room = Positions.remove(room, player_id)
-          updated_room = vacate_seat(updated_room, player_position)
+        cond do
+          # Owner leaving a :playing room — promote ownership, then handle leave
+          room.host_id == player_id && room.status == :playing ->
+            {room_after_promote, promoted?} =
+              case promote_owner(room) do
+                {:ok, promoted_room} -> {promoted_room, true}
+                {:no_humans, same_room} -> {same_room, false}
+              end
 
-          # If room becomes empty, delete it
-          if Positions.count(updated_room) == 0 do
-            Logger.info("Room #{room_code} is now empty, deleting")
-            new_state = remove_room(state, room_code)
-            {:reply, :ok, new_state}
-          else
-            # Update room status back to waiting and touch activity
-            final_room =
-              updated_room
-              |> Map.put(:status, :waiting)
-              |> touch_last_activity()
+            if promoted? do
+              # Broadcast owner change
+              new_owner_seat =
+                Enum.find_value(room_after_promote.seats, fn {pos, s} ->
+                  if Seat.owner?(s), do: {pos, s}
+                end)
 
-            %State{} =
+              if new_owner_seat do
+                {new_pos, new_seat} = new_owner_seat
+
+                Phoenix.PubSub.broadcast(
+                  PidroServer.PubSub,
+                  "game:#{room_code}",
+                  {:owner_changed, %{new_owner_id: new_seat.user_id, new_owner_position: new_pos}}
+                )
+              end
+
+              # Remove leaving player from position and vacate seat
+              player_position = Positions.get_position(room_after_promote, player_id)
+              updated_room = Positions.remove(room_after_promote, player_id)
+              updated_room = vacate_seat(updated_room, player_position)
+              updated_room = touch_last_activity(updated_room)
+
               new_state = %State{
                 state
-                | rooms: Map.put(state.rooms, room_code, final_room),
+                | rooms: Map.put(state.rooms, room_code, updated_room),
                   player_rooms: Map.delete(state.player_rooms, player_id)
               }
 
-            Logger.info("Player #{player_id} left room #{room_code}")
+              Logger.info(
+                "Owner #{player_id} left :playing room #{room_code}, ownership promoted to #{room_after_promote.host_id}"
+              )
 
-            broadcast_room(room_code, final_room)
-            broadcast_lobby_event({:room_updated, final_room})
+              broadcast_room(room_code, updated_room)
+              broadcast_lobby_event({:room_updated, updated_room})
 
+              {:reply, :ok, new_state}
+            else
+              # No humans left, close the room
+              Logger.info(
+                "Owner #{player_id} left room #{room_code}, no humans remaining, closing room"
+              )
+
+              new_state = remove_room(state, room_code)
+              {:reply, :ok, new_state}
+            end
+
+          # Host leaves non-playing room — close the room entirely
+          room.host_id == player_id ->
+            Logger.info("Host #{player_id} left room #{room_code}, closing room")
+            new_state = remove_room(state, room_code)
             {:reply, :ok, new_state}
-          end
+
+          true ->
+            # Find player's position and remove them
+            player_position = Positions.get_position(room, player_id)
+            updated_room = Positions.remove(room, player_id)
+            updated_room = vacate_seat(updated_room, player_position)
+
+            # If room becomes empty, delete it
+            if Positions.count(updated_room) == 0 do
+              Logger.info("Room #{room_code} is now empty, deleting")
+              new_state = remove_room(state, room_code)
+              {:reply, :ok, new_state}
+            else
+              # Update room status back to waiting and touch activity
+              final_room =
+                updated_room
+                |> Map.put(:status, :waiting)
+                |> touch_last_activity()
+
+              %State{} =
+                new_state = %State{
+                  state
+                  | rooms: Map.put(state.rooms, room_code, final_room),
+                    player_rooms: Map.delete(state.player_rooms, player_id)
+                }
+
+              Logger.info("Player #{player_id} left room #{room_code}")
+
+              broadcast_room(room_code, final_room)
+              broadcast_lobby_event({:room_updated, final_room})
+
+              {:reply, :ok, new_state}
+            end
         end
     end
   end
@@ -1203,6 +1260,41 @@ defmodule PidroServer.Games.RoomManager do
               phase_timers: Map.delete(room.phase_timers, position)
           }
 
+          # If this seat was the owner, promote ownership to next connected human
+          updated_room =
+            if seat.is_owner do
+              case promote_owner(updated_room) do
+                {:ok, promoted_room} ->
+                  Phoenix.PubSub.broadcast(
+                    PidroServer.PubSub,
+                    "game:#{room_code}",
+                    {:owner_changed,
+                     %{
+                       new_owner_id: promoted_room.host_id,
+                       new_owner_position:
+                         Enum.find_value(promoted_room.seats, fn {pos, s} ->
+                           if Seat.owner?(s), do: pos
+                         end)
+                     }}
+                  )
+
+                  Logger.info(
+                    "Ownership promoted to #{promoted_room.host_id} in room #{room_code}"
+                  )
+
+                  promoted_room
+
+                {:no_humans, room} ->
+                  Logger.info(
+                    "No connected humans remaining in room #{room_code} for ownership promotion"
+                  )
+
+                  room
+              end
+            else
+              updated_room
+            end
+
           updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
 
           # Broadcast seat permanently botted
@@ -1215,8 +1307,6 @@ defmodule PidroServer.Games.RoomManager do
           Logger.info(
             "Phase 3 (Gone): Seat at #{position} in room #{room_code} permanently bot-filled"
           )
-
-          # TODO: Phase 4 (PID-31) — if this seat was the owner, trigger ownership promotion
 
           # If the current owner is a connected human, notify them they can open the seat
           maybe_notify_owner_decision(updated_room, room_code, position)
@@ -1482,6 +1572,68 @@ defmodule PidroServer.Games.RoomManager do
 
     :ok
   end
+
+  # Ownership promotion helpers
+
+  @doc false
+  # Promotes ownership to the next connected human when the current owner
+  # is no longer available (permanently botted or explicitly left).
+  #
+  # Candidate order: partner first (N↔S, E↔W), then remaining positions
+  # sorted by joined_at.
+  #
+  # Returns {:ok, updated_room} or {:no_humans, room}.
+  defp promote_owner(%Room{} = room) do
+    owner_entry = Enum.find(room.seats, fn {_pos, seat} -> Seat.owner?(seat) end)
+
+    case owner_entry do
+      nil ->
+        {:no_humans, room}
+
+      {owner_pos, _owner_seat} ->
+        partner_pos = partner_position(owner_pos)
+        other_positions = [:north, :east, :south, :west] -- [owner_pos, partner_pos]
+
+        # Sort remaining positions by joined_at (earliest first, nils last)
+        sorted_others =
+          Enum.sort_by(other_positions, fn pos ->
+            case Map.get(room.seats, pos) do
+              %{joined_at: %DateTime{} = dt} -> DateTime.to_unix(dt, :microsecond)
+              _ -> :infinity
+            end
+          end)
+
+        candidates = [partner_pos | sorted_others]
+
+        new_owner_pos =
+          Enum.find(candidates, fn pos ->
+            seat = Map.get(room.seats, pos)
+            seat != nil && Seat.connected_human?(seat)
+          end)
+
+        case new_owner_pos do
+          nil ->
+            {:no_humans, room}
+
+          pos ->
+            old_owner_seat = Map.get(room.seats, owner_pos)
+            new_owner_seat = Map.get(room.seats, pos)
+
+            updated_seats =
+              room.seats
+              |> Map.put(owner_pos, %{old_owner_seat | is_owner: false})
+              |> Map.put(pos, %{new_owner_seat | is_owner: true})
+
+            {:ok, %{room | seats: updated_seats, host_id: new_owner_seat.user_id}}
+        end
+    end
+  end
+
+  @doc false
+  defp partner_position(:north), do: :south
+  defp partner_position(:south), do: :north
+  defp partner_position(:east), do: :west
+  defp partner_position(:west), do: :east
 
   # Seat management helpers
 

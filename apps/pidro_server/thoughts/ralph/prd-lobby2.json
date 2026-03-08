@@ -288,7 +288,7 @@
             "Wire into leave_room: if leaving player is owner and room is :playing, call promote_owner before handling the leave",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "4.2",

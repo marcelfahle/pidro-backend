@@ -391,6 +391,18 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_info(
+        {:owner_changed, %{new_owner_id: new_owner_id, new_owner_position: new_owner_position}},
+        socket
+      ) do
+    push(socket, "owner_changed", %{
+      new_owner_id: new_owner_id,
+      new_owner_position: new_owner_position
+    })
+
+    {:noreply, socket}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,

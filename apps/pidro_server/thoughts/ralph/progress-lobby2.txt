@@ -537,3 +537,56 @@ fully complete.
 ### Next up:
 - Feature 4.1: Ownership auto-promotion (PID-31)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 4.1: Ownership Auto-Promotion
+
+Implemented ownership promotion chain. When the owner's seat is permanently
+botted (Phase 3) or the owner explicitly leaves a :playing room, ownership
+transfers to the next connected human.
+
+### What was done:
+
+**RoomManager (room_manager.ex):**
+- Added `promote_owner/1` pure helper: finds the current owner seat, then
+  searches for the next connected human in priority order: partner first
+  (N↔S, E↔W), then remaining positions sorted by joined_at. Returns
+  `{:ok, updated_room}` (with is_owner transferred and host_id updated)
+  or `{:no_humans, room}`.
+- Added `partner_position/1` helper: N↔S, E↔W mapping.
+- Wired into Phase 3 handler (`handle_info({:phase3_gone, ...})`):
+  replaced the TODO comment with actual promote_owner call. If the
+  permanently-botted seat was the owner, promotes and broadcasts
+  `{:owner_changed, %{new_owner_id, new_owner_position}}`.
+- Wired into `leave_room` handler: added a `cond` branch for
+  `host_id == player_id && room.status == :playing`. Promotes ownership
+  before handling the leave. After promotion, the leaving player is no
+  longer the host, so the normal non-host leave path applies. If no
+  connected humans remain, closes the room.
+
+**GameChannel (game_channel.ex):**
+- Added `handle_info({:owner_changed, ...})` clause that pushes
+  "owner_changed" event to clients with new_owner_id and new_owner_position.
+
+**SubstituteBot (substitute_bot.ex):**
+- Added no-op `handle_info({:owner_changed, _})` clause to prevent
+  crashes from PubSub messages.
+
+### Design decisions:
+- `promote_owner/1` is a pure function (takes room, returns room) —
+  broadcasting happens at call sites, following codebase architecture
+  ("Pure functions over GenServer logic")
+- Partner gets first priority (same team), then others by join time
+- host_id is updated alongside is_owner to keep them in sync
+- For leave_room during :playing: owner leave now promotes instead of
+  closing the room. If no humans remain, room still closes.
+- Sorted_others uses DateTime.to_unix(:microsecond) for sorting, with
+  :infinity for nil joined_at (nils sort last)
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 291 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 4.2: Test ownership promotion scenarios (PID-31)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
