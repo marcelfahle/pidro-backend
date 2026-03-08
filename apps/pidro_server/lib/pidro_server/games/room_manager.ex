@@ -474,8 +474,10 @@ defmodule PidroServer.Games.RoomManager do
   @doc """
   Handles a player reconnection within the grace period.
 
-  If a player reconnects within the 2-minute grace period, they are removed
-  from the disconnected_players map and remain in the room.
+  Supports all three phases of the disconnect cascade:
+  - Phase 1 (Hiccup): Seat is `:reconnecting` — cancels timer, reclaims seat
+  - Phase 2 (Grace): Seat is `:bot_substitute` with `reserved_for` — terminates bot, reclaims seat
+  - Phase 3 (Gone): Seat is `:bot_substitute` without `reserved_for` — rejects with `:seat_permanently_filled`
 
   ## Parameters
 
@@ -488,6 +490,7 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :room_not_found}` - Room doesn't exist
   - `{:error, :player_not_disconnected}` - Player was not marked as disconnected
   - `{:error, :grace_period_expired}` - Grace period has expired (player already removed)
+  - `{:error, :seat_permanently_filled}` - Bot is permanent, player must return to lobby
 
   ## Examples
 
@@ -495,7 +498,11 @@ defmodule PidroServer.Games.RoomManager do
   """
   @spec handle_player_reconnect(String.t(), String.t()) ::
           {:ok, Room.t()}
-          | {:error, :room_not_found | :player_not_disconnected | :grace_period_expired}
+          | {:error,
+             :room_not_found
+             | :player_not_disconnected
+             | :grace_period_expired
+             | :seat_permanently_filled}
   def handle_player_reconnect(room_code, user_id) do
     GenServer.call(__MODULE__, {:player_reconnect, String.upcase(room_code), user_id})
   end
@@ -972,42 +979,45 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        # Check if player was disconnected
-        if Map.has_key?(room.disconnected_players, user_id) do
-          # Check if grace period hasn't expired
-          disconnect_time = Map.get(room.disconnected_players, user_id)
-          grace_period_ms = get_grace_period_ms()
+        # Look up the player's seat across all seats — check both user_id
+        # (Phase 1: still on seat) and reserved_for (Phase 2/3: bot took over)
+        seat_entry = find_seat_for_user(room, user_id)
 
-          if DateTime.diff(DateTime.utc_now(), disconnect_time, :millisecond) <= grace_period_ms do
-            # Remove from disconnected list
-            %Room{} =
+        cond do
+          # Phase 1 or Phase 2: seat found via user_id or reserved_for
+          seat_entry != nil ->
+            {position, seat} = seat_entry
+            handle_seat_reconnection(room, room_code, user_id, position, seat, state)
+
+          # Legacy fallback: check disconnected_players map
+          Map.has_key?(room.disconnected_players, user_id) ->
+            disconnect_time = Map.get(room.disconnected_players, user_id)
+            grace_period_ms = get_grace_period_ms()
+
+            if DateTime.diff(DateTime.utc_now(), disconnect_time, :millisecond) <= grace_period_ms do
               updated_room = %Room{
                 room
                 | disconnected_players: Map.delete(room.disconnected_players, user_id),
                   last_activity: DateTime.utc_now()
               }
 
-            # Cancel phase timer and reclaim seat if in hiccup cascade
-            updated_room = cancel_hiccup_and_reclaim(updated_room, user_id)
-
-            %State{} =
               updated_state = %State{
                 state
                 | rooms: Map.put(state.rooms, room_code, updated_room)
               }
 
-            Logger.info("Player #{user_id} reconnected to room #{room_code}")
+              Logger.info("Player #{user_id} reconnected to room #{room_code} (legacy)")
 
-            # Broadcast reconnection
-            broadcast_room(room_code, updated_room)
-            broadcast_lobby_event({:room_updated, updated_room})
+              broadcast_room(room_code, updated_room)
+              broadcast_lobby_event({:room_updated, updated_room})
 
-            {:reply, {:ok, updated_room}, updated_state}
-          else
-            {:reply, {:error, :grace_period_expired}, state}
-          end
-        else
-          {:reply, {:error, :player_not_disconnected}, state}
+              {:reply, {:ok, updated_room}, updated_state}
+            else
+              {:reply, {:error, :grace_period_expired}, state}
+            end
+
+          true ->
+            {:reply, {:error, :player_not_disconnected}, state}
         end
     end
   end
@@ -1297,35 +1307,135 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  # Cancels the Phase 1 timer and reclaims the seat when a player reconnects
-  # during the hiccup phase.
-  defp cancel_hiccup_and_reclaim(%Room{} = room, user_id) do
-    position = Positions.get_position(room, user_id)
+  # Finds a seat that belongs to a user, checking both user_id (Phase 1)
+  # and reserved_for (Phase 2/3 where user_id was cleared by bot substitution).
+  # Returns {position, seat} or nil.
+  defp find_seat_for_user(%Room{seats: seats}, user_id) do
+    Enum.find_value(seats, fn {position, seat} ->
+      cond do
+        seat.user_id == user_id && seat.status == :reconnecting ->
+          {position, seat}
 
-    # Cancel phase timer if one exists for this position
-    room =
-      case Map.get(room.phase_timers, position) do
-        nil ->
-          room
+        seat.reserved_for == user_id && seat.status in [:grace, :bot_substitute] ->
+          {position, seat}
 
-        timer_ref ->
-          Process.cancel_timer(timer_ref)
-          %{room | phase_timers: Map.delete(room.phase_timers, position)}
+        true ->
+          nil
       end
+    end)
+  end
 
-    # Reclaim seat if it's in :reconnecting state
-    case Map.get(room.seats, position) do
-      %Seat{status: :reconnecting} = seat ->
+  @doc false
+  # Handles reconnection based on the seat's current cascade phase.
+  # Phase 1 (:reconnecting) — cancel timer, reclaim seat
+  # Phase 2 (:bot_substitute with reserved_for) — terminate bot, cancel timer, reclaim seat
+  # Phase 3 (:bot_substitute without reserved_for) — reject, seat permanently filled
+  defp handle_seat_reconnection(room, room_code, user_id, position, seat, %State{} = state) do
+    case seat.status do
+      :reconnecting ->
+        # Phase 1: Cancel timer, reclaim seat
+        room = cancel_phase_timer(room, position)
+
         case Seat.reclaim(seat, user_id) do
           {:ok, reclaimed} ->
-            %{room | seats: Map.put(room.seats, position, reclaimed)}
+            updated_room =
+              %{
+                room
+                | seats: Map.put(room.seats, position, reclaimed),
+                  disconnected_players: Map.delete(room.disconnected_players, user_id),
+                  last_activity: DateTime.utc_now()
+              }
 
-          {:error, _} ->
-            room
+            updated_state = %State{
+              state
+              | rooms: Map.put(state.rooms, room_code, updated_room)
+            }
+
+            Logger.info(
+              "Player #{user_id} reconnected during Phase 1 (hiccup) at #{position} in room #{room_code}"
+            )
+
+            Phoenix.PubSub.broadcast(
+              PidroServer.PubSub,
+              "game:#{room_code}",
+              {:player_reconnected, %{user_id: user_id, position: position}}
+            )
+
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby_event({:room_updated, updated_room})
+
+            {:reply, {:ok, updated_room}, updated_state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
         end
 
+      :bot_substitute when seat.reserved_for == user_id ->
+        # Phase 2: Terminate bot, cancel timer, reclaim seat
+        room = cancel_phase_timer(room, position)
+
+        # Terminate the substitute bot process
+        if seat.bot_pid && Process.alive?(seat.bot_pid) do
+          DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, seat.bot_pid)
+        end
+
+        case Seat.reclaim(seat, user_id) do
+          {:ok, reclaimed} ->
+            updated_room =
+              %{
+                room
+                | seats: Map.put(room.seats, position, reclaimed),
+                  disconnected_players: Map.delete(room.disconnected_players, user_id),
+                  last_activity: DateTime.utc_now()
+              }
+
+            updated_state = %State{
+              state
+              | rooms: Map.put(state.rooms, room_code, updated_room)
+            }
+
+            Logger.info(
+              "Player #{user_id} reclaimed seat from bot during Phase 2 (grace) at #{position} in room #{room_code}"
+            )
+
+            Phoenix.PubSub.broadcast(
+              PidroServer.PubSub,
+              "game:#{room_code}",
+              {:player_reclaimed_seat, %{user_id: user_id, position: position}}
+            )
+
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby_event({:room_updated, updated_room})
+
+            {:reply, {:ok, updated_room}, updated_state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+
+      :bot_substitute ->
+        # Phase 3: Bot is permanent (reserved_for is nil), reject reconnection
+        Logger.info(
+          "Player #{user_id} rejected from room #{room_code} — seat at #{position} permanently filled"
+        )
+
+        {:reply, {:error, :seat_permanently_filled}, state}
+
       _ ->
+        {:reply, {:error, :player_not_disconnected}, state}
+    end
+  end
+
+  @doc false
+  # Cancels the phase timer for a given position if one exists.
+  defp cancel_phase_timer(%Room{} = room, position) do
+    case Map.get(room.phase_timers, position) do
+      nil ->
         room
+
+      timer_ref ->
+        Process.cancel_timer(timer_ref)
+        %{room | phase_timers: Map.delete(room.phase_timers, position)}
     end
   end
 

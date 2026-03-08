@@ -14,6 +14,7 @@ defmodule PidroServer.Games.Room.Seat do
       reconnecting -> grace            (start_grace/2)
       grace -> connected               (reclaim/2)
       grace -> bot_substitute          (substitute_bot/2)
+      bot_substitute -> connected      (reclaim/2, when reserved_for matches)
       bot_substitute -> vacant         (open_for_substitute/1)
       vacant -> connected              (fill_seat/2)
   """
@@ -153,7 +154,7 @@ defmodule PidroServer.Games.Room.Seat do
   with occupant_type `:human`. Only succeeds if `user_id` matches the
   `reserved_for` field (or the seat's own `user_id` during Phase 1).
 
-  Valid from: `:reconnecting` or `:grace`
+  Valid from: `:reconnecting`, `:grace`, or `:bot_substitute` (with `reserved_for`)
   """
   @spec reclaim(t(), String.t()) :: {:ok, t()} | {:error, atom()}
   def reclaim(%__MODULE__{status: :reconnecting, user_id: user_id} = seat, reclaiming_user_id)
@@ -184,8 +185,26 @@ defmodule PidroServer.Games.Room.Seat do
      }}
   end
 
+  def reclaim(
+        %__MODULE__{status: :bot_substitute, reserved_for: reserved_for} = seat,
+        reclaiming_user_id
+      )
+      when reserved_for != nil and reserved_for == reclaiming_user_id do
+    {:ok,
+     %{
+       seat
+       | status: :connected,
+         occupant_type: :human,
+         user_id: reclaiming_user_id,
+         bot_pid: nil,
+         disconnected_at: nil,
+         grace_expires_at: nil,
+         reserved_for: nil
+     }}
+  end
+
   def reclaim(%__MODULE__{status: status}, _)
-      when status in [:reconnecting, :grace],
+      when status in [:reconnecting, :grace, :bot_substitute],
       do: {:error, :user_mismatch}
 
   def reclaim(%__MODULE__{}, _), do: {:error, :invalid_transition}

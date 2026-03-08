@@ -258,9 +258,25 @@ defmodule PidroServer.Games.Room.SeatTest do
       assert {:error, :user_mismatch} = Seat.reclaim(grace, "wrong-user")
     end
 
-    test "reclaim from bot_substitute returns error" do
+    test "reclaim from bot_substitute with matching reserved_for succeeds" do
       seat = build_bot_substitute("user-1")
-      assert {:error, :invalid_transition} = Seat.reclaim(seat, "user-1")
+      assert {:ok, reclaimed} = Seat.reclaim(seat, "user-1")
+      assert reclaimed.status == :connected
+      assert reclaimed.occupant_type == :human
+      assert reclaimed.user_id == "user-1"
+      assert reclaimed.bot_pid == nil
+      assert reclaimed.reserved_for == nil
+    end
+
+    test "reclaim from permanent bot_substitute returns user_mismatch" do
+      seat = build_bot_substitute("user-1")
+      {:ok, permanent} = Seat.make_permanent_bot(seat)
+      assert {:error, :user_mismatch} = Seat.reclaim(permanent, "user-1")
+    end
+
+    test "reclaim from bot_substitute with wrong user returns user_mismatch" do
+      seat = build_bot_substitute("user-1")
+      assert {:error, :user_mismatch} = Seat.reclaim(seat, "wrong-user")
     end
 
     test "reclaim from connected returns error" do

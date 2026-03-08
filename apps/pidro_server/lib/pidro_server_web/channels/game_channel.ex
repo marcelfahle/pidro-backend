@@ -63,7 +63,7 @@ defmodule PidroServerWeb.GameChannel do
   }
 
   # Intercept presence_diff, player_ready, and player_reconnected broadcasts to handle them explicitly
-  intercept ["presence_diff", "player_ready", "player_reconnected"]
+  intercept ["presence_diff", "player_ready", "player_reconnected", "player_disconnected"]
 
   @doc """
   Authorizes and joins a player or spectator to the game channel.
@@ -92,8 +92,8 @@ defmodule PidroServerWeb.GameChannel do
       case role do
         :player ->
           # Check if player is in disconnected list
-          if Map.has_key?(room.disconnected_players || %{}, user_id) do
-            # Attempt reconnection
+          if is_reconnection?(room, user_id) do
+            # Attempt reconnection (handles Phase 1, 2, and 3)
             case RoomManager.handle_player_reconnect(room_code, user_id) do
               {:ok, updated_room} ->
                 Logger.info("Player #{user_id} reconnected to room #{room_code}")
@@ -106,6 +106,9 @@ defmodule PidroServerWeb.GameChannel do
 
                 # Continue with normal join flow
                 proceed_with_join(room_code, user_id, socket, :reconnect, :player)
+
+              {:error, :seat_permanently_filled} ->
+                {:error, %{reason: "seat permanently filled by bot"}}
 
               {:error, :grace_period_expired} ->
                 {:error, %{reason: "reconnection grace period expired"}}
@@ -357,6 +360,37 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  # Disconnect cascade PubSub events — push to client for UI updates
+  def handle_info({:player_reconnecting, %{user_id: user_id, position: position}}, socket) do
+    push(socket, "player_reconnecting", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:player_reconnected, %{user_id: user_id, position: position}}, socket) do
+    push(socket, "player_reconnected", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:player_reclaimed_seat, %{user_id: user_id, position: position}}, socket) do
+    push(socket, "player_reclaimed_seat", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:bot_substitute_active, %{position: position, user_id: user_id}}, socket) do
+    push(socket, "bot_substitute_active", %{position: position, user_id: user_id})
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_permanently_botted, %{position: position}}, socket) do
+    push(socket, "seat_permanently_botted", %{position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:owner_decision_available, %{position: position, owner_id: owner_id}}, socket) do
+    push(socket, "owner_decision_available", %{position: position, owner_id: owner_id})
+    {:noreply, socket}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,
@@ -408,6 +442,11 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_out("player_reconnected", msg, socket) do
     push(socket, "player_reconnected", msg)
+    {:noreply, socket}
+  end
+
+  def handle_out("player_disconnected", msg, socket) do
+    push(socket, "player_disconnected", msg)
     {:noreply, socket}
   end
 
@@ -516,6 +555,16 @@ defmodule PidroServerWeb.GameChannel do
     Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end)
   end
 
+  @spec is_reconnection?(RoomManager.Room.t(), String.t()) :: boolean()
+  defp is_reconnection?(room, user_id) do
+    # Check legacy disconnected_players map
+    # Check seat reserved_for (Phase 2/3: user_id cleared from seat but reserved_for still set)
+    Map.has_key?(room.disconnected_players || %{}, user_id) ||
+      Enum.any?(room.seats || %{}, fn {_pos, seat} ->
+        seat.reserved_for == user_id
+      end)
+  end
+
   @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
           :player | :spectator | :unauthorized
   defp determine_user_role(room, user_id) do
@@ -526,12 +575,23 @@ defmodule PidroServerWeb.GameChannel do
       Positions.has_player?(room, user_id_str) ->
         :player
 
+      # Player whose seat was taken by a bot still has reserved_for set
+      has_reserved_seat?(room, user_id_str) ->
+        :player
+
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
         :spectator
 
       true ->
         :unauthorized
     end
+  end
+
+  @spec has_reserved_seat?(RoomManager.Room.t(), String.t()) :: boolean()
+  defp has_reserved_seat?(room, user_id) do
+    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
+      seat.reserved_for == user_id
+    end)
   end
 
   @spec get_player_position(RoomManager.Room.t(), String.t()) :: atom()

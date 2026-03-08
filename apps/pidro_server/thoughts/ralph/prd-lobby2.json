@@ -235,7 +235,7 @@
             "If seat status is :bot_substitute (Phase 3): reject the reconnection. Return {:error, :seat_permanently_filled}. The player must go back to the lobby",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.6",
