@@ -1,0 +1,23 @@
+## 2026-03-08 — Feature 1.1: Lifecycle Config Module
+
+Created `lib/pidro_server/games/lifecycle.ex` — a pure config module that centralizes
+all timeout values for the disconnect cascade and room lifecycle.
+
+### What was done:
+- Created `PidroServer.Games.Lifecycle` module with `config/1` and `defaults/0` functions
+- 8 timeout keys with defaults: hiccup_timeout_ms (20s), grace_timeout_ms (120s),
+  empty_room_ttl_ms (30s), finished_room_ttl_ms (300s), idle_waiting_ttl_ms (600s),
+  reconnect_turn_extension_ms (10s), health_check_interval_ms (60s), presence_debounce_ms (3s)
+- Reads from `Application.get_env(:pidro_server, PidroServer.Games.Lifecycle, [])` with
+  fallback to built-in defaults
+- Full typespecs and moduledoc following existing patterns (modeled after Positions module)
+
+### Verification:
+- mix compile: clean, no warnings
+- mix format --check-formatted: passes for new file
+- mix test: pidro_server 204 tests, 0 failures (engine has 2 pre-existing flaky tests)
+
+### Next up:
+- Feature 1.2: Wire Lifecycle config into config.exs and runtime.exs
+- Feature 1.3: Tests for Lifecycle config
+- Then Phase 2 (Seat State Machine) is the next major milestone

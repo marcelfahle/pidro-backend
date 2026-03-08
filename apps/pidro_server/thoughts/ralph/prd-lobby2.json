@@ -1,0 +1,582 @@
+{
+  "project": "Pidro 2 — Lobby & Multiplayer Lifecycle (Server)",
+  "description": "Build a world-class multiplayer lobby and game lifecycle system for Pidro, a 4-player team trick-taking card game. The core philosophy: the game never stops. When players disconnect or rage quit, bots seamlessly fill seats so remaining players stay in flow. The lobby surfaces clear, categorized information about tables. This PRD covers the Phoenix/Elixir server-side implementation only. The codebase is an Elixir umbrella app at https://github.com/marcelfahle/pidro-backend with pidro_engine (pure game rules) and pidro_server (Phoenix multiplayer). The engine must remain untouched — it knows nothing about humans, bots, or networks. All lifecycle logic lives in pidro_server. IMPORTANT: Before implementing anything, explore the existing codebase to understand current file structure, naming conventions, module patterns, and where things live. Follow existing patterns — don't enforce new ones.",
+  "repository": "pidro-backend",
+
+  "human_inputs_required": [],
+
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Lifecycle Config — Configurable timeouts",
+      "linear_ticket": "PID-40",
+      "features": [
+        {
+          "id": "1.1",
+          "category": "setup",
+          "description": "Create a Lifecycle config module that centralizes all timeout values for the disconnect cascade",
+          "steps": [
+            "Explore the existing codebase to understand where game-related modules live (look at the games/ directory structure and existing modules like RoomManager, GameAdapter, etc.)",
+            "Create a new module in the games context — call it Lifecycle or similar, following the project's existing naming conventions",
+            "Implement a config/1 function that reads from Application.get_env with fallback defaults for these keys: hiccup_timeout_ms (20_000), grace_timeout_ms (120_000), empty_room_ttl_ms (30_000), finished_room_ttl_ms (300_000), idle_waiting_ttl_ms (600_000), reconnect_turn_extension_ms (10_000), health_check_interval_ms (60_000), presence_debounce_ms (3_000)",
+            "Add @moduledoc and typespecs following the existing documentation patterns in the codebase",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": true
+        },
+        {
+          "id": "1.2",
+          "category": "setup",
+          "description": "Wire Lifecycle config into application config files with environment variable overrides",
+          "steps": [
+            "Look at the existing config/ files to understand the project's config patterns (config.exs, dev.exs, runtime.exs, etc.)",
+            "Add config entries for the Lifecycle module with all 8 timeout keys using the project's existing config style",
+            "In runtime.exs (or the project's runtime config): add environment variable overrides so these can be tuned in production without redeploying",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "1.3",
+          "category": "testing",
+          "description": "Test that Lifecycle config reads default and overridden values correctly",
+          "steps": [
+            "Look at existing test files to understand test patterns, test helper setup, and directory structure",
+            "Create a test file for the Lifecycle module following existing conventions",
+            "Test: returns default values when no config override is set",
+            "Test: returns overridden values when Application.put_env is used (clean up in on_exit)",
+            "Run the test file — verify all tests pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 2,
+      "name": "Seat State Machine — Model seats as swappable entities",
+      "linear_ticket": "PID-29",
+      "features": [
+        {
+          "id": "2.1",
+          "category": "functional",
+          "description": "Define a Seat struct that represents a position at the table, which can be occupied by a human, bot, or left vacant",
+          "steps": [
+            "Create a new Seat module in the games context, following existing module patterns",
+            "Define a struct with these fields: position (:north/:south/:east/:west), occupant_type (:human/:bot/:vacant), user_id (string or nil), bot_pid (pid or nil), status (:connected/:reconnecting/:grace/:bot_substitute), disconnected_at (DateTime or nil), grace_expires_at (DateTime or nil), reserved_for (user_id of the human who can reclaim this seat during grace — string or nil), is_owner (boolean), joined_at (DateTime or nil)",
+            "Implement convenience constructors: new_human(position, user_id, opts) for a connected human, new_bot(position, bot_pid) for a bot, new_vacant(position) for an empty seat",
+            "Add @moduledoc and typespecs",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "2.2",
+          "category": "functional",
+          "description": "Implement validated state transitions on the Seat struct",
+          "steps": [
+            "Define valid transition map: connected -> [reconnecting], reconnecting -> [connected, grace], grace -> [connected, bot_substitute], bot_substitute -> [vacant], vacant -> [connected]",
+            "Implement these transition functions (each validates current state and returns {:ok, updated_seat} or {:error, reason}):",
+            "disconnect/1 — connected seat transitions to :reconnecting, sets disconnected_at",
+            "start_grace/2 — reconnecting seat transitions to :grace, sets grace_expires_at, sets reserved_for to user_id",
+            "substitute_bot/2 — grace seat transitions to :bot_substitute, swaps occupant_type to :bot, sets bot_pid, clears user_id",
+            "make_permanent_bot/1 — clears reserved_for on a bot_substitute seat (no longer reclaimable)",
+            "reclaim/2 — seat in :reconnecting or :grace transitions back to :connected if user_id matches reserved_for, restores human occupant, clears bot/grace fields",
+            "open_for_substitute/1 — bot_substitute seat transitions to :vacant, clears bot_pid/user_id/reserved_for",
+            "fill_seat/2 — vacant seat transitions to :connected with occupant_type :human and the given user_id",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "2.3",
+          "category": "functional",
+          "description": "Add query helpers and serialization to the Seat module",
+          "steps": [
+            "Implement boolean query functions: connected_human?/1, active_bot?/1, can_reclaim?/2 (takes seat and user_id), vacant?/1, owner?/1",
+            "Implement serialize/1 that converts a Seat to a JSON-safe map (no pids, DateTimes as ISO strings)",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "2.4",
+          "category": "testing",
+          "description": "Comprehensive tests for Seat struct, transitions, and queries",
+          "steps": [
+            "Create test file following existing test conventions",
+            "Test group 'creation': new_human, new_bot, new_vacant return correct struct values",
+            "Test group 'valid transitions': disconnect from connected, start_grace from reconnecting, substitute_bot from grace, reclaim from reconnecting, reclaim from grace, full lifecycle",
+            "Test group 'invalid transitions': disconnect from grace returns error, substitute_bot from connected returns error, reclaim with wrong user_id returns error",
+            "Test group 'queries': connected_human?, active_bot?, can_reclaim?, vacant? for various seat states",
+            "Test group 'serialization': serialize returns map with no Elixir-specific types",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        },
+        {
+          "id": "2.5",
+          "category": "refactor",
+          "description": "Integrate Seat model into RoomManager — add seats alongside existing players for backward compatibility",
+          "steps": [
+            "Study the existing RoomManager module thoroughly: understand how rooms are stored, how players map to positions, how join/leave works, what the room state shape looks like",
+            "Add a :seats field to the room state — a map of %{north: %Seat{}, south: %Seat{}, east: %Seat{}, west: %Seat{}}",
+            "In room creation: initialize all 4 seats as vacant",
+            "In join_room: when a player joins, also update the corresponding seat via Seat.fill_seat/2. Set is_owner for the first player (host). Keep existing players map updates for backward compatibility",
+            "In leave_room: when a player leaves, also update the seat back to vacant. Keep existing flow",
+            "IMPORTANT: This is additive. Do not remove or rename existing fields. The seats map lives alongside whatever player tracking already exists. Backward compatibility is critical.",
+            "Verify: mix compile — no errors, no warnings"
+          ],
+          "passes": false
+        },
+        {
+          "id": "2.6",
+          "category": "refactor",
+          "description": "Update room serialization to include seat status in API/channel responses",
+          "steps": [
+            "Find the function(s) that serialize room state for API responses and channel broadcasts (may be called serialize_room, to_json, format_room, or be inline in controllers/channels)",
+            "Add a :seats key to the serialized output that maps each position to Seat.serialize/1",
+            "Keep all existing fields unchanged — this is additive",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "2.7",
+          "category": "testing",
+          "description": "Verify all existing tests still pass with the Seat model integrated",
+          "steps": [
+            "Run the full test suite: mix test",
+            "If any tests fail due to the new :seats field in room state, update those test assertions to expect the additional field",
+            "Do NOT change any behavior — only adjust test expectations for the new field",
+            "Verify: All existing tests pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 3,
+      "name": "Three-Phase Disconnect Cascade — Bot auto-substitution",
+      "linear_ticket": "PID-30",
+      "features": [
+        {
+          "id": "3.1",
+          "category": "functional",
+          "description": "Implement Phase 1 (Hiccup) — on disconnect, mark seat as :reconnecting and schedule Phase 2 timer",
+          "steps": [
+            "Study the existing disconnect handling in the codebase — look at GameChannel terminate/2 callback, RoomManager's disconnect/grace handling, and the existing 2-minute grace timer",
+            "When a player disconnects from a :playing room: call Seat.disconnect/1 on their seat",
+            "Use Process.send_after to schedule a message that will trigger Phase 2 (grace + bot spawn) after Lifecycle.config(:hiccup_timeout_ms) milliseconds",
+            "Store the timer reference in the room state so it can be cancelled on reconnect. Add a :phase_timers map to room state if needed: %{position => timer_ref}",
+            "Broadcast a 'player_reconnecting' event on the game channel/PubSub with the position and user_id",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.2",
+          "category": "functional",
+          "description": "Implement Phase 2 (Grace) — when hiccup timer fires, spawn a substitute bot and start grace countdown",
+          "steps": [
+            "Add a handle_info clause in RoomManager for the Phase 2 timer message",
+            "Guard: if the seat is no longer :reconnecting (player came back), do nothing",
+            "If still :reconnecting: call Seat.start_grace/2 with a grace_expires_at timestamp (now + remaining grace time: grace_timeout_ms minus hiccup_timeout_ms)",
+            "Call a new function to spawn a substitute bot for this position (stub it for now — next task implements the actual bot). The function should return {:ok, bot_pid}",
+            "Update the seat with Seat.substitute_bot/2 using the bot pid",
+            "Schedule Phase 3 timer (gone/permanent) for the remaining grace duration",
+            "Broadcast 'bot_substitute_active' event with position and original user_id",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.3",
+          "category": "functional",
+          "description": "Create SubstituteBot GenServer — a production bot that can fill in during :playing games",
+          "steps": [
+            "Study the existing dev bot system: look at the dev/ directory for BotPlayer, RandomStrategy, BotManager. Understand how bots subscribe to game events and make moves via GameAdapter",
+            "Create a new SubstituteBot module (NOT in dev/ — this runs in production). It should be a GenServer that works like the dev BotPlayer but is not gated behind Mix.env() == :dev",
+            "On init: receive room_code and position. Subscribe to the game's PubSub topic",
+            "On game state updates: check if it's this bot's turn. If yes, get legal actions from GameAdapter, pick one (use random strategy for now), apply it via GameAdapter with a small delay (500ms) to feel natural",
+            "Add proper terminate/2 to unsubscribe from PubSub",
+            "Start the bot via DynamicSupervisor (use the existing game supervisor or create a child spec) — look at how the dev bots are started for reference",
+            "Replace the stub from 3.2 with the real bot spawning logic",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.4",
+          "category": "functional",
+          "description": "Implement Phase 3 (Gone) — make bot permanent, optionally notify owner",
+          "steps": [
+            "Add handle_info clause in RoomManager for the Phase 3 timer message",
+            "Guard: if seat is no longer :grace (player reclaimed), do nothing",
+            "If still :grace: call Seat.make_permanent_bot/1 to clear reserved_for — player can no longer reclaim",
+            "Broadcast 'seat_permanently_botted' event with position",
+            "If the permanently-botted seat was the owner seat, this will be handled by the ownership promotion ticket (Phase 4). Add a TODO comment for now",
+            "If the current owner is a connected human, broadcast 'owner_decision_available' so the client can show the non-blocking banner asking if they want to open the seat for a human substitute",
+            "Clean up the phase timer ref for this position",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.5",
+          "category": "functional",
+          "description": "Implement reconnection — reclaim seat during Phase 1 or Phase 2, reject during Phase 3",
+          "steps": [
+            "Study the existing reconnection handling — look at GameChannel join/3 for is_reconnection flag, and how RoomManager currently handles reconnects",
+            "Modify the reconnection path: when a player reconnects to a :playing room, look up their seat across all seats by checking both user_id AND reserved_for fields",
+            "If seat status is :reconnecting (Phase 1): call Seat.reclaim/2, cancel the phase timer, broadcast 'player_reconnected', return current game state",
+            "If seat status is :grace (Phase 2): call Seat.reclaim/2, terminate the substitute bot process (GenServer.stop or DynamicSupervisor.terminate_child), cancel the phase timer, broadcast 'player_reclaimed_seat', return current game state. Note: bot's moves during grace are NOT rolled back — they stand",
+            "If seat status is :bot_substitute (Phase 3): reject the reconnection. Return {:error, :seat_permanently_filled}. The player must go back to the lobby",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.6",
+          "category": "testing",
+          "description": "Test Phase 1 — disconnect triggers reconnecting, reconnect restores seat",
+          "steps": [
+            "Create a test file for the disconnect cascade, following existing test patterns",
+            "Set up helper that creates a room with 4 players in :playing state — look at how existing game/channel tests set this up",
+            "Test: disconnect marks seat as :reconnecting with disconnected_at set",
+            "Test: player_reconnecting event is broadcast on disconnect",
+            "Test: reconnect during Phase 1 restores seat to :connected :human",
+            "Test: phase transition timer is scheduled on disconnect",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        },
+        {
+          "id": "3.7",
+          "category": "testing",
+          "description": "Test Phase 2 and Phase 3 — bot spawning, reclaim, and permanence",
+          "steps": [
+            "Add to the disconnect cascade test file:",
+            "Test: Phase 2 spawns a bot after hiccup timeout — manually send the phase transition message to RoomManager, assert seat is :grace with a live bot_pid",
+            "Test: reconnect during Phase 2 terminates bot and restores seat — trigger Phase 2, reconnect, assert bot process is dead and seat is :connected",
+            "Test: Phase 3 makes bot permanent — trigger Phase 2 then Phase 3, assert reserved_for is nil",
+            "Test: reconnect during Phase 3 is rejected — trigger all phases, attempt reconnect, expect {:error, :seat_permanently_filled}",
+            "Test: multiple simultaneous disconnects are independent — disconnect north and east, verify each has their own cascade",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 4,
+      "name": "Ownership Auto-Promotion",
+      "linear_ticket": "PID-31",
+      "features": [
+        {
+          "id": "4.1",
+          "category": "functional",
+          "description": "Implement ownership promotion chain — when owner disconnects permanently, promote next connected human",
+          "steps": [
+            "In RoomManager (or a new helper module if it's getting large), create a promote_owner function that takes a room state",
+            "Logic: find the current owner seat (is_owner == true). Partner position: north<->south, east<->west. Candidates in order: partner first, then other two positions by joined_at. Find first candidate where connected_human? is true",
+            "If found: clear is_owner on old seat, set is_owner on new seat. Broadcast 'owner_changed' with new owner info. Return {:ok, updated_room}",
+            "If no connected humans remain: return {:no_humans, room}",
+            "Wire into Phase 3 handler: after make_permanent_bot, if that seat was the owner, call promote_owner",
+            "Wire into leave_room: if leaving player is owner and room is :playing, call promote_owner before handling the leave",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "4.2",
+          "category": "testing",
+          "description": "Test ownership promotion scenarios",
+          "steps": [
+            "Create test file for ownership promotion",
+            "Test: owner disconnect (Phase 3) promotes partner",
+            "Test: owner disconnect promotes opponent if partner also disconnected",
+            "Test: owner reconnect during grace keeps ownership",
+            "Test: explicit leave triggers promotion",
+            "Test: all humans disconnected returns {:no_humans, room}",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 5,
+      "name": "Lobby Room Filtering — Categorized lobby",
+      "linear_ticket": "PID-32",
+      "features": [
+        {
+          "id": "5.1",
+          "category": "functional",
+          "description": "Implement list_lobby/1 that returns four categorized room lists",
+          "steps": [
+            "Study how list_rooms(:available) currently works in RoomManager and where it's called from",
+            "Create a new function list_lobby/1 that takes a user_id (can be nil) and returns: %{my_rejoinable: [...], open_tables: [...], substitute_needed: [...], spectatable: [...]}",
+            "my_rejoinable: :playing rooms where any seat has reserved_for == user_id and status in [:reconnecting, :grace]. Include room code, scores, seat statuses, grace_expires_at",
+            "open_tables: :waiting rooms with vacant seats. Include room code, host name, seats filled count, created_at",
+            "substitute_needed: :playing rooms with any seat status == :vacant (explicitly opened by owner). Include room code, scores, open position, which team needs help",
+            "spectatable: :playing rooms with spectator capacity remaining. Include room code, scores, player names, spectator count",
+            "Rooms with zero connected humans should appear in NO category",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "5.2",
+          "category": "api",
+          "description": "Add REST endpoint and update LobbyChannel for categorized lobby data",
+          "steps": [
+            "Study existing room controller and lobby channel to understand response patterns",
+            "Add a new controller action (or update existing) for GET /api/v1/lobby that calls list_lobby with the authenticated user's id and returns the categorized map",
+            "Add the route in the router following existing API route patterns",
+            "Update LobbyChannel join handler to return categorized lobby data instead of (or in addition to) the flat room list",
+            "Update LobbyChannel broadcast handlers: when room events come in from PubSub, broadcast a 'lobby_update' event with category, action (added/removed/updated), and room data. Create a helper to determine which category a room belongs to",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "5.3",
+          "category": "testing",
+          "description": "Test lobby filtering returns correct rooms in each category",
+          "steps": [
+            "Create test file for lobby filtering",
+            "Test: open_tables returns only waiting rooms with vacant seats",
+            "Test: my_rejoinable returns rooms only for the specific user who has a reserved seat",
+            "Test: playing rooms appear in spectatable",
+            "Test: rooms with zero connected humans appear in no category",
+            "Test: room transitioning from waiting to playing moves from open_tables to spectatable",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 6,
+      "name": "Stale Room Cleanup",
+      "linear_ticket": "PID-33",
+      "features": [
+        {
+          "id": "6.1",
+          "category": "functional",
+          "description": "Implement zero-human room auto-close — when all humans disconnect, close room after TTL",
+          "steps": [
+            "Study existing room cleanup code — look for idle_waiting cleanup and finished room cleanup (5 min after game_over) to understand the patterns",
+            "After any seat transition that removes the last human (Phase 3 gone, explicit leave): check if zero seats have connected_human? == true",
+            "If zero humans: schedule an auto-close message after Lifecycle.config(:empty_room_ttl_ms)",
+            "In the auto-close handler: re-check if still zero humans (someone might have joined). If still zero, close the room: terminate all bot processes, broadcast room_closed to game channel and lobby, remove from state",
+            "Add proper logging for room closures with the reason",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "6.2",
+          "category": "functional",
+          "description": "Implement startup sweep and periodic health check",
+          "steps": [
+            "In RoomManager init (or shortly after): scan all rooms. Close any :playing room with zero connected humans immediately (leftovers from crash). Close any stale :waiting rooms older than idle_waiting_ttl",
+            "Add a periodic health check that runs every health_check_interval_ms: scan all rooms, log warnings for inconsistencies (dead bot processes, expired grace periods that weren't transitioned, :playing rooms with no game process). Auto-fix safe issues like cleaning up dead bot_pid references",
+            "Schedule the first health check in init, re-schedule after each check",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "6.3",
+          "category": "testing",
+          "description": "Test stale room cleanup",
+          "steps": [
+            "Create test file for room cleanup",
+            "Test: zero-human room closes after TTL fires",
+            "Test: auto-close is cancelled if a human joins before TTL",
+            "Test: startup sweep removes orphaned playing rooms",
+            "Test: health check cleans up dead bot pids",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 7,
+      "name": "Score Protection — Games always complete",
+      "linear_ticket": "PID-35",
+      "features": [
+        {
+          "id": "7.1",
+          "category": "functional",
+          "description": "Implement score recording on game_over that handles disconnected and substitute players",
+          "steps": [
+            "Study how game_over is currently handled — look in GameChannel and any stats/scoring modules",
+            "After existing game_over logic, iterate through all seats in the room and record results for each original human:",
+            "Connected human -> record as :played with the game result",
+            "Bot seat with reserved_for set (abandoned human) -> record the original human as :abandoned with the game result. They get the win or loss their team earned",
+            "Bot seat with no reserved_for (pure bot) -> no stats to record",
+            "Human who joined as substitute -> record as :substitute",
+            "If a Stats module already exists, use it. If not, create a minimal one that logs the results with a TODO comment for database persistence",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "7.2",
+          "category": "functional",
+          "description": "Track abandonment per user when Phase 3 fires",
+          "steps": [
+            "In the Phase 3 handler: when a seat becomes permanently bot-filled and reserved_for is not nil, record the abandonment for that user",
+            "If a user stats table exists, add games_abandoned and last_abandoned_at fields via migration. If no stats schema exists yet, log the abandonment and add a TODO for persistence",
+            "This data is stored but not acted upon yet — future work will use it for matchmaking penalties and profile badges",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "7.3",
+          "category": "testing",
+          "description": "Test score recording with disconnected players",
+          "steps": [
+            "Create test file for score protection",
+            "Test: game_over records scores for all 4 original humans in a normal game (all :played)",
+            "Test: disconnected player (bot-substituted) gets score recorded as :abandoned with the correct win/loss result",
+            "Test: pre-start abandonment (leaving during :waiting) does NOT record a game",
+            "Test: abandonment counter is called when Phase 3 fires",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 8,
+      "name": "Substitute Seat Opening — Owner invites strangers",
+      "linear_ticket": "PID-34",
+      "features": [
+        {
+          "id": "8.1",
+          "category": "functional",
+          "description": "Implement open_seat and close_seat — owner can make bot seats available for human substitutes",
+          "steps": [
+            "Add open_seat/3 to RoomManager: takes room_code, position, requesting_user_id. Validates: requester is owner, target seat is :bot_substitute, room is :playing. If valid: terminate bot, call Seat.open_for_substitute/1, broadcast substitute_available to lobby. Return {:ok, room} or {:error, reason}",
+            "Add close_seat/3: same owner check, seat must be :vacant. Spawn a new bot, set seat to :bot_substitute, remove from lobby substitute list",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "8.2",
+          "category": "functional",
+          "description": "Allow strangers to join :playing rooms that have a vacant seat opened by the owner",
+          "steps": [
+            "Study the existing join_room function — understand where it rejects :playing rooms",
+            "Add a new code path: if room is :playing AND has a seat with status :vacant, allow the join. Place the new player in that specific seat via Seat.fill_seat/2",
+            "The engine doesn't need changes — the position already exists, a bot was playing it, now the human takes over",
+            "Broadcast 'substitute_joined' to game channel. Remove room from substitute_needed lobby category",
+            "Return current game state to the joining player",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "8.3",
+          "category": "api",
+          "description": "Add channel events and REST endpoint for seat management",
+          "steps": [
+            "In GameChannel: add handle_in for 'open_seat' and 'close_seat' events. Extract position from payload, call RoomManager functions, reply with result",
+            "In the room controller: add an action for POST /api/v1/rooms/:code/open-seat. Add the route following existing patterns",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "8.4",
+          "category": "testing",
+          "description": "Test the full substitute seat flow end-to-end",
+          "steps": [
+            "Create test file for substitute seats",
+            "Test: owner can open a bot-filled seat — seat becomes :vacant",
+            "Test: non-owner cannot open a seat — {:error, :not_owner}",
+            "Test: stranger can join a :playing room with a vacant seat — placed in correct position",
+            "Test: owner can close a vacant seat back to bot",
+            "Test: cannot open a seat that isn't :bot_substitute",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    },
+
+    {
+      "phase": 9,
+      "name": "Global Online Presence",
+      "linear_ticket": "PID-39",
+      "features": [
+        {
+          "id": "9.1",
+          "category": "functional",
+          "description": "Create a PresenceAggregator that tracks unique online users across lobby and game channels",
+          "steps": [
+            "Study how Presence is currently tracked — look at Phoenix.Presence usage in lobby and game channels, and how presence_diff events are broadcast",
+            "Create a GenServer that subscribes to presence events across all channels. Maintain a MapSet of unique user_ids. Exclude bot user_ids",
+            "Debounce broadcasts: when the count changes, schedule a broadcast after Lifecycle.config(:presence_debounce_ms). Cancel and reschedule if count changes again during debounce window",
+            "Broadcast online count and breakdown (lobby/playing/spectating) to the lobby PubSub topic",
+            "Add a get_count/0 function for synchronous queries",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "9.2",
+          "category": "setup",
+          "description": "Add PresenceAggregator to supervision tree and wire into lobby channel",
+          "steps": [
+            "Add the PresenceAggregator to the application supervision tree — look at how existing GenServers are supervised",
+            "In LobbyChannel join handler: include online_count from PresenceAggregator.get_count() in the response",
+            "Add handler to push 'online_count_updated' events to lobby channel when count changes",
+            "Verify: mix compile — no errors"
+          ],
+          "passes": false
+        },
+        {
+          "id": "9.3",
+          "category": "testing",
+          "description": "Test presence aggregation",
+          "steps": [
+            "Create test file for PresenceAggregator",
+            "Test: tracks unique users across joins",
+            "Test: deduplicates same user in multiple channels",
+            "Test: excludes bots from count",
+            "Test: broadcasts count updates",
+            "Run tests — verify all pass"
+          ],
+          "passes": false
+        }
+      ]
+    }
+  ],
+
+  "verification": {
+    "final_checks": [
+      "Run: mix compile — zero warnings, zero errors",
+      "Run: mix test — all tests pass (existing + new)",
+      "Run: mix format --check-formatted — no formatting issues",
+      "Run: mix credo --strict — no critical issues (warnings acceptable)",
+      "Manual: start server with mix phx.server, create a room via admin/dev panel, fill with bots + yourself, disconnect yourself, observe 3-phase cascade in logs",
+      "Manual: GET /api/v1/lobby returns categorized room data with correct sections",
+      "Manual: reconnect within grace period successfully reclaims seat from bot",
+      "Manual: game completes normally with bot substitute after player disconnect"
+    ]
+  }
+}
