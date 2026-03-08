@@ -989,6 +989,14 @@ defmodule PidroServer.Games.RoomManager do
             {position, seat} = seat_entry
             handle_seat_reconnection(room, room_code, user_id, position, seat, state)
 
+          # Phase 3: seat permanently botted — player's position has a bot with no reserved_for
+          has_permanently_botted_position?(room, user_id) ->
+            Logger.info(
+              "Player #{user_id} rejected from room #{room_code} — seat permanently filled"
+            )
+
+            {:reply, {:error, :seat_permanently_filled}, state}
+
           # Legacy fallback: check disconnected_players map
           Map.has_key?(room.disconnected_players, user_id) ->
             disconnect_time = Map.get(room.disconnected_players, user_id)
@@ -1323,6 +1331,20 @@ defmodule PidroServer.Games.RoomManager do
           nil
       end
     end)
+  end
+
+  @doc false
+  # Checks if the user's position (from room.positions) has a permanently-botted seat
+  # (Phase 3: :bot_substitute with reserved_for == nil).
+  defp has_permanently_botted_position?(%Room{} = room, user_id) do
+    case Positions.get_position(room, user_id) do
+      nil ->
+        false
+
+      position ->
+        seat = Map.get(room.seats, position)
+        seat != nil && seat.status == :bot_substitute && seat.reserved_for == nil
+    end
   end
 
   @doc false

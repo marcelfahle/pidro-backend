@@ -264,4 +264,325 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert seat.user_id == "user1"
     end
   end
+
+  # Helper: disconnect a player and manually trigger Phase 2 by sending
+  # the {:phase2_start, ...} message to RoomManager (bypasses 20s timer).
+  # Returns the updated room after Phase 2 completes.
+  defp trigger_phase2(room_code, user_id) do
+    {_room, position} = disconnect_and_get_position(room_code, user_id)
+
+    # Manually send the Phase 2 timer message
+    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
+
+    # Synchronize: get_room is a GenServer.call, ensuring handle_info processed
+    {:ok, updated_room} = RoomManager.get_room(room_code)
+    {updated_room, position}
+  end
+
+  defp disconnect_and_get_position(room_code, user_id) do
+    :ok = RoomManager.handle_player_disconnect(room_code, user_id)
+    {:ok, room} = RoomManager.get_room(room_code)
+    position = position_for(room, user_id)
+    {room, position}
+  end
+
+  # Helper: trigger Phase 2 then Phase 3 for a player.
+  defp trigger_phase3(room_code, user_id) do
+    {_room, position} = trigger_phase2(room_code, user_id)
+
+    # Manually send the Phase 3 timer message
+    send(GenServer.whereis(RoomManager), {:phase3_gone, room_code, position})
+
+    {:ok, updated_room} = RoomManager.get_room(room_code)
+    {updated_room, position}
+  end
+
+  describe "Phase 2 (Grace) — bot spawned after hiccup timeout" do
+    test "Phase 2 spawns a bot — seat becomes :bot_substitute with live bot_pid" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      {updated_room, position} = trigger_phase2(room.code, user_id)
+
+      seat = updated_room.seats[position]
+      assert seat.status == :bot_substitute
+      assert seat.occupant_type == :bot
+      assert seat.bot_pid != nil
+      assert Process.alive?(seat.bot_pid)
+      assert seat.reserved_for == user_id
+      assert seat.grace_expires_at != nil
+      assert seat.user_id == nil
+    end
+
+    test "Phase 2 broadcasts bot_substitute_active event" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      {_updated_room, position} = trigger_phase2(room.code, user_id)
+
+      # Drain the disconnect broadcast first
+      assert_receive {:player_reconnecting, _}, 200
+      assert_receive {:bot_substitute_active, %{position: ^position, user_id: ^user_id}}, 200
+    end
+
+    test "Phase 2 schedules Phase 3 timer" do
+      {room, _positions} = create_playing_room()
+
+      {updated_room, position} = trigger_phase2(room.code, "user2")
+
+      timer_ref = updated_room.phase_timers[position]
+      assert timer_ref != nil
+      # Timer should still be active (Phase 3 hasn't fired yet)
+      assert is_integer(Process.cancel_timer(timer_ref))
+    end
+
+    test "reconnect during Phase 2 terminates bot and restores seat" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      {phase2_room, position} = trigger_phase2(room.code, user_id)
+
+      # Capture bot pid before reconnect
+      bot_pid = phase2_room.seats[position].bot_pid
+      assert Process.alive?(bot_pid)
+
+      # Reconnect during Phase 2
+      {:ok, reconnected_room} = RoomManager.handle_player_reconnect(room.code, user_id)
+
+      seat = reconnected_room.seats[position]
+      assert seat.status == :connected
+      assert seat.occupant_type == :human
+      assert seat.user_id == user_id
+      assert seat.bot_pid == nil
+      assert seat.reserved_for == nil
+      assert seat.grace_expires_at == nil
+
+      # Bot process should be dead
+      Process.sleep(50)
+      refute Process.alive?(bot_pid)
+    end
+
+    test "reconnect during Phase 2 cancels Phase 3 timer" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      {phase2_room, position} = trigger_phase2(room.code, user_id)
+
+      timer_ref = phase2_room.phase_timers[position]
+      assert timer_ref != nil
+
+      {:ok, reconnected_room} = RoomManager.handle_player_reconnect(room.code, user_id)
+
+      # Timer should be cleared
+      assert reconnected_room.phase_timers[position] == nil
+      # Original timer should have been cancelled
+      assert Process.cancel_timer(timer_ref) == false
+    end
+
+    test "reconnect during Phase 2 broadcasts player_reclaimed_seat event" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      {_phase2_room, position} = trigger_phase2(room.code, user_id)
+
+      # Drain earlier broadcasts
+      assert_receive {:player_reconnecting, _}, 200
+      assert_receive {:bot_substitute_active, _}, 200
+
+      {:ok, _} = RoomManager.handle_player_reconnect(room.code, user_id)
+      assert_receive {:player_reclaimed_seat, %{user_id: ^user_id, position: ^position}}, 200
+    end
+
+    test "Phase 2 does nothing if player already reconnected (Phase 1)" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      :ok = RoomManager.handle_player_disconnect(room.code, user_id)
+      {:ok, disc_room} = RoomManager.get_room(room.code)
+      position = position_for(disc_room, user_id)
+
+      # Reconnect during Phase 1
+      {:ok, _} = RoomManager.handle_player_reconnect(room.code, user_id)
+
+      # Now manually send Phase 2 message (timer would have fired)
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+
+      # Seat should still be :connected (Phase 2 was a no-op)
+      seat = updated_room.seats[position]
+      assert seat.status == :connected
+      assert seat.occupant_type == :human
+      assert seat.user_id == user_id
+    end
+  end
+
+  describe "Phase 3 (Gone) — bot becomes permanent" do
+    test "Phase 3 makes bot permanent — reserved_for is nil" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      {updated_room, position} = trigger_phase3(room.code, user_id)
+
+      seat = updated_room.seats[position]
+      assert seat.status == :bot_substitute
+      assert seat.occupant_type == :bot
+      assert seat.reserved_for == nil
+      assert seat.bot_pid != nil
+      assert Process.alive?(seat.bot_pid)
+    end
+
+    test "Phase 3 cleans up phase timer" do
+      {room, _positions} = create_playing_room()
+
+      {updated_room, position} = trigger_phase3(room.code, "user2")
+
+      assert updated_room.phase_timers[position] == nil
+    end
+
+    test "Phase 3 broadcasts seat_permanently_botted event" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      {_updated_room, position} = trigger_phase3(room.code, user_id)
+
+      # Drain earlier broadcasts
+      assert_receive {:player_reconnecting, _}, 200
+      assert_receive {:bot_substitute_active, _}, 200
+      assert_receive {:seat_permanently_botted, %{position: ^position}}, 200
+    end
+
+    test "reconnect during Phase 3 is rejected — seat permanently filled" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      {_updated_room, _position} = trigger_phase3(room.code, user_id)
+
+      result = RoomManager.handle_player_reconnect(room.code, user_id)
+      assert result == {:error, :seat_permanently_filled}
+    end
+
+    test "Phase 3 does nothing if player already reclaimed (Phase 2)" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      {_phase2_room, position} = trigger_phase2(room.code, user_id)
+
+      # Reconnect during Phase 2
+      {:ok, _} = RoomManager.handle_player_reconnect(room.code, user_id)
+
+      # Now manually send Phase 3 message (timer would have fired)
+      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+
+      # Seat should still be :connected (Phase 3 was a no-op)
+      seat = updated_room.seats[position]
+      assert seat.status == :connected
+      assert seat.occupant_type == :human
+      assert seat.user_id == user_id
+    end
+
+    test "Phase 3 notifies owner about decision when owner is a different connected human" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      {_updated_room, position} = trigger_phase3(room.code, user_id)
+
+      # Drain earlier broadcasts
+      assert_receive {:player_reconnecting, _}, 200
+      assert_receive {:bot_substitute_active, _}, 200
+      assert_receive {:seat_permanently_botted, _}, 200
+
+      # Owner (user1) should get notified since they're still connected
+      assert_receive {:owner_decision_available, %{position: ^position, owner_id: "user1"}}, 200
+    end
+  end
+
+  describe "Multiple disconnects and full lifecycle" do
+    test "multiple simultaneous disconnects each have independent cascades through Phase 2" do
+      {room, _positions} = create_playing_room()
+      user2_position = position_for(room, "user2")
+      user3_position = position_for(room, "user3")
+
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user3")
+
+      # Trigger Phase 2 for both
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user2_position})
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user3_position})
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+
+      # Both should have independent bots
+      seat2 = updated_room.seats[user2_position]
+      seat3 = updated_room.seats[user3_position]
+
+      assert seat2.status == :bot_substitute
+      assert seat3.status == :bot_substitute
+      assert seat2.bot_pid != seat3.bot_pid
+      assert seat2.reserved_for == "user2"
+      assert seat3.reserved_for == "user3"
+      assert Process.alive?(seat2.bot_pid)
+      assert Process.alive?(seat3.bot_pid)
+    end
+
+    test "reclaiming one bot does not affect the other's cascade" do
+      {room, _positions} = create_playing_room()
+      user2_position = position_for(room, "user2")
+      user3_position = position_for(room, "user3")
+
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user3")
+
+      # Trigger Phase 2 for both
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user2_position})
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user3_position})
+      {:ok, _} = RoomManager.get_room(room.code)
+
+      # Reclaim user2's seat only
+      {:ok, updated_room} = RoomManager.handle_player_reconnect(room.code, "user2")
+
+      # user2 should be back
+      assert updated_room.seats[user2_position].status == :connected
+      assert updated_room.seats[user2_position].user_id == "user2"
+
+      # user3 should still have bot
+      assert updated_room.seats[user3_position].status == :bot_substitute
+      assert updated_room.seats[user3_position].reserved_for == "user3"
+      assert Process.alive?(updated_room.seats[user3_position].bot_pid)
+    end
+
+    test "full lifecycle: disconnect → Phase 2 → Phase 3 → rejected reconnect" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+      position = position_for(room, user_id)
+
+      # Phase 1: Disconnect
+      :ok = RoomManager.handle_player_disconnect(room.code, user_id)
+      {:ok, room1} = RoomManager.get_room(room.code)
+      assert room1.seats[position].status == :reconnecting
+
+      # Phase 2: Bot spawns
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
+      {:ok, room2} = RoomManager.get_room(room.code)
+      assert room2.seats[position].status == :bot_substitute
+      assert room2.seats[position].reserved_for == user_id
+
+      # Phase 3: Bot permanent
+      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
+      {:ok, room3} = RoomManager.get_room(room.code)
+      assert room3.seats[position].status == :bot_substitute
+      assert room3.seats[position].reserved_for == nil
+
+      # Reconnect rejected
+      assert {:error, :seat_permanently_filled} =
+               RoomManager.handle_player_reconnect(room.code, user_id)
+    end
+  end
 end

@@ -265,7 +265,7 @@
             "Test: multiple simultaneous disconnects are independent — disconnect north and east, verify each has their own cascade",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },

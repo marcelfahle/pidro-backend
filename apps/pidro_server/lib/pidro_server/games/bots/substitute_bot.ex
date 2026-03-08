@@ -106,6 +106,14 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   def handle_info({:player_reconnecting, _}, state), do: {:noreply, state}
   @impl true
   def handle_info({:bot_substitute_active, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:seat_permanently_botted, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:player_reconnected, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:player_reclaimed_seat, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:owner_decision_available, _}, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do

@@ -478,3 +478,62 @@ Phase 1 (Hiccup) of the three-phase disconnect cascade.
 - Feature 3.7: Test Phase 2 and Phase 3
 - Feature 4.1: Ownership auto-promotion
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 3.7: Test Phase 2 and Phase 3 Disconnect Cascade
+
+Added 16 tests covering Phase 2 (Grace) and Phase 3 (Gone) of the disconnect
+cascade, plus full lifecycle integration tests. Also fixed two bugs discovered
+during testing.
+
+### What was done:
+
+**Tests (disconnect_cascade_test.exs):**
+- 3 helper functions: `trigger_phase2/2`, `trigger_phase3/2`, `disconnect_and_get_position/2`
+  — manually send `{:phase2_start, ...}` / `{:phase3_gone, ...}` to RoomManager to bypass
+  real timers and test synchronously
+- Phase 2 tests (7 tests):
+  1. Bot spawns — seat becomes :bot_substitute with live bot_pid and reserved_for
+  2. bot_substitute_active PubSub event is broadcast
+  3. Phase 3 timer is scheduled
+  4. Reconnect during Phase 2 terminates bot and restores seat
+  5. Reconnect during Phase 2 cancels Phase 3 timer
+  6. Reconnect during Phase 2 broadcasts player_reclaimed_seat event
+  7. Phase 2 is no-op if player already reconnected (Phase 1)
+- Phase 3 tests (5 tests):
+  1. Bot becomes permanent — reserved_for is nil
+  2. Phase timer is cleaned up
+  3. seat_permanently_botted PubSub event is broadcast
+  4. Reconnect rejected with {:error, :seat_permanently_filled}
+  5. Phase 3 is no-op if player already reclaimed (Phase 2)
+  6. Owner notified about decision when owner is different connected human
+- Full lifecycle tests (3 tests):
+  1. Multiple simultaneous disconnects each get independent Phase 2 bots
+  2. Reclaiming one bot doesn't affect the other's cascade
+  3. Full lifecycle: disconnect → Phase 2 → Phase 3 → rejected reconnect
+
+**Bug fix 1 — Phase 3 reconnection rejection (room_manager.ex):**
+- After Phase 3 (make_permanent_bot), `find_seat_for_user` can't find the seat
+  because `reserved_for` is nil. The legacy `disconnected_players` fallback was
+  allowing reconnection, bypassing the permanent-bot rejection.
+- Fix: added `has_permanently_botted_position?/2` helper that checks if the user's
+  position (from room.positions) has a permanent bot seat. Added explicit check in
+  `handle_call({:player_reconnect, ...})` between seat lookup and legacy fallback.
+
+**Bug fix 2 — SubstituteBot crash on cascade PubSub messages (substitute_bot.ex):**
+- SubstituteBot was crashing on `{:seat_permanently_botted, _}`,
+  `{:player_reclaimed_seat, _}`, `{:player_reconnected, _}`, and
+  `{:owner_decision_available, _}` PubSub messages (no matching handle_info clause).
+- Fix: added no-op handle_info clauses for all disconnect cascade PubSub events.
+
+### Verification:
+- mix format --check-formatted: passes
+- mix test (disconnect_cascade_test.exs): 27 tests, 0 failures
+- mix test (full pidro_server suite): 291 tests, 0 failures, 1 skipped
+
+### Phase 3 Complete!
+All 7 features (3.1–3.7) now pass. Phase 3 (Three-Phase Disconnect Cascade) is
+fully complete.
+
+### Next up:
+- Feature 4.1: Ownership auto-promotion (PID-31)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
