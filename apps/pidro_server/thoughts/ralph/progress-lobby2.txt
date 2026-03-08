@@ -77,3 +77,31 @@ position at the table as a swappable entity (human, bot, or vacant).
 - Feature 2.3: Query helpers and serialization (already included in 2.1 — may be marked done)
 - Feature 2.4: Comprehensive tests for Seat
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 2.4: Comprehensive Seat Tests
+
+Created `test/pidro_server/games/room/seat_test.exs` — 51 tests covering all Seat
+constructors, state transitions, query helpers, and serialization.
+
+### What was done:
+- 5 test groups across 5 describe blocks:
+  - creation (5 tests): new_human (with defaults and options), new_bot, new_vacant
+  - valid transitions (9 tests): disconnect, start_grace, substitute_bot, make_permanent_bot,
+    reclaim from reconnecting (Phase 1), reclaim from grace (Phase 2), open_for_substitute,
+    fill_seat, full lifecycle end-to-end
+  - invalid transitions (14 tests): every disallowed state transition returns {:error, :invalid_transition}
+    or {:error, :user_mismatch} for wrong user_id on reclaim
+  - queries (18 tests): connected_human?, active_bot?, can_reclaim?, vacant?, owner? across
+    all relevant seat states
+  - serialization (5 tests): JSON-safe output, no pids, DateTimes as ISO 8601, handles all seat types
+- Helper `build_bot_substitute/1` walks through the full cascade to build a bot_substitute seat
+- Also marked PRD features 2.2 and 2.3 as passes: true (they were implemented in 2.1)
+
+### Verification:
+- mix format --check-formatted: passes for pidro_server files
+- mix test (seat_test.exs): 51 tests, 0 failures
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 2.5: Integrate Seat model into RoomManager (additive, backward-compatible)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

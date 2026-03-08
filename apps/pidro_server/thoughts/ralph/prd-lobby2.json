@@ -86,7 +86,7 @@
             "fill_seat/2 — vacant seat transitions to :connected with occupant_type :human and the given user_id",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "2.3",
@@ -97,7 +97,7 @@
             "Implement serialize/1 that converts a Seat to a JSON-safe map (no pids, DateTimes as ISO strings)",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "2.4",
@@ -112,7 +112,7 @@
             "Test group 'serialization': serialize returns map with no Elixir-specific types",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "2.5",
