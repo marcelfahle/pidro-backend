@@ -454,7 +454,7 @@
             "Test: abandonment counter is called when Phase 3 fires",
             "Run tests — verify all pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },

@@ -994,3 +994,51 @@ persistence.
 - Feature 7.3: Test score recording with disconnected players (PID-35)
 - Phase 8: Substitute Seat Opening (PID-34)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 7.3: Test Score Recording with Disconnected Players
+
+Created `test/pidro_server/stats/score_protection_test.exs` — 12 tests covering
+score recording for all player participation types, plus Phase 3 abandonment
+integration.
+
+### What was done:
+
+**Tests (score_protection_test.exs):**
+- 5 describe blocks covering all PRD test requirements:
+  - build_player_results — all humans connected (3 tests): all 4 humans recorded
+    as :played, correct :win/:loss assignment by team, correct positions
+  - build_player_results — disconnected player / bot-substituted (4 tests):
+    abandoned human gets :abandoned with correct win/loss, abandoned on losing
+    team gets :loss, permanent bot (reserved_for nil) is skipped, vacant seat
+    is skipped
+  - build_player_results — pre-start abandonment (2 tests): waiting room with
+    vacant seats produces no entry for missing players, non-map input returns
+    empty map
+  - record_abandonment/3 (1 test): returns :ok
+  - record_abandonment integration — Phase 3 (2 tests): Phase 3 makes bot
+    permanent after abandonment (reserved_for cleared), Phase 3 is no-op for
+    already-reclaimed seats
+
+**Design decisions:**
+- Tests build Seat structs directly for pure function tests (async-safe, no
+  GenServer dependency) — follows existing Seat test patterns
+- Integration tests use RoomManager (async: false) with manual Phase 2/3
+  message sending, following disconnect_cascade_test patterns
+- Logger level in test config is :warning, so capture_log with :info level
+  would be needed for log assertions — instead verified state transitions
+  which are more reliable
+- Abandoned human test walks through the full Seat cascade (disconnect →
+  start_grace → substitute_bot) to build a realistic bot_substitute seat
+
+### Verification:
+- mix format --check-formatted: passes for new file (pre-existing engine
+  format issues unrelated)
+- mix test (score_protection_test.exs): 12 tests, 0 failures
+- mix test (full pidro_server suite): 328 tests, 0 failures, 1 skipped
+
+### Phase 7 Complete!
+All 3 features (7.1–7.3) now pass. Phase 7 (Score Protection) is fully complete.
+
+### Next up:
+- Phase 8: Substitute Seat Opening (PID-34) — owner opens bot seats for humans
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
