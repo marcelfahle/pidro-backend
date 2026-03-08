@@ -810,3 +810,49 @@ is automatically closed after the empty_room_ttl.
 - Feature 6.2: Startup sweep and periodic health check (PID-33)
 - Feature 6.3: Test stale room cleanup (PID-33)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 6.2: Startup Sweep and Periodic Health Check
+
+Implemented startup sweep and periodic health check in RoomManager for
+production robustness.
+
+### What was done:
+
+**Startup sweep (`handle_info(:startup_sweep, ...)`)**:
+- Triggered via `send(self(), :startup_sweep)` in `init/1`
+- Scans all rooms and closes:
+  - `:playing` rooms with zero connected humans (crash leftovers) — terminates
+    bots, stops game process, cancels phase timers, removes room
+  - Stale `:waiting` rooms older than `Lifecycle.config(:idle_waiting_ttl_ms)`
+- No-op when state is empty (normal fresh start)
+
+**Periodic health check (`handle_info(:health_check, ...)`)**:
+- Scheduled via `schedule_health_check/0` using
+  `Lifecycle.config(:health_check_interval_ms)` (60s default)
+- First check scheduled in `init/1`, re-scheduled after each check
+- Scans each room via `health_check_room/2` with 3 sub-checks:
+  1. `check_dead_bot_pids`: auto-fixes dead `bot_pid` references by clearing
+     them (sets to nil). Logs warning for each dead pid found.
+  2. `check_expired_grace_periods`: logs warning for seats with
+     `grace_expires_at` in the past (Phase 2 → Phase 3 timer missed)
+  3. `check_missing_game_process`: logs warning for `:playing` rooms where
+     `GameSupervisor.get_game/1` returns `{:error, :not_found}`
+
+### Design decisions:
+- Startup sweep uses `Enum.reduce` over rooms to accumulate state changes
+  (each `remove_room` modifies state)
+- Health check returns updated room with auto-fixes applied; warnings are
+  log-only (no state changes for those)
+- Separate helper per check for clarity and testability
+- `schedule_health_check/0` reads interval from Lifecycle config each time,
+  so it can be tuned at runtime
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 310 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 6.3: Test stale room cleanup (PID-33)
+- Phase 7: Score Protection (PID-35)
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

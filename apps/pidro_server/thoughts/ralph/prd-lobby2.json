@@ -390,7 +390,7 @@
             "Schedule the first health check in init, re-schedule after each check",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "6.3",

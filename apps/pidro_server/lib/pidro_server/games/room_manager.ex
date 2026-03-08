@@ -574,6 +574,8 @@ defmodule PidroServer.Games.RoomManager do
   def init(:ok) do
     Logger.info("RoomManager started")
     schedule_cleanup()
+    send(self(), :startup_sweep)
+    schedule_health_check()
     {:ok, %State{}}
   end
 
@@ -1401,6 +1403,65 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  # Startup sweep — clean up any inconsistent rooms left over from a crash.
+  # Closes :playing rooms with zero connected humans and stale :waiting rooms.
+  @impl true
+  def handle_info(:startup_sweep, %State{} = state) do
+    if map_size(state.rooms) == 0 do
+      {:noreply, state}
+    else
+      Logger.info("Running startup sweep on #{map_size(state.rooms)} rooms")
+      now = DateTime.utc_now()
+      idle_ttl_ms = Lifecycle.config(:idle_waiting_ttl_ms)
+
+      updated_state =
+        Enum.reduce(state.rooms, state, fn {code, room}, acc_state ->
+          cond do
+            # Playing rooms with zero connected humans — leftovers from crash
+            room.status == :playing && !has_connected_human?(room) ->
+              Logger.info(
+                "Startup sweep: closing :playing room #{code} with zero connected humans"
+              )
+
+              terminate_room_bots(room)
+              GameSupervisor.stop_game(code)
+              cancel_all_phase_timers(room)
+              remove_room(acc_state, code)
+
+            # Stale waiting rooms older than idle_waiting_ttl
+            room.status == :waiting &&
+                DateTime.diff(now, room.last_activity, :millisecond) > idle_ttl_ms ->
+              Logger.info("Startup sweep: closing stale :waiting room #{code}")
+              remove_room(acc_state, code)
+
+            true ->
+              acc_state
+          end
+        end)
+
+      {:noreply, updated_state}
+    end
+  end
+
+  # Periodic health check — scans all rooms for inconsistencies.
+  # Logs warnings and auto-fixes safe issues (dead bot_pid references).
+  @impl true
+  def handle_info(:health_check, %State{} = state) do
+    updated_state =
+      if map_size(state.rooms) == 0 do
+        state
+      else
+        Enum.reduce(state.rooms, state, fn {code, room}, acc_state ->
+          room = health_check_room(room, code)
+          %State{} = acc_state
+          %{acc_state | rooms: Map.put(acc_state.rooms, code, room)}
+        end)
+      end
+
+    schedule_health_check()
+    {:noreply, updated_state}
+  end
+
   ## Private Helper Functions
 
   @doc false
@@ -1848,6 +1909,72 @@ defmodule PidroServer.Games.RoomManager do
   defp schedule_cleanup do
     Process.send_after(self(), :cleanup_abandoned_rooms, :timer.minutes(1))
   end
+
+  @doc false
+  @spec schedule_health_check() :: reference()
+  defp schedule_health_check do
+    interval = Lifecycle.config(:health_check_interval_ms)
+    Process.send_after(self(), :health_check, interval)
+  end
+
+  @doc false
+  # Checks a single room for inconsistencies and auto-fixes safe issues.
+  # Returns the (possibly updated) room.
+  defp health_check_room(%Room{} = room, room_code) do
+    room
+    |> check_dead_bot_pids(room_code)
+    |> check_expired_grace_periods(room_code)
+    |> check_missing_game_process(room_code)
+  end
+
+  # Auto-fix: clean up dead bot_pid references in seats
+  defp check_dead_bot_pids(%Room{seats: seats} = room, room_code) do
+    updated_seats =
+      Map.new(seats, fn {pos, seat} ->
+        if seat.bot_pid && !Process.alive?(seat.bot_pid) do
+          Logger.warning(
+            "Health check: dead bot_pid at #{pos} in room #{room_code}, clearing reference"
+          )
+
+          {pos, %{seat | bot_pid: nil}}
+        else
+          {pos, seat}
+        end
+      end)
+
+    %{room | seats: updated_seats}
+  end
+
+  # Log warning for expired grace periods that weren't transitioned
+  defp check_expired_grace_periods(%Room{seats: seats} = room, room_code) do
+    now = DateTime.utc_now()
+
+    Enum.each(seats, fn {pos, seat} ->
+      if seat.grace_expires_at && DateTime.compare(now, seat.grace_expires_at) == :gt do
+        Logger.warning(
+          "Health check: expired grace period at #{pos} in room #{room_code} " <>
+            "(expired at #{DateTime.to_iso8601(seat.grace_expires_at)})"
+        )
+      end
+    end)
+
+    room
+  end
+
+  # Log warning for :playing rooms with no game process
+  defp check_missing_game_process(%Room{status: :playing} = room, room_code) do
+    case GameSupervisor.get_game(room_code) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, :not_found} ->
+        Logger.warning("Health check: :playing room #{room_code} has no game process")
+    end
+
+    room
+  end
+
+  defp check_missing_game_process(room, _room_code), do: room
 
   defp is_abandoned?(room, now, grace_period_minutes) do
     # Check if room is idle
