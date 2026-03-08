@@ -34,7 +34,7 @@
             "In runtime.exs (or the project's runtime config): add environment variable overrides so these can be tuned in production without redeploying",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "1.3",

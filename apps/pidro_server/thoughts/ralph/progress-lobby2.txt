@@ -1253,3 +1253,47 @@ complete.
 ### Next up:
 - Phase 9: Global Online Presence (PID-39) — PresenceAggregator
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 1.2: Wire Lifecycle Config into Application Config Files
+
+Wired the Lifecycle config module into all three config layers: compile-time
+defaults in config.exs, short test timeouts in test.exs, and environment
+variable overrides in runtime.exs for production tuning.
+
+### What was done:
+
+**config/config.exs:**
+- Added all 8 Lifecycle timeout keys with their default values as a config
+  block under `PidroServer.Games.Lifecycle`, right after the existing
+  RoomManager config entry
+
+**config/test.exs:**
+- Added short timeouts for all 8 keys (100ms–500ms) to avoid slow test runs.
+  Follows the same pattern as the existing RoomManager grace_period_ms
+  override (120_000 → 200)
+
+**config/runtime.exs:**
+- Added environment variable overrides for all 8 keys with `LIFECYCLE_` prefix:
+  LIFECYCLE_HICCUP_TIMEOUT_MS, LIFECYCLE_GRACE_TIMEOUT_MS, etc.
+- Uses `Keyword.merge` with existing config so partial overrides work correctly
+  (setting one env var doesn't clobber the other 7 values)
+- Runs in all environments (not just :prod) so it works in staging/dev too
+
+### Design decisions:
+- Env var names use `LIFECYCLE_` prefix for namespacing, matching the module name
+- Runtime.exs merges with existing config rather than replacing, so you can set
+  just one env var without losing all other configured values
+- Test timeouts are aggressive (100ms hiccup, 200ms grace) to keep tests fast
+  while still exercising the timer scheduling logic
+- Follows existing config.exs style: module-keyed config with keyword list values
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 344 tests, 0 failures, 1 skipped
+
+### Phase 1 Complete!
+All 3 features (1.1–1.3) now pass. Phase 1 (Lifecycle Config) is fully complete.
+
+### Next up:
+- Phase 9: Global Online Presence (PID-39) — PresenceAggregator
