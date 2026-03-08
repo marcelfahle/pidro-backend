@@ -43,6 +43,7 @@ defmodule PidroServerWeb.LobbyChannel do
   require Logger
 
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.Room.Seat
   alias PidroServerWeb.Presence
   alias PidroServer.Accounts.Auth
   alias PidroServer.Accounts.User
@@ -151,12 +152,10 @@ defmodule PidroServerWeb.LobbyChannel do
   end
 
   defp serialize_seats(room, user_map) do
-    # Map positions to seats with player data
-    positions = [:north, :east, :south, :west]
-
-    positions
+    [:north, :east, :south, :west]
     |> Enum.with_index()
     |> Enum.map(fn {position, index} ->
+      seat = Map.get(room.seats, position)
       player_id = room.positions[position]
 
       player_data =
@@ -166,12 +165,30 @@ defmodule PidroServerWeb.LobbyChannel do
           nil
         end
 
-      %{
+      base = %{
         position: position,
         seat_index: index,
         status: if(player_id, do: "occupied", else: "free"),
         player: player_data
       }
+
+      case seat do
+        %Seat{} ->
+          seat_data = Seat.serialize(seat)
+
+          Map.merge(base, %{
+            occupant_type: seat_data.occupant_type,
+            lifecycle_status: seat_data.status,
+            is_owner: seat_data.is_owner,
+            disconnected_at: seat_data.disconnected_at,
+            grace_expires_at: seat_data.grace_expires_at,
+            reserved_for: seat_data.reserved_for,
+            joined_at: seat_data.joined_at
+          })
+
+        nil ->
+          base
+      end
     end)
   end
 

@@ -139,7 +139,7 @@
             "Keep all existing fields unchanged — this is additive",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "2.7",
@@ -151,7 +151,7 @@
             "Do NOT change any behavior — only adjust test expectations for the new field",
             "Verify: All existing tests pass"
           ],
-          "passes": false
+          "passes": true
         }
       ]
     },

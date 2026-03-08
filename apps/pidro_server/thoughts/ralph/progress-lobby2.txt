@@ -140,3 +140,49 @@ renamed.
 - Feature 2.6: Update room serialization to include seat status
 - Feature 2.7: Verify all existing tests still pass with Seat model (already verified)
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Features 2.6 + 2.7: Room Serialization with Seats & Test Verification
+
+Updated both serialization paths (REST API and WebSocket) to include Seat lifecycle
+data in room responses. Also verified all existing tests pass (2.7).
+
+### What was done:
+
+**RoomJSON (REST API):**
+- Added `seats` field to `RoomJSON.room/1` — a map of position → `Seat.serialize/1` output
+- Added `serialize_room_seats/1` helper that maps each seat in `room.seats` through
+  `Seat.serialize/1`. Returns `%{}` when seats map is empty (backward compat)
+- Added alias for `PidroServer.Games.Room.Seat`
+
+**LobbyChannel (WebSocket):**
+- Updated `serialize_seats/2` to enrich existing seat entries with Seat struct data
+- When a `%Seat{}` struct exists for a position, merges lifecycle fields into the entry:
+  `occupant_type`, `lifecycle_status` (renamed from `status` to avoid conflict with
+  existing "occupied"/"free" status), `is_owner`, `disconnected_at`, `grace_expires_at`,
+  `reserved_for`, `joined_at`
+- Falls back to base format (position, seat_index, status, player) when no Seat struct
+  exists (backward compat for pre-Seat rooms)
+- Added module-level alias for `PidroServer.Games.Room.Seat`
+
+### Design decisions:
+- REST API uses position-keyed map (`%{north: %{...}, south: %{...}}`) — matches PRD spec
+- LobbyChannel keeps existing list format with player enrichment — additive only
+- LobbyChannel uses `lifecycle_status` instead of `status` to avoid conflict with
+  existing "occupied"/"free" string status used by frontend
+- Both paths handle empty/missing seats gracefully for backward compatibility
+
+### Feature 2.7 (test verification):
+- All existing tests pass without modification — the seats field is additive and doesn't
+  break any existing assertions
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Phase 2 Complete!
+All 7 features (2.1–2.7) now pass. Phase 2 (Seat State Machine) is fully complete.
+
+### Next up:
+- Phase 3: Three-Phase Disconnect Cascade (PID-30) — the core lifecycle feature
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)

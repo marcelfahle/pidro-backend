@@ -7,7 +7,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   single room responses, room lists, and room creation responses.
   """
 
-  alias PidroServer.Games.Room.Positions
+  alias PidroServer.Games.Room.{Positions, Seat}
   alias PidroServerWeb.Serializers.GameStateSerializer
 
   @doc """
@@ -107,8 +107,15 @@ defmodule PidroServerWeb.API.RoomJSON do
       status: room.status,
       max_players: room.max_players,
       max_spectators: room.max_spectators || 10,
-      created_at: DateTime.to_iso8601(room.created_at)
+      created_at: DateTime.to_iso8601(room.created_at),
+      seats: serialize_room_seats(Map.get(room, :seats, %{}))
     }
+  end
+
+  defp serialize_room_seats(seats) when map_size(seats) == 0, do: %{}
+
+  defp serialize_room_seats(seats) do
+    Map.new(seats, fn {position, seat} -> {position, Seat.serialize(seat)} end)
   end
 
   @doc false
