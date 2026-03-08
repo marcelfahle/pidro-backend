@@ -189,7 +189,7 @@
             "Broadcast 'bot_substitute_active' event with position and original user_id",
             "Verify: mix compile — no errors"
           ],
-          "passes": false
+          "passes": true
         },
         {
           "id": "3.3",

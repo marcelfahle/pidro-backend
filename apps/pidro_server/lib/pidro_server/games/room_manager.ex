@@ -1108,11 +1108,65 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  # Phase 2 handler — stub until Feature 3.2 implements bot substitution.
-  # Without this clause the timer message crashes the GenServer.
+  # Phase 2 handler — hiccup timer fired, spawn substitute bot and start grace countdown.
   @impl true
-  def handle_info({:phase2_start, _room_code, _position}, state) do
-    # TODO: Feature 3.2 — spawn substitute bot and start grace countdown
+  def handle_info({:phase2_start, room_code, position}, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:noreply, state}
+
+      %Room{} = room ->
+        seat = Map.get(room.seats, position)
+
+        if seat && seat.status == :reconnecting do
+          # Calculate remaining grace duration (total grace minus hiccup already elapsed)
+          grace_ms = Lifecycle.config(:grace_timeout_ms)
+          hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
+          remaining_grace_ms = grace_ms - hiccup_ms
+          grace_expires_at = DateTime.add(DateTime.utc_now(), remaining_grace_ms, :millisecond)
+
+          # Transition seat: reconnecting -> grace -> bot_substitute
+          {:ok, grace_seat} = Seat.start_grace(seat, grace_expires_at)
+
+          # Spawn substitute bot (stub — Feature 3.3 replaces with real SubstituteBot)
+          {:ok, bot_pid} = spawn_substitute_bot(room_code, position)
+          {:ok, bot_seat} = Seat.substitute_bot(grace_seat, bot_pid)
+
+          # Schedule Phase 3 (gone/permanent) timer
+          timer_ref =
+            Process.send_after(self(), {:phase3_gone, room_code, position}, remaining_grace_ms)
+
+          updated_room = %{
+            room
+            | seats: Map.put(room.seats, position, bot_seat),
+              phase_timers: Map.put(room.phase_timers, position, timer_ref)
+          }
+
+          updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+          # Broadcast bot substitution event
+          Phoenix.PubSub.broadcast(
+            PidroServer.PubSub,
+            "game:#{room_code}",
+            {:bot_substitute_active, %{position: position, user_id: seat.user_id}}
+          )
+
+          Logger.info(
+            "Phase 2 (Grace): Bot substituted at #{position} in room #{room_code} for user #{seat.user_id}"
+          )
+
+          {:noreply, updated_state}
+        else
+          # Player already reconnected or seat state changed, skip
+          {:noreply, state}
+        end
+    end
+  end
+
+  # Phase 3 handler — stub until Feature 3.4 implements permanent bot.
+  @impl true
+  def handle_info({:phase3_gone, _room_code, _position}, state) do
+    # TODO: Feature 3.4 — make bot permanent, notify owner
     {:noreply, state}
   end
 
@@ -1232,6 +1286,23 @@ defmodule PidroServer.Games.RoomManager do
       _ ->
         room
     end
+  end
+
+  # Substitute bot helpers
+
+  @doc false
+  # Spawns a substitute bot for a position in a playing room.
+  # Stub implementation — spawns a minimal process that stays alive until stopped.
+  # Feature 3.3 will replace this with a real SubstituteBot GenServer.
+  defp spawn_substitute_bot(_room_code, _position) do
+    pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    {:ok, pid}
   end
 
   # Seat management helpers

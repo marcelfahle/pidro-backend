@@ -229,3 +229,43 @@ a Phase 2 timer is scheduled.
 - Feature 3.2: Phase 2 (Grace) — spawn substitute bot when hiccup timer fires
 - Feature 3.3: SubstituteBot GenServer — production bot for filling in during games
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 3.2: Phase 2 (Grace) — Bot Substitution on Hiccup Timeout
+
+Replaced the Phase 2 stub in RoomManager with the real implementation. When the
+hiccup timer fires and the seat is still `:reconnecting`, a substitute bot is
+spawned and the grace countdown begins.
+
+### What was done:
+- Replaced stub `handle_info({:phase2_start, ...})` with full Phase 2 logic:
+  - Guard: if seat is no longer `:reconnecting` (player reconnected), does nothing
+  - Calculates remaining grace duration: `grace_timeout_ms - hiccup_timeout_ms`
+  - Calls `Seat.start_grace/2` with computed `grace_expires_at` timestamp
+  - Spawns a substitute bot via `spawn_substitute_bot/2` (stub process for now)
+  - Calls `Seat.substitute_bot/2` to transition seat to `:bot_substitute`
+  - Schedules `{:phase3_gone, room_code, position}` timer for remaining grace
+  - Broadcasts `{:bot_substitute_active, %{position, user_id}}` on game PubSub topic
+- Added `spawn_substitute_bot/2` private helper — spawns a minimal process that
+  stays alive until stopped. Feature 3.3 will replace with real SubstituteBot.
+- Added stub `handle_info({:phase3_gone, ...})` — no-op until Feature 3.4
+
+### Design decisions:
+- Seat transitions happen atomically: `:reconnecting` → `:grace` → `:bot_substitute`
+  in a single handler. There's no intermediate state where the seat is `:grace`
+  without a bot.
+- Phase 3 timer replaces the Phase 2 timer in `phase_timers` map (same position key)
+- Stub bot is a bare `spawn/1` — just stays alive. Feature 3.3 will replace with
+  a GenServer under DynamicSupervisor that actually plays moves.
+- Reconnection during Phase 2 (`:bot_substitute` state) is NOT handled yet —
+  that's Feature 3.5. Current `cancel_hiccup_and_reclaim/2` only handles Phase 1.
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 3.3: SubstituteBot GenServer — production bot for filling in during games
+- Feature 3.4: Phase 3 (Gone) — make bot permanent, notify owner
+- Feature 3.5: Reconnection during Phase 2 and Phase 3
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
