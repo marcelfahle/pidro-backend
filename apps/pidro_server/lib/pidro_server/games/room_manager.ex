@@ -43,6 +43,7 @@ defmodule PidroServer.Games.RoomManager do
   use GenServer
   require Logger
 
+  alias PidroServer.Games.Bots.SubstituteBot
   alias PidroServer.Games.GameSupervisor
   alias PidroServer.Games.Lifecycle
   alias PidroServer.Games.Room.Positions
@@ -1128,8 +1129,8 @@ defmodule PidroServer.Games.RoomManager do
           # Transition seat: reconnecting -> grace -> bot_substitute
           {:ok, grace_seat} = Seat.start_grace(seat, grace_expires_at)
 
-          # Spawn substitute bot (stub — Feature 3.3 replaces with real SubstituteBot)
-          {:ok, bot_pid} = spawn_substitute_bot(room_code, position)
+          # Spawn substitute bot to play moves for the disconnected player
+          {:ok, bot_pid} = SubstituteBot.start(room_code, position)
           {:ok, bot_seat} = Seat.substitute_bot(grace_seat, bot_pid)
 
           # Schedule Phase 3 (gone/permanent) timer
@@ -1286,23 +1287,6 @@ defmodule PidroServer.Games.RoomManager do
       _ ->
         room
     end
-  end
-
-  # Substitute bot helpers
-
-  @doc false
-  # Spawns a substitute bot for a position in a playing room.
-  # Stub implementation — spawns a minimal process that stays alive until stopped.
-  # Feature 3.3 will replace this with a real SubstituteBot GenServer.
-  defp spawn_substitute_bot(_room_code, _position) do
-    pid =
-      spawn(fn ->
-        receive do
-          :stop -> :ok
-        end
-      end)
-
-    {:ok, pid}
   end
 
   # Seat management helpers

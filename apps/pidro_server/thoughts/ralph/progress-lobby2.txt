@@ -269,3 +269,54 @@ spawned and the grace countdown begins.
 - Feature 3.4: Phase 3 (Gone) — make bot permanent, notify owner
 - Feature 3.5: Reconnection during Phase 2 and Phase 3
 - Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
+
+## 2026-03-08 — Feature 3.3: SubstituteBot GenServer
+
+Created `lib/pidro_server/games/bots/substitute_bot.ex` — a production GenServer
+that fills in for disconnected players during live games.
+
+### What was done:
+- Created `PidroServer.Games.Bots.SubstituteBot` GenServer in the bots/ directory
+  alongside BotPlayer (NOT in dev/ — this runs in production)
+- Key difference from BotPlayer: SubstituteBot does NOT join the room. It takes
+  over an existing seat that was vacated by a disconnected human. The position
+  already exists in the game engine — the bot just subscribes and plays moves.
+- `start/2` public API: starts the bot under BotSupervisor (existing DynamicSupervisor)
+  via `DynamicSupervisor.start_child/2`
+- On init: subscribes to `"game:#{room_code}"` PubSub topic, then checks for
+  initial move in case it's already this position's turn
+- On `{:state_update, game_state}`: checks `should_make_move?/2` — if it's the
+  bot's turn or `phase == :dealer_selection`, schedules a move after 500ms delay
+- Move execution: `GameAdapter.get_legal_actions/2` → `RandomStrategy.pick_action/2`
+  → `resolve_action/3` (handles `{:select_hand, :choose_6_cards}` placeholder)
+  → `GameAdapter.apply_action/3`
+- Proper `terminate/2` unsubscribes from PubSub
+- Ignores `Phoenix.Socket.Broadcast{}`, `{:game_over, ...}`, and disconnect
+  cascade PubSub messages (`{:player_reconnecting, _}`, `{:bot_substitute_active, _}`)
+- Replaced the stub `spawn_substitute_bot/2` in RoomManager with
+  `SubstituteBot.start(room_code, position)` — added alias, removed old function
+
+### Design decisions:
+- Placed in `games/bots/` namespace (not `games/room/`) to group with other bot
+  infrastructure (BotPlayer, BotManager, BotSupervisor, strategies)
+- 500ms delay (vs 1000ms for dev BotPlayer) — substitute bots should feel snappy
+  since they're filling in for a real player mid-game
+- No pause/resume — substitute bots play continuously until stopped
+- No BotManager tracking — lifecycle is managed by the disconnect cascade in
+  RoomManager (start on Phase 2, stop on reclaim or game over)
+- Uses existing BotSupervisor DynamicSupervisor — supervised with :one_for_one
+  strategy, so a crash is isolated and won't take down other bots
+- Does NOT call `RoomManager.join_room` — the position is already occupied in the
+  game engine. The bot just needs to subscribe to PubSub and make moves.
+
+### Verification:
+- mix compile --warnings-as-errors: clean
+- mix format --check-formatted: passes for pidro_server files
+- mix test (full pidro_server suite): 262 tests, 0 failures, 1 skipped
+
+### Next up:
+- Feature 3.4: Phase 3 (Gone) — make bot permanent, notify owner
+- Feature 3.5: Reconnection during Phase 2 and Phase 3
+- Feature 3.6: Test Phase 1 disconnect cascade
+- Feature 3.7: Test Phase 2 and Phase 3
+- Feature 1.2: Wire Lifecycle config into config files (low priority, non-blocking)
