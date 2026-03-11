@@ -30,7 +30,15 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   idle_waiting_ttl_ms: 600_000,
   reconnect_turn_extension_ms: 10_000,
   health_check_interval_ms: 60_000,
-  presence_debounce_ms: 3_000
+  presence_debounce_ms: 3_000,
+  turn_timer_bid_ms: 45_000,
+  turn_timer_play_ms: 30_000,
+  consecutive_timeout_threshold: 3,
+  bot_delay_ms: 1_500,
+  bot_delay_variance_ms: 800,
+  bot_min_delay_ms: 300,
+  trick_transition_delay_ms: 1_500,
+  hand_transition_delay_ms: 3_000
 
 # Configures the endpoint
 config :pidro_server, PidroServerWeb.Endpoint,

@@ -18,7 +18,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   use PidroServerWeb, :live_view
   alias PidroServer.Games.Bots.BotManager
-  alias PidroServer.Games.{GameAdapter, GameSupervisor, RoomManager}
+  alias PidroServer.Games.{GameAdapter, GameSupervisor, PacingSettings, RoomManager}
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Accounts.Auth
 
@@ -48,6 +48,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
      |> assign(:room_to_delete, nil)
      |> assign(:page_title, "Development Games")
      |> assign(:users, users)
+     |> assign_pacing_settings()
      |> assign_rooms_and_stats(rooms)}
   end
 
@@ -66,6 +67,9 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   @impl true
   def handle_info({:room_closed, _code}, socket), do: refresh_rooms(socket)
+
+  @impl true
+  def handle_info({:online_count_updated, _payload}, socket), do: {:noreply, socket}
 
   defp refresh_rooms(socket) do
     rooms = RoomManager.list_rooms(:all)
@@ -109,6 +113,40 @@ defmodule PidroServerWeb.Dev.GameListLive do
       |> assign(:host_user_id, Map.get(params, "host_user_id", socket.assigns.host_user_id))
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("update_pacing_form", %{"pacing" => params}, socket) do
+    {:noreply, assign_pacing_settings(socket, PacingSettings.normalize_form(params))}
+  end
+
+  @impl true
+  def handle_event("save_pacing", %{"pacing" => params}, socket) do
+    case PacingSettings.validate(params) do
+      {:ok, values} ->
+        PacingSettings.save(values)
+
+        {:noreply,
+         socket
+         |> assign_pacing_settings(PacingSettings.current_form())
+         |> put_flash(:info, "Game pacing updated")}
+
+      {:error, form, errors} ->
+        {:noreply,
+         socket
+         |> assign_pacing_settings(form, errors)
+         |> put_flash(:error, "Fix the pacing values and try again")}
+    end
+  end
+
+  @impl true
+  def handle_event("reset_pacing", _params, socket) do
+    PacingSettings.reset()
+
+    {:noreply,
+     socket
+     |> assign_pacing_settings(PacingSettings.current_form())
+     |> put_flash(:info, "Game pacing reset to defaults")}
   end
 
   @impl true
@@ -404,6 +442,83 @@ defmodule PidroServerWeb.Dev.GameListLive do
                 4 Bots
               </button>
             </div>
+          </div>
+        </div>
+
+        <div class="bg-white shadow sm:rounded-lg mb-8">
+          <div class="px-4 py-5 sm:p-6">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 class="text-lg leading-6 font-medium text-zinc-900">Game Pacing</h3>
+                <div class="mt-2 max-w-3xl text-sm text-zinc-500">
+                  <p>
+                    Runtime controls for bot delays and trick/hand pauses. These values are saved with
+                    <code class="rounded bg-zinc-100 px-1 py-0.5 text-xs">Application.put_env</code>
+                    so they take effect immediately without a restart.
+                  </p>
+                </div>
+              </div>
+              <div class="rounded-lg bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+                <p class="font-medium text-zinc-900">
+                  Bots will act between {@pacing_preview.bot_delay_min_ms}ms and {@pacing_preview.bot_delay_max_ms}ms
+                </p>
+                <p class="mt-1 text-zinc-500">
+                  Trick pause: {@pacing_form["trick_transition_delay_ms"]}ms
+                  · Hand pause: {@pacing_form["hand_transition_delay_ms"]}ms
+                </p>
+              </div>
+            </div>
+
+            <form phx-submit="save_pacing" phx-change="update_pacing_form" class="mt-6 space-y-6">
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <%= for field <- @pacing_fields do %>
+                  <div class="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
+                    <label
+                      for={pacing_input_id(field)}
+                      class="block text-sm font-medium text-zinc-900"
+                    >
+                      {field.label}
+                    </label>
+                    <p class="mt-1 text-xs leading-5 text-zinc-500">
+                      {field.description}
+                    </p>
+                    <input
+                      type="number"
+                      min={field.min}
+                      max={field.max}
+                      step={field.step}
+                      id={pacing_input_id(field)}
+                      name={"pacing[#{field_key(field)}]"}
+                      value={@pacing_form[field_key(field)]}
+                      class="mt-3 block w-full rounded-md border-zinc-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    />
+                    <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                      <span>Range: {field.min}ms to {field.max}ms</span>
+                      <span>Step: {field.step}ms</span>
+                    </div>
+                    <%= if error = @pacing_errors[field_key(field)] do %>
+                      <p class="mt-2 text-xs font-medium text-red-600">{error}</p>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+
+              <div class="flex flex-wrap gap-3">
+                <button
+                  type="submit"
+                  class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  Save Pacing
+                </button>
+                <button
+                  type="button"
+                  phx-click="reset_pacing"
+                  class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  Reset to Defaults
+                </button>
+              </div>
+            </form>
           </div>
         </div>
         
@@ -845,6 +960,16 @@ defmodule PidroServerWeb.Dev.GameListLive do
 
   # Private functions
 
+  defp assign_pacing_settings(socket, form \\ nil, errors \\ %{}) do
+    form = form || PacingSettings.current_form()
+
+    socket
+    |> assign(:pacing_fields, PacingSettings.field_specs())
+    |> assign(:pacing_form, form)
+    |> assign(:pacing_errors, errors)
+    |> assign(:pacing_preview, PacingSettings.preview(form))
+  end
+
   defp assign_rooms_and_stats(socket, rooms) do
     filtered_rooms = filter_rooms_by_phase(rooms, socket.assigns.phase_filter)
     sorted_rooms = sort_rooms(filtered_rooms, socket.assigns.sort_order)
@@ -892,6 +1017,14 @@ defmodule PidroServerWeb.Dev.GameListLive do
   end
 
   defp parse_bot_count(value) when is_integer(value), do: value
+
+  defp pacing_input_id(field) do
+    "pacing_#{field_key(field)}"
+  end
+
+  defp field_key(field) do
+    Atom.to_string(field.key)
+  end
 
   defp status_color(status) do
     case status do

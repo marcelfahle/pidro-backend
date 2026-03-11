@@ -18,8 +18,6 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   alias PidroServer.Games.Bots.Strategies.RandomStrategy
   alias PidroServer.Games.GameAdapter
 
-  @delay_ms 500
-
   ## Public API
 
   @doc """
@@ -54,7 +52,8 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
     state = %{
       room_code: room_code,
       position: position,
-      strategy: RandomStrategy
+      strategy: RandomStrategy,
+      move_scheduled?: false
     }
 
     {:ok, state, {:continue, :check_initial_move}}
@@ -64,31 +63,38 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   def handle_continue(:check_initial_move, state) do
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
-        if BotBrain.should_make_move?(game_state, state.position) do
-          BotBrain.schedule_move(@delay_ms)
-        end
+        {:noreply, maybe_schedule_move(game_state, state)}
 
       {:error, _} ->
-        :ok
+        {:noreply, state}
     end
-
-    {:noreply, state}
   end
 
   @impl true
-  def handle_info({:state_update, game_state}, state) do
-    if BotBrain.should_make_move?(game_state, state.position) do
-      BotBrain.schedule_move(@delay_ms)
-    end
+  def handle_info({:state_update, room_code, payload}, %{room_code: room_code} = state) do
+    case extract_state_update(payload) do
+      {:ok, game_state, delay_ms} ->
+        {:noreply, maybe_schedule_move(game_state, state, delay_ms)}
 
-    {:noreply, state}
+      :error ->
+        {:noreply, state}
+    end
   end
 
   @impl true
   def handle_info({:game_over, _winner, _scores}, state) do
     Logger.info("SubstituteBot (#{state.room_code}/#{state.position}) - Game over")
-    {:noreply, state}
+    {:noreply, %{state | move_scheduled?: false}}
   end
+
+  @impl true
+  def handle_info({:turn_timer_started, _payload}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:turn_timer_cancelled, _payload}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:turn_auto_played, _payload}, state), do: {:noreply, state}
 
   @impl true
   def handle_info(%Phoenix.Socket.Broadcast{}, state) do
@@ -98,7 +104,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   @impl true
   def handle_info(:make_move, state) do
     BotBrain.execute_move(state, "SubstituteBot")
-    {:noreply, state}
+    {:noreply, %{state | move_scheduled?: false}}
   end
 
   # Ignore disconnect cascade PubSub messages
@@ -131,5 +137,23 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
     :ok
   end
+
+  defp maybe_schedule_move(game_state, state, transition_delay_ms \\ 0) do
+    if BotBrain.should_make_move?(game_state, state.position) do
+      BotBrain.schedule_move_once(state, transition_delay_ms)
+    else
+      state
+    end
+  end
+
+  defp extract_state_update(%{state: game_state, transition_delay_ms: delay_ms})
+       when is_map(game_state) and is_integer(delay_ms),
+       do: {:ok, game_state, delay_ms}
+
+  defp extract_state_update(%{state: game_state}) when is_map(game_state),
+    do: {:ok, game_state, 0}
+
+  defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
+  defp extract_state_update(_payload), do: :error
 
 end

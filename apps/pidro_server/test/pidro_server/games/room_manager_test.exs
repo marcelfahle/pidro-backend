@@ -14,7 +14,7 @@ defmodule PidroServer.Games.RoomManagerTest do
   use ExUnit.Case, async: false
   require Logger
 
-  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
   alias PidroServer.Games.Room.Positions
 
   # Note: async: false is required because RoomManager is a singleton GenServer
@@ -550,6 +550,183 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
   end
 
+  describe "turn timers" do
+    test "starts a room-owned timer for all-human dealer selection" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      room_code = room.code
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      {:ok, _, _} = RoomManager.join_room(room_code, "user2")
+      {:ok, _, _} = RoomManager.join_room(room_code, "user3")
+      {:ok, _, _} = RoomManager.join_room(room_code, "user4")
+
+      assert_receive {:turn_timer_started, payload}, 200
+      assert payload.scope == :room
+      assert payload.position == nil
+      assert payload.phase == :dealer_selection
+      assert payload.transition_delay_ms == 0
+      assert payload.event_seq == 0
+
+      turn_timer = wait_for_turn_timer(room_code)
+      assert turn_timer.scope == :room
+      assert turn_timer.position == nil
+      assert turn_timer.phase == :dealer_selection
+      assert turn_timer.timer_id == payload.timer_id
+      assert turn_timer.remaining_ms > 0
+    end
+
+    test "restarts the timer when a new same-position action window arrives" do
+      room_code = create_playing_room()
+      bidding_state = advance_room_to_bidding(room_code)
+      active_timer = wait_for_turn_timer(room_code)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      send(
+        RoomManager,
+        {:state_update, room_code,
+         %{state: %{bidding_state | events: bidding_state.events ++ [:synthetic_window]}, transition_delay_ms: 0}}
+      )
+
+      assert_receive {:turn_timer_cancelled, cancelled}, 200
+      assert cancelled.timer_id == active_timer.timer_id
+      assert cancelled.position == active_timer.position
+      assert cancelled.reason == :acted
+
+      assert_receive {:turn_timer_started, started}, 200
+      assert started.scope == :seat
+      assert started.position == active_timer.position
+      assert started.phase == active_timer.phase
+      assert started.event_seq == active_timer.event_seq + 1
+      assert started.timer_id != active_timer.timer_id
+    end
+
+    test "pauses a seat-owned timer on disconnect and resumes it on reconnect" do
+      room_code = create_playing_room()
+      bidding_state = advance_room_to_bidding(room_code)
+      {:ok, room} = RoomManager.get_room(room_code)
+
+      timed_user = Map.fetch!(room.positions, bidding_state.current_turn)
+
+      :ok = RoomManager.handle_player_disconnect(room_code, timed_user)
+
+      {:ok, paused_room} = RoomManager.get_room(room_code)
+      assert paused_room.turn_timer == nil
+      assert paused_room.seats[bidding_state.current_turn].status == :reconnecting
+      assert paused_room.paused_turn_timer.key == {:seat, bidding_state.current_turn, :bidding, length(bidding_state.events)}
+      assert paused_room.paused_turn_timer.remaining_ms > 0
+
+      assert {:ok, nil} = RoomManager.get_turn_timer(room_code)
+
+      assert {:ok, _room} = RoomManager.handle_player_reconnect(room_code, timed_user)
+
+      resumed_timer = wait_for_turn_timer(room_code)
+      {:ok, resumed_room} = RoomManager.get_room(room_code)
+
+      assert resumed_room.paused_turn_timer == nil
+      assert resumed_timer.scope == :seat
+      assert resumed_timer.position == bidding_state.current_turn
+      assert resumed_timer.phase == :bidding
+      assert resumed_timer.event_seq == length(bidding_state.events)
+      assert resumed_timer.duration_ms <= Lifecycle.config(:turn_timer_bid_ms)
+      assert resumed_timer.remaining_ms > 0
+    end
+
+    test "reconciles the action window on reconnect when no paused timer survives" do
+      room_code = create_playing_room()
+      bidding_state = advance_room_to_bidding(room_code)
+      {:ok, room} = RoomManager.get_room(room_code)
+
+      timed_position = bidding_state.current_turn
+      timed_user = Map.fetch!(room.positions, timed_position)
+
+      :ok = RoomManager.handle_player_disconnect(room_code, timed_user)
+
+      :sys.replace_state(RoomManager, fn %RoomManager.State{} = manager_state ->
+        current_room = Map.fetch!(manager_state.rooms, room_code)
+        updated_room = %{current_room | paused_turn_timer: nil, turn_timer: nil}
+        %{manager_state | rooms: Map.put(manager_state.rooms, room_code, updated_room)}
+      end)
+
+      assert {:ok, nil} = RoomManager.get_turn_timer(room_code)
+      assert {:ok, _room} = RoomManager.handle_player_reconnect(room_code, timed_user)
+
+      resumed_timer = wait_for_turn_timer(room_code)
+
+      assert resumed_timer.scope == :seat
+      assert resumed_timer.position == timed_position
+      assert resumed_timer.phase == :bidding
+      assert resumed_timer.event_seq == length(bidding_state.events)
+      assert resumed_timer.remaining_ms > 0
+    end
+
+    test "uses the disconnect fallback when a timed-out player has no live game channel pid" do
+      room_code = create_playing_room()
+      bidding_state = advance_room_to_bidding(room_code)
+      {:ok, room} = RoomManager.get_room(room_code)
+      timer = wait_for_turn_timer(room_code)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      position = bidding_state.current_turn
+      threshold = Lifecycle.config(:consecutive_timeout_threshold)
+      timed_user = Map.fetch!(room.positions, position)
+
+      :sys.replace_state(RoomManager, fn %RoomManager.State{} = manager_state ->
+        current_room = Map.fetch!(manager_state.rooms, room_code)
+        updated_room = %{current_room | consecutive_timeouts: %{position => threshold - 1}}
+        %{manager_state | rooms: Map.put(manager_state.rooms, room_code, updated_room)}
+      end)
+
+      send(
+        RoomManager,
+        {:turn_timer_expired, room_code, timer.timer_id, {:seat, timer.position, timer.phase, timer.event_seq}}
+      )
+
+      assert_receive {:turn_auto_played, payload}, 200
+      assert payload.scope == :seat
+      assert payload.position == position
+      assert payload.phase == :bidding
+      assert payload.action == %{type: :pass}
+
+      updated_room =
+        wait_until(fn ->
+          case RoomManager.get_room(room_code) do
+            {:ok, %{seats: %{^position => seat}} = updated_room} when seat.status == :reconnecting ->
+              updated_room
+
+            _ ->
+              nil
+          end
+        end)
+
+      assert updated_room.consecutive_timeouts[position] == threshold
+      assert updated_room.seats[position].user_id == timed_user
+    end
+
+    test "ignores stale timeout messages" do
+      room_code = create_playing_room()
+      _bidding_state = advance_room_to_bidding(room_code)
+      timer = wait_for_turn_timer(room_code)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      send(
+        RoomManager,
+        {:turn_timer_expired, room_code, timer.timer_id + 1_000, {:seat, timer.position, timer.phase, timer.event_seq}}
+      )
+
+      refute_receive {:turn_auto_played, _payload}, 50
+
+      {:ok, current_timer} = RoomManager.get_turn_timer(room_code)
+      assert current_timer.timer_id == timer.timer_id
+      assert current_timer.position == timer.position
+      assert current_timer.phase == timer.phase
+      assert current_timer.event_seq == timer.event_seq
+    end
+  end
+
   describe "abandoned room cleanup" do
     test "removes abandoned room (inactive + no players)" do
       {:ok, room} = RoomManager.create_room("user1", %{})
@@ -783,6 +960,71 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user2")
 
       assert DateTime.compare(updated_room.last_activity, initial_activity) == :gt
+    end
+  end
+
+  defp create_playing_room do
+    {:ok, room} = RoomManager.create_room("user1", %{})
+    room_code = room.code
+
+    {:ok, _, _} = RoomManager.join_room(room_code, "user2")
+    {:ok, _, _} = RoomManager.join_room(room_code, "user3")
+    {:ok, _, _} = RoomManager.join_room(room_code, "user4")
+
+    _room =
+      wait_until(fn ->
+        case RoomManager.get_room(room_code) do
+          {:ok, %{status: :playing} = room} -> room
+          _ -> nil
+        end
+      end)
+
+    room_code
+  end
+
+  defp advance_room_to_bidding(room_code) do
+    {:ok, state} = GameAdapter.get_state(room_code)
+
+    if state.phase == :dealer_selection do
+      {:ok, _state} = GameAdapter.apply_action(room_code, :north, :select_dealer)
+    end
+
+    wait_until(fn ->
+      case GameAdapter.get_state(room_code) do
+        {:ok, %{phase: :bidding} = state} -> state
+        _ -> nil
+      end
+    end)
+  end
+
+  defp wait_for_turn_timer(room_code) do
+    wait_until(fn ->
+      case RoomManager.get_turn_timer(room_code) do
+        {:ok, nil} -> nil
+        {:ok, turn_timer} -> turn_timer
+        _ -> nil
+      end
+    end)
+  end
+
+  defp wait_until(fun, attempts \\ 40)
+
+  defp wait_until(_fun, 0) do
+    flunk("timed out waiting for condition")
+  end
+
+  defp wait_until(fun, attempts) do
+    case fun.() do
+      nil ->
+        Process.sleep(10)
+        wait_until(fun, attempts - 1)
+
+      false ->
+        Process.sleep(10)
+        wait_until(fun, attempts - 1)
+
+      value ->
+        value
     end
   end
 end

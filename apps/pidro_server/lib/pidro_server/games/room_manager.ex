@@ -43,9 +43,9 @@ defmodule PidroServer.Games.RoomManager do
   use GenServer
   require Logger
 
-  alias PidroServer.Games.Bots.SubstituteBot
-  alias PidroServer.Games.GameSupervisor
-  alias PidroServer.Games.Lifecycle
+  alias Pidro.Game.Engine
+  alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
+  alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, TurnTimer}
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.Room.Seat
 
@@ -90,7 +90,11 @@ defmodule PidroServer.Games.RoomManager do
             metadata: map(),
             phase_timers: %{Positions.position() => reference()},
             seats: map(),
-            last_activity: DateTime.t()
+            last_activity: DateTime.t(),
+            turn_timer: TurnTimer.t() | nil,
+            paused_turn_timer: TurnTimer.paused_t() | nil,
+            consecutive_timeouts: %{optional(Positions.position()) => non_neg_integer()},
+            last_hand_number: non_neg_integer() | nil
           }
 
     defstruct [
@@ -105,7 +109,11 @@ defmodule PidroServer.Games.RoomManager do
       spectator_ids: [],
       max_spectators: 10,
       phase_timers: %{},
-      seats: %{}
+      seats: %{},
+      turn_timer: nil,
+      paused_turn_timer: nil,
+      consecutive_timeouts: %{},
+      last_hand_number: nil
     ]
   end
 
@@ -116,12 +124,18 @@ defmodule PidroServer.Games.RoomManager do
     @type t :: %__MODULE__{
             rooms: %{String.t() => Room.t()},
             player_rooms: %{String.t() => String.t()},
-            spectator_rooms: %{String.t() => String.t()}
+            spectator_rooms: %{String.t() => String.t()},
+            subscribed_game_topics: MapSet.t(String.t()),
+            channel_pids: %{{String.t(), any()} => MapSet.t(pid())},
+            channel_monitors: %{reference() => {String.t(), any(), pid()}}
           }
 
     defstruct rooms: %{},
               player_rooms: %{},
-              spectator_rooms: %{}
+              spectator_rooms: %{},
+              subscribed_game_topics: MapSet.new(),
+              channel_pids: %{},
+              channel_monitors: %{}
   end
 
   ## Client API
@@ -667,6 +681,27 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, :reset_for_test)
   end
 
+  @spec get_turn_timer(String.t()) :: {:ok, map() | nil} | {:error, :room_not_found}
+  def get_turn_timer(room_code) do
+    GenServer.call(__MODULE__, {:get_turn_timer, String.upcase(room_code)})
+  end
+
+  @spec register_game_channel(String.t(), any(), pid()) :: :ok | {:error, :room_not_found}
+  def register_game_channel(room_code, user_id, pid \\ self()) do
+    GenServer.call(__MODULE__, {:register_game_channel, String.upcase(room_code), user_id, pid})
+  end
+
+  @spec unregister_game_channel(String.t(), any(), pid()) ::
+          :last_channel_closed | :channels_remaining | :not_registered
+  def unregister_game_channel(room_code, user_id, pid \\ self()) do
+    GenServer.call(__MODULE__, {:unregister_game_channel, String.upcase(room_code), user_id, pid})
+  end
+
+  @spec reset_consecutive_timeouts(String.t(), any()) :: :ok | {:error, :room_not_found}
+  def reset_consecutive_timeouts(room_code, user_id) do
+    GenServer.call(__MODULE__, {:reset_consecutive_timeouts, String.upcase(room_code), user_id})
+  end
+
   if Mix.env() == :test do
     def set_last_activity_for_test(room_code, datetime) do
       GenServer.call(__MODULE__, {:set_last_activity_for_test, room_code, datetime})
@@ -918,6 +953,32 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:get_turn_timer, room_code}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+
+      %Room{} = room ->
+        {:reply, {:ok, serialize_turn_timer(room.turn_timer)}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:register_game_channel, room_code, user_id, pid}, _from, %State{} = state) do
+    if Map.has_key?(state.rooms, room_code) do
+      {:reply, :ok, register_channel_pid(state, room_code, user_id, pid)}
+    else
+      {:reply, {:error, :room_not_found}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:unregister_game_channel, room_code, user_id, pid}, _from, %State{} = state) do
+    {result, new_state} = unregister_channel_pid(state, room_code, user_id, pid)
+    {:reply, result, new_state}
+  end
+
+  @impl true
   def handle_call({:update_room_status, room_code, new_status}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
@@ -936,6 +997,20 @@ defmodule PidroServer.Games.RoomManager do
         broadcast_lobby_event({:room_updated, updated_room})
 
         {:reply, :ok, new_state}
+    end
+  end
+
+  @impl true
+  def handle_call({:reset_consecutive_timeouts, room_code, user_id}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+
+      %Room{} = room ->
+        position = Positions.get_position(room, user_id)
+        updated_room = reset_timeout_counter(room, position)
+        updated_state = %{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+        {:reply, :ok, updated_state}
     end
   end
 
@@ -1139,34 +1214,19 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        # Only track disconnect if player is actually in the room
-        if Positions.has_player?(room, user_id) do
-          now = DateTime.utc_now()
+        case disconnect_player(state, room, room_code, user_id) do
+          {:ok, updated_room, updated_state} ->
+            Logger.info(
+              "Player #{user_id} disconnected from room #{room_code}, grace period started"
+            )
 
-          updated_room = %Room{room | last_activity: now}
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby_event({:room_updated, updated_room})
 
-          # For :playing rooms, update seat and start hiccup cascade
-          updated_room =
-            if room.status == :playing do
-              start_hiccup_cascade(updated_room, room_code, user_id)
-            else
-              updated_room
-            end
+            {:reply, :ok, updated_state}
 
-          %State{} =
-            updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
-
-          Logger.info(
-            "Player #{user_id} disconnected from room #{room_code}, grace period started"
-          )
-
-          # Broadcast room update
-          broadcast_room(room_code, updated_room)
-          broadcast_lobby_event({:room_updated, updated_room})
-
-          {:reply, :ok, updated_state}
-        else
-          {:reply, {:error, :player_not_in_room}, state}
+          {:error, reason, updated_state} ->
+            {:reply, {:error, reason}, updated_state}
         end
     end
   end
@@ -1308,10 +1368,16 @@ defmodule PidroServer.Games.RoomManager do
       updated_positions = Map.put(room.positions, position, player_id)
 
       updated_room =
-        %{room | seats: Map.put(room.seats, position, filled_seat), positions: updated_positions}
+        %{
+          room
+          | seats: Map.put(room.seats, position, filled_seat),
+            positions: updated_positions
+        }
+        |> reset_timeout_counter(position)
         |> touch_last_activity()
 
       new_state = put_room_and_player(state, updated_room, player_id)
+      {updated_room, new_state} = reconcile_turn_timer_for_current_state(updated_room, room_code, new_state)
 
       Logger.info(
         "Substitute player #{player_id} joined room #{room_code} at position #{position}"
@@ -1349,9 +1415,9 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call(:reset_for_test, _from, _state) do
+  def handle_call(:reset_for_test, _from, %State{} = state) do
     Logger.info("RoomManager state reset for testing")
-    {:reply, :ok, %State{}}
+    {:reply, :ok, teardown_state(state)}
   end
 
   @impl true
@@ -1605,6 +1671,72 @@ defmodule PidroServer.Games.RoomManager do
     {:noreply, updated_state}
   end
 
+  @impl true
+  def handle_info({:state_update, room_code, payload}, %State{} = state) do
+    case {Map.get(state.rooms, room_code), normalize_state_update_payload(payload)} do
+      {%Room{} = room, {:ok, game_state, transition_delay_ms}} ->
+        room =
+          room
+          |> maybe_reset_timeout_counters_for_new_hand(game_state)
+          |> Map.put(:last_hand_number, Map.get(game_state, :hand_number))
+
+        updated_state = %{state | rooms: Map.put(state.rooms, room_code, room)}
+        {updated_room, updated_state} = reconcile_turn_timer(room, room_code, game_state, transition_delay_ms, updated_state)
+        {:noreply, %{updated_state | rooms: Map.put(updated_state.rooms, room_code, updated_room)}}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:game_over, _winner, _scores}, %State{} = state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:turn_timer_expired, room_code, timer_id, key}, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      %Room{} = room ->
+        {updated_room, updated_state} = handle_turn_timer_expired(room, room_code, timer_id, key, state)
+        {:noreply, %{updated_state | rooms: Map.put(updated_state.rooms, room_code, updated_room)}}
+
+      nil ->
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, _reason}, %State{} = state) do
+    case Map.pop(state.channel_monitors, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {{room_code, user_id, ^pid}, channel_monitors} ->
+        key = {room_code, user_id}
+        remaining = state.channel_pids |> Map.get(key, MapSet.new()) |> MapSet.delete(pid)
+
+        channel_pids =
+          if MapSet.size(remaining) == 0 do
+            Map.delete(state.channel_pids, key)
+          else
+            Map.put(state.channel_pids, key, remaining)
+          end
+
+        {:noreply, %{state | channel_monitors: channel_monitors, channel_pids: channel_pids}}
+    end
+  end
+
+  @impl true
+  def handle_info(%Phoenix.Socket.Broadcast{}, %State{} = state) do
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info(_msg, %State{} = state) do
+    {:noreply, state}
+  end
+
   ## Private Helper Functions
 
   @doc false
@@ -1698,6 +1830,7 @@ defmodule PidroServer.Games.RoomManager do
 
     case seat && Seat.disconnect(seat) do
       {:ok, disconnected_seat} ->
+        room = pause_active_turn_timer(room, room_code, position)
         hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
 
         timer_ref =
@@ -1768,16 +1901,22 @@ defmodule PidroServer.Games.RoomManager do
 
         case Seat.reclaim(seat, user_id) do
           {:ok, reclaimed} ->
-            updated_room =
+            reclaimed_room =
               %{
                 room
                 | seats: Map.put(room.seats, position, reclaimed),
                   last_activity: DateTime.utc_now()
               }
+              |> reset_timeout_counter(position)
+              |> maybe_resume_paused_turn_timer(room_code, position)
+
+            updated_state = %State{state | rooms: Map.put(state.rooms, room_code, reclaimed_room)}
+            {updated_room, updated_state} =
+              reconcile_turn_timer_for_current_state(reclaimed_room, room_code, updated_state)
 
             updated_state = %State{
-              state
-              | rooms: Map.put(state.rooms, room_code, updated_room)
+              updated_state
+              | rooms: Map.put(updated_state.rooms, room_code, updated_room)
             }
 
             Logger.info(
@@ -1810,16 +1949,22 @@ defmodule PidroServer.Games.RoomManager do
 
         case Seat.reclaim(seat, user_id) do
           {:ok, reclaimed} ->
-            updated_room =
+            reclaimed_room =
               %{
                 room
                 | seats: Map.put(room.seats, position, reclaimed),
                   last_activity: DateTime.utc_now()
               }
+              |> reset_timeout_counter(position)
+              |> maybe_resume_paused_turn_timer(room_code, position)
+
+            updated_state = %State{state | rooms: Map.put(state.rooms, room_code, reclaimed_room)}
+            {updated_room, updated_state} =
+              reconcile_turn_timer_for_current_state(reclaimed_room, room_code, updated_state)
 
             updated_state = %State{
-              state
-              | rooms: Map.put(state.rooms, room_code, updated_room)
+              updated_state
+              | rooms: Map.put(updated_state.rooms, room_code, updated_room)
             }
 
             Logger.info(
@@ -2032,6 +2177,13 @@ defmodule PidroServer.Games.RoomManager do
         state
 
       room ->
+        maybe_cancel_turn_timer(room)
+        cancel_all_phase_timers(room)
+        terminate_room_bots(room)
+        state = unsubscribe_from_game_topic(state, room_code)
+        state = drop_room_channel_registrations(state, room_code)
+        _ = GameSupervisor.stop_game(room_code)
+
         # Remove room and all player/spectator mappings
         new_rooms = Map.delete(state.rooms, room_code)
 
@@ -2248,26 +2400,39 @@ defmodule PidroServer.Games.RoomManager do
 
     case GameSupervisor.start_game(room.code) do
       {:ok, pid} ->
-        Logger.info("Game started successfully for room #{room.code}")
-        # Update room status to :playing
-        %Room{} = updated_room = %Room{room | status: :playing}
+        finish_game_start(room, pid, state)
 
-        %State{} =
-          new_state = %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
-
-        broadcast_room(room.code, updated_room)
-        broadcast_lobby_event({:room_updated, updated_room})
-
-        # Broadcast initial game state so bots and channels that joined
-        # before the game started receive the first state update.
-        broadcast_initial_game_state(room.code, pid)
-
-        new_state
+      {:error, {:already_started, pid}} ->
+        finish_game_start(room, pid, state)
 
       {:error, reason} ->
         Logger.error("Failed to start game for room #{room.code}: #{inspect(reason)}")
         state
     end
+  end
+
+  defp finish_game_start(%Room{} = room, pid, %State{} = state) do
+    Logger.info("Game started successfully for room #{room.code}")
+
+    %Room{} =
+      updated_room = %Room{
+        room
+        | status: :playing,
+          turn_timer: nil,
+          paused_turn_timer: nil,
+          consecutive_timeouts: %{},
+          last_hand_number: nil
+      }
+
+    %State{} =
+      new_state =
+        %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
+        |> subscribe_to_game_topic(room.code)
+
+    broadcast_room(room.code, updated_room)
+    broadcast_lobby_event({:room_updated, updated_room})
+    broadcast_initial_game_state(room.code, pid)
+    new_state
   end
 
   @spec broadcast_initial_game_state(String.t(), pid()) :: :ok
@@ -2278,7 +2443,7 @@ defmodule PidroServer.Games.RoomManager do
       Phoenix.PubSub.broadcast(
         PidroServer.PubSub,
         "game:#{room_code}",
-        {:state_update, game_state}
+        {:state_update, room_code, %{state: game_state, transition_delay_ms: 0}}
       )
     rescue
       e ->
@@ -2288,5 +2453,532 @@ defmodule PidroServer.Games.RoomManager do
 
         :ok
     end
+  end
+
+  defp normalize_state_update_payload(%{state: game_state, transition_delay_ms: transition_delay_ms})
+       when is_map(game_state) and is_integer(transition_delay_ms) do
+    {:ok, game_state, transition_delay_ms}
+  end
+
+  defp normalize_state_update_payload(%{state: game_state}) when is_map(game_state) do
+    {:ok, game_state, 0}
+  end
+
+  defp normalize_state_update_payload(game_state) when is_map(game_state) do
+    {:ok, game_state, 0}
+  end
+
+  defp normalize_state_update_payload(_payload), do: :error
+
+  defp disconnect_player(%State{} = state, %Room{} = room, room_code, user_id) do
+    if Positions.has_player?(room, user_id) do
+      now = DateTime.utc_now()
+
+      updated_room =
+        %Room{room | last_activity: now}
+        |> then(fn current_room ->
+          if current_room.status == :playing do
+            start_hiccup_cascade(current_room, room_code, user_id)
+          else
+            current_room
+          end
+        end)
+
+      updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+      {:ok, updated_room, updated_state}
+    else
+      {:error, :player_not_in_room, state}
+    end
+  end
+
+  defp register_channel_pid(%State{} = state, room_code, user_id, pid) do
+    key = {room_code, user_id}
+    existing = Map.get(state.channel_pids, key, MapSet.new())
+
+    if MapSet.member?(existing, pid) do
+      state
+    else
+      ref = Process.monitor(pid)
+
+      %State{
+        state
+        | channel_pids: Map.put(state.channel_pids, key, MapSet.put(existing, pid)),
+          channel_monitors: Map.put(state.channel_monitors, ref, {room_code, user_id, pid})
+      }
+    end
+  end
+
+  defp unregister_channel_pid(%State{} = state, room_code, user_id, pid) do
+    key = {room_code, user_id}
+    existing = Map.get(state.channel_pids, key, MapSet.new())
+
+    if not MapSet.member?(existing, pid) do
+      {:not_registered, state}
+    else
+      refs_to_remove =
+        state.channel_monitors
+        |> Enum.filter(fn {_ref, {registered_room_code, registered_user_id, registered_pid}} ->
+          registered_room_code == room_code and registered_user_id == user_id and registered_pid == pid
+        end)
+        |> Enum.map(&elem(&1, 0))
+
+      Enum.each(refs_to_remove, &Process.demonitor(&1, [:flush]))
+
+      remaining = MapSet.delete(existing, pid)
+
+      channel_pids =
+        if MapSet.size(remaining) == 0 do
+          Map.delete(state.channel_pids, key)
+        else
+          Map.put(state.channel_pids, key, remaining)
+        end
+
+      channel_monitors = Map.drop(state.channel_monitors, refs_to_remove)
+
+      result = if MapSet.size(remaining) == 0, do: :last_channel_closed, else: :channels_remaining
+      {result, %State{state | channel_pids: channel_pids, channel_monitors: channel_monitors}}
+    end
+  end
+
+  defp drop_room_channel_registrations(%State{} = state, room_code) do
+    refs_to_remove =
+      state.channel_monitors
+      |> Enum.filter(fn {_ref, {registered_room_code, _user_id, _pid}} ->
+        registered_room_code == room_code
+      end)
+      |> Enum.map(&elem(&1, 0))
+
+    Enum.each(refs_to_remove, &Process.demonitor(&1, [:flush]))
+
+    channel_pids =
+      state.channel_pids
+      |> Enum.reject(fn {{registered_room_code, _user_id}, _pids} -> registered_room_code == room_code end)
+      |> Map.new()
+
+    %State{
+      state
+      | channel_pids: channel_pids,
+        channel_monitors: Map.drop(state.channel_monitors, refs_to_remove)
+    }
+  end
+
+  defp teardown_state(%State{} = state) do
+    Enum.each(state.rooms, fn {room_code, room} ->
+      maybe_cancel_turn_timer(room)
+      cancel_all_phase_timers(room)
+      terminate_room_bots(room)
+      _ = GameSupervisor.stop_game(room_code)
+    end)
+
+    Enum.each(Map.keys(state.channel_monitors), &Process.demonitor(&1, [:flush]))
+
+    Enum.each(state.subscribed_game_topics, fn room_code ->
+      GameAdapter.unsubscribe(room_code)
+    end)
+
+    %State{}
+  end
+
+  defp subscribe_to_game_topic(%State{} = state, room_code) do
+    if MapSet.member?(state.subscribed_game_topics, room_code) do
+      state
+    else
+      :ok = GameAdapter.subscribe(room_code)
+      %{state | subscribed_game_topics: MapSet.put(state.subscribed_game_topics, room_code)}
+    end
+  end
+
+  defp unsubscribe_from_game_topic(%State{} = state, room_code) do
+    if MapSet.member?(state.subscribed_game_topics, room_code) do
+      :ok = GameAdapter.unsubscribe(room_code)
+      %{state | subscribed_game_topics: MapSet.delete(state.subscribed_game_topics, room_code)}
+    else
+      state
+    end
+  end
+
+  defp reconcile_turn_timer_for_current_state(%Room{} = room, room_code, %State{} = state) do
+    case GameAdapter.get_state(room_code) do
+      {:ok, game_state} ->
+        reconcile_turn_timer(room, room_code, game_state, 0, state)
+
+      {:error, _reason} ->
+        {room, state}
+    end
+  end
+
+  defp reconcile_turn_timer(%Room{} = room, room_code, game_state, transition_delay_ms, %State{} = state) do
+    current_window = current_action_window(room, game_state)
+    room = drop_stale_paused_turn_timer(room, current_window)
+
+    case {room.turn_timer, current_window} do
+      {%{key: key}, {:ok, key, _scope, _actor_position, _phase, _duration_ms}} ->
+        {room, state}
+
+      {%{}, :none} ->
+        {cancel_active_turn_timer(room, room_code, :acted), state}
+
+      {%{}, {:ok, key, scope, actor_position, phase, duration_ms}} ->
+        room =
+          room
+          |> cancel_active_turn_timer(room_code, :acted)
+          |> start_turn_timer(room_code, key, scope, actor_position, phase, duration_ms, transition_delay_ms)
+
+        {room, state}
+
+      {nil, :none} ->
+        {room, state}
+
+      {nil, {:ok, key, scope, actor_position, phase, duration_ms}} ->
+        room =
+          if room.paused_turn_timer && room.paused_turn_timer.key == key do
+            room
+          else
+            start_turn_timer(
+              room,
+              room_code,
+              key,
+              scope,
+              actor_position,
+              phase,
+              duration_ms,
+              transition_delay_ms
+            )
+          end
+
+        {room, state}
+    end
+  end
+
+  defp current_action_window(%Room{} = room, game_state) do
+    phase = Map.get(game_state, :phase)
+    event_seq = length(Map.get(game_state, :events, []))
+
+    cond do
+      phase == :dealer_selection and all_human_table?(room) ->
+        case first_connected_human_position(room) do
+          nil ->
+            :none
+
+          actor_position ->
+            {:ok,
+             {:room, :dealer_selection, event_seq}, :room, actor_position, :dealer_selection,
+             Lifecycle.config(:turn_timer_play_ms)}
+        end
+
+      phase in [:bidding, :declaring, :playing, :second_deal] ->
+        position = Map.get(game_state, :current_turn)
+        seat = position && Map.get(room.seats, position)
+        actions = if position, do: Engine.legal_actions(game_state, position), else: []
+
+        if seat && Seat.connected_human?(seat) && actions != [] do
+          {:ok, {:seat, position, phase, event_seq}, :seat, position, phase, turn_timer_duration_ms(phase)}
+        else
+          :none
+        end
+
+      true ->
+        :none
+    end
+  end
+
+  defp turn_timer_duration_ms(:bidding), do: Lifecycle.config(:turn_timer_bid_ms)
+  defp turn_timer_duration_ms(_phase), do: Lifecycle.config(:turn_timer_play_ms)
+
+  defp start_turn_timer(%Room{} = room, room_code, key, scope, actor_position, phase, duration_ms, transition_delay_ms) do
+    timer =
+      TurnTimer.start_timer(
+        self(),
+        room_code,
+        key,
+        scope,
+        actor_position,
+        phase,
+        duration_ms,
+        transition_delay_ms
+      )
+
+    broadcast_game_event(room_code, {:turn_timer_started, turn_timer_payload(timer)})
+
+    %{
+      room
+      | turn_timer: timer,
+        paused_turn_timer: nil
+    }
+  end
+
+  defp maybe_cancel_turn_timer(%Room{turn_timer: nil} = room), do: room
+
+  defp maybe_cancel_turn_timer(%Room{} = room) do
+    TurnTimer.cancel_timer(room.turn_timer)
+    %{room | turn_timer: nil}
+  end
+
+  defp cancel_active_turn_timer(%Room{turn_timer: nil} = room, _room_code, _reason), do: room
+
+  defp cancel_active_turn_timer(%Room{} = room, room_code, reason) do
+    timer = room.turn_timer
+    TurnTimer.cancel_timer(timer)
+    broadcast_game_event(room_code, {:turn_timer_cancelled, turn_timer_cancelled_payload(timer, reason)})
+    %{room | turn_timer: nil}
+  end
+
+  defp pause_active_turn_timer(%Room{turn_timer: nil} = room, _room_code, _position), do: room
+
+  defp pause_active_turn_timer(%Room{} = room, room_code, position) do
+    case room.turn_timer do
+      %{scope: :seat, actor_position: ^position} = timer ->
+        paused_timer = TurnTimer.pause_timer(timer)
+        broadcast_game_event(room_code, {:turn_timer_cancelled, turn_timer_cancelled_payload(timer, :disconnected)})
+        %{room | turn_timer: nil, paused_turn_timer: paused_timer}
+
+      _ ->
+        room
+    end
+  end
+
+  defp maybe_resume_paused_turn_timer(%Room{paused_turn_timer: nil} = room, _room_code, _position), do: room
+
+  defp maybe_resume_paused_turn_timer(%Room{} = room, room_code, position) do
+    paused_timer = room.paused_turn_timer
+
+    cond do
+      room.turn_timer != nil ->
+        %{room | paused_turn_timer: nil}
+
+      paused_timer.actor_position != position ->
+        %{room | paused_turn_timer: nil}
+
+      true ->
+        case GameAdapter.get_state(room_code) do
+          {:ok, game_state} ->
+            case current_action_window(room, game_state) do
+              {:ok, key, :seat, ^position, phase, configured_duration_ms} when key == paused_timer.key ->
+                resume_ms =
+                  min(
+                    configured_duration_ms,
+                    paused_timer.remaining_ms + Lifecycle.config(:reconnect_turn_extension_ms)
+                  )
+
+                start_turn_timer(room, room_code, key, :seat, position, phase, resume_ms, 0)
+
+              _ ->
+                %{room | paused_turn_timer: nil}
+            end
+
+          {:error, _reason} ->
+            %{room | paused_turn_timer: nil}
+        end
+    end
+  end
+
+  defp drop_stale_paused_turn_timer(%Room{paused_turn_timer: nil} = room, _current_window), do: room
+
+  defp drop_stale_paused_turn_timer(%Room{} = room, current_window) do
+    case current_window do
+      {:ok, key, _scope, _actor_position, _phase, _duration_ms} ->
+        if key == room.paused_turn_timer.key do
+          room
+        else
+          %{room | paused_turn_timer: nil}
+        end
+
+      _ ->
+        %{room | paused_turn_timer: nil}
+    end
+  end
+
+  defp handle_turn_timer_expired(%Room{} = room, room_code, timer_id, key, %State{} = state) do
+    case room.turn_timer do
+      %{timer_id: ^timer_id, key: ^key, scope: scope, actor_position: actor_position, phase: phase} ->
+        cleared_room = %{room | turn_timer: nil}
+        cleared_state = %{state | rooms: Map.put(state.rooms, room_code, cleared_room)}
+
+        with {:ok, game_state} <- GameAdapter.get_state(room_code),
+             {:ok, ^key, ^scope, ^actor_position, _current_phase, _duration_ms} <-
+               current_action_window(cleared_room, game_state),
+             {:ok, legal_actions} <- GameAdapter.get_legal_actions(room_code, actor_position),
+             true <- legal_actions != [],
+             {:ok, action, _reasoning} <- TimeoutStrategy.pick_action(legal_actions, game_state),
+             resolved_action <- BotBrain.resolve_action(action, game_state, actor_position),
+             {:ok, _new_state} <- GameAdapter.apply_action(room_code, actor_position, resolved_action) do
+          {updated_room, incremented?} =
+            maybe_increment_timeout_counter(cleared_room, scope, actor_position)
+
+          broadcast_game_event(
+            room_code,
+            {:turn_auto_played, turn_auto_played_payload(scope, actor_position, phase, resolved_action)}
+          )
+
+          updated_state = %{cleared_state | rooms: Map.put(cleared_state.rooms, room_code, updated_room)}
+
+          if incremented? and timeout_threshold_reached?(updated_room, actor_position) do
+            maybe_force_disconnect(updated_room, room_code, actor_position, updated_state)
+          else
+            {updated_room, updated_state}
+          end
+        else
+          {:error, {:not_your_turn, _}} ->
+            {cleared_room, cleared_state}
+
+          {:error, :game_already_complete} ->
+            {cleared_room, cleared_state}
+
+          {:error, :not_found} ->
+            {cleared_room, cleared_state}
+
+          false ->
+            {cleared_room, cleared_state}
+
+          other ->
+            Logger.debug("Discarding stale turn timeout for #{room_code}: #{inspect(other)}")
+            {cleared_room, cleared_state}
+        end
+
+      _ ->
+        {room, state}
+    end
+  end
+
+  defp maybe_increment_timeout_counter(%Room{} = room, :seat, actor_position) do
+    case Map.get(room.seats, actor_position) do
+      %Seat{} = seat ->
+        if Seat.connected_human?(seat) do
+          count = Map.get(room.consecutive_timeouts, actor_position, 0) + 1
+
+          {%{room | consecutive_timeouts: Map.put(room.consecutive_timeouts, actor_position, count)}, true}
+        else
+          {room, false}
+        end
+
+      _ ->
+        {room, false}
+    end
+  end
+
+  defp maybe_increment_timeout_counter(%Room{} = room, _scope, _actor_position), do: {room, false}
+
+  defp timeout_threshold_reached?(%Room{} = room, actor_position) do
+    Map.get(room.consecutive_timeouts, actor_position, 0) >=
+      Lifecycle.config(:consecutive_timeout_threshold)
+  end
+
+  defp maybe_force_disconnect(%Room{} = room, room_code, actor_position, %State{} = state) do
+    case Map.get(room.seats, actor_position) do
+      %Seat{} = seat ->
+        if Seat.connected_human?(seat) do
+          pids =
+            state.channel_pids
+            |> Map.get({room_code, seat.user_id}, MapSet.new())
+            |> MapSet.to_list()
+
+          if pids == [] do
+            case disconnect_player(state, room, room_code, seat.user_id) do
+              {:ok, updated_room, updated_state} ->
+                broadcast_room(room_code, updated_room)
+                broadcast_lobby_event({:room_updated, updated_room})
+                {updated_room, updated_state}
+
+              {:error, _reason, updated_state} ->
+                {room, updated_state}
+            end
+          else
+            Enum.each(pids, &send(&1, {:force_disconnect, :timeout_threshold}))
+            {room, state}
+          end
+        else
+          {room, state}
+        end
+
+      _ ->
+        {room, state}
+    end
+  end
+
+  defp maybe_reset_timeout_counters_for_new_hand(%Room{last_hand_number: nil} = room, _game_state), do: room
+
+  defp maybe_reset_timeout_counters_for_new_hand(%Room{} = room, game_state) do
+    if Map.get(game_state, :hand_number, room.last_hand_number) > room.last_hand_number do
+      %{room | consecutive_timeouts: %{}}
+    else
+      room
+    end
+  end
+
+  defp reset_timeout_counter(%Room{} = room, nil), do: room
+
+  defp reset_timeout_counter(%Room{} = room, position) do
+    %{room | consecutive_timeouts: Map.delete(room.consecutive_timeouts, position)}
+  end
+
+  defp all_human_table?(%Room{seats: seats}) when map_size(seats) == 0, do: false
+
+  defp all_human_table?(%Room{seats: seats}) do
+    map_size(seats) == @max_players and Enum.all?(seats, fn {_position, seat} -> Seat.connected_human?(seat) end)
+  end
+
+  defp first_connected_human_position(%Room{seats: seats}) do
+    [:north, :east, :south, :west]
+    |> Enum.find(fn position ->
+      case Map.get(seats, position) do
+        %Seat{} = seat -> Seat.connected_human?(seat)
+        _ -> false
+      end
+    end)
+  end
+
+  defp serialize_turn_timer(nil), do: nil
+
+  defp serialize_turn_timer(timer) do
+    turn_timer_payload(timer)
+    |> Map.put(:remaining_ms, TurnTimer.remaining_ms(timer))
+  end
+
+  defp turn_timer_payload(timer) do
+    %{
+      timer_id: timer.timer_id,
+      scope: timer.scope,
+      position: if(timer.scope == :seat, do: timer.actor_position, else: nil),
+      phase: timer.phase,
+      duration_ms: timer.duration_ms,
+      transition_delay_ms: timer.transition_delay_ms,
+      server_time: current_server_time(),
+      event_seq: TurnTimer.event_seq(timer.key)
+    }
+  end
+
+  defp turn_timer_cancelled_payload(timer, reason) do
+    %{
+      timer_id: timer.timer_id,
+      scope: timer.scope,
+      position: if(timer.scope == :seat, do: timer.actor_position, else: nil),
+      reason: reason
+    }
+  end
+
+  defp turn_auto_played_payload(scope, actor_position, phase, action) do
+    %{
+      scope: scope,
+      position: if(scope == :seat, do: actor_position, else: nil),
+      phase: phase,
+      action: serialize_action(action),
+      reason: :timeout
+    }
+  end
+
+  defp serialize_action({:bid, amount}), do: %{type: :bid, amount: amount}
+  defp serialize_action(:pass), do: %{type: :pass}
+  defp serialize_action({:declare_trump, suit}), do: %{type: :declare_trump, suit: suit}
+  defp serialize_action({:play_card, {rank, suit}}), do: %{type: :play_card, card: %{rank: rank, suit: suit}}
+  defp serialize_action({:select_hand, _cards}), do: %{type: :select_hand}
+  defp serialize_action(:select_dealer), do: %{type: :select_dealer}
+  defp serialize_action(action), do: %{type: inspect(action)}
+
+  defp current_server_time do
+    DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+  end
+
+  defp broadcast_game_event(room_code, event) do
+    Phoenix.PubSub.broadcast_from(PidroServer.PubSub, self(), "game:#{room_code}", event)
   end
 end

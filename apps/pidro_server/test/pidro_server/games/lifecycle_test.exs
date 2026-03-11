@@ -11,7 +11,15 @@ defmodule PidroServer.Games.LifecycleTest do
     :idle_waiting_ttl_ms,
     :reconnect_turn_extension_ms,
     :health_check_interval_ms,
-    :presence_debounce_ms
+    :presence_debounce_ms,
+    :turn_timer_bid_ms,
+    :turn_timer_play_ms,
+    :consecutive_timeout_threshold,
+    :bot_delay_ms,
+    :bot_delay_variance_ms,
+    :bot_min_delay_ms,
+    :trick_transition_delay_ms,
+    :hand_transition_delay_ms
   ]
 
   @expected_defaults %{
@@ -22,7 +30,15 @@ defmodule PidroServer.Games.LifecycleTest do
     idle_waiting_ttl_ms: 600_000,
     reconnect_turn_extension_ms: 10_000,
     health_check_interval_ms: 60_000,
-    presence_debounce_ms: 3_000
+    presence_debounce_ms: 3_000,
+    turn_timer_bid_ms: 45_000,
+    turn_timer_play_ms: 30_000,
+    consecutive_timeout_threshold: 3,
+    bot_delay_ms: 1_500,
+    bot_delay_variance_ms: 800,
+    bot_min_delay_ms: 300,
+    trick_transition_delay_ms: 1_500,
+    hand_transition_delay_ms: 3_000
   }
 
   describe "config/1" do
@@ -76,9 +92,9 @@ defmodule PidroServer.Games.LifecycleTest do
   end
 
   describe "defaults/0" do
-    test "returns all 8 timeout keys" do
+    test "returns all timeout and pacing keys" do
       defaults = Lifecycle.defaults()
-      assert map_size(defaults) == 8
+      assert map_size(defaults) == length(@all_keys)
 
       for key <- @all_keys do
         assert Map.has_key?(defaults, key), "missing key: #{key}"

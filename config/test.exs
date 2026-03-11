@@ -44,7 +44,15 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   idle_waiting_ttl_ms: 500,
   reconnect_turn_extension_ms: 50,
   health_check_interval_ms: 500,
-  presence_debounce_ms: 50
+  presence_debounce_ms: 50,
+  turn_timer_bid_ms: 120,
+  turn_timer_play_ms: 90,
+  consecutive_timeout_threshold: 3,
+  bot_delay_ms: 20,
+  bot_delay_variance_ms: 10,
+  bot_min_delay_ms: 5,
+  trick_transition_delay_ms: 30,
+  hand_transition_delay_ms: 40
 
 # Compile dev-only LiveView routes in test to satisfy verified route checks
 config :pidro_server, dev_routes: true

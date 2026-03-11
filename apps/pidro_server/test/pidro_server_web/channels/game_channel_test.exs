@@ -16,6 +16,7 @@ defmodule PidroServerWeb.GameChannelTest do
   alias PidroServer.Accounts
   alias PidroServer.Games.{GameAdapter, GameSupervisor, RoomManager}
   alias PidroServerWeb.GameChannel
+  alias PidroServerWeb.Serializers.GameStateSerializer
 
   @moduletag :channel
 
@@ -152,6 +153,27 @@ defmodule PidroServerWeb.GameChannelTest do
                subscribe_and_join(socket, GameChannel, "game:XXXX", %{})
 
       assert reason == "room not found"
+    end
+
+    test "join reply includes the active turn timer hydration", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      {:ok, expected_timer} = wait_for_turn_timer(room_code)
+
+      {:ok, reply, _socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      assert reply.turn_timer.timer_id == expected_timer.timer_id
+      assert reply.turn_timer.scope == expected_timer.scope
+      assert reply.turn_timer.position == expected_timer.position
+      assert reply.turn_timer.phase == expected_timer.phase
+      assert reply.turn_timer.duration_ms == expected_timer.duration_ms
+      assert reply.turn_timer.transition_delay_ms == expected_timer.transition_delay_ms
+      assert reply.turn_timer.event_seq == expected_timer.event_seq
+      assert reply.turn_timer.remaining_ms <= expected_timer.remaining_ms
+      assert reply.turn_timer.remaining_ms >= 0
     end
   end
 
@@ -346,6 +368,34 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "state updates" do
+    test "pushes transition delay metadata with serialized game state", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      assert_push "presence_state", _presence_state, 1000
+
+      {:ok, state} = GameAdapter.get_state(room_code)
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:state_update, room_code, %{state: state, transition_delay_ms: 40}}
+      )
+
+      assert_push "game_state",
+                  %{state: pushed_state, legal_actions: legal_actions, transition_delay_ms: 40},
+                  1000
+
+      assert pushed_state == GameStateSerializer.serialize(state)
+      assert is_list(legal_actions)
+    end
+
     test "broadcasts state updates to all players", %{
       users: users,
       room_code: room_code,
@@ -660,6 +710,81 @@ defmodule PidroServerWeb.GameChannelTest do
       assert_broadcast "player_disconnected", %{user_id: _user_id, reason: reason}, 1000
       assert reason == "left"
     end
+
+    test "closing one of multiple channels for the same player does not disconnect the seat", %{
+      user1: user,
+      room_code: room_code
+    } do
+      {:ok, socket1} = create_socket(user)
+      {:ok, socket2} = create_socket(user)
+
+      {:ok, _reply, joined1} =
+        subscribe_and_join(socket1, GameChannel, "game:#{room_code}", %{})
+
+      {:ok, _reply, joined2} =
+        subscribe_and_join(socket2, GameChannel, "game:#{room_code}", %{})
+
+      leave(joined1)
+
+      refute_broadcast "player_disconnected", _payload, 100
+
+      {:ok, room} = RoomManager.get_room(room_code)
+      position = joined2.assigns.position
+      assert room.seats[position].status == :connected
+
+      leave(joined2)
+      assert_broadcast "player_disconnected", %{user_id: user_id}, 1000
+      assert to_string(user_id) == to_string(user.id)
+    end
+  end
+
+  describe "timer events" do
+    test "forwards timer lifecycle events from the game topic", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      {:ok, _reply, joined_socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      started = %{
+        timer_id: 101,
+        scope: :seat,
+        position: :north,
+        phase: :bidding,
+        duration_ms: 120,
+        transition_delay_ms: 0,
+        server_time: "2026-03-11T12:00:00.000Z",
+        event_seq: 2
+      }
+
+      cancelled = %{timer_id: 101, scope: :seat, position: :north, reason: :acted}
+      auto_played = %{scope: :seat, position: :north, phase: :bidding, action: %{type: :pass}, reason: :timeout}
+
+      send(joined_socket.channel_pid, {:turn_timer_started, started})
+      assert_push "turn_timer_started", ^started
+
+      send(joined_socket.channel_pid, {:turn_timer_cancelled, cancelled})
+      assert_push "turn_timer_cancelled", ^cancelled
+
+      send(joined_socket.channel_pid, {:turn_auto_played, auto_played})
+      assert_push "turn_auto_played", ^auto_played
+    end
+
+    test "pushes the timeout reason and stops the channel on forced disconnect", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      {:ok, _reply, joined_socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      send(joined_socket.channel_pid, {:force_disconnect, :timeout_threshold})
+
+      assert_push "force_disconnect", %{reason: "timeout_threshold"}
+      assert_receive {:EXIT, pid, {:shutdown, :timeout_threshold}}, 1000
+      assert pid == joined_socket.channel_pid
+    end
   end
 
   describe "reconnection edge cases" do
@@ -725,6 +850,23 @@ defmodule PidroServerWeb.GameChannelTest do
       player_ids = PidroServer.Games.Room.Positions.player_ids(room)
       user_count = Enum.count(player_ids, fn id -> to_string(id) == to_string(user.id) end)
       assert user_count == 1
+    end
+  end
+
+  defp wait_for_turn_timer(room_code, attempts \\ 40)
+
+  defp wait_for_turn_timer(_room_code, 0) do
+    flunk("timed out waiting for active turn timer")
+  end
+
+  defp wait_for_turn_timer(room_code, attempts) do
+    case RoomManager.get_turn_timer(room_code) do
+      {:ok, nil} ->
+        Process.sleep(10)
+        wait_for_turn_timer(room_code, attempts - 1)
+
+      {:ok, turn_timer} ->
+        {:ok, turn_timer}
     end
   end
 end

@@ -21,7 +21,6 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   alias PidroServer.Games.GameAdapter
 
   @default_strategy RandomStrategy
-  @default_delay_ms 1000
 
   ## Public API
 
@@ -54,7 +53,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
     room_code = Map.fetch!(opts, :room_code)
     position = Map.fetch!(opts, :position)
     strategy = Map.get(opts, :strategy, @default_strategy)
-    delay_ms = Map.get(opts, :delay_ms, @default_delay_ms)
+    delay_ms_override = Map.get(opts, :delay_ms)
     paused? = Map.get(opts, :paused?, false)
 
     # Resolve strategy atom to module if needed
@@ -86,7 +85,8 @@ defmodule PidroServer.Games.Bots.BotPlayer do
       position: position,
       user_id: bot_user_id,
       strategy: strategy_module,
-      delay_ms: delay_ms,
+      delay_ms_override: delay_ms_override,
+      move_scheduled?: false,
       paused?: paused?
     }
 
@@ -97,36 +97,43 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   def handle_continue(:check_initial_move, state) do
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
-        if should_make_move?(game_state, state) do
-          BotBrain.schedule_move(state.delay_ms)
-        end
+        {:noreply, maybe_schedule_move(game_state, state)}
 
       {:error, _} ->
-        :ok
+        {:noreply, state}
     end
-
-    {:noreply, state}
   end
 
   @impl true
-  def handle_info({:state_update, game_state}, state) do
-    if should_make_move?(game_state, state) do
-      BotBrain.schedule_move(state.delay_ms)
-    end
+  def handle_info({:state_update, room_code, payload}, %{room_code: room_code} = state) do
+    case extract_state_update(payload) do
+      {:ok, game_state, delay_ms} ->
+        {:noreply, maybe_schedule_move(game_state, state, delay_ms)}
 
-    {:noreply, state}
+      :error ->
+        {:noreply, state}
+    end
   end
 
   @impl true
   def handle_info({:game_over, _winner, _scores}, state) do
     Logger.info("BotPlayer for room #{state.room_code}, position #{state.position} - Game over")
-    {:noreply, state}
+    {:noreply, %{state | move_scheduled?: false}}
   end
+
+  @impl true
+  def handle_info({:turn_timer_started, _payload}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:turn_timer_cancelled, _payload}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:turn_auto_played, _payload}, state), do: {:noreply, state}
 
   # Ignore Phoenix Channel broadcast messages (presence_diff, game_state, etc.).
   # BotPlayer subscribes to the same PubSub topic as GameChannel, so it receives
   # channel-level broadcasts. Game state updates are already handled via the
-  # direct {:state_update, state} PubSub messages above.
+  # direct {:state_update, room_code, payload} PubSub messages above.
   @impl true
   def handle_info(%Phoenix.Socket.Broadcast{}, state) do
     {:noreply, state}
@@ -135,7 +142,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   @impl true
   def handle_info(:make_move, state) do
     BotBrain.execute_move(state, "BotPlayer")
-    {:noreply, state}
+    {:noreply, %{state | move_scheduled?: false}}
   end
 
   @impl true
@@ -149,15 +156,11 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
-        if should_make_move?(game_state, new_state) do
-          BotBrain.schedule_move(new_state.delay_ms)
-        end
+        {:noreply, maybe_schedule_move(game_state, new_state)}
 
       {:error, _reason} ->
-        :ok
+        {:noreply, new_state}
     end
-
-    {:noreply, new_state}
   end
 
   @impl true
@@ -173,11 +176,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
     case GameAdapter.get_state(state.room_code) do
       {:ok, game_state} ->
-        if should_make_move?(game_state, new_state) do
-          BotBrain.schedule_move(new_state.delay_ms)
-        end
-
-        {:noreply, new_state}
+        {:noreply, maybe_schedule_move(game_state, new_state)}
 
       {:error, _reason} ->
         {:noreply, new_state}
@@ -197,6 +196,30 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   defp should_make_move?(game_state, state) do
     not state.paused? and BotBrain.should_make_move?(game_state, state.position)
   end
+
+  defp maybe_schedule_move(game_state, state, transition_delay_ms \\ 0) do
+    if should_make_move?(game_state, state) do
+      BotBrain.schedule_move_once(state, transition_delay_ms, schedule_opts(state))
+    else
+      state
+    end
+  end
+
+  defp schedule_opts(%{delay_ms_override: nil}), do: []
+
+  defp schedule_opts(%{delay_ms_override: delay_ms}) do
+    [base_delay_ms: delay_ms, variance_ms: 0, min_delay_ms: delay_ms]
+  end
+
+  defp extract_state_update(%{state: game_state, transition_delay_ms: delay_ms})
+       when is_map(game_state) and is_integer(delay_ms),
+       do: {:ok, game_state, delay_ms}
+
+  defp extract_state_update(%{state: game_state}) when is_map(game_state),
+    do: {:ok, game_state, 0}
+
+  defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
+  defp extract_state_update(_payload), do: :error
 
   defp resolve_strategy(:random), do: RandomStrategy
   defp resolve_strategy(:basic), do: RandomStrategy

@@ -19,7 +19,7 @@ defmodule PidroServerWeb.GameChannel do
 
   ## Outgoing Events (to clients)
 
-  * `"game_state"` - Full game state update: `%{state: game_state}`
+  * `"game_state"` - Full game state update: `%{state: game_state, transition_delay_ms: integer()}`
   * `"player_joined"` - New player joined: `%{player_id: id, position: :north}`
   * `"player_left"` - Player left: `%{player_id: id}`
   * `"player_disconnected"` - Player disconnected: `%{user_id: id, position: :north, reason: "left"}`
@@ -167,13 +167,20 @@ defmodule PidroServerWeb.GameChannel do
         |> assign(:role, role)
         |> assign(:join_type, join_type)
 
+      if role == :player do
+        :ok = RoomManager.register_game_channel(room_code, user_id, self())
+      end
+
       # Track presence after join
       send(self(), :after_join)
+
+      {:ok, turn_timer} = RoomManager.get_turn_timer(room_code)
 
       reply_data = %{
         role: role,
         reconnected: join_type == :reconnect,
-        legal_actions: legal_actions
+        legal_actions: legal_actions,
+        turn_timer: turn_timer
       }
 
       # Add state only if game has started
@@ -372,14 +379,23 @@ defmodule PidroServerWeb.GameChannel do
   @impl true
   def handle_info(msg, socket)
 
-  def handle_info({:state_update, new_state}, socket) do
-    serialized_state = GameStateSerializer.serialize(new_state)
-    legal_actions = legal_actions_for_socket(socket)
+  def handle_info({:state_update, room_code, payload}, %{assigns: %{room_code: room_code}} = socket) do
+    case extract_state_update(payload) do
+      {:ok, new_state, delay_ms} ->
+        serialized_state = GameStateSerializer.serialize(new_state)
+        legal_actions = legal_actions_for_socket(socket)
 
-    # Each channel process subscribes directly to game PubSub updates.
-    # push/3 keeps legal actions personalized per player socket.
-    push(socket, "game_state", %{state: serialized_state, legal_actions: legal_actions})
-    {:noreply, socket}
+        push(socket, "game_state", %{
+          state: serialized_state,
+          legal_actions: legal_actions,
+          transition_delay_ms: delay_ms
+        })
+
+        {:noreply, socket}
+
+      :error ->
+        {:noreply, socket}
+    end
   end
 
   def handle_info({:game_over, winner, scores}, socket) do
@@ -398,6 +414,26 @@ defmodule PidroServerWeb.GameChannel do
     Process.send_after(self(), {:close_room, room_code}, :timer.minutes(5))
 
     {:noreply, socket}
+  end
+
+  def handle_info({:turn_timer_started, payload}, socket) do
+    push(socket, "turn_timer_started", payload)
+    {:noreply, socket}
+  end
+
+  def handle_info({:turn_timer_cancelled, payload}, socket) do
+    push(socket, "turn_timer_cancelled", payload)
+    {:noreply, socket}
+  end
+
+  def handle_info({:turn_auto_played, payload}, socket) do
+    push(socket, "turn_auto_played", payload)
+    {:noreply, socket}
+  end
+
+  def handle_info({:force_disconnect, :timeout_threshold}, socket) do
+    push(socket, "force_disconnect", %{reason: "timeout_threshold"})
+    {:stop, {:shutdown, :timeout_threshold}, socket}
   end
 
   def handle_info({:close_room, room_code}, socket) do
@@ -560,20 +596,32 @@ defmodule PidroServerWeb.GameChannel do
             "Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}"
           )
 
-          # Notify room manager - this will handle cleanup and broadcast to room channel
-          # Use handle_player_disconnect instead of leave_room
-          case RoomManager.handle_player_disconnect(room_code, user_id) do
-            :ok -> :ok
-            error -> Logger.warning("Failed to handle disconnect: #{inspect(error)}")
-          end
+          last_channel_closed? =
+            case RoomManager.unregister_game_channel(room_code, user_id, self()) do
+              :last_channel_closed ->
+                true
 
-          # Broadcast to other users in the game channel
-          broadcast_from(socket, "player_disconnected", %{
-            user_id: user_id,
-            position: socket.assigns[:position],
-            reason: format_reason(reason),
-            grace_period: true
-          })
+              :channels_remaining ->
+                false
+
+              :not_registered ->
+                false
+            end
+
+          if last_channel_closed? do
+            case RoomManager.handle_player_disconnect(room_code, user_id) do
+              :ok -> :ok
+              error -> Logger.warning("Failed to handle disconnect: #{inspect(error)}")
+            end
+
+            # Broadcast to other users in the game channel
+            broadcast_from(socket, "player_disconnected", %{
+              user_id: user_id,
+              position: socket.assigns[:position],
+              reason: format_reason(reason),
+              grace_period: true
+            })
+          end
 
         :spectator ->
           Logger.info(
@@ -604,6 +652,7 @@ defmodule PidroServerWeb.GameChannel do
 
     case GameAdapter.apply_action(room_code, position, action) do
       {:ok, _new_state} ->
+        _ = RoomManager.reset_consecutive_timeouts(room_code, socket.assigns.user_id)
         # State update is broadcast via PubSub subscription
         {:reply, :ok, socket}
 
@@ -734,9 +783,20 @@ defmodule PidroServerWeb.GameChannel do
   @spec format_reason(term()) :: String.t()
   defp format_reason(:normal), do: "left"
   defp format_reason({:shutdown, :left}), do: "left"
+  defp format_reason({:shutdown, :timeout_threshold}), do: "timeout"
   defp format_reason(:shutdown), do: "connection_lost"
   defp format_reason({:shutdown, _}), do: "connection_lost"
   defp format_reason(_), do: "error"
+
+  defp extract_state_update(%{state: game_state, transition_delay_ms: delay_ms})
+       when is_map(game_state) and is_integer(delay_ms),
+       do: {:ok, game_state, delay_ms}
+
+  defp extract_state_update(%{state: game_state}) when is_map(game_state),
+    do: {:ok, game_state, 0}
+
+  defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
+  defp extract_state_update(_payload), do: :error
 
   @spec save_game_stats(String.t(), atom(), map()) :: :ok
   defp save_game_stats(room_code, winner, scores) do

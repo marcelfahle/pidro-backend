@@ -32,7 +32,15 @@ lifecycle_overrides =
     {:idle_waiting_ttl_ms, "LIFECYCLE_IDLE_WAITING_TTL_MS"},
     {:reconnect_turn_extension_ms, "LIFECYCLE_RECONNECT_TURN_EXTENSION_MS"},
     {:health_check_interval_ms, "LIFECYCLE_HEALTH_CHECK_INTERVAL_MS"},
-    {:presence_debounce_ms, "LIFECYCLE_PRESENCE_DEBOUNCE_MS"}
+    {:presence_debounce_ms, "LIFECYCLE_PRESENCE_DEBOUNCE_MS"},
+    {:turn_timer_bid_ms, "LIFECYCLE_TURN_TIMER_BID_MS"},
+    {:turn_timer_play_ms, "LIFECYCLE_TURN_TIMER_PLAY_MS"},
+    {:consecutive_timeout_threshold, "LIFECYCLE_CONSECUTIVE_TIMEOUT_THRESHOLD"},
+    {:bot_delay_ms, "LIFECYCLE_BOT_DELAY_MS"},
+    {:bot_delay_variance_ms, "LIFECYCLE_BOT_DELAY_VARIANCE_MS"},
+    {:bot_min_delay_ms, "LIFECYCLE_BOT_MIN_DELAY_MS"},
+    {:trick_transition_delay_ms, "LIFECYCLE_TRICK_TRANSITION_DELAY_MS"},
+    {:hand_transition_delay_ms, "LIFECYCLE_HAND_TRANSITION_DELAY_MS"}
   ]
   |> Enum.reduce([], fn {key, env_var}, acc ->
     case System.get_env(env_var) do

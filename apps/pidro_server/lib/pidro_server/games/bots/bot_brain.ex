@@ -10,7 +10,7 @@ defmodule PidroServer.Games.Bots.BotBrain do
   require Logger
 
   alias Pidro.Game.DealerRob
-  alias PidroServer.Games.GameAdapter
+  alias PidroServer.Games.{GameAdapter, Lifecycle}
 
   @doc """
   Returns true if the game state indicates it's this bot's turn.
@@ -31,11 +31,47 @@ defmodule PidroServer.Games.Bots.BotBrain do
   end
 
   @doc """
-  Schedules a `:make_move` message to be sent after `delay_ms` milliseconds.
+  Computes a bot delay using a base delay, symmetric random variance, and floor.
   """
-  @spec schedule_move(non_neg_integer()) :: reference()
-  def schedule_move(delay_ms) do
+  @spec compute_delay(non_neg_integer(), non_neg_integer(), non_neg_integer()) :: non_neg_integer()
+  def compute_delay(base_ms, variance_ms, min_ms) do
+    raw_delay =
+      if variance_ms > 0 do
+        base_ms + Enum.random(-variance_ms..variance_ms)
+      else
+        base_ms
+      end
+
+    max(raw_delay, min_ms)
+  end
+
+  @doc """
+  Schedules a `:make_move` message using the current pacing config.
+
+  `transition_delay_ms` is added on top of the computed bot delay. Optional
+  schedule opts allow tests or explicit callers to override the base delay.
+  """
+  @spec schedule_move(non_neg_integer(), keyword()) :: reference()
+  def schedule_move(transition_delay_ms \\ 0, opts \\ []) do
+    base_ms = Keyword.get(opts, :base_delay_ms, Lifecycle.config(:bot_delay_ms))
+    variance_ms = Keyword.get(opts, :variance_ms, Lifecycle.config(:bot_delay_variance_ms))
+    min_ms = Keyword.get(opts, :min_delay_ms, Lifecycle.config(:bot_min_delay_ms))
+    delay_ms = compute_delay(base_ms, variance_ms, min_ms) + transition_delay_ms
+
     Process.send_after(self(), :make_move, delay_ms)
+  end
+
+  @doc """
+  Schedules a move only if one is not already pending.
+  """
+  @spec schedule_move_once(map(), non_neg_integer(), keyword()) :: map()
+  def schedule_move_once(state, transition_delay_ms \\ 0, opts \\ []) do
+    if Map.get(state, :move_scheduled?, false) do
+      state
+    else
+      schedule_move(transition_delay_ms, opts)
+      Map.put(state, :move_scheduled?, true)
+    end
   end
 
   @doc """

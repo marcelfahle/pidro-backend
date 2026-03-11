@@ -70,10 +70,13 @@ defmodule PidroServer.Games.GameIntegrationTest do
 
       # Apply an action that will trigger a broadcast
       [first_action | _] = actions
-      assert {:ok, _new_state} = GameAdapter.apply_action(room_code, :north, first_action)
+      assert {:ok, new_state} = GameAdapter.apply_action(room_code, :north, first_action)
 
       # Should receive a state update via PubSub
-      assert_receive {:state_update, _updated_state}, 1000
+      assert_receive {:state_update, ^room_code, %{state: updated_state, transition_delay_ms: 0}},
+                     1000
+
+      assert updated_state == new_state
 
       # Cleanup
       GameAdapter.unsubscribe(room_code)

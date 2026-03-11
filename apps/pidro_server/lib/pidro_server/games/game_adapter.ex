@@ -33,7 +33,7 @@ defmodule PidroServer.Games.GameAdapter do
 
   require Logger
   alias Pidro.Game.Replay
-  alias PidroServer.Games.{GameRegistry, GameSupervisor}
+  alias PidroServer.Games.{GameRegistry, GameSupervisor, Lifecycle}
 
   @doc """
   Applies an action to a game.
@@ -71,10 +71,12 @@ defmodule PidroServer.Games.GameAdapter do
   def apply_action(room_code, position, action) do
     with {:ok, pid} <- GameRegistry.lookup(room_code) do
       try do
+        old_state = Pidro.Server.get_state(pid)
+
         case Pidro.Server.apply_action(pid, position, action) do
-          {:ok, _state} = result ->
+          {:ok, new_state} = result ->
             # Broadcast state update to all subscribers
-            broadcast_state_update(room_code, pid)
+            broadcast_state_update(room_code, old_state, new_state)
             result
 
           {:error, _reason} = error ->
@@ -183,7 +185,7 @@ defmodule PidroServer.Games.GameAdapter do
 
   ## Message Types
 
-    - `{:state_update, new_state}` - Game state changed
+    - `{:state_update, room_code, %{state: new_state, transition_delay_ms: delay_ms}}` - Game state changed
     - `{:game_over, winner, scores}` - Game ended
 
   ## Parameters
@@ -288,7 +290,7 @@ defmodule PidroServer.Games.GameAdapter do
             case GenServer.call(pid, {:set_state, previous_state}) do
               :ok ->
                 # Broadcast the state update
-                broadcast_state_update(room_code, pid)
+                broadcast_state_update(room_code, current_state, previous_state)
                 {:ok, previous_state}
 
               error ->
@@ -312,20 +314,23 @@ defmodule PidroServer.Games.GameAdapter do
   ## Private Functions
 
   @doc false
-  @spec broadcast_state_update(String.t(), pid()) :: :ok | {:error, term()}
-  defp broadcast_state_update(room_code, pid) do
+  @spec broadcast_state_update(String.t(), map(), map()) :: :ok | {:error, term()}
+  defp broadcast_state_update(room_code, old_state, new_state) do
     try do
-      state = Pidro.Server.get_state(pid)
+      payload = %{
+        state: new_state,
+        transition_delay_ms: transition_delay_ms(old_state, new_state)
+      }
 
       Phoenix.PubSub.broadcast(
         PidroServer.PubSub,
         "game:#{room_code}",
-        {:state_update, state}
+        {:state_update, room_code, payload}
       )
 
       # Check if game is over and broadcast game_over message
-      if Map.get(state, :phase) == :game_over do
-        broadcast_game_over(room_code, state)
+      if Map.get(new_state, :phase) == :game_over do
+        broadcast_game_over(room_code, new_state)
       end
 
       :ok
@@ -350,5 +355,34 @@ defmodule PidroServer.Games.GameAdapter do
       "game:#{room_code}",
       {:game_over, winner, scores}
     )
+  end
+
+  @doc false
+  @spec transition_delay_ms(map(), map()) :: non_neg_integer()
+  def transition_delay_ms(old_state, new_state) do
+    cond do
+      Map.get(new_state, :phase) == :complete ->
+        0
+
+      hand_completed?(old_state, new_state) ->
+        Lifecycle.config(:hand_transition_delay_ms)
+
+      trick_completed?(old_state, new_state) ->
+        Lifecycle.config(:trick_transition_delay_ms)
+
+      true ->
+        0
+    end
+  end
+
+  @spec trick_completed?(map(), map()) :: boolean()
+  defp trick_completed?(old_state, new_state) do
+    length(Map.get(new_state, :tricks, [])) > length(Map.get(old_state, :tricks, [])) and
+      is_nil(Map.get(new_state, :current_trick))
+  end
+
+  @spec hand_completed?(map(), map()) :: boolean()
+  defp hand_completed?(old_state, new_state) do
+    Map.get(new_state, :hand_number, 0) > Map.get(old_state, :hand_number, 0)
   end
 end

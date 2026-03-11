@@ -104,16 +104,21 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
-  def handle_info({:state_update, new_state}, socket) do
-    # DEV-901: Refetch legal actions when state updates
-    legal_actions = get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
-    events = process_events(new_state.events)
+  def handle_info({:state_update, room_code, payload}, %{assigns: %{room_code: room_code}} = socket) do
+    case extract_state_update(payload) do
+      {:ok, new_state} ->
+        legal_actions = get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
+        events = process_events(new_state.events)
 
-    {:noreply,
-     socket
-     |> assign(:game_state, new_state)
-     |> assign(:legal_actions, legal_actions)
-     |> assign(:events, events)}
+        {:noreply,
+         socket
+         |> assign(:game_state, new_state)
+         |> assign(:legal_actions, legal_actions)
+         |> assign(:events, events)}
+
+      :error ->
+        {:noreply, socket}
+    end
   end
 
   @impl true
@@ -127,6 +132,15 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
      |> assign(:legal_actions, [])
      |> put_flash(:info, "Game Over!")}
   end
+
+  @impl true
+  def handle_info({:turn_timer_started, _payload}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_info({:turn_timer_cancelled, _payload}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_info({:turn_auto_played, _payload}, socket), do: {:noreply, socket}
 
   @impl true
   def handle_info({:room_update, room}, socket) do
@@ -199,6 +213,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:noreply, socket}
     end
   end
+
+  defp extract_state_update(%{state: game_state}) when is_map(game_state), do: {:ok, game_state}
+  defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state}
+  defp extract_state_update(_payload), do: :error
 
   @impl true
   def handle_event("clipboard_copied", _params, socket) do
