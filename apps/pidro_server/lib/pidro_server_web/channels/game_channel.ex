@@ -52,7 +52,6 @@ defmodule PidroServerWeb.GameChannel do
 
   alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
   alias PidroServer.Games.Room.Seat
-  alias PidroServer.Stats
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
 
@@ -379,7 +378,10 @@ defmodule PidroServerWeb.GameChannel do
   @impl true
   def handle_info(msg, socket)
 
-  def handle_info({:state_update, room_code, payload}, %{assigns: %{room_code: room_code}} = socket) do
+  def handle_info(
+        {:state_update, room_code, payload},
+        %{assigns: %{room_code: room_code}} = socket
+      ) do
     case extract_state_update(payload) do
       {:ok, new_state, delay_ms} ->
         serialized_state = GameStateSerializer.serialize(new_state)
@@ -398,15 +400,10 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
-  def handle_info({:game_over, winner, scores}, socket) do
-    room_code = socket.assigns.room_code
-
-    # Update room status to finished
-    RoomManager.update_room_status(room_code, :finished)
-
-    # Save game stats
-    save_game_stats(room_code, winner, scores)
-
+  def handle_info(
+        {:game_over, room_code, winner, scores},
+        %{assigns: %{room_code: room_code}} = socket
+      ) do
     # Broadcast game over to all players
     push(socket, "game_over", %{winner: winner, scores: scores})
 
@@ -797,62 +794,4 @@ defmodule PidroServerWeb.GameChannel do
 
   defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
   defp extract_state_update(_payload), do: :error
-
-  @spec save_game_stats(String.t(), atom(), map()) :: :ok
-  defp save_game_stats(room_code, winner, scores) do
-    # Get room to extract player IDs and game start time
-    case RoomManager.get_room(room_code) do
-      {:ok, room} ->
-        # Get game state to extract bid information
-        game_state_result = GameAdapter.get_state(room_code)
-
-        bid_info =
-          case game_state_result do
-            {:ok, state} ->
-              # Extract bid and trump info from game state
-              %{
-                bid_amount: state[:bid_amount],
-                bid_team: state[:bid_team]
-              }
-
-            _ ->
-              %{bid_amount: nil, bid_team: nil}
-          end
-
-        # Calculate game duration (use current time - created_at as approximation)
-        duration_seconds =
-          DateTime.diff(DateTime.utc_now(), room.created_at, :second)
-
-        # Prepare stats attributes
-        player_ids = PidroServer.Games.Room.Positions.player_ids(room)
-        player_results = Stats.build_player_results(room.seats, winner)
-
-        stats_attrs = %{
-          room_code: room_code,
-          winner: winner,
-          final_scores: scores,
-          bid_amount: bid_info.bid_amount,
-          bid_team: bid_info.bid_team,
-          duration_seconds: duration_seconds,
-          completed_at: DateTime.utc_now(),
-          player_ids: player_ids,
-          player_results: player_results
-        }
-
-        # Save to database
-        case Stats.save_game_result(stats_attrs) do
-          {:ok, _stats} ->
-            Logger.info("Saved game stats for room #{room_code}")
-            :ok
-
-          {:error, changeset} ->
-            Logger.error("Failed to save game stats for room #{room_code}: #{inspect(changeset)}")
-            :ok
-        end
-
-      {:error, _} ->
-        Logger.error("Could not find room #{room_code} to save stats")
-        :ok
-    end
-  end
 end

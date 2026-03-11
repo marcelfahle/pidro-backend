@@ -186,7 +186,7 @@ defmodule PidroServer.Games.GameAdapter do
   ## Message Types
 
     - `{:state_update, room_code, %{state: new_state, transition_delay_ms: delay_ms}}` - Game state changed
-    - `{:game_over, winner, scores}` - Game ended
+    - `{:game_over, room_code, winner, scores}` - Game ended
 
   ## Parameters
 
@@ -328,8 +328,8 @@ defmodule PidroServer.Games.GameAdapter do
         {:state_update, room_code, payload}
       )
 
-      # Check if game is over and broadcast game_over message
-      if Map.get(new_state, :phase) == :game_over do
+      # The engine finishes at :complete; older callers may still use :game_over.
+      if Map.get(new_state, :phase) in [:complete, :game_over] do
         broadcast_game_over(room_code, new_state)
       end
 
@@ -348,12 +348,12 @@ defmodule PidroServer.Games.GameAdapter do
   @spec broadcast_game_over(String.t(), map()) :: :ok | {:error, term()}
   defp broadcast_game_over(room_code, state) do
     winner = Map.get(state, :winner)
-    scores = Map.get(state, :scores)
+    scores = Map.get(state, :scores) || Map.get(state, :cumulative_scores)
 
     Phoenix.PubSub.broadcast(
       PidroServer.PubSub,
       "game:#{room_code}",
-      {:game_over, winner, scores}
+      {:game_over, room_code, winner, scores}
     )
   end
 

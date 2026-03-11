@@ -264,7 +264,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
     Response containing user game statistics.
 
     Aggregates game-related metrics for a user including total games played,
-    win/loss records, win rate percentage, time spent playing, and average bid amounts.
+    win/loss records, abandonment metrics, time spent playing, and average bid amounts.
     All numeric fields are calculated from the user's game history.
     """
 
@@ -315,6 +315,26 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
               description: "Average bid amount across all games",
               minimum: 0.0,
               example: 10.5
+            },
+            games_abandoned: %Schema{
+              type: :integer,
+              description: "Total number of games abandoned after the reconnect grace period",
+              minimum: 0,
+              example: 3
+            },
+            abandonment_rate: %Schema{
+              type: :number,
+              format: :double,
+              description: "Abandonment rate as a decimal (0.0 to 1.0, or 0 if no games played)",
+              minimum: 0.0,
+              example: 0.071
+            },
+            last_abandoned_at: %Schema{
+              type: :string,
+              format: "date-time",
+              nullable: true,
+              description: "Most recent time the user abandoned a game after grace expired",
+              example: "2026-03-11T19:30:00Z"
             }
           },
           required: [
@@ -323,7 +343,10 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             :losses,
             :win_rate,
             :total_duration_seconds,
-            :average_bid
+            :average_bid,
+            :games_abandoned,
+            :abandonment_rate,
+            :last_abandoned_at
           ]
         }
       },
@@ -335,7 +358,10 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           "losses" => 17,
           "win_rate" => 0.595,
           "total_duration_seconds" => 12_600,
-          "average_bid" => 10.5
+          "average_bid" => 10.5,
+          "games_abandoned" => 3,
+          "abandonment_rate" => 0.071,
+          "last_abandoned_at" => "2026-03-11T19:30:00Z"
         }
       }
     })

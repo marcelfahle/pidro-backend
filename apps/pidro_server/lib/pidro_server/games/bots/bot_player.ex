@@ -116,7 +116,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   end
 
   @impl true
-  def handle_info({:game_over, _winner, _scores}, state) do
+  def handle_info({:game_over, _room_code, _winner, _scores}, state) do
     Logger.info("BotPlayer for room #{state.room_code}, position #{state.position} - Game over")
     {:noreply, %{state | move_scheduled?: false}}
   end

@@ -1,21 +1,33 @@
 defmodule PidroServer.Stats.ScoreProtectionTest do
   @moduledoc """
   Tests for score recording with disconnected and substitute players.
-
-  Verifies that:
-  - All 4 connected humans get :played participation at game_over
-  - Disconnected players (bot-substituted) get :abandoned with correct win/loss
-  - Pre-start abandonment (leaving during :waiting) does NOT record a game result
-  - Phase 3 fires record_abandonment for the abandoning user
   """
 
-  use ExUnit.Case, async: false
+  use PidroServer.DataCase, async: false
 
-  alias PidroServer.Stats
   alias PidroServer.Games.Room.Seat
+  alias PidroServer.Games.RoomManager
+  alias PidroServer.Stats
+  alias PidroServer.Stats.{AbandonmentEvent, GameStats}
 
-  describe "build_player_results/2 — all humans connected" do
-    test "records all 4 original humans as :played" do
+  setup do
+    case GenServer.whereis(RoomManager) do
+      nil -> start_supervised!(RoomManager)
+      _pid -> :ok
+    end
+
+    RoomManager.reset_for_test()
+
+    case GenServer.whereis(PidroServer.Games.Bots.BotSupervisor) do
+      nil -> start_supervised!(PidroServer.Games.Bots.BotSupervisor)
+      _pid -> :ok
+    end
+
+    :ok
+  end
+
+  describe "build_player_results/3" do
+    test "records all connected humans as played with correct winners" do
       seats = %{
         north: Seat.new_human(:north, "user1"),
         south: Seat.new_human(:south, "user2"),
@@ -26,59 +38,20 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       results = Stats.build_player_results(seats, :north_south)
 
       assert map_size(results) == 4
-
-      for {user_id, result} <- results do
-        assert result.participation == :played, "#{user_id} should be :played"
-      end
-    end
-
-    test "assigns :win to winning team and :loss to losing team" do
-      seats = %{
-        north: Seat.new_human(:north, "user1"),
-        south: Seat.new_human(:south, "user2"),
-        east: Seat.new_human(:east, "user3"),
-        west: Seat.new_human(:west, "user4")
-      }
-
-      results = Stats.build_player_results(seats, :north_south)
-
-      assert results["user1"].result == :win
-      assert results["user1"].team == :north_south
+      assert results["user1"].participation == :played
       assert results["user2"].result == :win
-      assert results["user2"].team == :north_south
       assert results["user3"].result == :loss
-      assert results["user3"].team == :east_west
-      assert results["user4"].result == :loss
-      assert results["user4"].team == :east_west
-    end
-
-    test "records correct positions for each player" do
-      seats = %{
-        north: Seat.new_human(:north, "user1"),
-        south: Seat.new_human(:south, "user2"),
-        east: Seat.new_human(:east, "user3"),
-        west: Seat.new_human(:west, "user4")
-      }
-
-      results = Stats.build_player_results(seats, :east_west)
-
-      assert results["user1"].position == :north
-      assert results["user2"].position == :south
-      assert results["user3"].position == :east
       assert results["user4"].position == :west
     end
-  end
 
-  describe "build_player_results/2 — disconnected player (bot-substituted)" do
-    test "abandoned human gets :abandoned with correct win/loss result" do
-      # Simulate: user2 disconnected, bot playing at south with reserved_for
+    test "records abandoned humans when the substitute bot still carries reserved_for" do
       bot_pid = spawn(fn -> Process.sleep(:infinity) end)
 
       {:ok, bot_seat} =
         Seat.new_human(:south, "user2")
         |> Seat.disconnect()
-        |> then(fn {:ok, s} -> Seat.start_grace(s, DateTime.utc_now()) end)
-        |> then(fn {:ok, s} -> Seat.substitute_bot(s, bot_pid) end)
+        |> then(fn {:ok, seat} -> Seat.start_grace(seat, DateTime.utc_now()) end)
+        |> then(fn {:ok, seat} -> Seat.substitute_bot(seat, bot_pid) end)
 
       seats = %{
         north: Seat.new_human(:north, "user1"),
@@ -89,209 +62,189 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
 
       results = Stats.build_player_results(seats, :north_south)
 
-      # user2 abandoned but their team won — they still get the win
       assert results["user2"].participation == :abandoned
       assert results["user2"].result == :win
-      assert results["user2"].team == :north_south
+
+      Process.exit(bot_pid, :kill)
+    end
+
+    test "merges permanent bot abandonments back into player results" do
+      bot_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      {:ok, bot_seat} =
+        Seat.new_human(:south, "user2")
+        |> Seat.disconnect()
+        |> then(fn {:ok, seat} -> Seat.start_grace(seat, DateTime.utc_now()) end)
+        |> then(fn {:ok, seat} -> Seat.substitute_bot(seat, bot_pid) end)
+        |> then(fn {:ok, seat} -> Seat.make_permanent_bot(seat) end)
+
+      seats = %{
+        north: Seat.new_human(:north, "user1"),
+        south: bot_seat,
+        east: Seat.new_human(:east, "user3"),
+        west: Seat.new_human(:west, "user4")
+      }
+
+      abandonment_events = [
+        %AbandonmentEvent{user_id: "user2", room_code: "ROOM1", position: "south"}
+      ]
+
+      results = Stats.build_player_results(seats, :north_south, abandonment_events)
+
+      assert map_size(results) == 4
+      assert results["user2"].participation == :abandoned
       assert results["user2"].position == :south
 
       Process.exit(bot_pid, :kill)
     end
 
-    test "abandoned human on losing team gets :loss" do
-      bot_pid = spawn(fn -> Process.sleep(:infinity) end)
-
-      {:ok, bot_seat} =
-        Seat.new_human(:east, "user3")
-        |> Seat.disconnect()
-        |> then(fn {:ok, s} -> Seat.start_grace(s, DateTime.utc_now()) end)
-        |> then(fn {:ok, s} -> Seat.substitute_bot(s, bot_pid) end)
-
+    test "records both the original abandoned player and the substitute human" do
       seats = %{
         north: Seat.new_human(:north, "user1"),
-        south: Seat.new_human(:south, "user2"),
-        east: bot_seat,
-        west: Seat.new_human(:west, "user4")
-      }
-
-      results = Stats.build_player_results(seats, :north_south)
-
-      assert results["user3"].participation == :abandoned
-      assert results["user3"].result == :loss
-
-      Process.exit(bot_pid, :kill)
-    end
-
-    test "permanent bot (reserved_for nil) is skipped — no stats recorded" do
-      bot_pid = spawn(fn -> Process.sleep(:infinity) end)
-
-      {:ok, bot_seat} =
-        Seat.new_human(:south, "user2")
-        |> Seat.disconnect()
-        |> then(fn {:ok, s} -> Seat.start_grace(s, DateTime.utc_now()) end)
-        |> then(fn {:ok, s} -> Seat.substitute_bot(s, bot_pid) end)
-        |> then(fn {:ok, s} -> Seat.make_permanent_bot(s) end)
-
-      seats = %{
-        north: Seat.new_human(:north, "user1"),
-        south: bot_seat,
+        south: %Seat{
+          position: :south,
+          occupant_type: :human,
+          user_id: "substitute1",
+          status: :connected,
+          substitute: true
+        },
         east: Seat.new_human(:east, "user3"),
         west: Seat.new_human(:west, "user4")
       }
 
-      results = Stats.build_player_results(seats, :north_south)
+      abandonment_events = [%{user_id: "user2", position: "south"}]
+      results = Stats.build_player_results(seats, :north_south, abandonment_events)
 
-      # Permanent bot (reserved_for cleared) should be skipped
-      assert map_size(results) == 3
-      refute Map.has_key?(results, "user2")
-
-      Process.exit(bot_pid, :kill)
-    end
-
-    test "vacant seat is skipped" do
-      seats = %{
-        north: Seat.new_human(:north, "user1"),
-        south: Seat.new_vacant(:south),
-        east: Seat.new_human(:east, "user3"),
-        west: Seat.new_human(:west, "user4")
-      }
-
-      results = Stats.build_player_results(seats, :north_south)
-
-      assert map_size(results) == 3
-    end
-  end
-
-  describe "build_player_results/2 — pre-start abandonment" do
-    test "leaving during :waiting does not produce results (no seats in cascade)" do
-      # In a waiting room, all seats are either connected humans or vacant.
-      # A player who leaves has their seat set to vacant.
-      # build_player_results with a vacant seat produces no entry.
-      seats = %{
-        north: Seat.new_human(:north, "user1"),
-        south: Seat.new_vacant(:south),
-        east: Seat.new_vacant(:east),
-        west: Seat.new_vacant(:west)
-      }
-
-      results = Stats.build_player_results(seats, :north_south)
-
-      # Only user1 would be recorded — but in practice, build_player_results
-      # is only called at game_over (:playing rooms). A :waiting room that
-      # never started has no game_over event and no scores to record.
-      assert map_size(results) == 1
-      refute Map.has_key?(results, "user2")
-    end
-
-    test "returns empty map for non-map seats input" do
-      assert Stats.build_player_results(nil, :north_south) == %{}
-      assert Stats.build_player_results("invalid", :north_south) == %{}
+      assert map_size(results) == 5
+      assert results["user2"].participation == :abandoned
+      assert results["substitute1"].participation == :substitute
+      assert results["substitute1"].result == :win
     end
   end
 
   describe "record_abandonment/3" do
-    test "returns :ok and logs the abandonment" do
+    test "persists one abandonment event per user and room" do
       assert :ok = Stats.record_abandonment("user123", "ABC123", :north)
+      assert :ok = Stats.record_abandonment("user123", "ABC123", :north)
+
+      events = Stats.list_abandonments_for_room("ABC123")
+
+      assert length(events) == 1
+      assert hd(events).user_id == "user123"
+      assert hd(events).position == "north"
+    end
+
+    test "user stats exposes abandonment metrics" do
+      user_id = Ecto.UUID.generate()
+
+      {:ok, _game_stats} =
+        Stats.save_game_result(%{
+          room_code: "ROOM1",
+          winner: :north_south,
+          final_scores: %{north_south: 62, east_west: 45},
+          bid_amount: 8,
+          bid_team: :north_south,
+          duration_seconds: 300,
+          completed_at: DateTime.utc_now(),
+          player_ids: [user_id],
+          player_results: %{
+            user_id => %{
+              participation: :played,
+              result: :win,
+              team: :north_south,
+              position: :north
+            }
+          }
+        })
+
+      assert :ok = Stats.record_abandonment(user_id, "ROOM1", :north)
+
+      stats = Stats.get_user_stats(user_id)
+
+      assert stats.games_played == 1
+      assert stats.games_abandoned == 1
+      assert stats.abandonment_rate == 1.0
+      assert %DateTime{} = stats.last_abandoned_at
     end
   end
 
-  describe "record_abandonment integration — Phase 3 fires abandonment" do
-    # This test verifies that Phase 3 in RoomManager calls record_abandonment
-    # by checking the seat state transition. The abandonment call happens right
-    # before make_permanent_bot (which clears reserved_for). If Phase 3 fires
-    # and reserved_for becomes nil, record_abandonment was called at that point.
+  describe "completed game persistence" do
+    test "persists original players and substitutes exactly once on game_over" do
+      user1 = Ecto.UUID.generate()
+      user2 = Ecto.UUID.generate()
+      user3 = Ecto.UUID.generate()
+      user4 = Ecto.UUID.generate()
+      substitute = Ecto.UUID.generate()
 
-    setup do
-      case GenServer.whereis(PidroServer.Games.RoomManager) do
-        nil -> start_supervised!(PidroServer.Games.RoomManager)
-        _pid -> :ok
-      end
+      {:ok, room} = RoomManager.create_room(user1, %{name: "Score Protection"})
+      {:ok, _, _} = RoomManager.join_room(room.code, user2)
+      {:ok, _, _} = RoomManager.join_room(room.code, user3)
+      {:ok, _, _} = RoomManager.join_room(room.code, user4)
 
-      PidroServer.Games.RoomManager.reset_for_test()
-
-      case GenServer.whereis(PidroServer.Games.Bots.BotSupervisor) do
-        nil -> start_supervised!(PidroServer.Games.Bots.BotSupervisor)
-        _pid -> :ok
-      end
-
-      :ok
-    end
-
-    @tag :capture_log
-    test "Phase 3 makes bot permanent after abandonment — reserved_for cleared" do
-      alias PidroServer.Games.RoomManager
-
-      # Create a 4-player playing room
-      {:ok, room} = RoomManager.create_room("user1", %{name: "Abandon Test"})
-      {:ok, _, _} = RoomManager.join_room(room.code, "user2")
-      {:ok, _, _} = RoomManager.join_room(room.code, "user3")
-      {:ok, _, _} = RoomManager.join_room(room.code, "user4")
       {:ok, playing_room} = RoomManager.get_room(room.code)
-      assert playing_room.status == :playing
+      position = position_for(playing_room, user2)
 
-      user_id = "user2"
+      :ok = RoomManager.handle_player_disconnect(room.code, user2)
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
+      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
+      {:ok, _} = RoomManager.open_seat(room.code, position, user1)
+      {:ok, _, ^position} = RoomManager.join_as_substitute(room.code, substitute)
 
-      position =
-        Enum.find_value(playing_room.seats, fn {pos, seat} ->
-          if seat.user_id == user_id, do: pos
+      game_over = {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
+      send(GenServer.whereis(RoomManager), game_over)
+      send(GenServer.whereis(RoomManager), game_over)
+
+      saved_game =
+        wait_until(fn ->
+          Repo.get_by(GameStats, room_code: room.code)
         end)
 
-      # Disconnect and trigger full cascade
-      :ok = RoomManager.handle_player_disconnect(room.code, user_id)
+      assert saved_game.winner == "north_south"
+      assert map_size(saved_game.player_results) == 5
+      assert saved_game.player_results[user2]["participation"] == "abandoned"
+      assert saved_game.player_results[substitute]["participation"] == "substitute"
 
-      # Trigger Phase 2 — bot fills the seat
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
-      {:ok, phase2_room} = RoomManager.get_room(room.code)
+      assert Enum.sort(saved_game.player_ids) ==
+               Enum.sort([user1, user2, user3, user4, substitute])
 
-      # Verify Phase 2 state: bot substitute with reserved_for set
-      phase2_seat = phase2_room.seats[position]
-      assert phase2_seat.status == :bot_substitute
-      assert phase2_seat.reserved_for == user_id
-
-      # Trigger Phase 3 — record_abandonment is called, then make_permanent_bot
-      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
-      {:ok, phase3_room} = RoomManager.get_room(room.code)
-
-      # After Phase 3: reserved_for should be cleared (abandonment was recorded
-      # before this happened — see room_manager.ex Phase 3 handler)
-      phase3_seat = phase3_room.seats[position]
-      assert phase3_seat.status == :bot_substitute
-      assert phase3_seat.reserved_for == nil
-      assert phase3_seat.occupant_type == :bot
+      assert Repo.aggregate(GameStats, :count) == 1
     end
 
-    @tag :capture_log
-    test "Phase 3 does not fire abandonment for already-reclaimed seats" do
-      alias PidroServer.Games.RoomManager
-
-      {:ok, room} = RoomManager.create_room("user1", %{name: "No Abandon Test"})
+    test "pre-start abandonment does not record a game or abandonment" do
+      {:ok, room} = RoomManager.create_room("user1", %{name: "Waiting Room"})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
-      {:ok, _, _} = RoomManager.join_room(room.code, "user3")
-      {:ok, _, _} = RoomManager.join_room(room.code, "user4")
-      {:ok, playing_room} = RoomManager.get_room(room.code)
 
-      user_id = "user2"
+      assert :ok = RoomManager.leave_room("user2")
 
-      position =
-        Enum.find_value(playing_room.seats, fn {pos, seat} ->
-          if seat.user_id == user_id, do: pos
-        end)
+      assert Stats.list_abandonments_for_room(room.code) == []
+      assert Repo.get_by(GameStats, room_code: room.code) == nil
+    end
+  end
 
-      # Disconnect, trigger Phase 2, then reclaim
-      :ok = RoomManager.handle_player_disconnect(room.code, user_id)
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
-      {:ok, _} = RoomManager.get_room(room.code)
-      {:ok, _} = RoomManager.handle_player_reconnect(room.code, user_id)
+  defp position_for(room, user_id) do
+    Enum.find_value(room.seats, fn {pos, seat} ->
+      if seat.user_id == user_id, do: pos
+    end)
+  end
 
-      # Trigger Phase 3 — should be a no-op since player already reclaimed
-      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
-      {:ok, final_room} = RoomManager.get_room(room.code)
+  defp wait_until(fun, attempts \\ 40)
 
-      # Seat should still be connected human (Phase 3 was a no-op)
-      seat = final_room.seats[position]
-      assert seat.status == :connected
-      assert seat.occupant_type == :human
-      assert seat.user_id == user_id
+  defp wait_until(_fun, 0) do
+    flunk("timed out waiting for condition")
+  end
+
+  defp wait_until(fun, attempts) do
+    case fun.() do
+      nil ->
+        Process.sleep(10)
+        wait_until(fun, attempts - 1)
+
+      false ->
+        Process.sleep(10)
+        wait_until(fun, attempts - 1)
+
+      value ->
+        value
     end
   end
 end

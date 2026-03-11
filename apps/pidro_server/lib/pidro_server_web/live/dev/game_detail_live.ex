@@ -104,10 +104,15 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
-  def handle_info({:state_update, room_code, payload}, %{assigns: %{room_code: room_code}} = socket) do
+  def handle_info(
+        {:state_update, room_code, payload},
+        %{assigns: %{room_code: room_code}} = socket
+      ) do
     case extract_state_update(payload) do
       {:ok, new_state} ->
-        legal_actions = get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
+        legal_actions =
+          get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
+
         events = process_events(new_state.events)
 
         {:noreply,
@@ -122,7 +127,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
-  def handle_info({:game_over, _winner, _scores}, socket) do
+  def handle_info({:game_over, _room_code, _winner, _scores}, socket) do
     # Reload the game state to get the final state
     game_state = get_game_state(socket.assigns.room_code)
 

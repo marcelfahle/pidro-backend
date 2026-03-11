@@ -11,7 +11,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
   and phase timers are properly scheduled and cancelled.
   """
 
-  use ExUnit.Case, async: false
+  use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.RoomManager
 

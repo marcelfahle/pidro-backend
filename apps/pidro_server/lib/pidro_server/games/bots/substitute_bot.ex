@@ -82,7 +82,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   end
 
   @impl true
-  def handle_info({:game_over, _winner, _scores}, state) do
+  def handle_info({:game_over, _room_code, _winner, _scores}, state) do
     Logger.info("SubstituteBot (#{state.room_code}/#{state.position}) - Game over")
     {:noreply, %{state | move_scheduled?: false}}
   end
@@ -155,5 +155,4 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
   defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
   defp extract_state_update(_payload), do: :error
-
 end
