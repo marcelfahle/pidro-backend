@@ -65,7 +65,7 @@ defmodule PidroServerWeb.LobbyChannel do
     user_id = socket.assigns.user_id
 
     # Get current available room list (excludes finished and closed)
-    rooms = RoomManager.list_rooms(:available)
+    rooms = RoomManager.list_rooms(:available) |> Enum.filter(&RoomManager.visible_in_lobby?/1)
 
     # Get categorized lobby data for this user
     lobby = RoomManager.list_lobby(user_id)
@@ -95,27 +95,31 @@ defmodule PidroServerWeb.LobbyChannel do
   def handle_info(msg, socket)
 
   def handle_info({:room_created, room}, socket) do
-    serialized = serialize_room_with_users(room)
-    category = determine_category(room, socket.assigns.user_id)
+    if RoomManager.visible_in_lobby?(room) do
+      serialized = serialize_room_with_users(room)
+      category = determine_category(room, socket.assigns.user_id)
 
-    push(socket, "room_created", %{
-      room: serialized,
-      category: category,
-      action: "added"
-    })
+      push(socket, "room_created", %{
+        room: serialized,
+        category: category,
+        action: "added"
+      })
+    end
 
     {:noreply, socket}
   end
 
   def handle_info({:room_updated, room}, socket) do
-    serialized = serialize_room_with_users(room)
-    category = determine_category(room, socket.assigns.user_id)
+    if RoomManager.visible_in_lobby?(room) do
+      serialized = serialize_room_with_users(room)
+      category = determine_category(room, socket.assigns.user_id)
 
-    push(socket, "room_updated", %{
-      room: serialized,
-      category: category,
-      action: "updated"
-    })
+      push(socket, "room_updated", %{
+        room: serialized,
+        category: category,
+        action: "updated"
+      })
+    end
 
     {:noreply, socket}
   end

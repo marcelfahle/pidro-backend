@@ -11,7 +11,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
   Rooms with zero connected humans appear in no category.
   """
 
-  use ExUnit.Case, async: false
+  use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.RoomManager
 
@@ -120,6 +120,16 @@ defmodule PidroServer.Games.LobbyFilteringTest do
       codes = Enum.map(lobby.open_tables, & &1.code)
       assert room1.code in codes
       assert room2.code in codes
+    end
+
+    test "does not return single-player tables" do
+      _solo_room = create_waiting_room("solo_host", %{single_player: true})
+      room = create_waiting_room("host1")
+
+      lobby = RoomManager.list_lobby(nil)
+
+      assert length(lobby.open_tables) == 1
+      assert hd(lobby.open_tables).code == room.code
     end
   end
 

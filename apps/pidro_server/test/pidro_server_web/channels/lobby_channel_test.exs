@@ -70,6 +70,15 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert created_room.metadata.name == "Epic Game"
       assert created_room.metadata.difficulty == "hard"
     end
+
+    test "does not return single-player rooms on join", %{socket: socket, user: user} do
+      {:ok, solo_room} = RoomManager.create_room(user.id, %{name: "Solo", single_player: true})
+
+      {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      assert %{rooms: rooms} = reply
+      refute Enum.any?(rooms, fn room -> room.code == solo_room.code end)
+    end
   end
 
   describe "presence tracking" do
@@ -101,6 +110,22 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert created_room.code == room.code
     end
 
+    test "does not broadcast single-player room creation", %{socket: socket} do
+      {:ok, _reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      {:ok, other_user} =
+        Accounts.Auth.register_user(%{
+          username: "solo_creator",
+          email: "solo_creator@test.com",
+          password: "password123"
+        })
+
+      {:ok, _room} =
+        RoomManager.create_room(other_user.id, %{name: "Solo Table", single_player: true})
+
+      refute_push "room_created", _payload, 200
+    end
+
     test "broadcasts when player joins room", %{socket: socket, user: user} do
       # Create initial room
       {:ok, room} = RoomManager.create_room(user.id, %{name: "Test Room"})
@@ -118,7 +143,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
       {:ok, _, _} = RoomManager.join_room(room.code, other_user.id)
 
       # Should receive room_updated push
-      assert_push "room_updated", %{room: updated_room}, 1000
+      %{room: updated_room} = assert_push_for_room("room_updated", room.code)
       assert updated_room.code == room.code
       assert updated_room.player_count == 2
     end
@@ -227,6 +252,22 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert is_binary(serialized_room.created_at)
       assert serialized_room.metadata.name == "Test Room"
       assert serialized_room.metadata.mode == "competitive"
+    end
+  end
+
+  defp assert_push_for_room(event, room_code, attempts \\ 5)
+
+  defp assert_push_for_room(event, room_code, 0) do
+    flunk("timed out waiting for #{event} for room #{room_code}")
+  end
+
+  defp assert_push_for_room(event, room_code, attempts) do
+    assert_push ^event, payload, 1000
+
+    if payload.room.code == room_code do
+      payload
+    else
+      assert_push_for_room(event, room_code, attempts - 1)
     end
   end
 end

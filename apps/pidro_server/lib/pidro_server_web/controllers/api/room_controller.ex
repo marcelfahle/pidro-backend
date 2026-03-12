@@ -498,7 +498,10 @@ defmodule PidroServerWeb.API.RoomController do
   @spec index(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def index(conn, params) do
     filter = parse_filter(params["filter"])
-    rooms = RoomManager.list_rooms(filter)
+
+    rooms =
+      RoomManager.list_rooms(filter)
+      |> Enum.filter(&RoomManager.visible_in_lobby?/1)
 
     conn
     |> put_view(RoomJSON)
@@ -1142,10 +1145,22 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_metadata(room_params) when is_map(room_params) do
     %{}
     |> maybe_put(:name, room_params["name"])
+    |> maybe_put(:single_player, single_player_room_params?(room_params))
   end
 
   defp parse_metadata(_), do: %{}
 
+  defp single_player_room_params?(room_params) when is_map(room_params) do
+    case Map.get(room_params, "seats") do
+      seats when is_map(seats) ->
+        Enum.all?(~w(seat_2 seat_3 seat_4), fn key -> Map.get(seats, key) == "ai" end)
+
+      _ ->
+        false
+    end
+  end
+
   defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, false), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

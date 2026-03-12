@@ -158,6 +158,24 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert updated_room.status == :waiting
       assert Positions.count(updated_room) == 3
     end
+
+    test "closes a single-player table when the human leaves mid-game" do
+      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+
+      wait_until(fn ->
+        case RoomManager.get_room(room.code) do
+          {:ok, %{status: :playing}} -> true
+          _ -> false
+        end
+      end)
+
+      :ok = RoomManager.leave_room("user1")
+
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
   end
 
   describe "handle_player_disconnect/2" do
@@ -218,6 +236,24 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert Positions.has_player?(updated_room, "user1")
       assert Positions.has_player?(updated_room, "user2")
       assert Positions.has_player?(updated_room, "user3")
+    end
+
+    test "closes a single-player table when the human disconnects during play" do
+      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+
+      wait_until(fn ->
+        case RoomManager.get_room(room.code) do
+          {:ok, %{status: :playing}} -> true
+          _ -> false
+        end
+      end)
+
+      :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
     end
   end
 
@@ -551,6 +587,16 @@ defmodule PidroServer.Games.RoomManagerTest do
   end
 
   describe "turn timers" do
+    test "does not start turn timers for single-player rooms" do
+      room_code = create_playing_room(%{single_player: true})
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      _bidding_state = advance_room_to_bidding(room_code)
+
+      assert {:ok, nil} = RoomManager.get_turn_timer(room_code)
+      refute_receive {:turn_timer_started, _payload}, 100
+    end
+
     test "starts a room-owned timer for all-human dealer selection" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       room_code = room.code
@@ -586,7 +632,10 @@ defmodule PidroServer.Games.RoomManagerTest do
       send(
         RoomManager,
         {:state_update, room_code,
-         %{state: %{bidding_state | events: bidding_state.events ++ [:synthetic_window]}, transition_delay_ms: 0}}
+         %{
+           state: %{bidding_state | events: bidding_state.events ++ [:synthetic_window]},
+           transition_delay_ms: 0
+         }}
       )
 
       assert_receive {:turn_timer_cancelled, cancelled}, 200
@@ -614,7 +663,10 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, paused_room} = RoomManager.get_room(room_code)
       assert paused_room.turn_timer == nil
       assert paused_room.seats[bidding_state.current_turn].status == :reconnecting
-      assert paused_room.paused_turn_timer.key == {:seat, bidding_state.current_turn, :bidding, length(bidding_state.events)}
+
+      assert paused_room.paused_turn_timer.key ==
+               {:seat, bidding_state.current_turn, :bidding, length(bidding_state.events)}
+
       assert paused_room.paused_turn_timer.remaining_ms > 0
 
       assert {:ok, nil} = RoomManager.get_turn_timer(room_code)
@@ -681,7 +733,8 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       send(
         RoomManager,
-        {:turn_timer_expired, room_code, timer.timer_id, {:seat, timer.position, timer.phase, timer.event_seq}}
+        {:turn_timer_expired, room_code, timer.timer_id,
+         {:seat, timer.position, timer.phase, timer.event_seq}}
       )
 
       assert_receive {:turn_auto_played, payload}, 200
@@ -693,7 +746,8 @@ defmodule PidroServer.Games.RoomManagerTest do
       updated_room =
         wait_until(fn ->
           case RoomManager.get_room(room_code) do
-            {:ok, %{seats: %{^position => seat}} = updated_room} when seat.status == :reconnecting ->
+            {:ok, %{seats: %{^position => seat}} = updated_room}
+            when seat.status == :reconnecting ->
               updated_room
 
             _ ->
@@ -714,7 +768,8 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       send(
         RoomManager,
-        {:turn_timer_expired, room_code, timer.timer_id + 1_000, {:seat, timer.position, timer.phase, timer.event_seq}}
+        {:turn_timer_expired, room_code, timer.timer_id + 1_000,
+         {:seat, timer.position, timer.phase, timer.event_seq}}
       )
 
       refute_receive {:turn_auto_played, _payload}, 50
@@ -963,8 +1018,8 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
   end
 
-  defp create_playing_room do
-    {:ok, room} = RoomManager.create_room("user1", %{})
+  defp create_playing_room(metadata \\ %{}) do
+    {:ok, room} = RoomManager.create_room("user1", metadata)
     room_code = room.code
 
     {:ok, _, _} = RoomManager.join_room(room_code, "user2")

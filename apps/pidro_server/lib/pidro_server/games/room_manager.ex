@@ -278,6 +278,22 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Returns true when the room represents a single-player table.
+  """
+  @spec single_player_room?(Room.t()) :: boolean()
+  def single_player_room?(%Room{metadata: metadata}) when is_map(metadata) do
+    truthy_metadata?(metadata, :single_player)
+  end
+
+  def single_player_room?(%Room{}), do: false
+
+  @doc """
+  Returns true when the room should appear in lobby browsing surfaces.
+  """
+  @spec visible_in_lobby?(Room.t()) :: boolean()
+  def visible_in_lobby?(%Room{} = room), do: not single_player_room?(room)
+
+  @doc """
   Returns categorized lobby data for the given user.
 
   ## Categories
@@ -825,6 +841,11 @@ defmodule PidroServer.Games.RoomManager do
         %Room{} = room = state.rooms[room_code]
 
         cond do
+          single_player_human_player?(room, player_id) ->
+            Logger.info("Player #{player_id} left single-player room #{room_code}, closing room")
+            new_state = remove_room(state, room_code)
+            {:reply, :ok, new_state}
+
           # Owner leaving a :playing room — promote ownership, then handle leave
           room.host_id == player_id && room.status == :playing ->
             {room_after_promote, promoted?} =
@@ -940,7 +961,11 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_call({:list_lobby, user_id}, _from, %State{} = state) do
-    rooms = Map.values(state.rooms)
+    rooms =
+      state.rooms
+      |> Map.values()
+      |> Enum.filter(&visible_in_lobby?/1)
+
     lobby = categorize_lobby(rooms, user_id)
     {:reply, lobby, state}
   end
@@ -1215,19 +1240,28 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        case disconnect_player(state, room, room_code, user_id) do
-          {:ok, updated_room, updated_state} ->
-            Logger.info(
-              "Player #{user_id} disconnected from room #{room_code}, grace period started"
-            )
+        if single_player_human_player?(room, user_id) do
+          Logger.info(
+            "Player #{user_id} disconnected from single-player room #{room_code}, closing room"
+          )
 
-            broadcast_room(room_code, updated_room)
-            broadcast_lobby_event({:room_updated, updated_room})
+          new_state = remove_room(state, room_code)
+          {:reply, :ok, new_state}
+        else
+          case disconnect_player(state, room, room_code, user_id) do
+            {:ok, updated_room, updated_state} ->
+              Logger.info(
+                "Player #{user_id} disconnected from room #{room_code}, grace period started"
+              )
 
-            {:reply, :ok, updated_state}
+              broadcast_room(room_code, updated_room)
+              broadcast_lobby_event({:room_updated, updated_room})
 
-          {:error, reason, updated_state} ->
-            {:reply, {:error, reason}, updated_state}
+              {:reply, :ok, updated_state}
+
+            {:error, reason, updated_state} ->
+              {:reply, {:error, reason}, updated_state}
+          end
         end
     end
   end
@@ -2392,6 +2426,31 @@ defmodule PidroServer.Games.RoomManager do
     Enum.filter(rooms, &(&1.status in [:waiting, :ready, :playing]))
   end
 
+  defp truthy_metadata?(metadata, key) when is_map(metadata) do
+    case Map.get(metadata, key) || Map.get(metadata, Atom.to_string(key)) do
+      true -> true
+      "true" -> true
+      _ -> false
+    end
+  end
+
+  defp single_player_human_player?(%Room{} = room, player_id) do
+    if single_player_room?(room) do
+      case Positions.get_position(room, player_id) do
+        nil ->
+          false
+
+        position ->
+          case Map.get(room.seats, position) do
+            %Seat{occupant_type: :human, substitute: false} -> true
+            _ -> false
+          end
+      end
+    else
+      false
+    end
+  end
+
   @spec categorize_lobby([Room.t()], String.t() | nil) :: %{
           my_rejoinable: [Room.t()],
           open_tables: [Room.t()],
@@ -2733,34 +2792,38 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp current_action_window(%Room{} = room, game_state) do
-    phase = Map.get(game_state, :phase)
-    event_seq = length(Map.get(game_state, :events, []))
+    if single_player_room?(room) do
+      :none
+    else
+      phase = Map.get(game_state, :phase)
+      event_seq = length(Map.get(game_state, :events, []))
 
-    cond do
-      phase == :dealer_selection and all_human_table?(room) ->
-        case first_connected_human_position(room) do
-          nil ->
+      cond do
+        phase == :dealer_selection and all_human_table?(room) ->
+          case first_connected_human_position(room) do
+            nil ->
+              :none
+
+            actor_position ->
+              {:ok, {:room, :dealer_selection, event_seq}, :room, actor_position,
+               :dealer_selection, Lifecycle.config(:turn_timer_play_ms)}
+          end
+
+        phase in [:bidding, :declaring, :playing, :second_deal] ->
+          position = Map.get(game_state, :current_turn)
+          seat = position && Map.get(room.seats, position)
+          actions = if position, do: Engine.legal_actions(game_state, position), else: []
+
+          if seat && Seat.connected_human?(seat) && actions != [] do
+            {:ok, {:seat, position, phase, event_seq}, :seat, position, phase,
+             turn_timer_duration_ms(phase)}
+          else
             :none
+          end
 
-          actor_position ->
-            {:ok, {:room, :dealer_selection, event_seq}, :room, actor_position, :dealer_selection,
-             Lifecycle.config(:turn_timer_play_ms)}
-        end
-
-      phase in [:bidding, :declaring, :playing, :second_deal] ->
-        position = Map.get(game_state, :current_turn)
-        seat = position && Map.get(room.seats, position)
-        actions = if position, do: Engine.legal_actions(game_state, position), else: []
-
-        if seat && Seat.connected_human?(seat) && actions != [] do
-          {:ok, {:seat, position, phase, event_seq}, :seat, position, phase,
-           turn_timer_duration_ms(phase)}
-        else
+        true ->
           :none
-        end
-
-      true ->
-        :none
+      end
     end
   end
 
