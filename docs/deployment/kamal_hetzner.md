@@ -9,7 +9,7 @@ The Hetzner host does not need Elixir installed. Kamal deploys the release image
 1. Create a GHCR token with package read/write access.
 2. Copy [.kamal/secrets-common.example](/Users/mf/code/pidro/_PIDRO2/code-ralph/pidro_backend/.kamal/secrets-common.example) to `.kamal/secrets-common` and fill in real values.
 3. Run `just bootstrap` to install Docker on the server and open `22`, `80`, and `443`.
-4. Create Route53 records for `play.pidro.online` before the first TLS deploy.
+4. Create Route53 records for `app.pidro.online` before the first TLS deploy.
 5. Run `just setup` to boot Postgres, push secrets, and deploy the app.
 6. Run `just migrate` after the first deploy or any schema change.
 
@@ -25,14 +25,14 @@ Required secrets:
 
 Create these records in the `pidro.online` hosted zone:
 
-- `A` record: `play.pidro.online` -> `95.217.3.224`
-- optional `AAAA` record: `play.pidro.online` -> `2a01:4f9:c013:e90d::1`
+- `A` record: `app.pidro.online` -> `95.217.3.224`
+- optional `AAAA` record: `app.pidro.online` -> `2a01:4f9:c013:e90d::1`
 
 Use a low TTL like `300` for the first cutover.
 
 ## Notes
 
-- [config/deploy.yml](/Users/mf/code/pidro/_PIDRO2/code-ralph/pidro_backend/config/deploy.yml) is now set to `play.pidro.online` with Kamal-managed Let's Encrypt TLS.
+- [config/deploy.yml](/Users/mf/code/pidro/_PIDRO2/code-ralph/pidro_backend/config/deploy.yml) is now set to `app.pidro.online` with Kamal-managed Let's Encrypt TLS.
 - Kamal’s proxy health check hits `/up`, which also verifies database connectivity.
 - Postgres runs as a Kamal accessory named `postgres`, and the app connects to it over the internal Docker network with `DB_HOST=postgres`.
 - Builds are configured to run on the Hetzner host as a remote `amd64` builder, which avoids local Apple Silicon emulation issues.

@@ -9,7 +9,7 @@ ssh:
   user: root
 
 proxy:
-  host: play.pidro.online
+  host: app.pidro.online
   ssl: true
   app_port: 4000
   healthcheck:
@@ -31,7 +31,7 @@ builder:
 env:
   clear:
     PHX_SERVER: "true"
-    PHX_HOST: "play.pidro.online"
+    PHX_HOST: "app.pidro.online"
     PORT: "4000"
     POOL_SIZE: "20"
     DB_HOST: postgres

@@ -37,4 +37,4 @@ health:
     curl -fsS http://{{server_ip}}/up
 
 health-domain:
-    curl -fsS https://play.pidro.online/up
+    curl -fsS https://app.pidro.online/up
