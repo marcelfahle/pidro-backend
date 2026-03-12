@@ -1,0 +1,56 @@
+service: pidro-backend
+image: marcelfahle/pidro-backend
+
+servers:
+  web:
+    - 95.217.3.224
+
+ssh:
+  user: root
+
+proxy:
+  app_port: 4000
+  healthcheck:
+    path: /up
+    interval: 3
+    timeout: 5
+
+registry:
+  server: ghcr.io
+  username: marcelfahle
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  dockerfile: Dockerfile
+  remote: ssh://root@95.217.3.224
+
+env:
+  clear:
+    PHX_SERVER: "true"
+    PHX_HOST: "95.217.3.224"
+    PORT: "4000"
+    POOL_SIZE: "20"
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    DB_NAME: pidro_prod
+    DB_USER: pidro
+  secret:
+    - SECRET_KEY_BASE
+    - POSTGRES_PASSWORD
+
+accessories:
+  postgres:
+    service: postgres
+    image: postgres:17
+    host: 95.217.3.224
+    port: "127.0.0.1:5432:5432"
+    env:
+      clear:
+        POSTGRES_DB: pidro_prod
+        POSTGRES_USER: pidro
+      secret:
+        - POSTGRES_PASSWORD
+    directories:
+      - postgres-data:/var/lib/postgresql/data

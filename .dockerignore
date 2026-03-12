@@ -1,0 +1,14 @@
+.git
+.github
+.claude
+.kamal
+.elixir_ls
+.playwright-mcp
+_build
+cover
+deps
+doc
+docs
+tmp
+erl_crash.dump
+.DS_Store

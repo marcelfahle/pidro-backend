@@ -19,6 +19,14 @@ erl_crash.dump
 # Also ignore archive artifacts (built via "mix archive.build").
 *.ez
 
+# Kamal secrets
+.kamal/secrets
+.kamal/secrets.*
+!.kamal/*.example
+
+# Local env files
+.env
+
 
 
 # macOS

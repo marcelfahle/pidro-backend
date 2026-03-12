@@ -57,10 +57,24 @@ end
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
-      raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
-      """
+      case {
+             System.get_env("DB_HOST"),
+             System.get_env("DB_NAME"),
+             System.get_env("DB_USER"),
+             System.get_env("DB_PASSWORD") || System.get_env("POSTGRES_PASSWORD")
+           } do
+        {host, database, user, password}
+        when is_binary(host) and is_binary(database) and is_binary(user) and is_binary(password) ->
+          port = System.get_env("DB_PORT") || "5432"
+
+          "ecto://#{URI.encode_www_form(user)}:#{URI.encode_www_form(password)}@#{host}:#{port}/#{database}"
+
+        _ ->
+          raise """
+          environment variable DATABASE_URL is missing.
+          Set DATABASE_URL directly, or provide DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD.
+          """
+      end
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 

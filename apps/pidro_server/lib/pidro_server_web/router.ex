@@ -24,6 +24,7 @@ defmodule PidroServerWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    get "/up", HealthController, :up
   end
 
   # OpenAPI documentation routes
