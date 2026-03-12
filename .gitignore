@@ -21,6 +21,7 @@ erl_crash.dump
 
 # Kamal secrets
 .kamal/secrets
+.kamal/secrets-common
 .kamal/secrets.*
 !.kamal/*.example
 
