@@ -1127,7 +1127,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
     positions
     |> Enum.reduce_while({:ok, []}, fn position, {:ok, pids} ->
       try do
-        case BotManager.start_bot(room_code, position, strategy, 1000) do
+        case BotManager.start_bot(room_code, position, strategy) do
           {:ok, pid} -> {:cont, {:ok, [pid | pids]}}
           {:error, reason} -> {:halt, {:error, reason}}
         end

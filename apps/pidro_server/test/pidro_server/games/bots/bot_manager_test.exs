@@ -106,6 +106,28 @@ defmodule PidroServer.Games.Bots.BotManagerTest do
     end
   end
 
+  describe "pacing policy" do
+    test "start_bot/3 uses runtime pacing with no fixed override" do
+      {:ok, room} = RoomManager.create_room("host_user", %{})
+
+      {:ok, pid} = BotManager.start_bot(room.code, :east, :random)
+
+      assert :sys.get_state(pid).delay_ms_override == nil
+
+      cleanup_bots(room.code)
+    end
+
+    test "start_bot/4 keeps an explicit fixed delay override for dev callers" do
+      {:ok, room} = RoomManager.create_room("host_user", %{})
+
+      {:ok, pid} = BotManager.start_bot(room.code, :east, :random, 0)
+
+      assert :sys.get_state(pid).delay_ms_override == 0
+
+      cleanup_bots(room.code)
+    end
+  end
+
   describe "start_bots/4 returns error when not enough seats" do
     test "host at north, request 4 bots — only 3 seats available" do
       {:ok, room} = RoomManager.create_room("host_user", %{})

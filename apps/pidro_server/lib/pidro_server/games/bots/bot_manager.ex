@@ -16,7 +16,8 @@ defmodule PidroServer.Games.Bots.BotManager do
 
   ## Usage
 
-      {:ok, pid} = BotManager.start_bot("A3F9", :north, :random, 1000)
+      {:ok, pid} = BotManager.start_bot("A3F9", :north, :random)
+      {:ok, pid} = BotManager.start_bot("A3F9", :north, :random, 250)
       :ok = BotManager.stop_bot("A3F9", :north)
       :ok = BotManager.stop_all_bots("A3F9")
       :ok = BotManager.pause_bot("A3F9", :north)
@@ -36,9 +37,16 @@ defmodule PidroServer.Games.Bots.BotManager do
     GenServer.start_link(__MODULE__, :ok, Keyword.merge([name: __MODULE__], opts))
   end
 
-  @spec start_bots(String.t(), pos_integer(), atom(), non_neg_integer()) ::
+  @spec start_bots(String.t(), pos_integer(), atom()) ::
           {:ok, [pid()]} | {:error, term()}
-  def start_bots(room_code, bot_count, strategy, delay_ms \\ 1000)
+  def start_bots(room_code, bot_count, strategy)
+      when bot_count >= 1 and bot_count <= 4 do
+    start_bots(room_code, bot_count, strategy, nil)
+  end
+
+  @spec start_bots(String.t(), pos_integer(), atom(), non_neg_integer() | nil) ::
+          {:ok, [pid()]} | {:error, term()}
+  def start_bots(room_code, bot_count, strategy, delay_ms)
       when bot_count >= 1 and bot_count <= 4 do
     alias PidroServer.Games.RoomManager
     alias PidroServer.Games.Room.Positions
@@ -65,12 +73,19 @@ defmodule PidroServer.Games.Bots.BotManager do
     end
   end
 
-  @spec start_bot(String.t(), atom(), atom(), non_neg_integer()) ::
+  @spec start_bot(String.t(), atom(), atom()) ::
+          {:ok, pid()} | {:error, term()}
+  def start_bot(room_code, position, strategy)
+      when position in [:north, :east, :south, :west] and strategy in [:random, :basic, :smart] do
+    start_bot(room_code, position, strategy, nil)
+  end
+
+  @spec start_bot(String.t(), atom(), atom(), non_neg_integer() | nil) ::
           {:ok, pid()} | {:error, term()}
   def start_bot(room_code, position, strategy, delay_ms)
       when position in [:north, :east, :south, :west] and
              strategy in [:random, :basic, :smart] and
-             is_integer(delay_ms) and delay_ms >= 0 and delay_ms <= 5000 do
+             (is_nil(delay_ms) or (is_integer(delay_ms) and delay_ms >= 0 and delay_ms <= 5000)) do
     GenServer.call(__MODULE__, {:start_bot, room_code, position, strategy, delay_ms})
   end
 
@@ -115,10 +130,10 @@ defmodule PidroServer.Games.Bots.BotManager do
         {:reply, {:error, :already_exists}, state}
 
       [] ->
-        bot_spec = {
-          PidroServer.Games.Bots.BotPlayer,
-          room_code: room_code, position: position, strategy: strategy, delay_ms: delay_ms
-        }
+        bot_spec =
+          {PidroServer.Games.Bots.BotPlayer,
+           [room_code: room_code, position: position, strategy: strategy]
+           |> maybe_put_delay_override(delay_ms)}
 
         case DynamicSupervisor.start_child(PidroServer.Games.Bots.BotSupervisor, bot_spec) do
           {:ok, pid} ->
@@ -130,7 +145,7 @@ defmodule PidroServer.Games.Bots.BotManager do
             new_monitors = Map.put(state.monitors, ref, {room_code, position, pid})
 
             Logger.info(
-              "Started bot for room #{room_code}, position #{position}, strategy #{strategy}, delay #{delay_ms}ms"
+              "Started bot for room #{room_code}, position #{position}, strategy #{strategy}, pacing #{format_pacing(delay_ms)}"
             )
 
             {:reply, {:ok, pid}, %{state | bots: new_bots, monitors: new_monitors}}
@@ -286,4 +301,10 @@ defmodule PidroServer.Games.Bots.BotManager do
       Map.put(positions, position, bot_info)
     end)
   end
+
+  defp maybe_put_delay_override(opts, nil), do: opts
+  defp maybe_put_delay_override(opts, delay_ms), do: Keyword.put(opts, :delay_ms, delay_ms)
+
+  defp format_pacing(nil), do: "runtime"
+  defp format_pacing(delay_ms), do: "#{delay_ms}ms fixed"
 end

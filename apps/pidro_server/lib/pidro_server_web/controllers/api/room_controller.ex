@@ -1100,7 +1100,7 @@ defmodule PidroServerWeb.API.RoomController do
   #
   # The host occupies the first position (:north). Remaining positions (:east, :south, :west)
   # correspond to seat_2, seat_3, seat_4. For each seat configured as "ai", a bot is started
-  # via BotManager which will join the room and trigger auto-start when all seats are filled.
+  # via BotManager which joins the room and uses the shared runtime pacing config.
   @spec start_bots_for_room(RoomManager.Room.t(), map()) :: :ok
   defp start_bots_for_room(room, room_params) do
     seats = room_params["seats"] || %{}
@@ -1111,7 +1111,7 @@ defmodule PidroServerWeb.API.RoomController do
 
     for {seat_key, position} <- seat_positions,
         Map.get(seats, seat_key) == "ai" do
-      case BotManager.start_bot(room.code, position, difficulty, 1000) do
+      case BotManager.start_bot(room.code, position, difficulty) do
         {:ok, _pid} ->
           Logger.info("Started #{difficulty} bot at #{position} in room #{room.code}")
 
