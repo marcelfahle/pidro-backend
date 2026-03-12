@@ -1159,7 +1159,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               <option value="empty">-- Clear seat --</option>
               <%= for user <- @users do %>
                 <option value={user.id}>
-                  {user.display_name || user.id |> String.slice(0..11)}
+                  {user_label(user)}
                 </option>
               <% end %>
             </select>
@@ -1921,7 +1921,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
                   <option value="empty">-- Clear --</option>
                   <%= for user <- @users do %>
                     <option value={user.id}>
-                      {user.display_name || user.id |> String.slice(0..11)}
+                      {user_label(user)}
                     </option>
                   <% end %>
                 </select>
@@ -2011,6 +2011,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       </div>
     </div>
     """
+  end
+
+  defp user_label(user) do
+    Map.get(user, :display_name) || Map.get(user, :username) || String.slice(user.id, 0..11)
   end
 
   # DEV-1106: Render bot position configuration
