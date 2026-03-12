@@ -34,6 +34,7 @@ env:
     PHX_HOST: "app.pidro.online"
     PORT: "4000"
     POOL_SIZE: "20"
+    CORS_ORIGINS: "https://play.pidro.online,https://app.pidro.online"
     ENABLE_DEV_ROUTES: "true"
     DEV_BASIC_AUTH_USERNAME: "admin"
     DB_HOST: postgres

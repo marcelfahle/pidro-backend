@@ -106,7 +106,25 @@ if config_env() == :prod do
   host = System.get_env("PHX_HOST") || "example.com"
   port = String.to_integer(System.get_env("PORT") || "4000")
 
+  cors_origins =
+    case System.get_env("CORS_ORIGINS") do
+      nil -> :all
+      "*" -> :all
+      origins -> origins |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
+    end
+
+  check_origin =
+    case cors_origins do
+      :all ->
+        false
+
+      origins when is_list(origins) ->
+        ["https://#{host}", "http://#{host}" | origins]
+        |> Enum.uniq()
+    end
+
   config :pidro_server, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+  config :pidro_server, :cors_origins, cors_origins
 
   config :pidro_server, PidroServerWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
@@ -118,20 +136,8 @@ if config_env() == :prod do
       ip: {0, 0, 0, 0, 0, 0, 0, 0},
       port: port
     ],
+    check_origin: check_origin,
     secret_key_base: secret_key_base
-
-  # CORS configuration for mobile clients
-  # Set CORS_ORIGINS environment variable to comma-separated list of allowed origins
-  # Example: "https://app.example.com,https://mobile.example.com"
-  # Or set to "*" to allow all origins (not recommended for production)
-  cors_origins =
-    case System.get_env("CORS_ORIGINS") do
-      nil -> :all
-      "*" -> :all
-      origins -> String.split(origins, ",", trim: true)
-    end
-
-  config :pidro_server, :cors_origins, cors_origins
 
   # ## SSL Support
   #
