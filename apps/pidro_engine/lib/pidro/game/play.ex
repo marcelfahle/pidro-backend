@@ -634,7 +634,6 @@ defmodule Pidro.Game.Play do
     Enum.all?(active_positions, fn pos -> pos in played_positions end)
   end
 
-
   # Finds next non-eliminated player clockwise from current turn
   @spec find_next_active_player(game_state()) :: position()
   defp find_next_active_player(state) do
@@ -704,7 +703,7 @@ defmodule Pidro.Game.Play do
           |> Stream.iterate(&Types.next_position/1)
           |> Stream.drop(1)
           # Limit the stream to avoid infinite loops if everyone is cold
-          |> Stream.take(4) 
+          |> Stream.take(4)
           |> Enum.find(fn pos ->
             case players[pos] do
               %Player{eliminated?: false} -> true

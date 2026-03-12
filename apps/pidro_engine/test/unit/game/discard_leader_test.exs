@@ -14,10 +14,10 @@ defmodule Pidro.Game.DiscardLeaderTest do
       # Bug behavior: West leads (left of dealer)
 
       trump = :hearts
-      
+
       # South needs < 6 cards to trigger rob logic
-      south_hand = [{14, :hearts}, {13, :hearts}, {12, :hearts}] 
-      
+      south_hand = [{14, :hearts}, {13, :hearts}, {12, :hearts}]
+
       # Other players (hands irrelevant, just placeholders)
       players = %{
         south: %Types.Player{position: :south, team: :north_south, hand: south_hand},
@@ -26,27 +26,30 @@ defmodule Pidro.Game.DiscardLeaderTest do
         east: %Types.Player{position: :east, team: :east_west, hand: []}
       }
 
-      deck = [{10, :hearts}, {9, :hearts}, {8, :hearts}] # Cards for dealer to rob
+      # Cards for dealer to rob
+      deck = [{10, :hearts}, {9, :hearts}, {8, :hearts}]
 
       state = %GameState{
         phase: :second_deal,
         trump_suit: trump,
         current_dealer: :south,
-        current_turn: :south, # Dealer's turn to rob
+        # Dealer's turn to rob
+        current_turn: :south,
         players: players,
         deck: deck,
-        highest_bid: {:south, 14}, # South is highest bidder
+        # South is highest bidder
+        highest_bid: {:south, 14},
         discarded_cards: [],
         events: []
       }
 
       # Dealer selects 6 cards to keep
-      selected_cards = south_hand ++ deck 
-      
+      selected_cards = south_hand ++ deck
+
       {:ok, new_state} = Discard.dealer_rob_pack(state, selected_cards)
 
       assert new_state.phase == :playing
-      
+
       # The CRITICAL assertion:
       # Leader should be South (highest bidder), NOT West (left of dealer)
       assert new_state.current_turn == :south
@@ -62,10 +65,17 @@ defmodule Pidro.Game.DiscardLeaderTest do
       # Bug behavior: West leads
 
       trump = :hearts
-      
+
       # South has 6 cards -> no rob needed
-      south_hand = [{14, :hearts}, {13, :hearts}, {12, :hearts}, {11, :hearts}, {10, :hearts}, {9, :hearts}]
-      
+      south_hand = [
+        {14, :hearts},
+        {13, :hearts},
+        {12, :hearts},
+        {11, :hearts},
+        {10, :hearts},
+        {9, :hearts}
+      ]
+
       players = %{
         south: %Types.Player{position: :south, team: :north_south, hand: south_hand},
         west: %Types.Player{position: :west, team: :east_west, hand: []},
@@ -78,8 +88,10 @@ defmodule Pidro.Game.DiscardLeaderTest do
         trump_suit: trump,
         current_dealer: :south,
         players: players,
-        deck: [], # Empty deck, no rob possible
-        highest_bid: {:north, 10}, # North is highest bidder
+        # Empty deck, no rob possible
+        deck: [],
+        # North is highest bidder
+        highest_bid: {:north, 10},
         discarded_cards: [],
         events: []
       }

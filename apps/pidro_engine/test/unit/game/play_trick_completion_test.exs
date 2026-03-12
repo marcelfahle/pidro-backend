@@ -16,11 +16,27 @@ defmodule Pidro.Game.PlayTrickCompletionTest do
       # South: active, hasn't played yet
 
       trump = :hearts
+
       players = %{
         west: %Player{position: :west, team: :east_west, hand: [], eliminated?: true},
-        north: %Player{position: :north, team: :north_south, hand: [{8, :hearts}], eliminated?: false},
-        east: %Player{position: :east, team: :east_west, hand: [{10, :hearts}], eliminated?: false},
-        south: %Player{position: :south, team: :north_south, hand: [{7, :hearts}], eliminated?: false}
+        north: %Player{
+          position: :north,
+          team: :north_south,
+          hand: [{8, :hearts}],
+          eliminated?: false
+        },
+        east: %Player{
+          position: :east,
+          team: :east_west,
+          hand: [{10, :hearts}],
+          eliminated?: false
+        },
+        south: %Player{
+          position: :south,
+          team: :north_south,
+          hand: [{7, :hearts}],
+          eliminated?: false
+        }
       }
 
       # Trick history: West (cold), North, East
@@ -37,7 +53,8 @@ defmodule Pidro.Game.PlayTrickCompletionTest do
       state = %GameState{
         phase: :playing,
         trump_suit: trump,
-        current_turn: :south, # Should be South's turn
+        # Should be South's turn
+        current_turn: :south,
         players: players,
         current_trick: current_trick,
         trick_number: 1,
