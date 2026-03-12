@@ -1,7 +1,8 @@
 ARG ELIXIR_VERSION=1.19.5
 ARG OTP_VERSION=28
+ARG ELIXIR_IMAGE=elixir:${ELIXIR_VERSION}-otp-${OTP_VERSION}
 
-FROM elixir:${ELIXIR_VERSION}-otp-${OTP_VERSION} AS builder
+FROM ${ELIXIR_IMAGE} AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -29,12 +30,12 @@ RUN mix compile
 RUN cd apps/pidro_server && mix assets.deploy
 RUN cd apps/pidro_server && mix release pidro_server
 
-FROM debian:bookworm-slim AS runner
+FROM ${ELIXIR_IMAGE} AS runner
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends ca-certificates locales libstdc++6 openssl && \
+    apt-get install -y --no-install-recommends ca-certificates locales openssl && \
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen && \
     rm -rf /var/lib/apt/lists/*
