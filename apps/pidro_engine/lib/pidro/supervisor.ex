@@ -185,9 +185,9 @@ defmodule Pidro.Supervisor do
   """
   @spec lookup_game(String.t()) :: {:ok, pid()} | {:error, :not_found | :registry_not_enabled}
   def lookup_game(game_id) do
-    case Registry.lookup(Pidro.Registry, game_id) do
+    case live_registry_entries(game_id) do
       [{pid, _}] -> {:ok, pid}
-      [] -> {:error, :not_found}
+      _ -> {:error, :not_found}
     end
   rescue
     ArgumentError -> {:error, :registry_not_enabled}
@@ -210,6 +210,7 @@ defmodule Pidro.Supervisor do
   @spec list_games() :: [{String.t(), pid()}]
   def list_games do
     Registry.select(Pidro.Registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn {_game_id, pid} -> Process.alive?(pid) end)
   rescue
     ArgumentError -> []
   end
@@ -250,5 +251,10 @@ defmodule Pidro.Supervisor do
       |> Enum.reject(&is_nil/1)
 
     Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  defp live_registry_entries(game_id) do
+    Registry.lookup(Pidro.Registry, game_id)
+    |> Enum.filter(fn {pid, _value} -> Process.alive?(pid) end)
   end
 end

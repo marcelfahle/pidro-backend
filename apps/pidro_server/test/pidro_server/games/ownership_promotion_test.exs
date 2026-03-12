@@ -7,7 +7,7 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
   sorted by joined_at. If no connected humans remain, returns {:no_humans, room}.
   """
 
-  use ExUnit.Case, async: false
+  use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.Room.Seat
