@@ -35,3 +35,6 @@ postgres-logs:
 
 health:
     curl -fsS http://{{server_ip}}/up
+
+health-domain:
+    curl -fsS https://play.pidro.online/up
