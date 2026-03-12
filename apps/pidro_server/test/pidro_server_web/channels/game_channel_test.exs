@@ -759,7 +759,14 @@ defmodule PidroServerWeb.GameChannelTest do
       }
 
       cancelled = %{timer_id: 101, scope: :seat, position: :north, reason: :acted}
-      auto_played = %{scope: :seat, position: :north, phase: :bidding, action: %{type: :pass}, reason: :timeout}
+
+      auto_played = %{
+        scope: :seat,
+        position: :north,
+        phase: :bidding,
+        action: %{type: :pass},
+        reason: :timeout
+      }
 
       send(joined_socket.channel_pid, {:turn_timer_started, started})
       assert_push "turn_timer_started", ^started
@@ -788,6 +795,47 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "reconnection edge cases" do
+    test "immediate rejoin after forced inactivity disconnect keeps the human seat", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      {:ok, initial_reply, joined_socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      position = initial_reply.position
+
+      send(joined_socket.channel_pid, {:force_disconnect, :timeout_threshold})
+
+      {:ok, fresh_socket} = create_socket(user)
+
+      {:ok, reply, _rejoined_socket} =
+        subscribe_and_join(fresh_socket, GameChannel, "game:#{room_code}", %{})
+
+      assert reply.position == position
+      assert reply.role == :player
+
+      assert_receive {:EXIT, pid, {:shutdown, :timeout_threshold}}, 1000
+      assert pid == joined_socket.channel_pid
+
+      stable_room =
+        wait_for_room(room_code, fn room ->
+          seat = room.seats[position]
+
+          if seat.status == :connected and seat.occupant_type == :human and
+               seat.user_id == user.id do
+            room
+          end
+        end)
+
+      seat = stable_room.seats[position]
+      assert seat.status == :connected
+      assert seat.occupant_type == :human
+      assert seat.user_id == user.id
+      assert seat.bot_pid == nil
+      assert seat.reserved_for == nil
+    end
+
     test "reconnecting when not actually disconnected returns error", %{
       user1: user,
       room_code: room_code,
@@ -867,6 +915,30 @@ defmodule PidroServerWeb.GameChannelTest do
 
       {:ok, turn_timer} ->
         {:ok, turn_timer}
+    end
+  end
+
+  defp wait_for_room(room_code, matcher, attempts \\ 60)
+
+  defp wait_for_room(_room_code, _matcher, 0) do
+    flunk("timed out waiting for room state")
+  end
+
+  defp wait_for_room(room_code, matcher, attempts) do
+    case RoomManager.get_room(room_code) do
+      {:ok, room} ->
+        case matcher.(room) do
+          nil ->
+            Process.sleep(10)
+            wait_for_room(room_code, matcher, attempts - 1)
+
+          matched ->
+            matched
+        end
+
+      {:error, _reason} ->
+        Process.sleep(10)
+        wait_for_room(room_code, matcher, attempts - 1)
     end
   end
 end

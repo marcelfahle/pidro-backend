@@ -91,36 +91,7 @@ defmodule PidroServerWeb.GameChannel do
 
       case role do
         :player ->
-          # Check if player is in disconnected list
-          if is_reconnection?(room, user_id) do
-            # Attempt reconnection (handles Phase 1, 2, and 3)
-            case RoomManager.handle_player_reconnect(room_code, user_id) do
-              {:ok, updated_room} ->
-                Logger.info("Player #{user_id} reconnected to room #{room_code}")
-
-                # Broadcast reconnection to other players
-                position = get_player_position(updated_room, user_id)
-
-                # Schedule broadcast after join is complete
-                send(self(), {:broadcast_reconnection, user_id, position})
-
-                # Continue with normal join flow
-                proceed_with_join(room_code, user_id, socket, :reconnect, :player)
-
-              {:error, :seat_permanently_filled} ->
-                {:error, %{reason: "seat permanently filled by bot"}}
-
-              {:error, :grace_period_expired} ->
-                {:error, %{reason: "reconnection grace period expired"}}
-
-              {:error, reason} ->
-                Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
-                {:error, %{reason: "reconnection failed: #{format_error(reason)}"}}
-            end
-          else
-            # Not a reconnection, proceed with normal join
-            proceed_with_join(room_code, user_id, socket, :new, :player)
-          end
+          join_player(room_code, user_id, socket)
 
         :substitute ->
           # Stranger joining a :playing room with a vacant seat
@@ -143,6 +114,65 @@ defmodule PidroServerWeb.GameChannel do
     else
       _ -> {:error, %{reason: "room not found"}}
     end
+  end
+
+  defp join_player(room_code, user_id, socket) do
+    with :ok <- ensure_player_channel_registered(room_code, user_id),
+         {:ok, room} <- RoomManager.get_room(room_code) do
+      result =
+        if is_reconnection?(room, user_id) do
+          attempt_player_reconnect(room_code, user_id, socket)
+        else
+          proceed_with_join(room_code, user_id, socket, :new, :player)
+        end
+
+      cleanup_failed_player_join(room_code, user_id, result)
+    else
+      {:error, :room_not_found} ->
+        cleanup_failed_player_join(room_code, user_id, {:error, %{reason: "room not found"}})
+    end
+  end
+
+  defp ensure_player_channel_registered(room_code, user_id) do
+    case RoomManager.register_game_channel(room_code, user_id, self()) do
+      :ok -> :ok
+      {:error, :room_not_found} -> {:error, :room_not_found}
+    end
+  end
+
+  defp attempt_player_reconnect(room_code, user_id, socket) do
+    case RoomManager.handle_player_reconnect(room_code, user_id) do
+      {:ok, updated_room} ->
+        Logger.info("Player #{user_id} reconnected to room #{room_code}")
+
+        position = get_player_position(updated_room, user_id)
+        send(self(), {:broadcast_reconnection, user_id, position})
+
+        proceed_with_join(room_code, user_id, socket, :reconnect, :player)
+
+      {:error, :seat_permanently_filled} ->
+        {:error, %{reason: "seat permanently filled by bot"}}
+
+      {:error, :grace_period_expired} ->
+        {:error, %{reason: "reconnection grace period expired"}}
+
+      {:error, reason} ->
+        Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
+        {:error, %{reason: "reconnection failed: #{format_error(reason)}"}}
+    end
+  end
+
+  defp cleanup_failed_player_join(_room_code, _user_id, {:ok, _reply_data, _socket} = result),
+    do: result
+
+  defp cleanup_failed_player_join(room_code, user_id, result) do
+    case RoomManager.unregister_game_channel(room_code, user_id, self()) do
+      :last_channel_closed -> :ok
+      :channels_remaining -> :ok
+      :not_registered -> :ok
+    end
+
+    result
   end
 
   # Extract the common join logic into a helper function
