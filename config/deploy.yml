@@ -34,6 +34,8 @@ env:
     PHX_HOST: "app.pidro.online"
     PORT: "4000"
     POOL_SIZE: "20"
+    ENABLE_DEV_ROUTES: "true"
+    DEV_BASIC_AUTH_USERNAME: "admin"
     DB_HOST: postgres
     DB_PORT: "5432"
     DB_NAME: pidro_prod
@@ -41,6 +43,7 @@ env:
   secret:
     - SECRET_KEY_BASE
     - POSTGRES_PASSWORD
+    - DEV_BASIC_AUTH_PASSWORD
 
 accessories:
   postgres:

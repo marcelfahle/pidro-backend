@@ -10,6 +10,10 @@ defmodule PidroServerWeb.Router do
     plug :put_secure_browser_headers
   end
 
+  pipeline :dev_access do
+    plug PidroServerWeb.Plugs.DevAccess
+  end
+
   pipeline :api do
     plug :accepts, ["json"]
     plug OpenApiSpex.Plug.PutApiSpec, module: PidroServerWeb.ApiSpec
@@ -75,13 +79,18 @@ defmodule PidroServerWeb.Router do
     delete "/rooms/:code/unwatch", RoomController, :unwatch
   end
 
+  scope "/dev", PidroServerWeb.Dev do
+    pipe_through [:browser, :dev_access]
+
+    live_session :dev, root_layout: {PidroServerWeb.Layouts, :dev_root} do
+      live "/games", GameListLive
+      live "/games/:code", GameDetailLive
+      live "/analytics", AnalyticsLive
+    end
+  end
+
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:pidro_server, :dev_routes) do
-    # If you want to use the LiveDashboard in production, you should put
-    # it behind authentication and allow only admins to access it.
-    # If your application does not have an admins-only section yet,
-    # you can use Plug.BasicAuth to set up some basic authentication
-    # as long as you are also using SSL (which you should anyway).
     import Phoenix.LiveDashboard.Router
 
     scope "/dev" do
@@ -89,16 +98,6 @@ defmodule PidroServerWeb.Router do
 
       live_dashboard "/dashboard", metrics: PidroServerWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
-    end
-
-    scope "/dev", PidroServerWeb.Dev do
-      pipe_through :browser
-
-      live_session :dev, root_layout: {PidroServerWeb.Layouts, :dev_root} do
-        live "/games", GameListLive
-        live "/games/:code", GameDetailLive
-        live "/analytics", AnalyticsLive
-      end
     end
   end
 end
