@@ -93,32 +93,25 @@ defmodule Pidro.Game.Dealing do
   """
   @spec select_dealer(game_state()) :: {:ok, game_state()} | error()
   def select_dealer(%Types.GameState{} = state) do
-    # Simulate cutting by having each player draw a random card
-    positions = [:north, :east, :south, :west]
-
-    # Generate random cards for each position (simulating cuts)
     cuts =
-      positions
+      [:north, :east, :south, :west]
       |> Enum.map(fn pos ->
-        # Generate a random rank (2-14) and suit
         rank = Enum.random(2..14)
         suit = Enum.random([:hearts, :diamonds, :clubs, :spades])
-        card = {rank, suit}
-        {pos, card, rank}
+        {pos, {rank, suit}}
       end)
-      |> Enum.sort_by(fn {_pos, _card, rank} -> rank end, :desc)
 
-    # Winner is the player with the highest card
-    [{winner_pos, winner_card, _rank} | _rest] = cuts
+    cuts_map = Map.new(cuts)
 
-    # Create and shuffle a new deck for the hand
+    {winner_pos, winner_card} =
+      Enum.max_by(cuts, fn {_pos, {rank, _suit}} -> rank end)
+
     deck = Pidro.Core.Deck.new()
-
-    # Update state with selected dealer and shuffled deck
     event = {:dealer_selected, winner_pos, winner_card}
 
     updated_state =
       state
+      |> GameState.update(:dealer_selection_cuts, cuts_map)
       |> GameState.update(:current_dealer, winner_pos)
       |> GameState.update(:deck, deck.cards)
       |> GameState.update(:events, state.events ++ [event])

@@ -654,6 +654,7 @@ defmodule Pidro.Game.Engine do
           |> GameState.update(:killed_cards, %{})
           |> GameState.update(:cards_requested, %{})
           |> GameState.update(:dealer_pool_size, nil)
+          |> GameState.update(:dealer_selection_cuts, nil)
 
         # Reset player hands and elimination status
         # Iterate over new_state.players to ensure any changes from rotate_dealer are preserved

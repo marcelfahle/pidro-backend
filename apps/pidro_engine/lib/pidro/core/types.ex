@@ -265,6 +265,11 @@ defmodule Pidro.Core.Types do
     field(:current_dealer, Pidro.Core.Types.position() | nil, default: nil)
     field(:current_turn, Pidro.Core.Types.position() | nil, default: nil)
 
+    # Dealer selection ceremony (first hand only)
+    field(:dealer_selection_cuts, %{Pidro.Core.Types.position() => Pidro.Core.Types.card()} | nil,
+      default: nil
+    )
+
     # Deck
     field(:deck, [Pidro.Core.Types.card()], default: [])
     field(:discarded_cards, [Pidro.Core.Types.card()], default: [])

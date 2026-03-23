@@ -49,7 +49,9 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       hand_points: Map.get(state, :hand_points, %{}),
       scores: Map.get(state, :cumulative_scores, %{}),
       cumulative_scores: Map.get(state, :cumulative_scores, %{}),
-      winner: Map.get(state, :winner)
+      winner: Map.get(state, :winner),
+      dealer_selection_cuts:
+        serialize_position_cards(Map.get(state, :dealer_selection_cuts))
     }
   end
 
@@ -222,4 +224,11 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
   defp serialize_legal_action({:select_hand, _}), do: %{type: "select_hand"}
   defp serialize_legal_action(:select_dealer), do: %{type: "select_dealer"}
   defp serialize_legal_action(action), do: %{type: inspect(action)}
+
+  @spec serialize_position_cards(%{atom() => {integer(), atom()}} | nil) :: map() | nil
+  defp serialize_position_cards(nil), do: nil
+
+  defp serialize_position_cards(position_cards) when is_map(position_cards) do
+    Map.new(position_cards, fn {position, card} -> {position, serialize_card(card)} end)
+  end
 end
