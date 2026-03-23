@@ -120,10 +120,15 @@ defmodule PidroServerWeb.GameChannel do
     with :ok <- ensure_player_channel_registered(room_code, user_id),
          {:ok, room} <- RoomManager.get_room(room_code) do
       result =
-        if is_reconnection?(room, user_id) do
-          attempt_player_reconnect(room_code, user_id, socket)
-        else
-          proceed_with_join(room_code, user_id, socket, :new, :player)
+        cond do
+          is_reconnection?(room, user_id) ->
+            attempt_player_reconnect(room_code, user_id, socket)
+
+          is_permanently_botted?(room, user_id) ->
+            {:error, %{reason: "seat permanently filled by bot"}}
+
+          true ->
+            proceed_with_join(room_code, user_id, socket, :new, :player)
         end
 
       cleanup_failed_player_join(room_code, user_id, result)
@@ -705,6 +710,23 @@ defmodule PidroServerWeb.GameChannel do
   defp user_authorized?(user_id, room, :spectator) do
     user_id_str = to_string(user_id)
     Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end)
+  end
+
+  # Phase 3: seat is a permanent bot (reserved_for cleared) but positions
+  # still contains the original user_id. Without this guard, the player
+  # would slip through as a normal join instead of being rejected.
+  @spec is_permanently_botted?(RoomManager.Room.t(), String.t()) :: boolean()
+  defp is_permanently_botted?(room, user_id) do
+    alias PidroServer.Games.Room.Positions
+
+    case Positions.get_position(room, user_id) do
+      nil ->
+        false
+
+      position ->
+        seat = Map.get(room.seats, position)
+        seat != nil && seat.status == :bot_substitute && seat.reserved_for == nil
+    end
   end
 
   @spec is_reconnection?(RoomManager.Room.t(), String.t()) :: boolean()

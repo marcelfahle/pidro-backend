@@ -1240,28 +1240,23 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        if single_player_human_player?(room, user_id) do
-          Logger.info(
-            "Player #{user_id} disconnected from single-player room #{room_code}, closing room"
-          )
+        # All rooms (including single-player) get the hiccup → grace → gone
+        # disconnect cascade. This allows reconnection after browser refresh or
+        # network hiccup. Intentional leaves via leave_room/1 still close
+        # single-player rooms immediately.
+        case disconnect_player(state, room, room_code, user_id) do
+          {:ok, updated_room, updated_state} ->
+            Logger.info(
+              "Player #{user_id} disconnected from room #{room_code}, grace period started"
+            )
 
-          new_state = remove_room(state, room_code)
-          {:reply, :ok, new_state}
-        else
-          case disconnect_player(state, room, room_code, user_id) do
-            {:ok, updated_room, updated_state} ->
-              Logger.info(
-                "Player #{user_id} disconnected from room #{room_code}, grace period started"
-              )
+            broadcast_room(room_code, updated_room)
+            broadcast_lobby_event({:room_updated, updated_room})
 
-              broadcast_room(room_code, updated_room)
-              broadcast_lobby_event({:room_updated, updated_room})
+            {:reply, :ok, updated_state}
 
-              {:reply, :ok, updated_state}
-
-            {:error, reason, updated_state} ->
-              {:reply, {:error, reason}, updated_state}
-          end
+          {:error, reason, updated_state} ->
+            {:reply, {:error, reason}, updated_state}
         end
     end
   end
@@ -2393,15 +2388,16 @@ defmodule PidroServer.Games.RoomManager do
   defp check_missing_game_process(room, _room_code), do: room
 
   defp is_abandoned?(room, now, grace_period_minutes) do
-    # Check if room is idle
     grace_period_seconds = grace_period_minutes * 60
     is_idle = DateTime.diff(now, room.last_activity, :second) > grace_period_seconds
 
-    # Check if room is effectively empty (no players, no spectators)
-    active_player_count = Positions.count(room)
     active_spectator_count = length(room.spectator_ids)
 
-    room.status == :waiting && is_idle && active_player_count == 0 && active_spectator_count == 0
+    # A waiting room is abandoned if idle AND has no connected humans.
+    # Previously this checked Positions.count == 0, which missed rooms where
+    # seat status was never cleared on disconnect (seats stayed :connected).
+    room.status == :waiting && is_idle && !has_connected_human?(room) &&
+      active_spectator_count == 0
   end
 
   @doc false

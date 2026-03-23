@@ -238,7 +238,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert Positions.has_player?(updated_room, "user3")
     end
 
-    test "closes a single-player table when the human disconnects during play" do
+    test "single-player room stays alive with grace period when human disconnects during play" do
       {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
@@ -252,6 +252,54 @@ defmodule PidroServer.Games.RoomManagerTest do
       end)
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+
+      # Room stays alive — disconnect cascade starts instead of immediate removal
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+      assert updated_room.status == :playing
+
+      # Player's seat is in :reconnecting phase (hiccup window)
+      position = Positions.get_position(updated_room, "user1")
+      seat = Map.get(updated_room.seats, position)
+      assert seat.status == :reconnecting
+    end
+
+    test "single-player room allows reconnection after disconnect" do
+      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+
+      wait_until(fn ->
+        case RoomManager.get_room(room.code) do
+          {:ok, %{status: :playing}} -> true
+          _ -> false
+        end
+      end)
+
+      :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+
+      # Reconnect within hiccup window succeeds
+      {:ok, reconnected_room} = RoomManager.handle_player_reconnect(room.code, "user1")
+      position = Positions.get_position(reconnected_room, "user1")
+      seat = Map.get(reconnected_room.seats, position)
+      assert seat.status == :connected
+      assert seat.occupant_type == :human
+    end
+
+    test "intentional leave still closes single-player room immediately" do
+      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
+      {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+
+      wait_until(fn ->
+        case RoomManager.get_room(room.code) do
+          {:ok, %{status: :playing}} -> true
+          _ -> false
+        end
+      end)
+
+      :ok = RoomManager.leave_room("user1")
 
       assert {:error, :room_not_found} = RoomManager.get_room(room.code)
     end
