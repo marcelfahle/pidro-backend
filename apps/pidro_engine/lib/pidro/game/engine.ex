@@ -250,6 +250,32 @@ defmodule Pidro.Game.Engine do
     {:error, :game_not_complete}
   end
 
+  @doc """
+  Advances the game past the dealer selection ceremony.
+
+  Called by the Server (GenServer) after a display delay, to resume the
+  auto-transition chain from dealer_selection → dealing → bidding.
+
+  Only valid when the phase is `:dealer_selection` and cuts have been populated.
+
+  ## Returns
+
+  - `{:ok, new_state}` — state after auto-transitioning through dealing
+  - `{:error, :not_in_dealer_selection}` — phase is not dealer_selection
+  """
+  @spec advance_from_dealer_selection(Types.GameState.t()) ::
+          {:ok, Types.GameState.t()} | {:error, atom()}
+  def advance_from_dealer_selection(
+        %Types.GameState{phase: :dealer_selection, dealer_selection_cuts: cuts} = state
+      )
+      when not is_nil(cuts) do
+    state
+    |> Map.put(:phase, :dealing)
+    |> maybe_auto_transition()
+  end
+
+  def advance_from_dealer_selection(_state), do: {:error, :not_in_dealer_selection}
+
   # =============================================================================
   # Action Dispatching
   # =============================================================================
@@ -701,7 +727,10 @@ defmodule Pidro.Game.Engine do
   # Checks if the current phase should automatically transition
   @spec can_auto_transition?(Types.GameState.t()) :: boolean()
   defp can_auto_transition?(%Types.GameState{phase: :dealer_selection} = state) do
-    StateMachine.can_transition_from_dealer_selection?(state)
+    # Once cuts are populated, pause so the frontend can display the ceremony.
+    # The Server (GenServer) schedules a timer to continue the transition.
+    is_nil(state.dealer_selection_cuts) and
+      StateMachine.can_transition_from_dealer_selection?(state)
   end
 
   defp can_auto_transition?(%Types.GameState{phase: :dealing} = state) do

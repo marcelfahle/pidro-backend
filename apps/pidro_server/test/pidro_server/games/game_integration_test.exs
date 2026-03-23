@@ -45,10 +45,14 @@ defmodule PidroServer.Games.GameIntegrationTest do
       assert {:ok, initial_state} = GameAdapter.get_state(room_code)
       assert initial_state.phase == :dealer_selection
 
-      # Select dealer (any player can trigger this)
+      # Select dealer — pauses at :dealer_selection with cuts, then advances asynchronously
       assert {:ok, state} = GameAdapter.apply_action(room_code, :north, :select_dealer)
+      assert state.phase == :dealer_selection
+      assert state.dealer_selection_cuts != nil
 
-      # After dealer selection, should progress to dealing or bidding
+      # Wait for async advance
+      Process.sleep(50)
+      assert {:ok, state} = GameAdapter.get_state(room_code)
       assert state.phase in [:dealing, :bidding]
       assert state.current_dealer != nil
     end
@@ -149,12 +153,14 @@ defmodule PidroServer.Games.GameIntegrationTest do
       assert {:ok, state} = GameAdapter.get_state(room_code)
       assert state.phase == :dealer_selection
 
-      # Select dealer
+      # Select dealer — pauses with cuts, then advances asynchronously
       assert {:ok, state} = GameAdapter.apply_action(room_code, :north, :select_dealer)
+      assert state.phase == :dealer_selection
       assert state.current_dealer != nil
 
-      # Dealer should be selected, and game should progress
-      # The phase should advance automatically or we should be ready to bid
+      # Wait for async advance
+      Process.sleep(50)
+      assert {:ok, state} = GameAdapter.get_state(room_code)
       assert state.phase in [:dealing, :bidding, :declaring]
     end
 

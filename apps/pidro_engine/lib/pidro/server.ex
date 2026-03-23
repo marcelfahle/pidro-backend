@@ -273,10 +273,15 @@ defmodule Pidro.Server do
     telemetry_enabled? = Keyword.get(opts, :telemetry, true)
     initial_state = Keyword.get(opts, :initial_state, GS.new())
 
+    dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
+    pubsub = Keyword.get(opts, :pubsub)
+
     state = %{
       game_state: initial_state,
       game_id: game_id,
-      telemetry_enabled?: telemetry_enabled?
+      telemetry_enabled?: telemetry_enabled?,
+      dealer_selection_delay_ms: dealer_selection_delay_ms,
+      pubsub: pubsub
     }
 
     {:ok, state}
@@ -313,6 +318,7 @@ defmodule Pidro.Server do
         end
 
         new_state = %{state | game_state: new_game_state}
+        maybe_schedule_dealer_selection_advance(new_game_state, state)
         {:reply, {:ok, new_game_state}, new_state}
 
       {:error, _reason} = error ->
@@ -384,7 +390,42 @@ defmodule Pidro.Server do
     {:reply, :ok, new_state}
   end
 
+  @impl true
+  def handle_info(:advance_from_dealer_selection, state) do
+    %{game_state: game_state} = state
+
+    case Engine.advance_from_dealer_selection(game_state) do
+      {:ok, new_game_state} ->
+        broadcast_state_change(state, new_game_state)
+        {:noreply, %{state | game_state: new_game_state}}
+
+      {:error, _reason} ->
+        # Already advanced (e.g., by a concurrent action) — ignore
+        {:noreply, state}
+    end
+  end
+
   # Private Helpers
+
+  defp maybe_schedule_dealer_selection_advance(
+         %{phase: :dealer_selection} = game_state,
+         %{dealer_selection_delay_ms: delay_ms}
+       )
+       when not is_nil(game_state.dealer_selection_cuts) do
+    Process.send_after(self(), :advance_from_dealer_selection, delay_ms)
+  end
+
+  defp maybe_schedule_dealer_selection_advance(_game_state, _server_state), do: :ok
+
+  defp broadcast_state_change(%{pubsub: nil}, _new_game_state), do: :ok
+
+  defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id}, new_game_state) do
+    apply(Phoenix.PubSub, :broadcast, [
+      pubsub,
+      "game:#{game_id}",
+      {:state_update, game_id, %{state: new_game_state, transition_delay_ms: 0}}
+    ])
+  end
 
   defp emit_telemetry(event_suffix, measurements, state) do
     metadata = %{

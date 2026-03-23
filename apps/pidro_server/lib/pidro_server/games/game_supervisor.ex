@@ -72,9 +72,13 @@ defmodule PidroServer.Games.GameSupervisor do
   def start_game(room_code) do
     Logger.info("Starting game for room #{room_code}")
 
-    # Prepare game options with registry name
+    alias PidroServer.Games.Lifecycle
+
     game_opts = [
-      name: GameRegistry.via(room_code)
+      name: GameRegistry.via(room_code),
+      game_id: room_code,
+      pubsub: PidroServer.PubSub,
+      dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms)
     ]
 
     # Start Pidro.Server under this supervisor
@@ -191,4 +195,5 @@ defmodule PidroServer.Games.GameSupervisor do
     |> Enum.map(fn {_, pid, _, _} -> pid end)
     |> Enum.filter(&is_pid/1)
   end
+
 end

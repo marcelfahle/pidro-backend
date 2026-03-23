@@ -41,16 +41,23 @@ defmodule Pidro.ServerTest do
 
   describe "apply_action/3" do
     test "applies valid action and returns new state" do
-      {:ok, pid} = Server.start_link()
+      {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 0)
 
       # Get initial state to check legal actions
       state = Server.get_state(pid)
       actions = Server.legal_actions(pid, :north)
 
-      # If dealer selection is available, use it
+      # After select_dealer, phase pauses at :dealer_selection with cuts populated.
+      # The GenServer timer (0ms in tests) advances to dealing/bidding asynchronously.
       if :select_dealer in actions do
         {:ok, new_state} = Server.apply_action(pid, :north, :select_dealer)
-        assert new_state.phase != state.phase
+        assert new_state.phase == :dealer_selection
+        assert new_state.dealer_selection_cuts != nil
+
+        # Wait for the async advance
+        Process.sleep(50)
+        advanced_state = Server.get_state(pid)
+        assert advanced_state.phase != :dealer_selection
       end
     end
 

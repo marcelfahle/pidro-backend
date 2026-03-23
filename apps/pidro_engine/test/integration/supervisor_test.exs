@@ -264,10 +264,17 @@ defmodule Pidro.SupervisorTest do
 
   describe "integration with Server" do
     test "can play full game through supervised server", %{supervisor: _sup} do
-      {:ok, pid} = Supervisor.start_game(game_id: "integration_game")
+      {:ok, pid} =
+        Supervisor.start_game(game_id: "integration_game", dealer_selection_delay_ms: 0)
 
-      # Select dealer - this automatically transitions through dealing to bidding
+      # Select dealer pauses at :dealer_selection with cuts, then advances asynchronously
       {:ok, state} = Server.apply_action(pid, :north, :select_dealer)
+      assert state.phase == :dealer_selection
+      assert state.dealer_selection_cuts != nil
+
+      # Wait for async advance to bidding
+      Process.sleep(50)
+      state = Server.get_state(pid)
       assert state.phase == :bidding
       assert state.current_dealer != nil
 
@@ -280,11 +287,15 @@ defmodule Pidro.SupervisorTest do
     end
 
     test "multiple supervised games run independently", %{supervisor: _sup} do
-      {:ok, pid1} = Supervisor.start_game(game_id: "game_a", register: true)
-      {:ok, pid2} = Supervisor.start_game(game_id: "game_b", register: true)
+      {:ok, pid1} =
+        Supervisor.start_game(game_id: "game_a", register: true, dealer_selection_delay_ms: 0)
 
-      # Advance first game - select_dealer auto-transitions through dealing to bidding
+      {:ok, pid2} =
+        Supervisor.start_game(game_id: "game_b", register: true, dealer_selection_delay_ms: 0)
+
+      # Advance first game
       {:ok, _state1} = Server.apply_action(pid1, :north, :select_dealer)
+      Process.sleep(50)
 
       # Second game should be unchanged
       state2 = Server.get_state(pid2)

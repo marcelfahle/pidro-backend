@@ -18,6 +18,7 @@ defmodule PidroServer.Games.LifecycleTest do
     :bot_delay_ms,
     :bot_delay_variance_ms,
     :bot_min_delay_ms,
+    :dealer_selection_delay_ms,
     :trick_transition_delay_ms,
     :hand_transition_delay_ms
   ]
@@ -37,6 +38,7 @@ defmodule PidroServer.Games.LifecycleTest do
     bot_delay_ms: 1_500,
     bot_delay_variance_ms: 800,
     bot_min_delay_ms: 300,
+    dealer_selection_delay_ms: 3_000,
     trick_transition_delay_ms: 1_500,
     hand_transition_delay_ms: 3_000
   }
