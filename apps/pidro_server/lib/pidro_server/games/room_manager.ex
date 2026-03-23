@@ -738,6 +738,10 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_call({:create_room, host_id, metadata}, _from, %State{} = state) do
+    # If the player is stuck in a room from a previous disconnected session
+    # (e.g. browser refresh followed by navigating away), clean it up first
+    state = maybe_evict_disconnected_player(state, host_id)
+
     with :ok <- ensure_not_in_other_room(state, host_id, nil) do
       room_code = generate_room_code()
       now = DateTime.utc_now()
@@ -1840,6 +1844,49 @@ defmodule PidroServer.Games.RoomManager do
       nil -> :ok
       ^room_code -> {:error, :already_seated}
       _other -> {:error, :already_in_room}
+    end
+  end
+
+  # When a player is tracked in a room but their seat is disconnected
+  # (reconnecting or bot_substitute), they've abandoned the session.
+  # Auto-leave so they can create/join a new room.
+  defp maybe_evict_disconnected_player(%State{} = state, player_id) do
+    case Map.get(state.player_rooms, player_id) do
+      nil ->
+        state
+
+      room_code ->
+        case Map.get(state.rooms, room_code) do
+          nil ->
+            # Stale mapping — clean it up
+            %State{state | player_rooms: Map.delete(state.player_rooms, player_id)}
+
+          %Room{} = room ->
+            position = Positions.get_position(room, player_id)
+
+            if position do
+              seat = Map.get(room.seats, position)
+
+              if seat && seat.status in [:reconnecting, :bot_substitute] do
+                Logger.info(
+                  "Auto-evicting disconnected player #{player_id} from room #{room_code} (seat: #{seat.status})"
+                )
+
+                if single_player_room?(room) do
+                  remove_room(state, room_code)
+                else
+                  # For multiplayer: just clear the player_rooms mapping.
+                  # The seat is already in a disconnected state and the cascade
+                  # will handle bot replacement / cleanup independently.
+                  %State{state | player_rooms: Map.delete(state.player_rooms, player_id)}
+                end
+              else
+                state
+              end
+            else
+              state
+            end
+        end
     end
   end
 
