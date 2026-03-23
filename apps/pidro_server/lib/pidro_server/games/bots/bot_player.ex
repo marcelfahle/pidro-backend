@@ -130,6 +130,30 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   @impl true
   def handle_info({:turn_auto_played, _payload}, state), do: {:noreply, state}
 
+  # Ignore disconnect cascade PubSub messages
+  @impl true
+  def handle_info({:player_reconnected, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:player_disconnected, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:player_reconnecting, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:bot_substitute_active, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:seat_permanently_botted, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:player_reclaimed_seat, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:owner_decision_available, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:owner_changed, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:substitute_available, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:substitute_seat_closed, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:substitute_joined, _}, state), do: {:noreply, state}
+
   # Ignore Phoenix Channel broadcast messages (presence_diff, game_state, etc.).
   # BotPlayer subscribes to the same PubSub topic as GameChannel, so it receives
   # channel-level broadcasts. Game state updates are already handled via the
