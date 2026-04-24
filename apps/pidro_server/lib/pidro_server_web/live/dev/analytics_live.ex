@@ -13,6 +13,8 @@ defmodule PidroServerWeb.Dev.AnalyticsLive do
   """
 
   use PidroServerWeb, :live_view
+  import PidroServerWeb.Dev.AdminComponents
+
   alias PidroServer.Games.RoomManager
 
   @impl true
@@ -46,153 +48,157 @@ defmodule PidroServerWeb.Dev.AnalyticsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="px-4 py-10 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-7xl">
-        <!-- Header -->
-        <div class="mb-8">
-          <.link
-            navigate={~p"/dev/games"}
-            class="text-sm text-indigo-600 hover:text-indigo-900 mb-2 inline-block"
-          >
-            ← Back to Games
-          </.link>
-          <h1 class="text-4xl font-bold text-zinc-900">Development Analytics</h1>
-          <p class="mt-2 text-lg text-zinc-600">Real-time server metrics and performance</p>
-          <div class="mt-3 text-sm text-zinc-500 bg-blue-50 border border-blue-200 rounded-md p-3">
-            This is a development analytics dashboard. More metrics coming in Phase 2.
-          </div>
-        </div>
-        
+    <.admin_shell
+      active="analytics"
+      title="Development Analytics"
+      subtitle="Monitor server health, room status, process count, memory, and live game volume while testing."
+    >
+      <:actions>
+        <.link
+          navigate={~p"/dev/games"}
+          class="inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700 shadow-sm hover:border-orange-300 hover:text-stone-950"
+        >
+          <.icon name="hero-arrow-left" class="size-4" /> Games
+        </.link>
+      </:actions>
+
     <!-- Server Status -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Server Status</h3>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Status</dt>
-                <dd class="mt-1">
-                  <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                    Running
-                  </span>
-                </dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Uptime</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {format_uptime(@uptime_start, @current_time)}
-                </dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Current Time (UTC)</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {Calendar.strftime(@current_time, "%Y-%m-%d %H:%M:%S")}
-                </dd>
-              </div>
-            </dl>
-          </div>
+      <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-3">
+          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+            Server Status
+          </h3>
         </div>
-        
-    <!-- Game Statistics -->
-        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Total Rooms</dt>
-              <dd class="mt-1 text-3xl font-semibold text-zinc-900">{@stats.total_rooms}</dd>
-            </div>
-          </div>
-
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Active Games</dt>
-              <dd class="mt-1 text-3xl font-semibold text-green-600">{@stats.active_games}</dd>
-            </div>
-          </div>
-
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Waiting Rooms</dt>
-              <dd class="mt-1 text-3xl font-semibold text-yellow-600">
-                {@stats.waiting_rooms}
+        <div class="border-t border-stone-200 px-4 py-4">
+          <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
+            <div>
+              <dt class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+                Status
+              </dt>
+              <dd class="mt-1">
+                <span class="inline-flex rounded-sm bg-green-100 px-2 py-1 text-xs font-bold text-green-800">
+                  Running
+                </span>
               </dd>
             </div>
-          </div>
-
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Finished Games</dt>
-              <dd class="mt-1 text-3xl font-semibold text-blue-600">
-                {@stats.finished_games}
+            <div>
+              <dt class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+                Uptime
+              </dt>
+              <dd class="mt-1 text-sm font-bold text-stone-900">
+                {format_uptime(@uptime_start, @current_time)}
               </dd>
             </div>
-          </div>
-        </div>
-        
-    <!-- Room Status Breakdown -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Room Status Breakdown</h3>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <div class="space-y-4">
-              <%= for {status, count} <- @stats.by_status do %>
-                <div>
-                  <div class="flex items-center justify-between mb-1">
-                    <span class="text-sm font-medium text-zinc-700 capitalize">{status}</span>
-                    <span class="text-sm text-zinc-500">{count} rooms</span>
-                  </div>
-                  <div class="w-full bg-zinc-200 rounded-full h-2">
-                    <div
-                      class={"h-2 rounded-full #{status_bar_color(status)}"}
-                      style={"width: #{calculate_percentage(count, @stats.total_rooms)}%"}
-                    >
-                    </div>
-                  </div>
-                </div>
-              <% end %>
+            <div>
+              <dt class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+                Current Time (UTC)
+              </dt>
+              <dd class="mt-1 font-mono text-sm text-stone-900">
+                {Calendar.strftime(@current_time, "%Y-%m-%d %H:%M:%S")}
+              </dd>
             </div>
-          </div>
-        </div>
-        
-    <!-- System Information -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-          <div class="px-4 py-5 sm:px-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">System Information</h3>
-          </div>
-          <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
-            <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Elixir Version</dt>
-                <dd class="mt-1 text-sm text-zinc-900">{System.version()}</dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">OTP Version</dt>
-                <dd class="mt-1 text-sm text-zinc-900">{:erlang.system_info(:otp_release)}</dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Total Processes</dt>
-                <dd class="mt-1 text-sm text-zinc-900">{:erlang.system_info(:process_count)}</dd>
-              </div>
-              <div>
-                <dt class="text-sm font-medium text-zinc-500">Memory Usage</dt>
-                <dd class="mt-1 text-sm text-zinc-900">
-                  {format_memory(:erlang.memory(:total))}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        </div>
-        
-    <!-- Auto-refresh indicator -->
-        <div class="mt-4 text-center text-sm text-zinc-500">
-          <span class="inline-flex items-center">
-            <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
-            Live updates enabled (refreshing every second)
-          </span>
+          </dl>
         </div>
       </div>
-    </div>
+
+    <!-- Game Statistics -->
+      <dl class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <.stat_card
+          label="Total rooms"
+          value={@stats.total_rooms}
+          hint="All RoomManager entries"
+          icon="hero-square-3-stack-3d"
+          tone="orange"
+        />
+        <.stat_card
+          label="Active games"
+          value={@stats.active_games}
+          hint="Currently playing"
+          icon="hero-play"
+          tone="green"
+        />
+        <.stat_card
+          label="Waiting rooms"
+          value={@stats.waiting_rooms}
+          hint="Open lobbies"
+          icon="hero-clock"
+        />
+        <.stat_card
+          label="Finished games"
+          value={@stats.finished_games}
+          hint="Cleanup candidates"
+          icon="hero-flag"
+          tone="blue"
+        />
+      </dl>
+
+    <!-- Room Status Breakdown -->
+      <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-3">
+          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+            Room Status Breakdown
+          </h3>
+        </div>
+        <div class="border-t border-stone-200 px-4 py-4">
+          <div class="space-y-4">
+            <%= for {status, count} <- @stats.by_status do %>
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-sm font-medium text-zinc-700 capitalize">{status}</span>
+                  <span class="text-sm text-zinc-500">{count} rooms</span>
+                </div>
+                <div class="w-full bg-zinc-200 rounded-full h-2">
+                  <div
+                    class={"h-2 rounded-full #{status_bar_color(status)}"}
+                    style={"width: #{calculate_percentage(count, @stats.total_rooms)}%"}
+                  >
+                  </div>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      </div>
+
+    <!-- System Information -->
+      <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-3">
+          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+            System Information
+          </h3>
+        </div>
+        <div class="border-t border-stone-200 px-4 py-4">
+          <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+            <div>
+              <dt class="text-sm font-medium text-zinc-500">Elixir Version</dt>
+              <dd class="mt-1 text-sm text-zinc-900">{System.version()}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-zinc-500">OTP Version</dt>
+              <dd class="mt-1 text-sm text-zinc-900">{:erlang.system_info(:otp_release)}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-zinc-500">Total Processes</dt>
+              <dd class="mt-1 text-sm text-zinc-900">{:erlang.system_info(:process_count)}</dd>
+            </div>
+            <div>
+              <dt class="text-sm font-medium text-zinc-500">Memory Usage</dt>
+              <dd class="mt-1 text-sm text-zinc-900">
+                {format_memory(:erlang.memory(:total))}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+    <!-- Auto-refresh indicator -->
+      <div class="text-center text-sm text-stone-500">
+        <span class="inline-flex items-center">
+          <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+          Live updates enabled (refreshing every second)
+        </span>
+      </div>
+    </.admin_shell>
     """
   end
 

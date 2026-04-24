@@ -78,6 +78,60 @@ defmodule PidroServer.Stats do
   end
 
   @doc """
+  Gets compact game stats for a set of users.
+
+  This is intended for admin lists where loading each user one by one would
+  create unnecessary database chatter.
+  """
+  def get_user_stats_map(user_ids) when is_list(user_ids) do
+    user_ids = Enum.uniq(user_ids)
+
+    if Enum.empty?(user_ids) do
+      %{}
+    else
+      games =
+        from(gs in GameStats,
+          where: fragment("? && ?", gs.player_ids, type(^user_ids, {:array, :binary_id}))
+        )
+        |> Repo.all()
+
+      abandonments = abandonment_summary(user_ids)
+
+      games_by_user =
+        Enum.reduce(games, %{}, fn game, acc ->
+          game_user_ids =
+            game
+            |> Map.get(:player_ids, [])
+            |> Enum.filter(&(&1 in user_ids))
+
+          Enum.reduce(game_user_ids, acc, fn user_id, user_acc ->
+            Map.update(user_acc, user_id, [game], &[game | &1])
+          end)
+        end)
+
+      Map.new(user_ids, fn user_id ->
+        user_games = Map.get(games_by_user, user_id, [])
+        games_played = length(user_games)
+        wins = count_user_wins(user_games, user_id)
+        games_abandoned = get_in(abandonments, [user_id, :count]) || 0
+        last_abandoned_at = get_in(abandonments, [user_id, :last_abandoned_at])
+
+        {user_id,
+         %{
+           games_played: games_played,
+           wins: wins,
+           losses: games_played - wins,
+           win_rate: if(games_played > 0, do: wins / games_played, else: 0.0),
+           games_abandoned: games_abandoned,
+           last_abandoned_at: last_abandoned_at
+         }}
+      end)
+    end
+  end
+
+  def get_user_stats_map(_user_ids), do: %{}
+
+  @doc """
   Gets all game stats for a room code.
   """
   def get_game_by_room_code(room_code) do
@@ -105,6 +159,27 @@ defmodule PidroServer.Stats do
       end
 
     Repo.all(query)
+  end
+
+  @doc """
+  Lists recent abandonment events for a player.
+  """
+  def list_user_abandonments(user_id, limit \\ 20) do
+    from(ae in AbandonmentEvent,
+      where: ae.user_id == ^user_id,
+      order_by: [desc: ae.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Returns a player's stored result map for a completed game.
+  """
+  def player_result_for(%GameStats{} = game, user_id) do
+    game
+    |> get_player_result(user_id)
+    |> normalize_player_result()
   end
 
   @doc """
@@ -274,6 +349,18 @@ defmodule PidroServer.Stats do
     |> Repo.aggregate(:count)
   end
 
+  defp abandonment_summary(user_ids) do
+    from(ae in AbandonmentEvent,
+      where: ae.user_id in ^user_ids,
+      group_by: ae.user_id,
+      select: {ae.user_id, count(ae.id), max(ae.inserted_at)}
+    )
+    |> Repo.all()
+    |> Map.new(fn {user_id, count, last_abandoned_at} ->
+      {user_id, %{count: count, last_abandoned_at: to_utc_datetime(last_abandoned_at)}}
+    end)
+  end
+
   defp last_abandoned_at(user_id) do
     from(ae in AbandonmentEvent, where: ae.user_id == ^user_id, select: max(ae.inserted_at))
     |> Repo.one()
@@ -404,6 +491,17 @@ defmodule PidroServer.Stats do
   end
 
   defp get_player_result(_game, _user_id), do: nil
+
+  defp normalize_player_result(nil), do: nil
+
+  defp normalize_player_result(result) when is_map(result) do
+    %{
+      participation: result[:participation] || result["participation"],
+      result: result[:result] || result["result"],
+      team: result[:team] || result["team"],
+      position: result[:position] || result["position"]
+    }
+  end
 
   defp get_player_position(game, user_id) do
     player_ids = game.player_ids || []

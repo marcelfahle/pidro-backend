@@ -33,6 +33,8 @@ defmodule PidroServer.Accounts.Auth do
   alias PidroServer.Accounts.User
   alias PidroServer.Repo
 
+  @default_user_page_size 30
+
   @doc """
   Registers a new user with the given attributes.
 
@@ -205,6 +207,85 @@ defmodule PidroServer.Accounts.Auth do
     |> Map.new(&{&1.id, &1})
   end
 
+  @doc """
+  Lists users for admin screens with search, account-type filtering, sorting,
+  and pagination.
+  """
+  def list_users(opts \\ []) do
+    page = opts |> Keyword.get(:page, 1) |> normalize_positive_integer(1)
+
+    per_page =
+      opts
+      |> Keyword.get(:per_page, @default_user_page_size)
+      |> normalize_positive_integer(@default_user_page_size)
+
+    query =
+      User
+      |> search_users(Keyword.get(opts, :search, ""))
+      |> filter_guest(Keyword.get(opts, :guest, :all))
+
+    total = Repo.aggregate(query, :count, :id)
+
+    total_pages = max(ceil_div(total, per_page), 1)
+    page = min(page, total_pages)
+
+    entries =
+      query
+      |> sort_users(Keyword.get(opts, :sort, :recent))
+      |> limit(^per_page)
+      |> offset(^((page - 1) * per_page))
+      |> Repo.all()
+
+    %{
+      entries: entries,
+      total: total,
+      page: page,
+      per_page: per_page,
+      total_pages: total_pages
+    }
+  end
+
+  @doc """
+  Returns high-level account counts for the admin user management dashboard.
+  """
+  def user_admin_summary do
+    total = Repo.aggregate(User, :count, :id)
+    guests = Repo.aggregate(from(u in User, where: u.guest == true), :count, :id)
+    registered = total - guests
+    with_email = Repo.aggregate(from(u in User, where: not is_nil(u.email)), :count, :id)
+
+    %{
+      total: total,
+      guests: guests,
+      registered: registered,
+      with_email: with_email
+    }
+  end
+
+  @doc """
+  Builds a changeset for admin profile edits.
+  """
+  def change_user(%User{} = user, attrs \\ %{}) do
+    user
+    |> User.changeset(admin_user_attrs(attrs))
+  end
+
+  @doc """
+  Updates user profile fields managed from the admin panel.
+  """
+  def update_user(%User{} = user, attrs) do
+    user
+    |> User.changeset(admin_user_attrs(attrs))
+    |> Repo.update()
+  end
+
+  @doc """
+  Deletes a user account. Historical game stats keep the raw player id.
+  """
+  def delete_user(%User{} = user) do
+    Repo.delete(user)
+  end
+
   defp valid_uuid?(id) when is_binary(id) do
     case Ecto.UUID.cast(id) do
       {:ok, _} -> true
@@ -233,4 +314,75 @@ defmodule PidroServer.Accounts.Auth do
   def list_recent_users(limit \\ 10) do
     Repo.all(from u in User, order_by: [desc: u.inserted_at], limit: ^limit)
   end
+
+  defp search_users(query, nil), do: query
+  defp search_users(query, ""), do: query
+
+  defp search_users(query, search) when is_binary(search) do
+    search = String.trim(search)
+
+    if search == "" do
+      query
+    else
+      term = "%#{search}%"
+
+      from u in query,
+        where:
+          ilike(u.username, ^term) or ilike(u.email, ^term) or
+            fragment("CAST(? AS TEXT) ILIKE ?", u.id, ^term)
+    end
+  end
+
+  defp filter_guest(query, guest) when guest in [:guest, "guest"] do
+    from u in query, where: u.guest == true
+  end
+
+  defp filter_guest(query, guest) when guest in [:registered, "registered"] do
+    from u in query, where: u.guest == false
+  end
+
+  defp filter_guest(query, _guest), do: query
+
+  defp sort_users(query, sort) when sort in [:username, "username"] do
+    from u in query, order_by: [asc: fragment("lower(?)", u.username), desc: u.inserted_at]
+  end
+
+  defp sort_users(query, sort) when sort in [:oldest, "oldest"] do
+    from u in query, order_by: [asc: u.inserted_at]
+  end
+
+  defp sort_users(query, sort) when sort in [:updated, "updated"] do
+    from u in query, order_by: [desc: u.updated_at]
+  end
+
+  defp sort_users(query, _sort) do
+    from u in query, order_by: [desc: u.inserted_at]
+  end
+
+  defp admin_user_attrs(attrs) when is_map(attrs) do
+    %{}
+    |> maybe_put_attr(:username, Map.get(attrs, "username", Map.get(attrs, :username)))
+    |> maybe_put_attr(:email, Map.get(attrs, "email", Map.get(attrs, :email)))
+    |> maybe_put_attr(:guest, Map.get(attrs, "guest", Map.get(attrs, :guest)))
+  end
+
+  defp admin_user_attrs(_attrs), do: %{}
+
+  defp maybe_put_attr(attrs, _key, nil), do: attrs
+  defp maybe_put_attr(attrs, key, value), do: Map.put(attrs, key, value)
+
+  defp normalize_positive_integer(value, _fallback) when is_integer(value) and value > 0,
+    do: value
+
+  defp normalize_positive_integer(value, fallback) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, _} when integer > 0 -> integer
+      _ -> fallback
+    end
+  end
+
+  defp normalize_positive_integer(_value, fallback), do: fallback
+
+  defp ceil_div(0, _denominator), do: 0
+  defp ceil_div(numerator, denominator), do: div(numerator + denominator - 1, denominator)
 end

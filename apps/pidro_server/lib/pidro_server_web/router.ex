@@ -82,9 +82,14 @@ defmodule PidroServerWeb.Router do
   scope "/dev", PidroServerWeb.Dev do
     pipe_through [:browser, :dev_access]
 
+    get "/emails/export.csv", EmailExportController, :index
+
     live_session :dev, root_layout: {PidroServerWeb.Layouts, :dev_root} do
       live "/games", GameListLive
       live "/games/:code", GameDetailLive
+      live "/users", UserListLive
+      live "/users/:id", UserDetailLive
+      live "/emails", EmailMigrationLive
       live "/analytics", AnalyticsLive
     end
   end

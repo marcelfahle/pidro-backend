@@ -1,0 +1,32 @@
+services:
+  keila:
+    image: pentacent/keila:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4001:4000"
+    environment:
+      DB_URL: "ecto://keila:${KEILA_DB_PASSWORD}@db/keila"
+      SECRET_KEY_BASE: "${SECRET_KEY_BASE}"
+      URL_HOST: "mail.pidro.online"
+      URL_SCHEMA: "https"
+      URL_PORT: "443"
+      MAILER_SMTP_HOST: "email-smtp.eu-west-1.amazonaws.com"
+      MAILER_SMTP_PORT: "587"
+      MAILER_SMTP_USER: "${SES_SMTP_USER}"
+      MAILER_SMTP_PASSWORD: "${SES_SMTP_PASSWORD}"
+      MAILER_SES_CONFIGURATION_SET: "${MAILER_SES_CONFIGURATION_SET:-pidro-main}"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: keila
+      POSTGRES_PASSWORD: "${KEILA_DB_PASSWORD}"
+      POSTGRES_DB: keila
+    volumes:
+      - keila_db:/var/lib/postgresql/data
+
+volumes:
+  keila_db:

@@ -17,6 +17,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
   """
 
   use PidroServerWeb, :live_view
+  import PidroServerWeb.Dev.AdminComponents
+
   alias PidroServer.Games.Bots.BotManager
   alias PidroServer.Games.{GameAdapter, GameSupervisor, PacingSettings, RoomManager}
   alias PidroServer.Games.Room.Positions
@@ -396,565 +398,569 @@ defmodule PidroServerWeb.Dev.GameListLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="px-4 py-10 sm:px-6 sm:py-28 lg:px-8 xl:px-28 xl:py-32">
-      <div class="mx-auto max-w-7xl">
-        <div class="mb-8">
-          <h1 class="text-4xl font-bold text-zinc-900">Pidro Development Interface - Game List</h1>
-          <p class="mt-2 text-lg text-zinc-600">
-            Real-time overview and management of all game rooms
-          </p>
-        </div>
-        
+    <.admin_shell
+      active="games"
+      title="Development Games"
+      subtitle="Create rooms, tune pacing, inspect live state, and clean up finished tables from one operational console."
+    >
+      <:actions>
+        <span class="rounded-sm border border-stone-300 bg-white px-3 py-2 font-mono text-xs font-bold uppercase tracking-[0.14em] text-stone-600">
+          Live room manager
+        </span>
+      </:actions>
+
     <!-- Quick-Create Presets -->
-        <div class="bg-white shadow sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:p-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Quick Create</h3>
-            <div class="mt-2 max-w-xl text-sm text-zinc-500">
-              <p>One-click room presets for common dev scenarios.</p>
-            </div>
-            <div class="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                phx-click="preset_empty_room"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-zinc-600 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-zinc-500"
-              >
-                Empty Room
-              </button>
-              <button
-                type="button"
-                phx-click="preset_1h_3b"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              >
-                1H + 3B
-              </button>
-              <button
-                type="button"
-                phx-click="preset_2h_2b"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                2H + 2B
-              </button>
-              <button
-                type="button"
-                phx-click="preset_4_bots"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-              >
-                4 Bots
-              </button>
-            </div>
+      <div class="rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-4">
+          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+            Quick Create
+          </h3>
+          <div class="mt-1 max-w-xl text-sm text-stone-500">
+            <p>One-click room presets for common dev scenarios.</p>
           </div>
-        </div>
-
-        <div class="bg-white shadow sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:p-6">
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h3 class="text-lg leading-6 font-medium text-zinc-900">Game Pacing</h3>
-                <div class="mt-2 max-w-3xl text-sm text-zinc-500">
-                  <p>
-                    Runtime controls for bot delays and trick/hand pauses. These values are saved with
-                    <code class="rounded bg-zinc-100 px-1 py-0.5 text-xs">Application.put_env</code>
-                    so they take effect immediately without a restart.
-                  </p>
-                </div>
-              </div>
-              <div class="rounded-lg bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
-                <p class="font-medium text-zinc-900">
-                  Bots will act between {@pacing_preview.bot_delay_min_ms}ms and {@pacing_preview.bot_delay_max_ms}ms
-                </p>
-                <p class="mt-1 text-zinc-500">
-                  Trick pause: {@pacing_form["trick_transition_delay_ms"]}ms
-                  · Hand pause: {@pacing_form["hand_transition_delay_ms"]}ms
-                </p>
-              </div>
-            </div>
-
-            <form phx-submit="save_pacing" phx-change="update_pacing_form" class="mt-6 space-y-6">
-              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <%= for field <- @pacing_fields do %>
-                  <div class="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4">
-                    <label
-                      for={pacing_input_id(field)}
-                      class="block text-sm font-medium text-zinc-900"
-                    >
-                      {field.label}
-                    </label>
-                    <p class="mt-1 text-xs leading-5 text-zinc-500">
-                      {field.description}
-                    </p>
-                    <input
-                      type="number"
-                      min={field.min}
-                      max={field.max}
-                      step={field.step}
-                      id={pacing_input_id(field)}
-                      name={"pacing[#{field_key(field)}]"}
-                      value={@pacing_form[field_key(field)]}
-                      class="mt-3 block w-full rounded-md border-zinc-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    />
-                    <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
-                      <span>Range: {field.min}ms to {field.max}ms</span>
-                      <span>Step: {field.step}ms</span>
-                    </div>
-                    <%= if error = @pacing_errors[field_key(field)] do %>
-                      <p class="mt-2 text-xs font-medium text-red-600">{error}</p>
-                    <% end %>
-                  </div>
-                <% end %>
-              </div>
-
-              <div class="flex flex-wrap gap-3">
-                <button
-                  type="submit"
-                  class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Save Pacing
-                </button>
-                <button
-                  type="button"
-                  phx-click="reset_pacing"
-                  class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Reset to Defaults
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-        
-    <!-- Create New Game Section -->
-        <div class="bg-white shadow sm:rounded-lg mb-8">
-          <div class="px-4 py-5 sm:p-6">
-            <h3 class="text-lg leading-6 font-medium text-zinc-900">Create New Game</h3>
-            <div class="mt-2 max-w-xl text-sm text-zinc-500">
-              <p>Create a new game room for testing and development.</p>
-            </div>
-            <div class="mt-5">
-              <%= if !@show_create_form do %>
-                <button
-                  type="button"
-                  phx-click="toggle_create_form"
-                  class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  New Game
-                </button>
-              <% else %>
-                <form phx-submit="create_game" phx-change="update_form" class="space-y-4">
-                  <!-- Game Name Input -->
-                  <div>
-                    <label for="game_name" class="block text-sm font-medium text-zinc-700">
-                      Game Name
-                    </label>
-                    <input
-                      type="text"
-                      name="game_name"
-                      id="game_name"
-                      value={@game_name}
-                      placeholder="My Test Game"
-                      class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    />
-                  </div>
-                  
-    <!-- Host Selection -->
-                  <div>
-                    <label for="host_user_id" class="block text-sm font-medium text-zinc-700">
-                      Host / Player 1
-                    </label>
-                    <select
-                      name="host_user_id"
-                      id="host_user_id"
-                      class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    >
-                      <option value="dev_host" selected={@host_user_id == "dev_host"}>
-                        Use Game Name (Dev Mode)
-                      </option>
-                      <%= for user <- @users do %>
-                        <option value={user.id} selected={@host_user_id == user.id}>
-                          User: {user.username} ({String.slice(user.id, 0..7)}...)
-                        </option>
-                      <% end %>
-                    </select>
-                    <p class="mt-1 text-xs text-zinc-500">
-                      Select a real user to allow that user to play as the host.
-                    </p>
-                  </div>
-                  
-    <!-- Bot Count Radio Buttons -->
-                  <div>
-                    <label class="block text-sm font-medium text-zinc-700">Bot Count</label>
-                    <div class="mt-2 flex flex-wrap gap-4">
-                      <%= for count <- 0..4 do %>
-                        <label class="inline-flex items-center">
-                          <input
-                            type="radio"
-                            name="bot_count"
-                            value={count}
-                            checked={@bot_count == count}
-                            class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
-                          />
-                          <span class="ml-2 text-sm text-zinc-700">{count}</span>
-                        </label>
-                      <% end %>
-                    </div>
-                    <p class="mt-1 text-xs text-zinc-500">
-                      <%= case @bot_count do %>
-                        <% 0 -> %>
-                          No bots. Waiting for 4 human players.
-                        <% 1 -> %>
-                          1 bot. Waiting for 3 human players.
-                        <% 2 -> %>
-                          2 bots. Waiting for 2 human players.
-                        <% 3 -> %>
-                          3 bots. Waiting for 1 human player (Host).
-                        <% 4 -> %>
-                          4 bots. Full automated game (Spectator only).
-                      <% end %>
-                    </p>
-                  </div>
-                  <!-- Bot Difficulty Dropdown -->
-                  <div>
-                    <label for="bot_difficulty" class="block text-sm font-medium text-zinc-700">
-                      Bot Difficulty
-                    </label>
-                    <select
-                      name="bot_difficulty"
-                      id="bot_difficulty"
-                      class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    >
-                      <option value="random" selected={@bot_difficulty == "random"}>Random</option>
-                      <option value="basic" selected={@bot_difficulty == "basic"}>Basic</option>
-                      <option value="smart" selected={@bot_difficulty == "smart"}>Smart</option>
-                    </select>
-                  </div>
-                  <!-- Action Buttons -->
-                  <div class="flex space-x-3">
-                    <button
-                      type="submit"
-                      class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
-                      Create
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="cancel_create"
-                      class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              <% end %>
-            </div>
-          </div>
-        </div>
-        
-    <!-- Statistics Cards -->
-        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Total Rooms</dt>
-              <dd class="mt-1 text-3xl font-semibold text-zinc-900">{@stats.total}</dd>
-            </div>
-          </div>
-
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Waiting</dt>
-              <dd class="mt-1 text-3xl font-semibold text-yellow-600">{@stats.waiting}</dd>
-            </div>
-          </div>
-
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Active Games</dt>
-              <dd class="mt-1 text-3xl font-semibold text-green-600">{@stats.playing}</dd>
-            </div>
-          </div>
-
-          <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="px-4 py-5 sm:p-6">
-              <dt class="text-sm font-medium text-zinc-500 truncate">Finished</dt>
-              <dd class="mt-1 text-3xl font-semibold text-blue-600">{@stats.finished}</dd>
-            </div>
-          </div>
-        </div>
-        
-    <!-- Filter and Sort Controls -->
-        <div class="bg-white shadow sm:rounded-lg mb-4 px-4 py-4">
-          <div class="flex flex-wrap items-center gap-4">
-            <!-- Phase Filter -->
-            <div class="flex items-center gap-2">
-              <label for="phase-filter" class="text-sm font-medium text-zinc-700">
-                Filter by Phase:
-              </label>
-              <select
-                id="phase-filter"
-                phx-change="filter_phase"
-                name="phase"
-                class="block rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              >
-                <option value="all" selected={@phase_filter == :all}>All</option>
-                <option value="waiting" selected={@phase_filter == :waiting}>Waiting</option>
-                <option value="playing" selected={@phase_filter == :playing}>Playing</option>
-                <option value="finished" selected={@phase_filter == :finished}>Finished</option>
-              </select>
-            </div>
-            
-    <!-- Sort Toggle -->
+          <div class="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              phx-click="toggle_sort"
-              class="inline-flex items-center px-3 py-2 border border-zinc-300 shadow-sm text-sm leading-4 font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              phx-click="preset_empty_room"
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-zinc-600 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-zinc-500"
             >
-              <%= if @sort_order == :desc do %>
-                Newest First
-              <% else %>
-                Oldest First
-              <% end %>
+              Empty Room
             </button>
-            
-    <!-- Game Count Badge -->
-            <div class="ml-auto">
-              <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
-                Showing {@stats.filtered} of {@stats.total} games
-              </span>
-            </div>
+            <button
+              type="button"
+              phx-click="preset_1h_3b"
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+            >
+              1H + 3B
+            </button>
+            <button
+              type="button"
+              phx-click="preset_2h_2b"
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              2H + 2B
+            </button>
+            <button
+              type="button"
+              phx-click="preset_4_bots"
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+            >
+              4 Bots
+            </button>
           </div>
         </div>
-        
-    <!-- Rooms Table -->
-        <div class="bg-white shadow overflow-hidden sm:rounded-lg">
-          <div class="px-4 py-5 sm:px-6 flex justify-between items-center">
+      </div>
+
+      <div class="rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-4">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h3 class="text-lg leading-6 font-medium text-zinc-900">Active Rooms</h3>
-              <p class="mt-1 max-w-2xl text-sm text-zinc-500">
-                Live updates from all game rooms
+              <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+                Game Pacing
+              </h3>
+              <div class="mt-1 max-w-3xl text-sm text-stone-500">
+                <p>
+                  Runtime controls for bot delays and trick/hand pauses. These values are saved with
+                  <code class="rounded bg-zinc-100 px-1 py-0.5 text-xs">Application.put_env</code>
+                  so they take effect immediately without a restart.
+                </p>
+              </div>
+            </div>
+            <div class="rounded-sm border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
+              <p class="font-bold text-stone-900">
+                Bots will act between {@pacing_preview.bot_delay_min_ms}ms and {@pacing_preview.bot_delay_max_ms}ms
+              </p>
+              <p class="mt-1 text-zinc-500">
+                Trick pause: {@pacing_form["trick_transition_delay_ms"]}ms
+                · Hand pause: {@pacing_form["hand_transition_delay_ms"]}ms
               </p>
             </div>
-            <%= if @stats.finished > 0 do %>
+          </div>
+
+          <form phx-submit="save_pacing" phx-change="update_pacing_form" class="mt-6 space-y-6">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <%= for field <- @pacing_fields do %>
+                <div class="rounded-md border border-stone-200 bg-stone-50/60 p-4">
+                  <label
+                    for={pacing_input_id(field)}
+                    class="block text-sm font-medium text-zinc-900"
+                  >
+                    {field.label}
+                  </label>
+                  <p class="mt-1 text-xs leading-5 text-zinc-500">
+                    {field.description}
+                  </p>
+                  <input
+                    type="number"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    id={pacing_input_id(field)}
+                    name={"pacing[#{field_key(field)}]"}
+                    value={@pacing_form[field_key(field)]}
+                    class="mt-3 block w-full rounded-md border-zinc-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  />
+                  <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
+                    <span>Range: {field.min}ms to {field.max}ms</span>
+                    <span>Step: {field.step}ms</span>
+                  </div>
+                  <%= if error = @pacing_errors[field_key(field)] do %>
+                    <p class="mt-2 text-xs font-medium text-red-600">{error}</p>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+
+            <div class="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Save Pacing
+              </button>
               <button
                 type="button"
-                phx-click="request_bulk_delete"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                phx-click="reset_pacing"
+                class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-                Delete All Finished ({@stats.finished})
+                Reset to Defaults
               </button>
-            <% end %>
-          </div>
-          <div class="border-t border-zinc-200">
-            <%= if Enum.empty?(@rooms) do %>
-              <div class="px-4 py-8 text-center text-zinc-500">
-                No active rooms at the moment
-              </div>
-            <% else %>
-              <table class="min-w-full divide-y divide-zinc-200">
-                <thead class="bg-zinc-50">
-                  <tr>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Room Code
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Name
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Status
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Players
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Phase
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Score
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Host
-                    </th>
-                    <th
-                      scope="col"
-                      class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                    >
-                      Created
-                    </th>
-                    <th scope="col" class="relative px-6 py-3">
-                      <span class="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-zinc-200">
-                  <%= for room <- @rooms do %>
-                    <tr>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                        <.link
-                          navigate={~p"/dev/games/#{room.code}"}
-                          class="text-sm font-medium text-indigo-600 hover:text-indigo-900"
-                        >
-                          {room.code}
-                        </.link>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm text-zinc-900">
-                          {room.metadata[:name] || "Game #{room.code}"}
-                        </div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                        <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(room.status)}"}>
-                          {room.status}
-                        </span>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        {Positions.count(room)} / 4
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        <%= if game_state = @game_states[room.code] do %>
-                          <span class="font-medium">{format_game_phase(game_state)}</span>
-                        <% else %>
-                          <span class="text-zinc-400">-</span>
-                        <% end %>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        <%= if game_state = @game_states[room.code] do %>
-                          <span class="font-mono">{format_scores(game_state)}</span>
-                        <% else %>
-                          <span class="text-zinc-400">-</span>
-                        <% end %>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        {room.host_id |> String.slice(0..7)}...
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                        {format_time(room.created_at)}
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div class="flex justify-end space-x-3">
-                          <%= if room.status == :playing do %>
-                            <.link
-                              navigate={~p"/dev/games/#{room.code}"}
-                              class="text-indigo-600 hover:text-indigo-900"
-                            >
-                              Watch
-                            </.link>
-                          <% end %>
-                          <button
-                            type="button"
-                            phx-click="request_delete"
-                            phx-value-code={room.code}
-                            class="text-red-600 hover:text-red-900"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  <% end %>
-                </tbody>
-              </table>
-            <% end %>
-          </div>
+            </div>
+          </form>
         </div>
-        
-    <!-- Auto-refresh indicator -->
-        <div class="mt-4 text-center text-sm text-zinc-500">
-          <span class="inline-flex items-center">
-            <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
-            Live updates enabled
-          </span>
-        </div>
-        
-    <!-- Confirmation Modal -->
-        <%= if @show_confirm_modal do %>
-          <div
-            class="fixed z-50 inset-0 overflow-y-auto"
-            aria-labelledby="modal-title"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-              <div
-                class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
-                aria-hidden="true"
-                phx-click="cancel_confirm"
+      </div>
+
+    <!-- Create New Game Section -->
+      <div class="rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-4">
+          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+            Create New Game
+          </h3>
+          <div class="mt-1 max-w-xl text-sm text-stone-500">
+            <p>Create a new game room for testing and development.</p>
+          </div>
+          <div class="mt-5">
+            <%= if !@show_create_form do %>
+              <button
+                type="button"
+                phx-click="toggle_create_form"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-              </div>
-
-              <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">
-                &#8203;
-              </span>
-
-              <div class="relative inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
-                <div class="sm:flex sm:items-start">
-                  <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
-                    <svg
-                      class="h-6 w-6 text-red-600"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      aria-hidden="true"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                  </div>
-                  <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                      Confirm Delete
-                    </h3>
-                    <div class="mt-2">
-                      <p class="text-sm text-gray-500">
-                        {@confirm_message}
-                      </p>
-                    </div>
-                  </div>
+                New Game
+              </button>
+            <% else %>
+              <form phx-submit="create_game" phx-change="update_form" class="space-y-4">
+                <!-- Game Name Input -->
+                <div>
+                  <label for="game_name" class="block text-sm font-medium text-zinc-700">
+                    Game Name
+                  </label>
+                  <input
+                    type="text"
+                    name="game_name"
+                    id="game_name"
+                    value={@game_name}
+                    placeholder="My Test Game"
+                    class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  />
                 </div>
-                <div class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse">
-                  <button
-                    type="button"
-                    phx-click="confirm_delete"
-                    class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
+
+    <!-- Host Selection -->
+                <div>
+                  <label for="host_user_id" class="block text-sm font-medium text-zinc-700">
+                    Host / Player 1
+                  </label>
+                  <select
+                    name="host_user_id"
+                    id="host_user_id"
+                    class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                   >
-                    Confirm
+                    <option value="dev_host" selected={@host_user_id == "dev_host"}>
+                      Use Game Name (Dev Mode)
+                    </option>
+                    <%= for user <- @users do %>
+                      <option value={user.id} selected={@host_user_id == user.id}>
+                        User: {user.username} ({String.slice(user.id, 0..7)}...)
+                      </option>
+                    <% end %>
+                  </select>
+                  <p class="mt-1 text-xs text-zinc-500">
+                    Select a real user to allow that user to play as the host.
+                  </p>
+                </div>
+
+    <!-- Bot Count Radio Buttons -->
+                <div>
+                  <label class="block text-sm font-medium text-zinc-700">Bot Count</label>
+                  <div class="mt-2 flex flex-wrap gap-4">
+                    <%= for count <- 0..4 do %>
+                      <label class="inline-flex items-center">
+                        <input
+                          type="radio"
+                          name="bot_count"
+                          value={count}
+                          checked={@bot_count == count}
+                          class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
+                        />
+                        <span class="ml-2 text-sm text-zinc-700">{count}</span>
+                      </label>
+                    <% end %>
+                  </div>
+                  <p class="mt-1 text-xs text-zinc-500">
+                    <%= case @bot_count do %>
+                      <% 0 -> %>
+                        No bots. Waiting for 4 human players.
+                      <% 1 -> %>
+                        1 bot. Waiting for 3 human players.
+                      <% 2 -> %>
+                        2 bots. Waiting for 2 human players.
+                      <% 3 -> %>
+                        3 bots. Waiting for 1 human player (Host).
+                      <% 4 -> %>
+                        4 bots. Full automated game (Spectator only).
+                    <% end %>
+                  </p>
+                </div>
+                <!-- Bot Difficulty Dropdown -->
+                <div>
+                  <label for="bot_difficulty" class="block text-sm font-medium text-zinc-700">
+                    Bot Difficulty
+                  </label>
+                  <select
+                    name="bot_difficulty"
+                    id="bot_difficulty"
+                    class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  >
+                    <option value="random" selected={@bot_difficulty == "random"}>Random</option>
+                    <option value="basic" selected={@bot_difficulty == "basic"}>Basic</option>
+                    <option value="smart" selected={@bot_difficulty == "smart"}>Smart</option>
+                  </select>
+                </div>
+                <!-- Action Buttons -->
+                <div class="flex space-x-3">
+                  <button
+                    type="submit"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  >
+                    Create
                   </button>
                   <button
                     type="button"
-                    phx-click="cancel_confirm"
-                    class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
+                    phx-click="cancel_create"
+                    class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
                     Cancel
                   </button>
                 </div>
+              </form>
+            <% end %>
+          </div>
+        </div>
+      </div>
+
+    <!-- Statistics Cards -->
+      <dl class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <.stat_card
+          label="Total rooms"
+          value={@stats.total}
+          hint="Known by RoomManager"
+          icon="hero-square-3-stack-3d"
+          tone="orange"
+        />
+        <.stat_card label="Waiting" value={@stats.waiting} hint="Open lobbies" icon="hero-clock" />
+        <.stat_card
+          label="Active games"
+          value={@stats.playing}
+          hint="Game processes running"
+          icon="hero-play"
+          tone="green"
+        />
+        <.stat_card
+          label="Finished"
+          value={@stats.finished}
+          hint="Ready for cleanup"
+          icon="hero-flag"
+          tone="blue"
+        />
+      </dl>
+
+    <!-- Filter and Sort Controls -->
+      <div class="rounded-md border border-stone-300 bg-white px-4 py-3 shadow-sm">
+        <div class="flex flex-wrap items-center gap-4">
+          <!-- Phase Filter -->
+          <div class="flex items-center gap-2">
+            <label for="phase-filter" class="text-sm font-medium text-zinc-700">
+              Filter by Phase:
+            </label>
+            <select
+              id="phase-filter"
+              phx-change="filter_phase"
+              name="phase"
+              class="block rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+            >
+              <option value="all" selected={@phase_filter == :all}>All</option>
+              <option value="waiting" selected={@phase_filter == :waiting}>Waiting</option>
+              <option value="playing" selected={@phase_filter == :playing}>Playing</option>
+              <option value="finished" selected={@phase_filter == :finished}>Finished</option>
+            </select>
+          </div>
+
+    <!-- Sort Toggle -->
+          <button
+            type="button"
+            phx-click="toggle_sort"
+            class="inline-flex items-center px-3 py-2 border border-zinc-300 shadow-sm text-sm leading-4 font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          >
+            <%= if @sort_order == :desc do %>
+              Newest First
+            <% else %>
+              Oldest First
+            <% end %>
+          </button>
+
+    <!-- Game Count Badge -->
+          <div class="ml-auto">
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
+              Showing {@stats.filtered} of {@stats.total} games
+            </span>
+          </div>
+        </div>
+      </div>
+
+    <!-- Rooms Table -->
+      <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="px-4 py-3 flex justify-between items-center">
+          <div>
+            <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+              Active Rooms
+            </h3>
+            <p class="mt-1 max-w-2xl text-xs text-stone-500">
+              Live updates from all game rooms
+            </p>
+          </div>
+          <%= if @stats.finished > 0 do %>
+            <button
+              type="button"
+              phx-click="request_bulk_delete"
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+            >
+              Delete All Finished ({@stats.finished})
+            </button>
+          <% end %>
+        </div>
+        <div class="border-t border-zinc-200">
+          <%= if Enum.empty?(@rooms) do %>
+            <div class="px-4 py-8 text-center text-zinc-500">
+              No active rooms at the moment
+            </div>
+          <% else %>
+            <table class="min-w-full divide-y divide-zinc-200">
+              <thead class="bg-zinc-50">
+                <tr>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Room Code
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Name
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Status
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Players
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Phase
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Score
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Host
+                  </th>
+                  <th
+                    scope="col"
+                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                  >
+                    Created
+                  </th>
+                  <th scope="col" class="relative px-6 py-3">
+                    <span class="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-zinc-200">
+                <%= for room <- @rooms do %>
+                  <tr>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <.link
+                        navigate={~p"/dev/games/#{room.code}"}
+                        class="text-sm font-medium text-indigo-600 hover:text-indigo-900"
+                      >
+                        {room.code}
+                      </.link>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <div class="text-sm text-zinc-900">
+                        {room.metadata[:name] || "Game #{room.code}"}
+                      </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(room.status)}"}>
+                        {room.status}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                      {Positions.count(room)} / 4
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                      <%= if game_state = @game_states[room.code] do %>
+                        <span class="font-medium">{format_game_phase(game_state)}</span>
+                      <% else %>
+                        <span class="text-zinc-400">-</span>
+                      <% end %>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                      <%= if game_state = @game_states[room.code] do %>
+                        <span class="font-mono">{format_scores(game_state)}</span>
+                      <% else %>
+                        <span class="text-zinc-400">-</span>
+                      <% end %>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                      {room.host_id |> String.slice(0..7)}...
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                      {format_time(room.created_at)}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <div class="flex justify-end space-x-3">
+                        <%= if room.status == :playing do %>
+                          <.link
+                            navigate={~p"/dev/games/#{room.code}"}
+                            class="text-indigo-600 hover:text-indigo-900"
+                          >
+                            Watch
+                          </.link>
+                        <% end %>
+                        <button
+                          type="button"
+                          phx-click="request_delete"
+                          phx-value-code={room.code}
+                          class="text-red-600 hover:text-red-900"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          <% end %>
+        </div>
+      </div>
+
+    <!-- Auto-refresh indicator -->
+      <div class="mt-4 text-center text-sm text-zinc-500">
+        <span class="inline-flex items-center">
+          <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+          Live updates enabled
+        </span>
+      </div>
+
+    <!-- Confirmation Modal -->
+      <%= if @show_confirm_modal do %>
+        <div
+          class="fixed z-50 inset-0 overflow-y-auto"
+          aria-labelledby="modal-title"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div
+              class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+              aria-hidden="true"
+              phx-click="cancel_confirm"
+            >
+            </div>
+
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">
+              &#8203;
+            </span>
+
+            <div class="relative inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+              <div class="sm:flex sm:items-start">
+                <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                  <svg
+                    class="h-6 w-6 text-red-600"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                </div>
+                <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                  <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+                    Confirm Delete
+                  </h3>
+                  <div class="mt-2">
+                    <p class="text-sm text-gray-500">
+                      {@confirm_message}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse">
+                <button
+                  type="button"
+                  phx-click="confirm_delete"
+                  class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
+                >
+                  Confirm
+                </button>
+                <button
+                  type="button"
+                  phx-click="cancel_confirm"
+                  class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
-        <% end %>
-      </div>
-    </div>
+        </div>
+      <% end %>
+    </.admin_shell>
     """
   end
 

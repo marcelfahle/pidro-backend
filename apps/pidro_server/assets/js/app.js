@@ -25,12 +25,13 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/pidro_server"
 import topbar from "../vendor/topbar"
 import {Clipboard} from "./hooks/clipboard"
+import {EmailEditor} from "./hooks/email_editor"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, Clipboard},
+  hooks: {...colocatedHooks, Clipboard, EmailEditor},
 })
 
 // Show progress bar on live navigation and form submits
@@ -81,4 +82,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-

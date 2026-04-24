@@ -13,6 +13,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   """
 
   use PidroServerWeb, :live_view
+  import PidroServerWeb.Dev.AdminComponents
+
   require Logger
   alias PidroServer.Accounts.Auth
   alias PidroServer.Dev.{Event, ReplayController}
@@ -940,70 +942,70 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="px-4 py-10 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-7xl">
-        <div class="mb-8">
-          <.link
-            navigate={~p"/dev/games"}
-            class="text-sm text-indigo-600 hover:text-indigo-900 mb-2 inline-block"
-          >
-            &larr; Back to Games
-          </.link>
-          <div class="flex items-center gap-4">
-            <h1 class="text-4xl font-bold text-zinc-900">Game: {@room_code}</h1>
-            <button
-              type="button"
-              phx-click="toggle_all_bots_pause"
-              class={[
-                "px-3 py-1.5 text-sm font-medium rounded-md transition-all",
-                if(@bots_paused,
-                  do: "bg-green-100 text-green-700 hover:bg-green-200",
-                  else: "bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
-                )
-              ]}
-            >
-              <%= if @bots_paused do %>
-                &#9654; Resume Bots
-              <% else %>
-                &#9646;&#9646; Pause Bots
-              <% end %>
-            </button>
-          </div>
-          <p class="mt-2 text-lg text-zinc-600">
-            Development game detail view with interactive controls
-          </p>
-        </div>
+    <.admin_shell
+      active="games"
+      title={"Table #{@room_code}"}
+      subtitle="Inspect live game state, seat assignments, bot behavior, action controls, and raw event history."
+    >
+      <:actions>
+        <.link
+          navigate={~p"/dev/games"}
+          class="inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700 shadow-sm hover:border-orange-300 hover:text-stone-950"
+        >
+          <.icon name="hero-arrow-left" class="size-4" /> Tables
+        </.link>
+        <button
+          type="button"
+          phx-click="toggle_all_bots_pause"
+          class={[
+            "inline-flex items-center gap-2 rounded-sm px-3 py-2 text-sm font-bold shadow-sm transition active:translate-y-px",
+            if(@bots_paused,
+              do: "border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
+              else: "border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+            )
+          ]}
+        >
+          <%= if @bots_paused do %>
+            <.icon name="hero-play" class="size-4" /> Resume Bots
+          <% else %>
+            <.icon name="hero-pause" class="size-4" /> Pause Bots
+          <% end %>
+        </button>
+      </:actions>
 
-        <.render_room_info room={@room} />
-        <.render_tab_bar active_tab={@active_tab} room_code={@room_code} />
+      <.render_room_info room={@room} />
+      <.render_tab_bar active_tab={@active_tab} room_code={@room_code} />
 
-        <%= if @active_tab == :board do %>
-          <.render_board_tab {assigns} />
-        <% else %>
-          <.render_seats_tab {assigns} />
-        <% end %>
+      <%= if @active_tab == :board do %>
+        <.render_board_tab {assigns} />
+      <% else %>
+        <.render_seats_tab {assigns} />
+      <% end %>
 
-        <div class="mt-4 text-center text-sm text-zinc-500">
-          <span class="inline-flex items-center">
-            <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
-            Live updates enabled
-          </span>
-        </div>
+      <div class="mt-4 text-center text-sm text-zinc-500">
+        <span class="inline-flex items-center">
+          <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
+          Live updates enabled
+        </span>
       </div>
-    </div>
+    </.admin_shell>
     """
   end
 
   defp render_room_info(assigns) do
     ~H"""
-    <div class="bg-white shadow overflow-hidden sm:rounded-lg mb-8">
-      <div class="px-4 py-5 sm:px-6">
-        <h3 class="text-lg leading-6 font-medium text-zinc-900">Room Information</h3>
+    <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
+      <div class="px-4 py-3">
+        <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+          Room Information
+        </h3>
       </div>
-      <div class="border-t border-zinc-200 px-4 py-5 sm:p-6">
+      <div class="border-t border-stone-200 px-4 py-4">
         <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
           <div>
-            <dt class="text-sm font-medium text-zinc-500">Status</dt>
+            <dt class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Status
+            </dt>
             <dd class="mt-1 text-sm text-zinc-900">
               <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(@room.status)}"}>
                 {@room.status}
@@ -1011,13 +1013,17 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
             </dd>
           </div>
           <div>
-            <dt class="text-sm font-medium text-zinc-500">Players</dt>
+            <dt class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Players
+            </dt>
             <dd class="mt-1 text-sm text-zinc-900">
               {PidroServer.Games.Room.Positions.count(@room)} / 4
             </dd>
           </div>
           <div>
-            <dt class="text-sm font-medium text-zinc-500">Host</dt>
+            <dt class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Host
+            </dt>
             <dd class="mt-1 text-sm text-zinc-900">
               {@room.host_id |> String.slice(0..7)}...
             </dd>
@@ -1030,15 +1036,15 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   defp render_tab_bar(assigns) do
     ~H"""
-    <div class="mb-8 border-b border-zinc-200">
-      <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+    <div class="rounded-md border border-stone-300 bg-white px-3 py-2 shadow-sm">
+      <nav class="flex flex-wrap gap-2" aria-label="Tabs">
         <.link
           patch={~p"/dev/games/#{@room_code}?tab=board"}
           class={[
-            "whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium",
+            "whitespace-nowrap rounded-sm px-3 py-2 text-sm font-bold",
             if(@active_tab == :board,
-              do: "border-indigo-500 text-indigo-600",
-              else: "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
+              do: "bg-stone-950 text-white",
+              else: "text-stone-600 hover:bg-stone-100 hover:text-stone-950"
             )
           ]}
         >
@@ -1047,10 +1053,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         <.link
           patch={~p"/dev/games/#{@room_code}?tab=seats_bots"}
           class={[
-            "whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium",
+            "whitespace-nowrap rounded-sm px-3 py-2 text-sm font-bold",
             if(@active_tab == :seats_bots,
-              do: "border-indigo-500 text-indigo-600",
-              else: "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
+              do: "bg-stone-950 text-white",
+              else: "text-stone-600 hover:bg-stone-100 hover:text-stone-950"
             )
           ]}
         >
