@@ -11,6 +11,7 @@ defmodule PidroServer.Emails.EmailTemplate do
 
   schema "email_templates" do
     field :kind, Ecto.Enum, values: [:transactional, :campaign]
+    field :key, :string
     field :name, :string
     field :subject, :string
     field :preview_text, :string
@@ -28,6 +29,7 @@ defmodule PidroServer.Emails.EmailTemplate do
     template
     |> cast(attrs, [
       :kind,
+      :key,
       :name,
       :subject,
       :preview_text,
@@ -37,13 +39,19 @@ defmodule PidroServer.Emails.EmailTemplate do
       :html_body,
       :variables_text
     ])
-    |> validate_required([:kind, :name, :subject, :html_body])
+    |> validate_required([:kind, :key, :name, :subject, :html_body])
+    |> validate_format(:key, ~r/^[a-z][a-z0-9_]*$/,
+      message:
+        "must start with a letter and contain only lowercase letters, numbers, and underscores"
+    )
+    |> validate_length(:key, min: 2, max: 80)
     |> validate_length(:name, min: 2, max: 120)
     |> validate_length(:subject, max: 180)
     |> validate_length(:preview_text, max: 240)
     |> validate_email(:from_email)
     |> validate_email(:reply_to)
     |> put_variables_from_text()
+    |> unique_constraint(:key, name: :email_templates_kind_key_index)
   end
 
   defp validate_email(changeset, field) do

@@ -4,12 +4,15 @@ defmodule PidroServer.Emails do
   """
 
   import Ecto.Query
+  import Swoosh.Email, except: [from: 2]
 
   alias PidroServer.Accounts.User
   alias PidroServer.Emails.EmailTemplate
+  alias PidroServer.Mailer
   alias PidroServer.Repo
 
   @ses_relay "email-smtp.eu-west-1.amazonaws.com"
+  @placeholder_regex ~r/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/
   @contact_headers [
     "email",
     "username",
@@ -126,6 +129,12 @@ defmodule PidroServer.Emails do
   def get_template(id), do: Repo.get(EmailTemplate, id)
   def get_template!(id), do: Repo.get!(EmailTemplate, id)
 
+  def get_template_by_key(kind, key) do
+    Repo.get_by(EmailTemplate, kind: normalize_kind(kind), key: normalize_template_key(key))
+  end
+
+  def get_transactional_template(key), do: get_template_by_key(:transactional, key)
+
   def first_template(kind) do
     kind
     |> list_templates()
@@ -133,8 +142,13 @@ defmodule PidroServer.Emails do
   end
 
   def create_template(kind) when kind in [:transactional, :campaign] do
+    attrs =
+      kind
+      |> default_template_attrs()
+      |> Map.put(:key, default_template_key(kind))
+
     %EmailTemplate{}
-    |> EmailTemplate.changeset(default_template_attrs(kind))
+    |> EmailTemplate.changeset(attrs)
     |> Repo.insert()
   end
 
@@ -161,6 +175,53 @@ defmodule PidroServer.Emails do
 
   def delete_template(%EmailTemplate{} = template) do
     Repo.delete(template)
+  end
+
+  def render_template(%EmailTemplate{} = template, variables \\ %{}) do
+    variables = normalize_variables(variables)
+
+    missing_variables =
+      template
+      |> required_variable_names()
+      |> Enum.reject(&Map.has_key?(variables, &1))
+
+    if missing_variables == [] do
+      html_body = render_placeholders(template.html_body || "", variables, :html)
+
+      {:ok,
+       %{
+         subject: render_placeholders(template.subject || "", variables, :text),
+         preview_text: render_placeholders(template.preview_text || "", variables, :text),
+         html_body: html_body,
+         text_body: html_to_text(html_body)
+       }}
+    else
+      {:error, {:missing_variables, missing_variables}}
+    end
+  end
+
+  def deliver_transactional(key, recipient, variables \\ %{}) do
+    case get_transactional_template(key) do
+      nil ->
+        {:error, :template_not_found}
+
+      %EmailTemplate{} = template ->
+        deliver_template(template, recipient, variables)
+    end
+  end
+
+  def deliver_template(%EmailTemplate{} = template, recipient, variables \\ %{}) do
+    with {:ok, recipient_mailbox} <- recipient_to_mailbox(recipient),
+         {:ok, rendered} <- render_template(template, variables) do
+      new()
+      |> to(recipient_mailbox)
+      |> Swoosh.Email.from(sender_mailbox(template))
+      |> maybe_reply_to(template.reply_to)
+      |> subject(rendered.subject)
+      |> html_body(rendered.html_body)
+      |> text_body(rendered.text_body)
+      |> Mailer.deliver()
+    end
   end
 
   def template_summary do
@@ -191,6 +252,18 @@ defmodule PidroServer.Emails do
   def normalize_kind("campaign"), do: :campaign
   def normalize_kind("transactional"), do: :transactional
   def normalize_kind(_kind), do: :transactional
+
+  def normalize_template_key(key) when is_atom(key) do
+    key
+    |> Atom.to_string()
+    |> normalize_template_key()
+  end
+
+  def normalize_template_key(key) when is_binary(key) do
+    key
+    |> String.trim()
+    |> String.downcase()
+  end
 
   defp default_template_attrs(:transactional) do
     %{
@@ -225,6 +298,144 @@ defmodule PidroServer.Emails do
       """,
       variables_text: "{{first_name}}\n{{unsubscribe_url}}\n{{support_email}}"
     }
+  end
+
+  defp default_template_key(kind) do
+    suffix =
+      Ecto.UUID.generate()
+      |> String.slice(0, 8)
+      |> String.replace("-", "_")
+
+    "#{kind}_email_#{suffix}"
+  end
+
+  defp required_variable_names(%EmailTemplate{} = template) do
+    [template.subject, template.preview_text, template.html_body]
+    |> Enum.flat_map(fn source ->
+      @placeholder_regex
+      |> Regex.scan(source || "")
+      |> Enum.map(fn [_match, key] -> key end)
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_variables(variables) when is_map(variables) do
+    variables
+    |> Enum.map(fn {key, value} -> {normalize_variable_key(key), variable_to_string(value)} end)
+    |> Map.new()
+  end
+
+  defp normalize_variables(_variables), do: %{}
+
+  defp normalize_variable_key(key) when is_atom(key), do: Atom.to_string(key)
+
+  defp normalize_variable_key(key) do
+    key = key |> to_string() |> String.trim()
+
+    case Regex.run(@placeholder_regex, key) do
+      [_match, variable_key] -> variable_key
+      _other -> key
+    end
+  end
+
+  defp variable_to_string(nil), do: ""
+  defp variable_to_string(%Date{} = value), do: Date.to_iso8601(value)
+  defp variable_to_string(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp variable_to_string(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp variable_to_string(value), do: to_string(value)
+
+  defp render_placeholders(source, variables, mode) do
+    Regex.replace(@placeholder_regex, source, fn _match, key ->
+      value = Map.fetch!(variables, key)
+
+      case mode do
+        :html ->
+          value
+          |> Phoenix.HTML.html_escape()
+          |> Phoenix.HTML.safe_to_string()
+
+        :text ->
+          value
+      end
+    end)
+  end
+
+  defp html_to_text(html_body) do
+    html_body
+    |> String.replace(~r/<\s*br\s*\/?>/i, "\n")
+    |> String.replace(~r/<\s*\/\s*(p|div|h[1-6]|li)\s*>/i, "\n")
+    |> String.replace(~r/<\s*li[^>]*>/i, "- ")
+    |> String.replace(~r/<[^>]+>/, "")
+    |> decode_basic_html_entities()
+    |> String.replace(~r/[ \t]+\n/, "\n")
+    |> String.replace(~r/\n{3,}/, "\n\n")
+    |> String.trim()
+  end
+
+  defp decode_basic_html_entities(text) do
+    text
+    |> String.replace("&nbsp;", " ")
+    |> String.replace("&amp;", "&")
+    |> String.replace("&lt;", "<")
+    |> String.replace("&gt;", ">")
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#39;", "'")
+  end
+
+  defp recipient_to_mailbox(%User{email: email, username: username}) do
+    mailbox(username, email)
+  end
+
+  defp recipient_to_mailbox({name, email}), do: mailbox(name, email)
+  defp recipient_to_mailbox(email) when is_binary(email), do: mailbox(nil, email)
+  defp recipient_to_mailbox(_recipient), do: {:error, :invalid_recipient}
+
+  defp mailbox(name, email) do
+    email = email |> to_string() |> String.trim()
+    name = if is_binary(name), do: String.trim(name), else: nil
+
+    cond do
+      email == "" ->
+        {:error, :missing_recipient_email}
+
+      not valid_email?(email) ->
+        {:error, :invalid_recipient_email}
+
+      is_binary(name) and name != "" ->
+        {:ok, {name, email}}
+
+      true ->
+        {:ok, email}
+    end
+  end
+
+  defp sender_mailbox(%EmailTemplate{} = template) do
+    delivery = delivery_setup()
+    from_email = present_or_default(template.from_email, delivery.from_address)
+    from_name = present_or_default(template.from_name, "Pidro")
+
+    {from_name, from_email}
+  end
+
+  defp maybe_reply_to(email, reply_to_address) do
+    reply_to_address = reply_to_address |> to_string() |> String.trim()
+
+    if reply_to_address == "" do
+      email
+    else
+      reply_to(email, reply_to_address)
+    end
+  end
+
+  defp present_or_default(value, default) do
+    value = value |> to_string() |> String.trim()
+
+    if value == "", do: default, else: value
+  end
+
+  defp valid_email?(email) do
+    String.match?(email, ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
   end
 
   defp exportable_contacts_query do

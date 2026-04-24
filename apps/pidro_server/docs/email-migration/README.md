@@ -7,6 +7,7 @@ The Pidro app now owns:
 - `/dev/emails` email studio for creating and editing transactional emails and campaign drafts.
 - `/dev/emails/export.csv` Keila contact CSV export for local users with email addresses.
 - Database-backed email draft records, generated email HTML, preview, variable insertion, save, download, and copy actions.
+- Stable transactional email keys plus `PidroServer.Emails.deliver_transactional/3` for app-triggered sends.
 - A small delivery setup readout using real runtime config.
 
 The admin panel is not the source of truth for Linear ticket status or historical Loops metrics. Do not copy Loops send/open/delivery numbers into Pidro; recreate the email content here and move finished campaign execution into Keila.
@@ -134,6 +135,8 @@ In Keila:
 ## 5. Pidro Transactional Mail
 
 Linear: PID-20
+
+Usage manual: [transactional-email-usage.md](transactional-email-usage.md)
 
 Swoosh is already in the Pidro app. SMTP delivery needs `gen_smtp`, which was not present in the current lockfile. Add it when the build environment has network access:
 

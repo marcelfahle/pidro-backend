@@ -144,7 +144,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
     <.admin_shell
       active="emails"
       title="Email Studio"
-      subtitle="Draft transactional emails and campaigns. Keep copy, variables, and HTML exports in one place."
+      subtitle="Draft transactional emails and campaigns. Transactional templates expose stable keys for server-side sends."
     >
       <:actions>
         <button
@@ -252,6 +252,9 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                 <span class="mt-1 block truncate pl-4 text-xs font-normal text-stone-500">
                   {template.subject}
                 </span>
+                <span class="mt-1 block truncate pl-4 font-mono text-[11px] font-normal text-stone-400">
+                  :{template.key}
+                </span>
               </button>
             </div>
           <% end %>
@@ -275,6 +278,9 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                     </span>
                     <span class={subtle_badge_class()}>
                       Saved in database
+                    </span>
+                    <span class="rounded-md border border-stone-200 bg-white px-2 py-1 font-mono text-xs font-medium text-stone-600">
+                      :{@selected_template.key}
                     </span>
                     <span
                       data-editor-dirty
@@ -333,6 +339,26 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                 </label>
                 <label class="block bg-white px-4 py-3">
                   <span class={field_label_class()}>
+                    Code key
+                  </span>
+                  <input
+                    name={@form[:key].name}
+                    data-email-field="key"
+                    value={field_value(@form, :key)}
+                    class={text_input_class(["font-mono"])}
+                  />
+                  <p class="mt-1 truncate text-xs text-stone-500">
+                    Use
+                    <code class="font-mono">
+                      Emails.deliver_transactional(:{field_value(
+                        @form,
+                        :key
+                      )}, ...)
+                    </code>
+                  </p>
+                </label>
+                <label class="block bg-white px-4 py-3">
+                  <span class={field_label_class()}>
                     Subject
                   </span>
                   <input
@@ -353,7 +379,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                     class={text_input_class()}
                   />
                 </label>
-                <div class="grid gap-px bg-stone-100 sm:grid-cols-3">
+                <div class="grid gap-px bg-stone-100 sm:grid-cols-3 lg:col-span-2">
                   <label class="block bg-white px-4 py-3">
                     <span class={field_label_class()}>
                       From name
