@@ -11,6 +11,7 @@ defmodule PidroServer.Progression.Heritage do
 
     * `played_pidro_one :: boolean`   — had a Pidro 1 account
     * `founding_member  :: boolean`   — pre-launch / founding cohort
+    * `legacy_premium   :: boolean`   — had active Pidro 1 premium (display only)
     * `legacy_level     :: integer`   — the carried Pidro 1 level (display only)
     * `legacy_accolades :: [string]`  — named legacy awards/titles
 
@@ -34,6 +35,7 @@ defmodule PidroServer.Progression.Heritage do
   @vocabulary [
     {:played_pidro_one, "Played Pidro 1", :boolean},
     {:founding_member, "Founding Member", :boolean},
+    {:legacy_premium, "Pidro 1 Premium", :boolean},
     {:legacy_level, "Legacy Level", :value},
     {:legacy_accolades, "Legacy Accolades", :value}
   ]

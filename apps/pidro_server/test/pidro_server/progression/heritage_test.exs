@@ -41,6 +41,17 @@ defmodule PidroServer.Progression.HeritageTest do
            ]
   end
 
+  test "legacy_premium truthy -> premium badge (PID-53)" do
+    assert Heritage.display(%{"legacy_premium" => true}) == [
+             %{key: :legacy_premium, label: "Pidro 1 Premium", value: true}
+           ]
+  end
+
+  test "legacy_premium false / absent -> no premium badge (PID-53)" do
+    assert Heritage.display(%{"legacy_premium" => false}) == []
+    assert Heritage.display(%{}) == []
+  end
+
   test "full mixed map keeps vocabulary order" do
     flags = %{
       "legacy_accolades" => ["Champion"],

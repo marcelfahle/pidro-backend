@@ -22,6 +22,7 @@ defmodule PidroServer.Profiles do
   alias PidroServer.Achievements.Catalog
   alias PidroServer.Playstyle
   alias PidroServer.Profiles.Achievement
+  alias PidroServer.Profiles.LegacyProgression
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Profiles.PostGameSummary
   alias PidroServer.Profiles.RatingState
@@ -64,6 +65,112 @@ defmodule PidroServer.Profiles do
             {:error, changeset}
         end
     end
+  end
+
+  @doc """
+  Imports a Pidro 1 player's progression into their Pidro 2 profile (PID-53).
+
+  The pure legacy → profile mapping: carries the Veteran XP/level, routes legacy
+  badges + premium + founding-member recognition into display-only Heritage
+  flags, sets the playstyle accumulators from the bridge's pre-aggregation, and
+  leaves skill at `Rating.default/0` with `rating_games_count: 0` (NO seed) so a
+  migrated player is Provisional on arrival.
+
+  `legacy_data` is a `%LegacyProgression{}` or a plain map (normalized via
+  `struct/2`, so any missing/`nil` field falls to its struct default). The first
+  argument is a `user_id` or a `%User{}` (resolved to its id) for the future
+  bridge call site.
+
+  Every write is an ABSOLUTE set through one `PlayerProfile.changeset/2`, wrapped
+  in a transaction (the single-write boundary `rebuild_from_history/1` uses).
+
+  ## Idempotency
+
+  Guards on `heritage_flags["played_pidro_one"] == true` — the marker the import
+  itself sets. A re-run short-circuits with `{:ok, :already_migrated}` and writes
+  nothing, so it can never clobber XP/skill/playstyle the player earned *after*
+  migrating. There is deliberately no `force:` escape hatch in v1; a re-apply
+  would be a separate operational tool.
+
+  Returns `{:ok, profile}` on a fresh import, `{:ok, :already_migrated}` when the
+  guard short-circuits, or `{:error, changeset}` on a write failure.
+  """
+  @spec import_legacy_progression(Ecto.UUID.t() | User.t(), LegacyProgression.t() | map()) ::
+          {:ok, PlayerProfile.t()} | {:ok, :already_migrated} | {:error, Ecto.Changeset.t()}
+  def import_legacy_progression(user_or_id, legacy_data) do
+    user_id = user_id_from(user_or_id)
+    legacy = normalize_legacy(legacy_data)
+
+    Repo.transaction(fn ->
+      {:ok, profile} = get_or_create_profile(user_id)
+
+      if already_migrated?(profile) do
+        :already_migrated
+      else
+        case profile |> PlayerProfile.changeset(legacy_attrs(legacy)) |> Repo.update() do
+          {:ok, updated} -> updated
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      end
+    end)
+  end
+
+  defp user_id_from(%User{id: id}), do: id
+  defp user_id_from(user_id) when is_binary(user_id), do: user_id
+
+  defp normalize_legacy(%LegacyProgression{} = legacy), do: legacy
+  defp normalize_legacy(map) when is_map(map), do: struct(LegacyProgression, map)
+
+  defp already_migrated?(%PlayerProfile{heritage_flags: flags}) when is_map(flags) do
+    Map.get(flags, "played_pidro_one") == true or Map.get(flags, :played_pidro_one) == true
+  end
+
+  defp already_migrated?(_profile), do: false
+
+  # Build the full absolute-set attrs map for the one import changeset. Skill is
+  # left at Rating.default/0 + count 0 (NO seed → guaranteed Provisional). When
+  # legacy.playstyle is nil the four accumulators stay 0.
+  defp legacy_attrs(%LegacyProgression{} = legacy) do
+    level = Progression.level_for_xp(legacy.xp)
+    {default_mu, default_sigma} = Rating.default()
+
+    %{attempts: attempts, wins: wins, won_bid_sum: won_bid_sum} =
+      legacy_playstyle(legacy.playstyle)
+
+    %{
+      veteran_xp: legacy.xp,
+      veteran_level: level,
+      heritage_flags: %{
+        "played_pidro_one" => true,
+        "legacy_level" => level,
+        "legacy_accolades" => legacy.badges,
+        "founding_member" => legacy.founding_member,
+        "legacy_premium" => legacy.premium
+      },
+      playstyle_bidding_attempts: attempts,
+      playstyle_bidding_wins: wins,
+      avg_winning_bid_sum: won_bid_sum,
+      # wins == won-bid count (a winning bid is a won round).
+      avg_winning_bid_count: wins,
+      rating_mu: default_mu,
+      rating_sigma: default_sigma,
+      rating_games_count: 0
+    }
+  end
+
+  defp legacy_playstyle(nil), do: %{attempts: 0, wins: 0, won_bid_sum: 0}
+
+  defp legacy_playstyle(%{} = ps) do
+    %{
+      attempts: legacy_int(ps, :bidding_attempts, "bidding_attempts"),
+      wins: legacy_int(ps, :bidding_wins, "bidding_wins"),
+      won_bid_sum: legacy_int(ps, :won_bid_sum, "won_bid_sum")
+    }
+  end
+
+  defp legacy_int(map, atom_key, string_key) do
+    value = Map.get(map, atom_key) || Map.get(map, string_key)
+    if is_integer(value), do: value, else: 0
   end
 
   @doc """
