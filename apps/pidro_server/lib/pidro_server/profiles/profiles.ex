@@ -235,6 +235,47 @@ defmodule PidroServer.Profiles do
   end
 
   @doc """
+  Bulk progression summaries for a list of user ids, in ONE query.
+
+  Returns `%{user_id => %{veteran_level: pos_integer(), tier: Rating.Tier.tier(),
+  provisional: boolean()}}`. Each value carries the canonical level (recomputed
+  from stored XP, so a stale `veteran_level` cache can never surface) and the
+  skill tier classified in memory via `Rating.Tier.classify/1`. Users without a
+  `player_profiles` row are simply absent from the map; the caller renders sane
+  defaults (level 1 / provisional) for them.
+
+  This is the no-N+1 companion to the per-row list view: one indexed `IN` scan
+  over `player_profiles`, tier classification done in Elixir.
+  """
+  @spec summaries_for([Ecto.UUID.t()]) ::
+          %{
+            optional(Ecto.UUID.t()) => %{
+              veteran_level: pos_integer(),
+              tier: atom(),
+              provisional: boolean()
+            }
+          }
+  def summaries_for([]), do: %{}
+
+  def summaries_for(user_ids) when is_list(user_ids) do
+    from(p in PlayerProfile,
+      where: p.user_id in ^user_ids,
+      select: {p.user_id, p.veteran_xp, p.rating_mu, p.rating_sigma, p.rating_games_count}
+    )
+    |> Repo.all()
+    |> Map.new(fn {user_id, veteran_xp, mu, sigma, games_count} ->
+      %{tier: tier, provisional: provisional} = Rating.Tier.classify(mu, sigma, games_count)
+
+      {user_id,
+       %{
+         veteran_level: Progression.level_for_xp(veteran_xp),
+         tier: tier,
+         provisional: provisional
+       }}
+    end)
+  end
+
+  @doc """
   Projects the public, client-facing profile payload (PID-54).
 
   Takes either a `user_id` or the `get_profile_for_screen/1` screen map and

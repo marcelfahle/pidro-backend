@@ -4,6 +4,7 @@ defmodule PidroServer.ProfilesTest do
   alias PidroServer.Profiles
   alias PidroServer.Profiles.Achievement
   alias PidroServer.Profiles.PlayerProfile
+  alias PidroServer.Progression
   alias PidroServer.Stats
 
   defp insert_user do
@@ -593,6 +594,40 @@ defmodule PidroServer.ProfilesTest do
       assert public.user_id == user.id
       assert public.skill == %{tier: :provisional, provisional: true}
       refute Map.has_key?(public, :rating_mu)
+    end
+  end
+
+  describe "summaries_for/1" do
+    test "returns level + classified tier per existing profile in one map" do
+      veteran = insert_user()
+      rookie = insert_user()
+
+      {:ok, _} = Profiles.import_legacy_progression(veteran.id, %{xp: 5000})
+      {:ok, _} = Profiles.get_or_create_profile(rookie.id)
+
+      summaries = Profiles.summaries_for([veteran.id, rookie.id])
+
+      veteran_summary = summaries[veteran.id]
+      assert veteran_summary.veteran_level == Progression.level_for_xp(5000)
+      # Fresh import leaves skill at default + count 0 → provisional.
+      assert veteran_summary.tier == :provisional
+      assert veteran_summary.provisional == true
+
+      assert summaries[rookie.id] == %{
+               veteran_level: 1,
+               tier: :provisional,
+               provisional: true
+             }
+    end
+
+    test "omits users without a profile row" do
+      missing_id = Ecto.UUID.generate()
+
+      assert Profiles.summaries_for([missing_id]) == %{}
+    end
+
+    test "returns an empty map for an empty list" do
+      assert Profiles.summaries_for([]) == %{}
     end
   end
 end

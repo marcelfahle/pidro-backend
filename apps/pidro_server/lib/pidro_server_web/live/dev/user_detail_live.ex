@@ -11,6 +11,8 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Profiles
+  alias PidroServer.Rating.Tier
   alias PidroServer.Stats
 
   @impl true
@@ -184,6 +186,129 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
           tone={if @stats.games_abandoned > 0, do: "red", else: "stone"}
         />
       </dl>
+
+      <section class="rounded-md border border-stone-300 bg-white shadow-sm">
+        <div class="border-b border-stone-200 px-4 py-3">
+          <h2 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
+            Progression
+          </h2>
+          <p class="mt-1 text-xs text-stone-500">
+            Veteran level, skill tier, playstyle, mastery, and heritage for this player.
+          </p>
+        </div>
+
+        <div class="grid gap-4 p-4 lg:grid-cols-2">
+          <div class="rounded-lg border border-stone-200 bg-stone-50/70 p-4">
+            <div class="flex items-center justify-between gap-2">
+              <p class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+                Veteran
+              </p>
+              <span class="rounded-md bg-stone-950 px-2 py-1 text-xs font-black text-white">
+                Lvl {@profile.veteran_level}
+              </span>
+            </div>
+            <p class="mt-2 text-lg font-black text-stone-950">{@profile.veteran_title}</p>
+            <p class="mt-1 text-xs text-stone-500">{@profile.veteran_xp} XP total</p>
+            <%= case @profile.veteran_progress do %>
+              <% {into, span} -> %>
+                <div class="mt-3">
+                  <div class="h-2 w-full overflow-hidden rounded-full bg-stone-200">
+                    <div
+                      class="h-full rounded-full bg-orange-500"
+                      style={"width: #{progress_percent(into, span)}%"}
+                    >
+                    </div>
+                  </div>
+                  <p class="mt-1 text-xs text-stone-500">
+                    {into}/{span} XP to next level
+                  </p>
+                </div>
+              <% :max -> %>
+                <p class="mt-3 text-xs font-bold text-emerald-700">Max level reached</p>
+            <% end %>
+          </div>
+
+          <div class="rounded-lg border border-stone-200 bg-stone-50/70 p-4">
+            <p class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Skill
+            </p>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <span class="text-lg font-black text-stone-950">{tier_label(@skill.tier)}</span>
+              <span
+                :if={@skill.provisional}
+                class="rounded-md bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"
+              >
+                Provisional
+              </span>
+            </div>
+            <p class="mt-3 font-mono text-[0.7rem] leading-5 text-stone-400">
+              Internal · μ {format_float(@profile.rating_mu)} · σ {format_float(@profile.rating_sigma)} · {@profile.rating_games_count} rated games
+            </p>
+          </div>
+
+          <div class="rounded-lg border border-stone-200 bg-stone-50/70 p-4">
+            <p class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Playstyle
+            </p>
+            <%= if @profile.aggression_insufficient do %>
+              <p class="mt-2 text-sm font-semibold text-stone-500">
+                Not enough data yet
+              </p>
+              <p class="mt-1 text-xs text-stone-400">
+                Bidding tendencies appear once this player has bid in more games.
+              </p>
+            <% else %>
+              <p class="mt-2 text-lg font-black text-stone-950">
+                {aggression_label(@profile.aggression_label)}
+              </p>
+              <p class="mt-1 text-xs text-stone-500">
+                Aggression {format_percent(@profile.aggression_needle)} · Avg winning bid {avg_bid_label(
+                  @profile.avg_winning_bid
+                )}
+              </p>
+            <% end %>
+          </div>
+
+          <div class="rounded-lg border border-stone-200 bg-stone-50/70 p-4">
+            <p class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Mastery
+            </p>
+            <%= if Enum.empty?(@profile.achievements) do %>
+              <p class="mt-2 text-sm font-semibold text-stone-500">No achievements earned yet</p>
+            <% else %>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <span
+                  :for={achievement <- @profile.achievements}
+                  class="rounded-md bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700"
+                  title={achievement.description}
+                >
+                  {achievement.name}
+                </span>
+              </div>
+            <% end %>
+          </div>
+
+          <div class="rounded-lg border border-stone-200 bg-stone-50/70 p-4 lg:col-span-2">
+            <p class="font-mono text-[0.68rem] font-bold uppercase tracking-[0.14em] text-stone-500">
+              Heritage
+            </p>
+            <%= if Enum.empty?(@profile.heritage) do %>
+              <p class="mt-2 text-sm font-semibold text-stone-500">
+                No heritage recognition (not a migrated Pidro 1 player)
+              </p>
+            <% else %>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <span
+                  :for={badge <- @profile.heritage}
+                  class="rounded-md bg-sky-50 px-2 py-1 text-xs font-bold text-sky-700"
+                >
+                  {heritage_label(badge)}
+                </span>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      </section>
 
       <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <main class="space-y-6">
@@ -490,9 +615,12 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
 
   defp load_user_context(socket) do
     user = socket.assigns.user
+    {:ok, profile} = Profiles.get_profile_for_screen(user.id)
 
     socket
     |> assign(:stats, Stats.get_user_stats(user.id))
+    |> assign(:profile, profile)
+    |> assign(:skill, Tier.classify(profile))
     |> assign(:recent_games, Stats.list_recent_games(player_id: user.id, limit: 20))
     |> assign(:abandonments, Stats.list_user_abandonments(user.id, 8))
     |> assign(:active_rooms, active_rooms_for_user(user.id))
@@ -681,4 +809,33 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
   defp normalize_value(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_value(value) when is_binary(value), do: value
   defp normalize_value(_value), do: "unknown"
+
+  defp tier_label(tier) when is_atom(tier) do
+    tier |> Atom.to_string() |> String.capitalize()
+  end
+
+  defp tier_label(_tier), do: "Unknown"
+
+  defp aggression_label(label) when is_atom(label) do
+    label |> Atom.to_string() |> String.capitalize()
+  end
+
+  defp aggression_label(_label), do: "Unknown"
+
+  defp avg_bid_label(value) when is_number(value), do: format_float(value)
+  defp avg_bid_label(_value), do: "—"
+
+  defp progress_percent(_into, span) when span in [nil, 0], do: 0
+  defp progress_percent(into, span), do: round(into / span * 100)
+
+  defp format_float(value) when is_float(value), do: :erlang.float_to_binary(value, decimals: 1)
+  defp format_float(value) when is_integer(value), do: Integer.to_string(value)
+  defp format_float(_value), do: "—"
+
+  defp heritage_label(%{label: label, value: true}), do: label
+  defp heritage_label(%{label: label, value: value}), do: "#{label}: #{heritage_value(value)}"
+  defp heritage_label(_badge), do: "Unknown"
+
+  defp heritage_value(value) when is_list(value), do: Enum.join(value, ", ")
+  defp heritage_value(value), do: to_string(value)
 end
