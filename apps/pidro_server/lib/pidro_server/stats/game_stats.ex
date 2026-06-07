@@ -19,6 +19,7 @@ defmodule PidroServer.Stats.GameStats do
     field :completed_at, :utc_datetime
     field :player_ids, {:array, :binary_id}
     field :player_results, :map
+    field :player_bidding, :map
 
     timestamps()
   end
@@ -37,7 +38,8 @@ defmodule PidroServer.Stats.GameStats do
       :duration_seconds,
       :completed_at,
       :player_ids,
-      :player_results
+      :player_results,
+      :player_bidding
     ])
     |> validate_required([:room_code, :completed_at])
     |> validate_inclusion(:winner, ["north_south", "east_west"],

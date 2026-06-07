@@ -555,7 +555,174 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
   end
 
+  describe "playstyle accumulation (PID-51)" do
+    test "live accumulation across two games; second game adds to the first" do
+      a = Ecto.UUID.generate()
+      b = Ecto.UUID.generate()
+
+      results = %{
+        a => result_for(:north_south, :north_south, :north),
+        b => result_for(:east_west, :north_south, :east)
+      }
+
+      # a wins 2 of 3 hands (sum 13); b wins 1 (sum 9).
+      bidding = %{
+        a => %{"attempts" => 3, "wins" => 2, "won_bid_sum" => 13},
+        b => %{"attempts" => 3, "wins" => 1, "won_bid_sum" => 9}
+      }
+
+      seed_completed("PS1", :north_south, results)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south, %{}, bidding)
+
+      pa = profile(a)
+      assert pa.playstyle_bidding_attempts == 3
+      assert pa.playstyle_bidding_wins == 2
+      assert pa.avg_winning_bid_sum == 13
+      assert pa.avg_winning_bid_count == 2
+
+      pb = profile(b)
+      assert pb.playstyle_bidding_attempts == 3
+      assert pb.playstyle_bidding_wins == 1
+      assert pb.avg_winning_bid_sum == 9
+      assert pb.avg_winning_bid_count == 1
+
+      # A second completed game ADDS to the accumulators.
+      seed_completed("PS2", :north_south, results)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south, %{}, bidding)
+
+      pa2 = profile(a)
+      assert pa2.playstyle_bidding_attempts == 6
+      assert pa2.playstyle_bidding_wins == 4
+      assert pa2.avg_winning_bid_sum == 26
+      assert pa2.avg_winning_bid_count == 4
+    end
+
+    test "single-player / bot-filled game still accumulates the human's bidding facts" do
+      human = Ecto.UUID.generate()
+      results = %{human => result_for(:north_south, :north_south, :north)}
+      # 5 hands, the human won 2 (sum 15); bots never appear in the map.
+      bidding = %{human => %{"attempts" => 5, "wins" => 2, "won_bid_sum" => 15}}
+
+      seed_completed("PSSOLO", :north_south, results)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south, %{}, bidding)
+
+      p = profile(human)
+      assert p.playstyle_bidding_attempts == 5
+      assert p.playstyle_bidding_wins == 2
+      assert p.avg_winning_bid_sum == 15
+      assert p.avg_winning_bid_count == 2
+    end
+
+    test "live == rebuild parity for the four accumulators" do
+      [a, b, c, d] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      complete_4human_ps("PSP1", {a, b, c, d}, :north_south, DateTime.add(@base, 1), %{
+        a => %{"attempts" => 4, "wins" => 2, "won_bid_sum" => 13},
+        b => %{"attempts" => 4, "wins" => 1, "won_bid_sum" => 7},
+        c => %{"attempts" => 4, "wins" => 1, "won_bid_sum" => 8},
+        d => %{"attempts" => 4, "wins" => 0, "won_bid_sum" => 0}
+      })
+
+      complete_4human_ps("PSP2", {a, b, c, d}, :east_west, DateTime.add(@base, 2), %{
+        a => %{"attempts" => 3, "wins" => 0, "won_bid_sum" => 0},
+        b => %{"attempts" => 3, "wins" => 2, "won_bid_sum" => 17},
+        c => %{"attempts" => 3, "wins" => 1, "won_bid_sum" => 6},
+        d => %{"attempts" => 3, "wins" => 0, "won_bid_sum" => 0}
+      })
+
+      live = playstyle_snapshot()
+
+      assert {:ok, _} = Profiles.rebuild_all()
+
+      rebuilt = playstyle_snapshot()
+      assert Map.keys(live) |> Enum.sort() == Map.keys(rebuilt) |> Enum.sort()
+
+      Enum.each(live, fn {user_id, facts} ->
+        assert facts == Map.fetch!(rebuilt, user_id)
+      end)
+    end
+
+    test "a nil player_bidding row contributes zero on rebuild (no crash, no negative)" do
+      u = Ecto.UUID.generate()
+      results = %{u => result_for(:north_south, :north_south, :north)}
+
+      # Row written WITHOUT player_bidding (pre-column / events unavailable).
+      {:ok, _} =
+        Stats.save_game_result(%{
+          room_code: "PSNIL",
+          winner: :north_south,
+          final_scores: %{north_south: 62, east_west: 45},
+          duration_seconds: 100,
+          completed_at: DateTime.add(@base, 1),
+          player_ids: [u],
+          player_results: results
+        })
+
+      assert {:ok, reb} = Profiles.rebuild_from_history(u)
+      assert reb.playstyle_bidding_attempts == 0
+      assert reb.playstyle_bidding_wins == 0
+      assert reb.avg_winning_bid_sum == 0
+      assert reb.avg_winning_bid_count == 0
+    end
+
+    test "a forced failure rolls back playstyle accumulation (no partial inc)" do
+      u = Ecto.UUID.generate()
+      results = %{u => result_for(:north_south, :north_south, :north)}
+      bidding = %{u => %{"attempts" => 3, "wins" => 2, "won_bid_sum" => 13}}
+
+      result =
+        Repo.transaction(fn ->
+          {:ok, _} = Profiles.apply_completed_game(results, :north_south, %{}, bidding)
+          Repo.rollback(:forced)
+        end)
+
+      assert {:error, :forced} = result
+      assert Repo.aggregate(PlayerProfile, :count) == 0
+    end
+  end
+
   # --- helpers ---
+
+  # Seed a game_stats row carrying player_bidding AND run the live completion
+  # update, mirroring the real save path so live and rebuild see the same map.
+  defp complete_4human_ps(room_code, {n, e, s, w}, winner, completed_at, bidding) do
+    results = %{
+      n => result_for(:north_south, winner, :north),
+      e => result_for(:east_west, winner, :east),
+      s => result_for(:north_south, winner, :south),
+      w => result_for(:east_west, winner, :west)
+    }
+
+    {:ok, _} =
+      Stats.save_game_result(%{
+        room_code: room_code,
+        winner: winner,
+        final_scores: %{north_south: 62, east_west: 45},
+        bid_amount: 8,
+        bid_team: :north_south,
+        duration_seconds: 300,
+        completed_at: completed_at,
+        player_ids: Map.keys(results),
+        player_results: results,
+        player_bidding: bidding
+      })
+
+    {:ok, _} = Profiles.apply_completed_game(results, winner, %{}, bidding)
+    results
+  end
+
+  defp playstyle_snapshot do
+    Repo.all(PlayerProfile)
+    |> Map.new(fn p ->
+      {p.user_id,
+       %{
+         attempts: p.playstyle_bidding_attempts,
+         wins: p.playstyle_bidding_wins,
+         won_bid_sum: p.avg_winning_bid_sum,
+         won_bid_count: p.avg_winning_bid_count
+       }}
+    end)
+  end
 
   # Seed + apply a single-human game (the rest of the table is bots / absent),
   # with controllable winner, completed_at, and scores.

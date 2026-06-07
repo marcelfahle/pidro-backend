@@ -68,9 +68,46 @@ defmodule PidroServer.ProfilesTest do
       assert {:ok, view} = Profiles.get_profile_for_screen(user.id)
       assert view.games_played == 0
       assert view.win_rate == 0.0
-      assert view.avg_winning_bid == 0.0
+      # PID-51: nil-on-empty (never won a bid), not a misleading 0.0.
+      assert view.avg_winning_bid == nil
       assert view.first_seen_at == Repo.reload!(user).inserted_at
       assert is_integer(view.account_age_days)
+    end
+
+    test "fresh profile reports :insufficient playstyle (center needle, balanced, no rate)" do
+      user = insert_user()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user.id)
+      assert view.bidding_win_rate == nil
+      assert view.aggression_insufficient == true
+      assert view.aggression_needle == 0.5
+      assert view.aggression_label == :balanced
+      assert view.avg_winning_bid == nil
+    end
+
+    test "populated profile derives needle/label/avg_winning_bid from the accumulators" do
+      user_id = Ecto.UUID.generate()
+      {:ok, profile} = Profiles.get_or_create_profile(user_id)
+
+      # 1 win in 4 attempts → rate 0.25 → needle 0.5 → :balanced. Avg bid 7.5.
+      profile
+      |> PlayerProfile.changeset(%{
+        playstyle_bidding_wins: 1,
+        playstyle_bidding_attempts: 4,
+        avg_winning_bid_sum: 30,
+        avg_winning_bid_count: 4
+      })
+      |> Repo.update!()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
+
+      rate = PidroServer.Playstyle.bidding_win_rate(1, 4)
+      assert view.bidding_win_rate == rate
+      assert view.aggression_insufficient == false
+      assert view.aggression_needle == PidroServer.Playstyle.needle(rate)
+      assert view.aggression_label == PidroServer.Playstyle.label(view.aggression_needle)
+      assert view.avg_winning_bid == PidroServer.Playstyle.avg_winning_bid(30, 4)
+      assert view.avg_winning_bid == 7.5
     end
 
     test "computes win_rate correctly for a populated profile" do

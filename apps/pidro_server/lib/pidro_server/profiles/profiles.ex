@@ -20,6 +20,7 @@ defmodule PidroServer.Profiles do
   alias PidroServer.Accounts.User
   alias PidroServer.Achievements
   alias PidroServer.Achievements.Catalog
+  alias PidroServer.Playstyle
   alias PidroServer.Profiles.Achievement
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Profiles.RatingState
@@ -78,6 +79,15 @@ defmodule PidroServer.Profiles do
       earned = list_achievements(user_id)
       earned_keys = MapSet.new(earned, & &1.achievement_key)
 
+      # Playstyle (PID-51): derive the needle/label/avg-bid from the accumulators.
+      rate =
+        Playstyle.bidding_win_rate(
+          profile.playstyle_bidding_wins,
+          profile.playstyle_bidding_attempts
+        )
+
+      needle = Playstyle.needle(rate)
+
       {:ok,
        %{
          user_id: profile.user_id,
@@ -96,7 +106,13 @@ defmodule PidroServer.Profiles do
          veteran_progress: Progression.level_progress(profile.veteran_xp),
          playstyle_bidding_wins: profile.playstyle_bidding_wins,
          playstyle_bidding_attempts: profile.playstyle_bidding_attempts,
-         avg_winning_bid: average(profile.avg_winning_bid_sum, profile.avg_winning_bid_count),
+         # PID-51 derived playstyle view (raw counters kept above — internal):
+         bidding_win_rate: if(rate == :insufficient, do: nil, else: rate),
+         aggression_needle: needle,
+         aggression_label: Playstyle.label(needle),
+         aggression_insufficient: rate == :insufficient,
+         avg_winning_bid:
+           Playstyle.avg_winning_bid(profile.avg_winning_bid_sum, profile.avg_winning_bid_count),
          heritage_flags: profile.heritage_flags,
          heritage: Heritage.display(profile.heritage_flags),
          first_seen_at: first_seen_at,
@@ -164,7 +180,7 @@ defmodule PidroServer.Profiles do
   @spec apply_completed_game(map(), atom() | String.t()) ::
           {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
   def apply_completed_game(player_results, winner),
-    do: apply_completed_game(player_results, winner, %{}, [])
+    do: apply_completed_game(player_results, winner, %{}, %{}, [])
 
   @doc """
   Applies one completed game to the participating users' profiles, inside the
@@ -222,20 +238,34 @@ defmodule PidroServer.Profiles do
   the FIRST time this call (empty list / absent when nothing new). PID-50 does
   not build the post-game payload (that's PID-52); it only produces the data at
   the seam so PID-52 can consume it without re-querying.
-  """
-  @spec apply_completed_game(map(), atom() | String.t(), map(), keyword()) ::
-          {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
-  def apply_completed_game(player_results, winner, scores, opts \\ [])
 
-  def apply_completed_game(player_results, winner, scores, _opts)
+  ## Playstyle (PID-51) — every completed game, NOT rated-gated
+
+  In the SAME per-participant loop, each valid-UUID participant's bidding facts
+  from `player_bidding` (`%{user_id => %{"attempts", "wins", "won_bid_sum"}}`,
+  the per-game map built by `Stats.build_player_bidding/2`; string- or atom-keyed
+  tolerant, `nil` → no-op) are folded into the four playstyle accumulators
+  (`playstyle_bidding_attempts`, `playstyle_bidding_wins`, `avg_winning_bid_sum`,
+  `avg_winning_bid_count`). Like XP, playstyle is *character* not skill — it ticks
+  for single-player / bot-filled games too. Bot seats never appear as keys in
+  `player_bidding`, so bots never pollute a human's accumulators.
+  """
+  @spec apply_completed_game(map(), atom() | String.t(), map(), map(), keyword()) ::
+          {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
+  def apply_completed_game(player_results, winner, scores, player_bidding \\ %{}, opts \\ [])
+
+  def apply_completed_game(player_results, winner, scores, player_bidding, _opts)
       when is_map(player_results) do
-    # 1. Lifetime counters (PID-44) + veteran XP (PID-49): every valid-UUID
-    #    participant, regardless of rated status.
+    player_bidding = if is_map(player_bidding), do: player_bidding, else: %{}
+
+    # 1. Lifetime counters (PID-44) + veteran XP (PID-49) + playstyle (PID-51):
+    #    every valid-UUID participant, regardless of rated status.
     Enum.each(player_results, fn {user_id, result} ->
       case Ecto.UUID.cast(user_id) do
         {:ok, valid_id} ->
           apply_one(valid_id, win_from_result?(result))
           apply_xp(valid_id, result, scores)
+          apply_playstyle(valid_id, bidding_facts_for(player_bidding, user_id))
 
         :error ->
           Logger.warning("Profiles.apply_completed_game skipping non-UUID id #{inspect(user_id)}")
@@ -253,7 +283,8 @@ defmodule PidroServer.Profiles do
     {:ok, newly_earned}
   end
 
-  def apply_completed_game(_player_results, _winner, _scores, _opts), do: {:ok, %{}}
+  def apply_completed_game(_player_results, _winner, _scores, _player_bidding, _opts),
+    do: {:ok, %{}}
 
   @doc """
   Recomputes a single user's lifetime counters from `game_stats` history and
@@ -284,6 +315,26 @@ defmodule PidroServer.Profiles do
     veteran_xp =
       Enum.reduce(games, 0, fn game, acc -> acc + xp_for_history_game(game, user_id) end)
 
+    # Playstyle accumulators are commutative per-game sums of each row's stored
+    # player_bidding facts (string-keyed JSONB tolerant; nil/missing → zero), so
+    # the rebuild mirrors the live path exactly. wins == won-bid count, so the
+    # avg's count accumulator equals the wins sum.
+    playstyle =
+      Enum.reduce(
+        games,
+        %{attempts: 0, wins: 0, won_bid_sum: 0},
+        fn game, acc ->
+          %{attempts: attempts, wins: wins, won_bid_sum: won_bid_sum} =
+            playstyle_facts(bidding_facts_for(game.player_bidding, user_id) || %{})
+
+          %{
+            attempts: acc.attempts + attempts,
+            wins: acc.wins + wins,
+            won_bid_sum: acc.won_bid_sum + won_bid_sum
+          }
+        end
+      )
+
     with {:ok, profile} <- get_or_create_profile(user_id) do
       result =
         profile
@@ -292,7 +343,11 @@ defmodule PidroServer.Profiles do
           wins: wins,
           losses: losses,
           veteran_xp: veteran_xp,
-          veteran_level: Progression.level_for_xp(veteran_xp)
+          veteran_level: Progression.level_for_xp(veteran_xp),
+          playstyle_bidding_attempts: playstyle.attempts,
+          playstyle_bidding_wins: playstyle.wins,
+          avg_winning_bid_sum: playstyle.won_bid_sum,
+          avg_winning_bid_count: playstyle.wins
         })
         |> Repo.update()
 
@@ -879,6 +934,60 @@ defmodule PidroServer.Profiles do
     :ok
   end
 
+  # Live playstyle writer (PID-51), inside the surrounding completion
+  # transaction. Folds one game's per-user bidding facts into the four
+  # accumulators (commutative per-game sums → live == rebuild). A nil/absent
+  # facts map (no bidding facts for this user) is a no-op.
+  defp apply_playstyle(_user_id, nil), do: :ok
+
+  defp apply_playstyle(user_id, facts) when is_map(facts) do
+    %{attempts: attempts, wins: wins, won_bid_sum: won_bid_sum} = playstyle_facts(facts)
+
+    if attempts == 0 and wins == 0 and won_bid_sum == 0 do
+      :ok
+    else
+      {:ok, _profile} = get_or_create_profile(user_id)
+
+      from(p in PlayerProfile, where: p.user_id == ^user_id)
+      |> Repo.update_all(
+        inc: [
+          playstyle_bidding_attempts: attempts,
+          playstyle_bidding_wins: wins,
+          avg_winning_bid_sum: won_bid_sum,
+          # wins == won-bid count, so the avg's count accumulator is fed from wins.
+          avg_winning_bid_count: wins
+        ]
+      )
+    end
+
+    :ok
+  end
+
+  defp apply_playstyle(_user_id, _facts), do: :ok
+
+  # Resolve a user's per-game bidding facts from the player_bidding map,
+  # tolerating atom (just-built) or string (JSONB round-trip) user-id keys.
+  defp bidding_facts_for(player_bidding, user_id) when is_map(player_bidding) do
+    Map.get(player_bidding, user_id) || Map.get(player_bidding, to_string(user_id))
+  end
+
+  defp bidding_facts_for(_player_bidding, _user_id), do: nil
+
+  # Normalize a per-user facts map (atom- or string-keyed; missing/non-integer
+  # → 0) into the three accumulator deltas.
+  defp playstyle_facts(facts) when is_map(facts) do
+    %{
+      attempts: facts_int(facts, :attempts, "attempts"),
+      wins: facts_int(facts, :wins, "wins"),
+      won_bid_sum: facts_int(facts, :won_bid_sum, "won_bid_sum")
+    }
+  end
+
+  defp facts_int(facts, atom_key, string_key) do
+    value = Map.get(facts, atom_key) || Map.get(facts, string_key)
+    if is_integer(value), do: value, else: 0
+  end
+
   # Per-game XP contribution for the rebuild: reuses won_game?/2 for the win
   # bonus and reads the user's team score from the stored final_scores
   # (string-keyed JSONB tolerant). Legacy rows missing a team's score floor to 0.
@@ -1005,9 +1114,6 @@ defmodule PidroServer.Profiles do
 
   defp win_rate(_wins, 0), do: 0.0
   defp win_rate(wins, games_played), do: wins / games_played
-
-  defp average(_sum, 0), do: 0.0
-  defp average(sum, count), do: sum / count
 
   defp first_seen_at(user_id) do
     case Repo.get(User, user_id) do
