@@ -1771,7 +1771,20 @@ defmodule PidroServer.Games.RoomManager do
           |> Map.put(:paused_turn_timer, nil)
           |> touch_last_activity()
 
-        :ok = Stats.save_completed_game(finished_room, winner, scores, game_state)
+        # PID-52: on a successful first commit, fire a NEW post-commit broadcast
+        # carrying the per-player progression summaries. The idempotent
+        # short-circuit / rollback returns :ok (no summaries) → no broadcast.
+        case Stats.save_completed_game(finished_room, winner, scores, game_state) do
+          {:ok, summaries} when is_map(summaries) and map_size(summaries) > 0 ->
+            Phoenix.PubSub.broadcast(
+              PidroServer.PubSub,
+              "game:#{room_code}",
+              {:progression_summary, room_code, summaries}
+            )
+
+          _ ->
+            :ok
+        end
 
         updated_state = %{state | rooms: Map.put(state.rooms, room_code, finished_room)}
         broadcast_room(room_code, finished_room)

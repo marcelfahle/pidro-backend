@@ -373,8 +373,15 @@ defmodule PidroServer.Stats do
 
   @doc """
   Persists the final game result exactly once for a finished room.
+
+  On a successful first save, returns `{:ok, summaries}` where `summaries` is the
+  ephemeral `%{user_id => post_game_summary_map}` from
+  `Profiles.apply_completed_game/4` (PID-52). On the idempotent short-circuit
+  (already saved) or a rolled-back transaction, returns `:ok` — no summary is
+  ever surfaced for a re-fire or a rollback.
   """
-  @spec save_completed_game(map(), atom(), map(), map() | nil) :: :ok
+  @spec save_completed_game(map(), atom(), map(), map() | nil) ::
+          {:ok, %{optional(Ecto.UUID.t()) => map()}} | :ok
   def save_completed_game(%{code: room_code} = room, winner, scores, game_state \\ nil) do
     case Repo.get_by(GameStats, room_code: room_code) do
       %GameStats{} ->
@@ -403,14 +410,14 @@ defmodule PidroServer.Stats do
         result =
           Repo.transaction(fn ->
             case save_game_result(stats_attrs) do
-              {:ok, stats} ->
-                # PID-50: apply_completed_game now returns the per-user
-                # newly-earned achievement keys. PID-52 will wire this into the
-                # post-game payload; for now we capture and discard it.
-                {:ok, _newly_earned} =
+              {:ok, _stats} ->
+                # PID-52: apply_completed_game returns the per-user ephemeral
+                # post-game summaries; carry them out of the transaction so the
+                # caller can push them per-player after the commit.
+                {:ok, summaries} =
                   Profiles.apply_completed_game(player_results, winner, scores, player_bidding)
 
-                stats
+                summaries
 
               {:error, changeset} ->
                 Repo.rollback(changeset)
@@ -418,9 +425,9 @@ defmodule PidroServer.Stats do
           end)
 
         case result do
-          {:ok, _stats} ->
+          {:ok, summaries} ->
             Logger.info("Saved game stats for room #{room_code}")
-            :ok
+            {:ok, summaries}
 
           {:error, changeset} ->
             Logger.error("Failed to save game stats for room #{room_code}: #{inspect(changeset)}")

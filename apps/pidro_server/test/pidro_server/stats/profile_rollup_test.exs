@@ -469,25 +469,28 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       assert count == 1
     end
 
-    test "apply_completed_game returns per-user newly-earned keys; not re-reported next game" do
+    test "achievements live in the summary's achievements_unlocked; not re-reported next game" do
       u = Ecto.UUID.generate()
 
       for n <- 1..9 do
         complete_solo("RET#{n}", u, :north_south, DateTime.add(@base, n))
       end
 
-      # The 10th completion crosses :player; capture its return value directly.
+      # The 10th completion crosses :player; capture its summary directly.
       results = %{u => result_for(:north_south, :north_south, :north)}
       scores = %{north_south: 62, east_west: 30}
       seed_completed("RET10", :north_south, results, DateTime.add(@base, 10))
-      assert {:ok, newly} = Profiles.apply_completed_game(results, :north_south, scores)
-      assert :player in Map.fetch!(newly, u)
+      assert {:ok, summaries} = Profiles.apply_completed_game(results, :north_south, scores)
+
+      keys = Enum.map(summaries[u].achievements_unlocked, & &1.key)
+      assert "player" in keys
 
       # A subsequent game does NOT re-report :player (idempotent).
       results2 = %{u => result_for(:north_south, :north_south, :north)}
       seed_completed("RET11", :north_south, results2, DateTime.add(@base, 11))
-      assert {:ok, newly2} = Profiles.apply_completed_game(results2, :north_south, scores)
-      refute :player in Map.get(newly2, u, [])
+      assert {:ok, summaries2} = Profiles.apply_completed_game(results2, :north_south, scores)
+      keys2 = Enum.map(summaries2[u].achievements_unlocked, & &1.key)
+      refute "player" in keys2
     end
 
     test "live award set == rebuild award set (headline parity guard)" do
@@ -552,6 +555,96 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
       assert {:ok, _} = Profiles.rebuild_all()
       assert "player" in earned_keys(u)
+    end
+  end
+
+  describe "post-game summary (PID-52)" do
+    test "a 4-human rated game returns a summary per participant (rated, rating, xp)" do
+      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      results = %{
+        n => result_for(:north_south, :north_south, :north),
+        e => result_for(:east_west, :north_south, :east),
+        s => result_for(:north_south, :north_south, :south),
+        w => result_for(:east_west, :north_south, :west)
+      }
+
+      scores = %{north_south: 62, east_west: 45}
+      seed_completed("SUM4", :north_south, results, nil, scores)
+      assert {:ok, summaries} = Profiles.apply_completed_game(results, :north_south, scores)
+
+      assert Map.keys(summaries) |> Enum.sort() == Enum.sort([n, e, s, w])
+
+      for {id, expected_xp} <- [{n, 112}, {s, 112}, {e, 45}, {w, 45}] do
+        summary = summaries[id]
+        assert summary.rated == true
+        assert summary.xp_earned == expected_xp
+        assert is_map(summary.rating)
+        assert summary.rating.direction in ["up", "down", "none"]
+      end
+    end
+
+    test "a single-player / bot-filled game returns rated: false, rating: nil, full Veteran block" do
+      human = Ecto.UUID.generate()
+      results = %{human => result_for(:north_south, :north_south, :north)}
+      scores = %{north_south: 62, east_west: 45}
+
+      seed_completed("SUMSOLO", :north_south, results, nil, scores)
+      assert {:ok, summaries} = Profiles.apply_completed_game(results, :north_south, scores)
+
+      summary = summaries[human]
+      assert summary.rated == false
+      assert summary.rating == nil
+      assert summary.xp_earned == 112
+      assert summary.veteran_level == Progression.level_for_xp(112)
+      assert summary.veteran_title == Progression.title_for_level(summary.veteran_level)
+      assert is_map(summary.veteran_progress)
+    end
+
+    test "a rolled-back completion leaves no profile changes and emits no summary" do
+      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      results = %{
+        n => result_for(:north_south, :north_south, :north),
+        e => result_for(:east_west, :north_south, :east),
+        s => result_for(:north_south, :north_south, :south),
+        w => result_for(:east_west, :north_south, :west)
+      }
+
+      # The broadcast lives in RoomManager and only fires on a committed {:ok,
+      # summaries}; a rolled-back transaction returns {:error, _} so nothing is
+      # ever surfaced.
+      result =
+        Repo.transaction(fn ->
+          {:ok, _summaries} = Profiles.apply_completed_game(results, :north_south)
+          Repo.rollback(:forced)
+        end)
+
+      assert {:error, :forced} = result
+      assert Repo.aggregate(PlayerProfile, :count) == 0
+    end
+
+    test "idempotent re-fire produces no second progression_summary broadcast" do
+      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      {:ok, room} = RoomManager.create_room(n, %{name: "SummaryIdempotent"})
+      {:ok, _, _} = RoomManager.join_room(room.code, e)
+      {:ok, _, _} = RoomManager.join_room(room.code, s)
+      {:ok, _, _} = RoomManager.join_room(room.code, w)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      game_over = {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
+      send(GenServer.whereis(RoomManager), game_over)
+
+      assert_receive {:progression_summary, room_code, summaries}, 1000
+      assert room_code == room.code
+      assert map_size(summaries) == 4
+
+      # Re-fire: the GameStats short-circuit returns :ok → no second broadcast.
+      send(GenServer.whereis(RoomManager), game_over)
+      _ = :sys.get_state(GenServer.whereis(RoomManager))
+      refute_receive {:progression_summary, _, _}, 200
     end
   end
 

@@ -424,6 +424,105 @@ defmodule PidroServerWeb.GameChannelTest do
     end
   end
 
+  describe "progression summary (PID-52)" do
+    test "pushes the socket's own progression_summary slice", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      assert_push "presence_state", _presence_state, 1000
+
+      my_summary = %{rated: false, xp_earned: 112, rating: nil}
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:progression_summary, room_code, %{user.id => my_summary}}
+      )
+
+      assert_push "progression_summary", ^my_summary, 1000
+    end
+
+    test "pushes ONLY this socket's slice, never another player's deltas", %{
+      user1: user,
+      user2: other,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      assert_push "presence_state", _presence_state, 1000
+
+      mine = %{rated: true, xp_earned: 112}
+      theirs = %{rated: true, xp_earned: 45}
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:progression_summary, room_code, %{user.id => mine, other.id => theirs}}
+      )
+
+      assert_push "progression_summary", pushed, 1000
+      assert pushed == mine
+      refute pushed == theirs
+    end
+
+    test "a socket whose user is absent from the map pushes an empty map (no crash)", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      assert_push "presence_state", _presence_state, 1000
+
+      other_id = Ecto.UUID.generate()
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:progression_summary, room_code, %{other_id => %{rated: false}}}
+      )
+
+      assert_push "progression_summary", pushed, 1000
+      assert pushed == %{}
+    end
+
+    test "the base game_over push is unchanged (regression guard)", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      assert_push "presence_state", _presence_state, 1000
+
+      scores = %{north_south: 62, east_west: 45}
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:game_over, room_code, :north_south, scores}
+      )
+
+      assert_push "game_over", %{winner: :north_south, scores: ^scores}, 1000
+    end
+  end
+
   describe "integration: full game flow" do
     test "4 players can interact with game via channels", %{
       users: users,

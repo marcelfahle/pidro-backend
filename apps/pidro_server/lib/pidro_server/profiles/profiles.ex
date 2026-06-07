@@ -23,6 +23,7 @@ defmodule PidroServer.Profiles do
   alias PidroServer.Playstyle
   alias PidroServer.Profiles.Achievement
   alias PidroServer.Profiles.PlayerProfile
+  alias PidroServer.Profiles.PostGameSummary
   alias PidroServer.Profiles.RatingState
   alias PidroServer.Progression
   alias PidroServer.Progression.Heritage
@@ -178,7 +179,7 @@ defmodule PidroServer.Profiles do
   passes real scores from `stats.ex`.
   """
   @spec apply_completed_game(map(), atom() | String.t()) ::
-          {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
+          {:ok, %{optional(Ecto.UUID.t()) => map()}}
   def apply_completed_game(player_results, winner),
     do: apply_completed_game(player_results, winner, %{}, %{}, [])
 
@@ -234,10 +235,18 @@ defmodule PidroServer.Profiles do
   `game_view`, and the user's ordered history incl. this game — the row was
   inserted earlier in this same transaction) and idempotent-upserts the awards.
 
-  **Returns `{:ok, %{user_id => [newly_earned_key]}}`** — the keys awarded for
-  the FIRST time this call (empty list / absent when nothing new). PID-50 does
-  not build the post-game payload (that's PID-52); it only produces the data at
-  the seam so PID-52 can consume it without re-querying.
+  The newly-earned keys (those awarded for the FIRST time this call) become the
+  `achievements_unlocked` field of each participant's summary (PID-52).
+
+  ## Post-game summary (PID-52) — the new return
+
+  **Returns `{:ok, %{user_id => summary_map}}`** — one ephemeral per-player
+  "what changed" map (built by the pure `PostGameSummary.build/3` from a BEFORE
+  snapshot read at the top of the loop body + the XP/rating/achievement deltas
+  this call computes). Nothing is persisted; the summary is built from
+  in-transaction reads and handed back for the caller to push. See
+  `PidroServer.Profiles.PostGameSummary` for the shape. There is no rebuild
+  concern — `rebuild_*` are untouched.
 
   ## Playstyle (PID-51) — every completed game, NOT rated-gated
 
@@ -251,40 +260,98 @@ defmodule PidroServer.Profiles do
   `player_bidding`, so bots never pollute a human's accumulators.
   """
   @spec apply_completed_game(map(), atom() | String.t(), map(), map(), keyword()) ::
-          {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
+          {:ok, %{optional(Ecto.UUID.t()) => map()}}
   def apply_completed_game(player_results, winner, scores, player_bidding \\ %{}, opts \\ [])
 
   def apply_completed_game(player_results, winner, scores, player_bidding, _opts)
       when is_map(player_results) do
     player_bidding = if is_map(player_bidding), do: player_bidding, else: %{}
+    rated? = match?({:ok, _}, rated_game?(player_results))
 
     # 1. Lifetime counters (PID-44) + veteran XP (PID-49) + playstyle (PID-51):
-    #    every valid-UUID participant, regardless of rated status.
-    Enum.each(player_results, fn {user_id, result} ->
-      case Ecto.UUID.cast(user_id) do
-        {:ok, valid_id} ->
-          apply_one(valid_id, win_from_result?(result))
-          apply_xp(valid_id, result, scores)
-          apply_playstyle(valid_id, bidding_facts_for(player_bidding, user_id))
+    #    every valid-UUID participant, regardless of rated status. Capture a
+    #    single coherent BEFORE snapshot per participant (one read at the top of
+    #    the loop body, before the writers run) and the XP delta the writer
+    #    already computes — both threaded into the summary later.
+    {before_snapshots, xp_deltas} =
+      Enum.reduce(player_results, {%{}, %{}}, fn {user_id, result}, {befores, xp} ->
+        case Ecto.UUID.cast(user_id) do
+          {:ok, valid_id} ->
+            {:ok, before} = get_or_create_profile(valid_id)
 
-        :error ->
-          Logger.warning("Profiles.apply_completed_game skipping non-UUID id #{inspect(user_id)}")
-      end
-    end)
+            apply_one(valid_id, win_from_result?(result))
+            xp_delta = apply_xp(valid_id, result, scores)
+            apply_playstyle(valid_id, bidding_facts_for(player_bidding, user_id))
+
+            {Map.put(befores, valid_id, before_snapshot(before)), Map.put(xp, valid_id, xp_delta)}
+
+          :error ->
+            Logger.warning(
+              "Profiles.apply_completed_game skipping non-UUID id #{inspect(user_id)}"
+            )
+
+            {befores, xp}
+        end
+      end)
 
     # 2. Ratings (PID-47): rated 4-human games only, priors from stored rows.
-    apply_live_rating(player_results, winner)
+    #    Surfaces the per-user before/after μ/σ + counts (empty on :unrated).
+    rating_deltas = apply_live_rating(player_results, winner)
 
     # 3. Achievements (PID-50): per valid-UUID participant, evaluate active defs
     #    against the post-update aggregates + this game + ordered history, and
-    #    idempotent-upsert. Returns the per-user newly-earned keys (PID-52 seam).
+    #    idempotent-upsert. Returns the per-user newly-earned keys.
     newly_earned = apply_live_achievements(player_results, scores)
 
-    {:ok, newly_earned}
+    # 4. Assemble the ephemeral per-player summary from the deltas just computed.
+    summaries =
+      Map.new(before_snapshots, fn {valid_id, before} ->
+        deltas =
+          build_deltas(
+            rated?,
+            Map.fetch!(xp_deltas, valid_id),
+            Map.get(rating_deltas, valid_id),
+            Map.get(newly_earned, valid_id, [])
+          )
+
+        {valid_id, PostGameSummary.build(before, deltas, [])}
+      end)
+
+    {:ok, summaries}
   end
 
   def apply_completed_game(_player_results, _winner, _scores, _player_bidding, _opts),
     do: {:ok, %{}}
+
+  # The BEFORE snapshot of the profile columns the summary classifies against.
+  defp before_snapshot(%PlayerProfile{} = profile) do
+    %{
+      veteran_xp: profile.veteran_xp,
+      rating_mu: profile.rating_mu,
+      rating_sigma: profile.rating_sigma,
+      rating_games_count: profile.rating_games_count
+    }
+  end
+
+  # Merge the XP, rating, and achievement deltas into the shape PostGameSummary
+  # expects. A casual game (or a participant with no rating move) carries
+  # `rating_after: nil`.
+  defp build_deltas(rated?, %{xp_earned: xp_earned, veteran_xp_after: xp_after}, rating, keys) do
+    {rating_after, count_after} =
+      case rating do
+        %{after: after_rating, count_after: count_after} -> {after_rating, count_after}
+        nil -> {nil, nil}
+      end
+
+    %{
+      xp_earned: xp_earned,
+      veteran_xp_after: xp_after,
+      rated?: rated? and not is_nil(rating_after),
+      rating_after: rating_after,
+      rating_count_after: count_after,
+      newly_earned_keys: keys
+    }
+  end
 
   @doc """
   Recomputes a single user's lifetime counters from `game_stats` history and
@@ -703,6 +770,10 @@ defmodule PidroServer.Profiles do
   # Reads the four participants' stored priors, rates via the shared rate_game/3,
   # and on a rated game overwrites μ/σ + increments rating_games_count by 1 for
   # exactly those four ids. On :unrated, nothing is written.
+  #
+  # Surfaces (PID-52) the per-user after-rating + after-count as
+  # `%{user_id => %{after: {mu, sigma}, count_after: n}}` (empty map on
+  # :unrated) so the summary can classify the tier move without re-reading.
   defp apply_live_rating(player_results, winner) do
     ids = participant_ids(%{player_results: player_results})
     priors = load_priors(ids)
@@ -715,8 +786,20 @@ defmodule PidroServer.Profiles do
         counts = Map.new(ids, &{&1, 1})
         persist_ratings(acc, counts, :increment_count)
 
+        counts_after =
+          from(p in PlayerProfile,
+            where: p.user_id in ^ids,
+            select: {p.user_id, p.rating_games_count}
+          )
+          |> Repo.all()
+          |> Map.new()
+
+        Map.new(ids, fn id ->
+          {id, %{after: Map.fetch!(acc, id), count_after: Map.get(counts_after, id, 1)}}
+        end)
+
       :unrated ->
-        :ok
+        %{}
     end
   end
 
@@ -915,7 +998,8 @@ defmodule PidroServer.Profiles do
   # Live XP writer (PID-49), inside the surrounding completion transaction.
   # Increments veteran_xp by the per-game award, then recomputes the
   # veteran_level cache from the post-inc total. The XP inc is commutative; the
-  # level set is a pure function of the new XP.
+  # level set is a pure function of the new XP. Surfaces the per-game delta +
+  # after-total so the summary (PID-52) needs no re-read.
   defp apply_xp(user_id, result, scores) do
     won? = win_from_result?(result)
     team_score = team_score_for(result, scores)
@@ -931,7 +1015,7 @@ defmodule PidroServer.Profiles do
     from(p in PlayerProfile, where: p.user_id == ^user_id)
     |> Repo.update_all(set: [veteran_level: Progression.level_for_xp(new_xp)])
 
-    :ok
+    %{xp_earned: delta, veteran_xp_after: new_xp}
   end
 
   # Live playstyle writer (PID-51), inside the surrounding completion

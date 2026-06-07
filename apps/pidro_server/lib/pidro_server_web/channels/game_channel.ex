@@ -26,6 +26,8 @@ defmodule PidroServerWeb.GameChannel do
   * `"player_reconnected"` - Player reconnected: `%{user_id: id, position: position}`
   * `"turn_changed"` - Current player changed: `%{current_player: :north}`
   * `"game_over"` - Game ended: `%{winner: :north_south, scores: %{...}}`
+  * `"progression_summary"` - Per-player post-game "what changed" deltas (XP/level,
+    achievements, and a rated tier move); only this socket's own slice (PID-52)
   * `"presence_state"` - Presence information (who's online)
   * `"presence_diff"` - Presence changes
 
@@ -445,6 +447,18 @@ defmodule PidroServerWeb.GameChannel do
     # Schedule room closure after 5 minutes
     Process.send_after(self(), {:close_room, room_code}, :timer.minutes(5))
 
+    {:noreply, socket}
+  end
+
+  # PID-52: per-player post-game "what changed" summary. The broadcast carries
+  # the full `%{user_id => summary}` map; each socket pushes ONLY its own slice
+  # (per-socket privacy — clients never see opponents' deltas). A non-participant
+  # socket (spectator / bot-only seat) pushes an empty map and never crashes.
+  def handle_info(
+        {:progression_summary, room_code, summaries},
+        %{assigns: %{room_code: room_code, user_id: user_id}} = socket
+      ) do
+    push(socket, "progression_summary", Map.get(summaries, user_id, %{}))
     {:noreply, socket}
   end
 
