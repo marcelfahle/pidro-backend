@@ -39,6 +39,7 @@ defmodule PidroServer.MixProject do
             PidroServerWeb.API.AuthController,
             PidroServerWeb.API.RoomController,
             PidroServerWeb.API.UserController,
+            PidroServerWeb.API.ProfileController,
             PidroServerWeb.API.FallbackController
           ],
           "WebSocket Channels": [

@@ -480,4 +480,117 @@ defmodule PidroServer.ProfilesTest do
       assert Profiles.list_achievements(b) |> Enum.map(& &1.achievement_key) == ["winner"]
     end
   end
+
+  describe "public_profile/1 — fail-closed allowlist (PID-54)" do
+    # A representative screen-shaped map; mirrors get_profile_for_screen/1's keys.
+    defp screen_fixture(overrides \\ %{}) do
+      Map.merge(
+        %{
+          user_id: Ecto.UUID.generate(),
+          games_played: 42,
+          wins: 25,
+          losses: 17,
+          win_rate: 0.595,
+          rating_mu: 40.0,
+          rating_sigma: 5.0,
+          rating_games_count: 50,
+          veteran_level: 7,
+          veteran_xp: 1480,
+          veteran_title: "Seasoned",
+          veteran_progress: {120, 210},
+          playstyle_bidding_wins: 30,
+          playstyle_bidding_attempts: 49,
+          bidding_win_rate: 0.61,
+          aggression_needle: 0.72,
+          aggression_label: :aggressive,
+          aggression_insufficient: false,
+          avg_winning_bid: 9.4,
+          heritage_flags: %{"founding_member" => true},
+          heritage: [%{key: :founding_member, label: "Founding Member", value: true}],
+          first_seen_at: DateTime.utc_now(),
+          account_age_days: 217,
+          achievements: [],
+          achievements_catalog: []
+        },
+        overrides
+      )
+    end
+
+    test "excludes the raw rating internals and raw accumulators" do
+      public = Profiles.public_profile(screen_fixture())
+
+      refute Map.has_key?(public, :rating_mu)
+      refute Map.has_key?(public, :rating_sigma)
+      refute Map.has_key?(public, :rating_games_count)
+      refute Map.has_key?(public, :heritage_flags)
+      refute Map.has_key?(public, :playstyle_bidding_wins)
+      refute Map.has_key?(public, :playstyle_bidding_attempts)
+
+      # Not smuggled into the skill sub-object either.
+      refute Map.has_key?(public.skill, :rating_mu)
+      refute Map.has_key?(public.skill, :rating_sigma)
+      refute Map.has_key?(public.skill, :rating_games_count)
+    end
+
+    test "classifies a rated, low-sigma rating into a non-provisional tier" do
+      public =
+        screen_fixture(%{rating_mu: 40.0, rating_sigma: 5.0, rating_games_count: 50})
+        |> Profiles.public_profile()
+
+      assert public.skill == %{tier: :gold, provisional: false}
+    end
+
+    test "classifies a never-rated (count 0) profile as provisional" do
+      public =
+        screen_fixture(%{rating_games_count: 0})
+        |> Profiles.public_profile()
+
+      assert public.skill == %{tier: :provisional, provisional: true}
+    end
+
+    test "carries the display fields through unchanged" do
+      screen = screen_fixture()
+      public = Profiles.public_profile(screen)
+
+      assert public.user_id == screen.user_id
+      assert public.games_played == screen.games_played
+      assert public.wins == screen.wins
+      assert public.losses == screen.losses
+      assert public.win_rate == screen.win_rate
+      assert public.first_seen_at == screen.first_seen_at
+      assert public.account_age_days == screen.account_age_days
+
+      # progress is a {into, span} tuple in the screen map, JSON-encoded as a
+      # 2-element list in the public payload.
+      assert public.veteran == %{
+               level: screen.veteran_level,
+               xp: screen.veteran_xp,
+               title: screen.veteran_title,
+               progress: [120, 210]
+             }
+
+      assert public.heritage == screen.heritage
+
+      assert public.playstyle == %{
+               bidding_win_rate: screen.bidding_win_rate,
+               aggression_needle: screen.aggression_needle,
+               aggression_label: screen.aggression_label,
+               aggression_insufficient: screen.aggression_insufficient,
+               avg_winning_bid: screen.avg_winning_bid
+             }
+
+      assert public.achievements == screen.achievements
+      assert public.achievements_catalog == screen.achievements_catalog
+    end
+
+    test "accepts a user_id and reuses get_profile_for_screen/1 internally" do
+      user = insert_user()
+
+      public = Profiles.public_profile(user.id)
+
+      assert public.user_id == user.id
+      assert public.skill == %{tier: :provisional, provisional: true}
+      refute Map.has_key?(public, :rating_mu)
+    end
+  end
 end

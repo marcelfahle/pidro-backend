@@ -234,6 +234,79 @@ defmodule PidroServer.Profiles do
     end
   end
 
+  @doc """
+  Projects the public, client-facing profile payload (PID-54).
+
+  Takes either a `user_id` or the `get_profile_for_screen/1` screen map and
+  returns an **explicit, fail-closed allowlist** of fields safe to serve over
+  the API. Skill is exposed ONLY as `%{tier, provisional}` (via
+  `Rating.Tier.classify/1`); the raw rating internals and raw accumulators are
+  deliberately never carried.
+
+  This is constructed field-by-field — NOT by dropping keys from the screen map
+  — so a field added to `get_profile_for_screen/1` later cannot silently leak.
+
+  ## Excluded internals (present in the screen map, ABSENT here)
+
+  `rating_mu`, `rating_sigma`, `rating_games_count` (consumed only to classify
+  the tier), `playstyle_bidding_wins`/`playstyle_bidding_attempts` (raw
+  accumulators; the derived `playstyle` view replaces them), and `heritage_flags`
+  (raw stored map; `heritage` is the public display view).
+  """
+  @spec public_profile(Ecto.UUID.t() | map()) :: map()
+  def public_profile(user_id) when is_binary(user_id) do
+    {:ok, screen} = get_profile_for_screen(user_id)
+    public_profile(screen)
+  end
+
+  def public_profile(%{} = screen) do
+    %{tier: tier, provisional: provisional} = Rating.Tier.classify(screen)
+
+    %{
+      user_id: screen.user_id,
+
+      # Headline lifetime stats
+      games_played: screen.games_played,
+      wins: screen.wins,
+      losses: screen.losses,
+      win_rate: screen.win_rate,
+      first_seen_at: screen.first_seen_at,
+      account_age_days: screen.account_age_days,
+
+      # Skill — tier + state ONLY (μ/σ derived away here, never emitted)
+      skill: %{tier: tier, provisional: provisional},
+
+      # Veteran
+      veteran: %{
+        level: screen.veteran_level,
+        xp: screen.veteran_xp,
+        title: screen.veteran_title,
+        progress: encode_progress(screen.veteran_progress)
+      },
+
+      # Heritage (already a display list)
+      heritage: screen.heritage,
+
+      # Playstyle (display view; raw counters NOT carried)
+      playstyle: %{
+        bidding_win_rate: screen.bidding_win_rate,
+        aggression_needle: screen.aggression_needle,
+        aggression_label: screen.aggression_label,
+        aggression_insufficient: screen.aggression_insufficient,
+        avg_winning_bid: screen.avg_winning_bid
+      },
+
+      # Mastery
+      achievements: screen.achievements,
+      achievements_catalog: screen.achievements_catalog
+    }
+  end
+
+  # Veteran progress is `{into, span} | :max`. JSON cannot encode a tuple, so the
+  # pair becomes a 2-element `[into, span]` list and the cap becomes "max".
+  defp encode_progress({into, span}), do: [into, span]
+  defp encode_progress(:max), do: "max"
+
   # Joins the user's earned rows to the Catalog for display copy, ordered by
   # award time. Unknown keys (a def removed from the catalog) are dropped.
   defp screen_achievements(earned) do
