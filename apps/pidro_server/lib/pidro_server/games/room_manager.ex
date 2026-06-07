@@ -1774,7 +1774,11 @@ defmodule PidroServer.Games.RoomManager do
         # PID-52: on a successful first commit, fire a NEW post-commit broadcast
         # carrying the per-player progression summaries. The idempotent
         # short-circuit / rollback returns :ok (no summaries) → no broadcast.
-        case Stats.save_completed_game(finished_room, winner, scores, game_state) do
+        #
+        # Persistence is a secondary side effect of finishing a game: a stats /
+        # profile write failure must never crash the RoomManager and drop live
+        # rooms. Isolate it — log and carry on if it blows up.
+        case persist_completed_game(room_code, finished_room, winner, scores, game_state) do
           {:ok, summaries} when is_map(summaries) and map_size(summaries) > 0 ->
             Phoenix.PubSub.broadcast(
               PidroServer.PubSub,
@@ -1842,6 +1846,25 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   ## Private Helper Functions
+
+  # Persist the completed game (game_stats row + profile/rating/XP/achievement
+  # rollups) without letting a failure take down the RoomManager. Returns
+  # whatever `Stats.save_completed_game/4` returns on success, or `:error` if it
+  # raised/exited (e.g. a transient DB problem) — the game has already finished
+  # for the players regardless.
+  defp persist_completed_game(room_code, finished_room, winner, scores, game_state) do
+    Stats.save_completed_game(finished_room, winner, scores, game_state)
+  rescue
+    error ->
+      Logger.error("Failed to persist completed game #{room_code}: #{Exception.message(error)}")
+
+      :error
+  catch
+    kind, reason ->
+      Logger.error("Failed to persist completed game #{room_code}: #{inspect({kind, reason})}")
+
+      :error
+  end
 
   @doc false
   defp fetch_room(%State{rooms: rooms}, code) do
