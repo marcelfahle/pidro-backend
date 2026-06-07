@@ -6,6 +6,7 @@ defmodule PidroServer.Stats do
 
   require Logger
   import Ecto.Query, warn: false
+  alias PidroServer.Profiles
   alias PidroServer.Repo
   alias PidroServer.Stats.{AbandonmentEvent, GameStats}
 
@@ -318,7 +319,19 @@ defmodule PidroServer.Stats do
           player_results: player_results
         }
 
-        case save_game_result(stats_attrs) do
+        result =
+          Repo.transaction(fn ->
+            case save_game_result(stats_attrs) do
+              {:ok, stats} ->
+                :ok = Profiles.apply_completed_game(player_results, winner)
+                stats
+
+              {:error, changeset} ->
+                Repo.rollback(changeset)
+            end
+          end)
+
+        case result do
           {:ok, _stats} ->
             Logger.info("Saved game stats for room #{room_code}")
             :ok
