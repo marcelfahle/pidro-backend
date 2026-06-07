@@ -94,16 +94,53 @@ defmodule PidroServer.Profiles do
   end
 
   @doc """
-  Applies one completed game to the set of participating users' profiles.
-
-  Increments `games_played` and either `wins` or `losses` per the per-user
-  result. Called once per newly-inserted `game_stats` row, from inside the
-  `Stats` write path's transaction. Bots are already excluded by the caller
-  (they never appear in `player_results`). Ids that are not valid UUIDs are
-  logged and skipped rather than crashing the surrounding transaction.
+  Arity-2 shim for the lifetime-counter completion hook (PID-44). Delegates to
+  `apply_completed_game/3` with the default options so the historical call shape
+  keeps working; ratings now move too (see the `/3` doc).
   """
   @spec apply_completed_game(map(), atom() | String.t()) :: :ok
-  def apply_completed_game(player_results, _winner) when is_map(player_results) do
+  def apply_completed_game(player_results, winner),
+    do: apply_completed_game(player_results, winner, [])
+
+  @doc """
+  Applies one completed game to the participating users' profiles, inside the
+  caller's transaction (`Stats.save_completed_game/4`).
+
+  ## Lifetime counters (PID-44)
+
+  Increments `games_played` and either `wins` or `losses` for every valid-UUID
+  key in `player_results` (counters count ALL human participation, including
+  `:abandoned` reserved-for ids). Bots never appear (the caller skips them). Ids
+  that are not valid UUIDs are logged and skipped rather than crashing the
+  surrounding transaction.
+
+  ## Ratings (PID-47) — bot-seat policy (authoritative, v1)
+
+  Rates ONLY a game that started 4 distinct human seats (a full 2v2 of real
+  users). Reads each participant's CURRENT stored `{mu, sigma}` as priors via
+  `load_priors/1`, calls the shared `rate_game/3`, and on `{:rated, updated}`
+  overwrites each participant's `rating_mu`/`rating_sigma` and increments
+  `rating_games_count` by 1; on `:unrated` leaves every rating column untouched.
+
+  Single-player / bots-only, 3-human + bot-fill, and any game with fewer than 4
+  distinct valid-UUID keys are unrated (lifetime counters still update). This
+  falls out of the single shared `rated_game?/1` (reached via `rate_game/3`) —
+  no separate flag. `:abandoned` (original human disconnected, bot played under
+  their UUID) and `:substitute` seats stay RATED in v1: they still represent 4
+  distinct human UUIDs that started the game. Tightening the predicate to exclude
+  them is deferred — a one-line change in the single shared `rated_game?/1` that
+  both the live and rebuild paths track automatically.
+
+  The per-game move is identical-by-construction to one `rerate_incremental/0`
+  replay step (same `rate_game/3`, same priors-at-this-game, count += 1), and so
+  matches a fresh `rerate_all/0`. This path does NOT advance the `rating_state`
+  cursor — see the cursor-coherence contract in `rerate_incremental/0`'s `@doc`.
+
+  The `opts` keyword is a forward seam only; pass `[]` (no options read in v1).
+  """
+  @spec apply_completed_game(map(), atom() | String.t(), keyword()) :: :ok
+  def apply_completed_game(player_results, winner, _opts) when is_map(player_results) do
+    # 1. Lifetime counters (PID-44): bump every valid-UUID participant.
     Enum.each(player_results, fn {user_id, result} ->
       case Ecto.UUID.cast(user_id) do
         {:ok, valid_id} ->
@@ -114,10 +151,13 @@ defmodule PidroServer.Profiles do
       end
     end)
 
+    # 2. Ratings (PID-47): rated 4-human games only, priors from stored rows.
+    apply_live_rating(player_results, winner)
+
     :ok
   end
 
-  def apply_completed_game(_player_results, _winner), do: :ok
+  def apply_completed_game(_player_results, _winner, _opts), do: :ok
 
   @doc """
   Recomputes a single user's lifetime counters from `game_stats` history and
@@ -273,6 +313,22 @@ defmodule PidroServer.Profiles do
   tie sorting before the cursor) is skipped; `rerate_all/0` is the authoritative
   repair and re-sorts and replays everything. Same drift-then-rebuild contract as
   the PID-44 counters. Returns `{:ok, %{games: rated_game_count}}`.
+
+  ## Cursor-coherence contract (PID-47)
+
+  Once the live completion path (`apply_completed_game/3`) is active, ratings move
+  per game at completion time WITHOUT advancing this cursor (advancing one shared
+  `rating_state` row per game-over would serialize every realtime completion on a
+  single row lock). The cursor therefore reflects the last BATCH rerate, NOT live
+  progress, and lags behind live game completions.
+
+  Consequently `rerate_incremental/0` is a **backfill / repair tool**, not a
+  steady-state job. It MUST NOT be run concurrently with (or after, against the
+  same games as) live updates: it would re-apply games the live path already
+  applied, double-moving μ/σ and double-counting `rating_games_count`.
+  **`rerate_all/0` is the source-of-truth repair** once live updates are active —
+  it wipes to `Rating.default/0` and replays the full history in total order,
+  producing the canonical values regardless of any live/incremental drift.
   """
   @spec rerate_incremental() :: {:ok, %{games: non_neg_integer()}}
   def rerate_incremental do
@@ -395,9 +451,45 @@ defmodule PidroServer.Profiles do
     end
   end
 
-  defp load_priors(user_ids) do
+  # Live per-game rating move (PID-47): one rerate_incremental/0-shaped step.
+  # Reads the four participants' stored priors, rates via the shared rate_game/3,
+  # and on a rated game overwrites μ/σ + increments rating_games_count by 1 for
+  # exactly those four ids. On :unrated, nothing is written.
+  defp apply_live_rating(player_results, winner) do
+    ids = participant_ids(%{player_results: player_results})
+    priors = load_priors(ids)
+
+    case rate_game(player_results, winner, priors) do
+      {:rated, updated} ->
+        # Restrict the persist to the four rated participants so rate_game/3's
+        # carried-through non-participant priors are never re-written.
+        acc = Map.take(updated, ids)
+        counts = Map.new(ids, &{&1, 1})
+        persist_ratings(acc, counts, :increment_count)
+
+      :unrated ->
+        :ok
+    end
+  end
+
+  @doc """
+  Loads stored `{mu, sigma}` priors for the given user ids as a
+  `%{user_id => {mu, sigma}}` map. Pure read; creates no rows. Shared by the
+  incremental rerate job and the live completion path so both see identical
+  priors-at-this-game.
+
+  Only users who have actually been RATED (`rating_games_count > 0`) contribute a
+  prior. Users with no row — or a lazily-created counter-only row that has never
+  been rated — are omitted, so callers default them to the EXACT `Rating.default/0`
+  inside `rate_game/3`. This is what makes the live path identical-by-construction
+  to a from-scratch `rerate_all/0`: the rounded schema-default `rating_sigma`
+  (8.333) on an unrated row never leaks in as a prior in place of `Rating.default/0`
+  (8.333…).
+  """
+  @spec load_priors([Ecto.UUID.t()]) :: %{optional(Ecto.UUID.t()) => rating()}
+  def load_priors(user_ids) do
     from(p in PlayerProfile,
-      where: p.user_id in ^user_ids,
+      where: p.user_id in ^user_ids and p.rating_games_count > 0,
       select: {p.user_id, p.rating_mu, p.rating_sigma}
     )
     |> Repo.all()
