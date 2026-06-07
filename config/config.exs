@@ -40,6 +40,19 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   trick_transition_delay_ms: 1_500,
   hand_transition_delay_ms: 3_000
 
+# Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
+# Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
+# ordinal distribution. provisional_max_sigma MUST stay strictly below the 8.333
+# schema default so never-rated users remain provisional.
+config :pidro_server, PidroServer.Rating.Tier,
+  provisional_min_games: 10,
+  provisional_max_sigma: 6.0,
+  bronze_min: 0.0,
+  silver_min: 10.0,
+  gold_min: 18.0,
+  platinum_min: 26.0,
+  master_min: 34.0
+
 # Configures the endpoint
 config :pidro_server, PidroServerWeb.Endpoint,
   url: [host: "localhost"],
