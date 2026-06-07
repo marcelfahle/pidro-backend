@@ -3,6 +3,7 @@ defmodule PidroServer.Rating.TierTest do
   # Application env, which other tests in this module read.
   use ExUnit.Case, async: false
 
+  alias PidroServer.Rating
   alias PidroServer.Rating.Tier
 
   doctest PidroServer.Rating.Tier
@@ -33,7 +34,7 @@ defmodule PidroServer.Rating.TierTest do
     test "defaults/0 returns the documented map" do
       assert Tier.defaults() == %{
                provisional_min_games: 10,
-               provisional_max_sigma: 6.0,
+               provisional_max_sigma: 6.5,
                bronze_min: 0.0,
                silver_min: 10.0,
                gold_min: 18.0,
@@ -43,34 +44,51 @@ defmodule PidroServer.Rating.TierTest do
     end
   end
 
-  describe "provisional gate" do
-    test "sigma == max_sigma with sufficient games stays provisional (>= ceiling)" do
-      assert Tier.classify(40.0, 6.0, 50) ==
-               %{tier: :provisional, provisional: true}
+  describe "provisional gate (OR-clear)" do
+    test "sufficient games clears regardless of high sigma (the games-count driver)" do
+      # The key fix: OpenSkill sigma converges slowly (floors ~6.06), so a player
+      # with realistic high sigma must still reach a real band after min_games.
+      assert %{provisional: false} = Tier.classify(40.0, 7.2, 10)
+      assert %{provisional: false} = Tier.classify(40.0, 8.0, 50)
     end
 
-    test "sigma just below ceiling with sufficient games clears" do
-      assert %{provisional: false} = Tier.classify(40.0, 5.999, 50)
+    test "low sigma clears early even below min_games (fast-converger gate)" do
+      assert %{provisional: false} = Tier.classify(40.0, 3.0, 4)
     end
 
-    test "games below min with low sigma stays provisional" do
-      assert Tier.classify(40.0, 3.0, 9) ==
-               %{tier: :provisional, provisional: true}
+    test "provisional only while BOTH too few games AND sigma still high" do
+      # few games + high sigma -> provisional
+      assert %{provisional: true} = Tier.classify(40.0, 7.0, 9)
+      assert %{provisional: true} = Tier.classify(25.0, 6.5, 0)
     end
 
-    test "games at min with low sigma clears (>= min_games boundary)" do
-      assert %{provisional: false} = Tier.classify(40.0, 3.0, 10)
+    test "games at min clears (>= min_games boundary) even with high sigma" do
+      assert %{provisional: false} = Tier.classify(40.0, 7.5, 10)
     end
 
-    test "AND-clear: only games >= 10 AND sigma < 6.0 clears" do
-      # low games + low sigma -> provisional
-      assert %{provisional: true} = Tier.classify(40.0, 3.0, 9)
-      # high games + high sigma -> provisional
-      assert %{provisional: true} = Tier.classify(40.0, 6.0, 50)
-      # low games + high sigma -> provisional
-      assert %{provisional: true} = Tier.classify(40.0, 6.0, 9)
-      # passing corner: high games + low sigma -> cleared
-      assert %{provisional: false} = Tier.classify(40.0, 3.0, 10)
+    test "sigma just below ceiling clears even with few games" do
+      assert %{provisional: false} = Tier.classify(40.0, 6.499, 3)
+    end
+
+    test "sigma == ceiling with few games stays provisional (>= ceiling)" do
+      assert %{provisional: true} = Tier.classify(40.0, 6.5, 3)
+    end
+  end
+
+  describe "reaches a real band after enough rated games (regression: provisional must clear)" do
+    test "a player with min_games and realistic slow-converging sigma lands in a band" do
+      result = Tier.classify(30.0, 7.2, 10)
+      refute result.provisional
+      assert result.tier in [:bronze, :silver, :gold, :platinum, :master]
+    end
+
+    test "a strong record yields a higher band than a weak one (both cleared)" do
+      strong = Tier.classify(40.0, 7.0, 15)
+      weak = Tier.classify(20.0, 7.0, 15)
+      refute strong.provisional
+      refute weak.provisional
+      # higher mu -> higher ordinal -> at least as high a band
+      assert Rating.ordinal({40.0, 7.0}) > Rating.ordinal({20.0, 7.0})
     end
   end
 
@@ -157,17 +175,19 @@ defmodule PidroServer.Rating.TierTest do
       assert %{tier: :master, provisional: false} = classify_at(12.0)
     end
 
-    test "lowering provisional_max_sigma makes a previously-cleared rating provisional" do
-      # sigma 5.0 clears under defaults (max_sigma 6.0).
-      assert %{provisional: false} = Tier.classify(40.0, 5.0, 50)
+    test "lowering provisional_max_sigma makes a previously early-cleared rating provisional" do
+      # With few games (< min_games), only the sigma gate can clear. sigma 5.0
+      # clears under defaults (max_sigma 6.5)...
+      assert %{provisional: false} = Tier.classify(40.0, 5.0, 4)
 
       prior = Application.get_env(:pidro_server, PidroServer.Rating.Tier)
       on_exit(fn -> restore_env(prior) end)
 
+      # ...but tightening the sigma gate below 5.0 re-provisionalizes it (still few games).
       Application.put_env(:pidro_server, PidroServer.Rating.Tier, provisional_max_sigma: 2.0)
 
       assert %{tier: :provisional, provisional: true} =
-               Tier.classify(40.0, 5.0, 50)
+               Tier.classify(40.0, 5.0, 4)
     end
   end
 

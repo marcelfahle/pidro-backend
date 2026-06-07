@@ -150,12 +150,13 @@ defmodule PidroServer.Profiles.PostGameSummaryTest do
     end
 
     test "provisional clears: before provisional, after cleared" do
-      # before: count below min_games (provisional); after: count crosses and
-      # sigma below max_sigma.
+      # before: count below min_games AND still-high sigma (provisional);
+      # after: count crosses min_games -> cleared by the games-count gate even
+      # though sigma is still high (realistic — OpenSkill sigma converges slowly).
       summary =
         PostGameSummary.build(
-          before(rating_mu: 30.0, rating_sigma: 5.0, rating_games_count: 9),
-          rated_deltas(rating_after: {30.5, 4.5}, rating_count_after: 10)
+          before(rating_mu: 30.0, rating_sigma: 7.5, rating_games_count: 9),
+          rated_deltas(rating_after: {30.5, 7.3}, rating_count_after: 10)
         )
 
       assert summary.rating.provisional_before == true

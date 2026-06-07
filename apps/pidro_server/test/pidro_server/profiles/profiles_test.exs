@@ -541,8 +541,10 @@ defmodule PidroServer.ProfilesTest do
     end
 
     test "classifies a never-rated (count 0) profile as provisional" do
+      # A never-rated profile carries the default high sigma (8.333), so it is
+      # provisional on both gates (count < min AND sigma >= max_sigma).
       public =
-        screen_fixture(%{rating_games_count: 0})
+        screen_fixture(%{rating_games_count: 0, rating_sigma: 8.333})
         |> Profiles.public_profile()
 
       assert public.skill == %{tier: :provisional, provisional: true}

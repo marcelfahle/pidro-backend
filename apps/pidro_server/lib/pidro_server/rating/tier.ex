@@ -6,10 +6,16 @@ defmodule PidroServer.Rating.Tier do
   Provisional state. Bands are read off `Rating.ordinal/1` (mu - 3*sigma), NOT
   raw mu, so uncertainty is already priced in.
 
-  A player is PROVISIONAL while they have too few rated games OR their sigma is
-  still too high; the band is suppressed and `tier: :provisional` is returned.
-  Provisional clears only once BOTH conditions are satisfied
-  (games_count >= min_games AND sigma < max_sigma).
+  A player is PROVISIONAL until we are confident: the band is suppressed and
+  `tier: :provisional` is returned while they have too few rated games AND their
+  sigma is still high. Provisional clears as soon as EITHER condition is met —
+  `games_count >= min_games` OR `sigma < max_sigma` (whichever comes first).
+
+  Games-count is the reliable driver: OpenSkill's sigma converges slowly (it
+  floors around 6.06 with the default model), so a sigma-only gate could never
+  clear in practice. The games-count gate guarantees every player reaches a real
+  band after `provisional_min_games` rated games; the sigma gate is an earlier
+  out for players whose uncertainty drops unusually fast.
 
   Thresholds are config-tunable (see `config :pidro_server, PidroServer.Rating.Tier`);
   launch defaults are placeholders, not finely calibrated.
@@ -35,7 +41,7 @@ defmodule PidroServer.Rating.Tier do
 
   @defaults %{
     provisional_min_games: 10,
-    provisional_max_sigma: 6.0,
+    provisional_max_sigma: 6.5,
     bronze_min: 0.0,
     silver_min: 10.0,
     gold_min: 18.0,
@@ -48,7 +54,8 @@ defmodule PidroServer.Rating.Tier do
 
   Returns `%{tier:, provisional:}`. The band is derived from
   `Rating.ordinal/1` (`mu - 3*sigma`); it is suppressed (`tier: :provisional`)
-  while `games_count < provisional_min_games` OR `sigma >= provisional_max_sigma`.
+  while `games_count < provisional_min_games` AND `sigma >= provisional_max_sigma`
+  (i.e. it clears once either gate opens).
 
   ## Examples
 
@@ -58,7 +65,12 @@ defmodule PidroServer.Rating.Tier do
       iex> PidroServer.Rating.Tier.classify(15.0, 5.0, 50)
       %{tier: :bronze, provisional: false}
 
-      iex> PidroServer.Rating.Tier.classify(40.0, 3.0, 9)
+      # Cleared by games-count after enough rated games, even with high sigma:
+      iex> PidroServer.Rating.Tier.classify(15.0, 7.2, 12)
+      %{tier: :bronze, provisional: false}
+
+      # Still provisional: too few games AND sigma still high.
+      iex> PidroServer.Rating.Tier.classify(25.0, 7.5, 4)
       %{tier: :provisional, provisional: true}
 
   """
@@ -105,10 +117,10 @@ defmodule PidroServer.Rating.Tier do
   @spec defaults() :: map()
   def defaults, do: @defaults
 
-  # Provisional while too few games OR sigma still too high; clears only when
-  # both conditions are satisfied.
+  # Provisional only while BOTH too few games AND sigma still high; clears as
+  # soon as either gate opens (enough games, or sigma low enough).
   defp provisional?(sigma, games_count) do
-    games_count < config(:provisional_min_games) or
+    games_count < config(:provisional_min_games) and
       sigma >= config(:provisional_max_sigma)
   end
 

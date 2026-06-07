@@ -42,11 +42,18 @@ config :pidro_server, PidroServer.Games.Lifecycle,
 
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
-# ordinal distribution. provisional_max_sigma MUST stay strictly below the 8.333
-# schema default so never-rated users remain provisional.
+# ordinal distribution.
+#
+# Provisional clears once EITHER gate opens: games_count >= provisional_min_games
+# OR sigma < provisional_max_sigma. Games-count is the reliable driver — OpenSkill
+# sigma floors ~6.06 with the default model, so a sub-6.06 sigma gate would never
+# clear; provisional_max_sigma sits just above the floor as a fast-converger early
+# out, while min_games guarantees everyone reaches a real band after 10 rated games.
+# provisional_max_sigma stays below the 8.333 schema default so never-rated users
+# remain provisional.
 config :pidro_server, PidroServer.Rating.Tier,
   provisional_min_games: 10,
-  provisional_max_sigma: 6.0,
+  provisional_max_sigma: 6.5,
   bronze_min: 0.0,
   silver_min: 10.0,
   gold_min: 18.0,
