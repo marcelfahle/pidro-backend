@@ -95,6 +95,48 @@ defmodule PidroServer.ProfilesTest do
       assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
       assert view.avg_winning_bid == 10.0
     end
+
+    test "untouched profile reports veteran_level 1 (XP-derived, not raw 0) and empty heritage" do
+      user = insert_user()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user.id)
+      assert view.veteran_xp == 0
+      assert view.veteran_level == 1
+      assert view.veteran_title == "Rookie"
+      assert view.veteran_progress == {0, 83}
+      assert view.heritage == []
+      assert view.heritage_flags == %{}
+    end
+
+    test "veteran fields derive from stored XP" do
+      user_id = Ecto.UUID.generate()
+      {:ok, profile} = Profiles.get_or_create_profile(user_id)
+
+      # Stale/zero cached level on purpose; the screen recomputes from XP.
+      profile
+      |> PlayerProfile.changeset(%{veteran_xp: 200, veteran_level: 0})
+      |> Repo.update!()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
+      assert view.veteran_xp == 200
+      assert view.veteran_level == PidroServer.Progression.level_for_xp(200)
+      assert view.veteran_title == PidroServer.Progression.title_for_level(view.veteran_level)
+      assert view.veteran_progress == PidroServer.Progression.level_progress(200)
+    end
+
+    test "heritage display list reflects heritage_flags" do
+      user_id = Ecto.UUID.generate()
+      {:ok, profile} = Profiles.get_or_create_profile(user_id)
+
+      profile
+      |> PlayerProfile.changeset(%{
+        heritage_flags: %{"played_pidro_one" => true, "legacy_level" => 73}
+      })
+      |> Repo.update!()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
+      assert Enum.map(view.heritage, & &1.key) == [:played_pidro_one, :legacy_level]
+    end
   end
 
   describe "apply_completed_game/2" do

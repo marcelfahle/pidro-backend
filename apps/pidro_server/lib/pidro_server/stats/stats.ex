@@ -323,7 +323,7 @@ defmodule PidroServer.Stats do
           Repo.transaction(fn ->
             case save_game_result(stats_attrs) do
               {:ok, stats} ->
-                :ok = Profiles.apply_completed_game(player_results, winner)
+                :ok = Profiles.apply_completed_game(player_results, winner, scores)
                 stats
 
               {:error, changeset} ->

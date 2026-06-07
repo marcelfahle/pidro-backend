@@ -8,6 +8,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   alias PidroServer.Games.RoomManager
   alias PidroServer.Profiles
   alias PidroServer.Profiles.PlayerProfile
+  alias PidroServer.Progression
   alias PidroServer.Rating
   alias PidroServer.Stats
   alias PidroServer.Stats.GameStats
@@ -233,7 +234,152 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
   end
 
+  describe "veteran XP (PID-49)" do
+    test "awards XP to ALL participants of a 4-human game, incl. losers" do
+      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      results = %{
+        n => result_for(:north_south, :north_south, :north),
+        e => result_for(:east_west, :north_south, :east),
+        s => result_for(:north_south, :north_south, :south),
+        w => result_for(:east_west, :north_south, :west)
+      }
+
+      scores = %{north_south: 62, east_west: 45}
+      seed_completed("XP4", :north_south, results)
+      :ok = Profiles.apply_completed_game(results, :north_south, scores)
+
+      # Winners: 62 + 50 = 112; losers: 45 (no bonus).
+      for id <- [n, s] do
+        p = profile(id)
+        assert p.veteran_xp == 112
+        assert p.veteran_level == Progression.level_for_xp(112)
+      end
+
+      for id <- [e, w] do
+        p = profile(id)
+        assert p.veteran_xp == 45
+        assert p.veteran_level == Progression.level_for_xp(45)
+      end
+    end
+
+    test "single-player / bot-filled game still pays XP (NOT rated-gated)" do
+      human = Ecto.UUID.generate()
+      results = %{human => result_for(:north_south, :north_south, :north)}
+      scores = %{north_south: 62, east_west: 45}
+
+      seed_completed("XPSOLO", :north_south, results)
+      :ok = Profiles.apply_completed_game(results, :north_south, scores)
+
+      p = profile(human)
+      # XP accrues (dedication) while the skill rating stays untouched.
+      assert p.veteran_xp == 112
+      assert p.veteran_level == Progression.level_for_xp(112)
+      assert p.games_played == 1
+      assert p.rating_games_count == 0
+    end
+
+    test "an :abandoned seat earns XP like the counters credit it" do
+      user_id = Ecto.UUID.generate()
+
+      results = %{
+        user_id => %{
+          participation: :abandoned,
+          result: :win,
+          team: :north_south,
+          position: :north
+        }
+      }
+
+      scores = %{north_south: 62, east_west: 45}
+      seed_completed("XPABANDON", :north_south, results)
+      :ok = Profiles.apply_completed_game(results, :north_south, scores)
+
+      p = profile(user_id)
+      assert p.veteran_xp == 112
+    end
+
+    test "live completion XP/level == rebuild_all/0 XP/level (parity)" do
+      [a, b, c, d, e, f] = for _ <- 1..6, do: Ecto.UUID.generate()
+
+      complete_4human_xp("PG1", {a, b, c, d}, :north_south, %{north_south: 62, east_west: 30})
+      complete_4human_xp("PG2", {a, c, e, b}, :east_west, %{north_south: 40, east_west: 62})
+      complete_4human_xp("PG3", {e, f, a, d}, :north_south, %{north_south: 62, east_west: 51})
+      complete_4human_xp("PG4", {b, d, f, c}, :east_west, %{north_south: 22, east_west: 62})
+
+      live = xp_snapshot()
+
+      assert {:ok, _} = Profiles.rebuild_all()
+
+      rebuilt = xp_snapshot()
+      assert Map.keys(live) |> Enum.sort() == Map.keys(rebuilt) |> Enum.sort()
+
+      Enum.each(live, fn {user_id, {xp, level}} ->
+        assert {xp, level} == Map.fetch!(rebuilt, user_id)
+      end)
+    end
+
+    test "rebuild tolerates legacy string-keyed final_scores and missing team score" do
+      u1 = Ecto.UUID.generate()
+      u2 = Ecto.UUID.generate()
+
+      results = %{
+        u1 => result_for(:north_south, :north_south, :north),
+        u2 => result_for(:east_west, :north_south, :east)
+      }
+
+      # Persist with a final_scores map missing the east_west key (legacy floor 0).
+      {:ok, _} =
+        Stats.save_game_result(%{
+          room_code: "XPLEGACY",
+          winner: :north_south,
+          final_scores: %{north_south: 62},
+          duration_seconds: 100,
+          completed_at: DateTime.utc_now(),
+          player_ids: [u1, u2],
+          player_results: results
+        })
+
+      assert {:ok, reb_u1} = Profiles.rebuild_from_history(u1)
+      assert {:ok, reb_u2} = Profiles.rebuild_from_history(u2)
+
+      # Winner: 62 + 50; loser: missing score floors to 0.
+      assert reb_u1.veteran_xp == 112
+      assert reb_u2.veteran_xp == 0
+    end
+  end
+
   # --- helpers ---
+
+  defp complete_4human_xp(room_code, {n, e, s, w}, winner, scores) do
+    results = %{
+      n => result_for(:north_south, winner, :north),
+      e => result_for(:east_west, winner, :east),
+      s => result_for(:north_south, winner, :south),
+      w => result_for(:east_west, winner, :west)
+    }
+
+    {:ok, _} =
+      Stats.save_game_result(%{
+        room_code: room_code,
+        winner: winner,
+        final_scores: scores,
+        bid_amount: 8,
+        bid_team: :north_south,
+        duration_seconds: 300,
+        completed_at: DateTime.utc_now(),
+        player_ids: Map.keys(results),
+        player_results: results
+      })
+
+    :ok = Profiles.apply_completed_game(results, winner, scores)
+    results
+  end
+
+  defp xp_snapshot do
+    Repo.all(PlayerProfile)
+    |> Map.new(fn p -> {p.user_id, {p.veteran_xp, p.veteran_level}} end)
+  end
 
   defp result_for(team, winner, position) do
     %{

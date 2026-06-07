@@ -20,6 +20,8 @@ defmodule PidroServer.Profiles do
   alias PidroServer.Accounts.User
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Profiles.RatingState
+  alias PidroServer.Progression
+  alias PidroServer.Progression.Heritage
   alias PidroServer.Rating
   alias PidroServer.Repo
   alias PidroServer.Stats.GameStats
@@ -81,12 +83,17 @@ defmodule PidroServer.Profiles do
          rating_mu: profile.rating_mu,
          rating_sigma: profile.rating_sigma,
          rating_games_count: profile.rating_games_count,
-         veteran_level: profile.veteran_level,
+         # veteran_level recomputed from XP (canonical) so a stale cache can never
+         # surface; equals the stored cache by construction once any game/rebuild ran.
+         veteran_level: Progression.level_for_xp(profile.veteran_xp),
          veteran_xp: profile.veteran_xp,
+         veteran_title: Progression.title_for_level(Progression.level_for_xp(profile.veteran_xp)),
+         veteran_progress: Progression.level_progress(profile.veteran_xp),
          playstyle_bidding_wins: profile.playstyle_bidding_wins,
          playstyle_bidding_attempts: profile.playstyle_bidding_attempts,
          avg_winning_bid: average(profile.avg_winning_bid_sum, profile.avg_winning_bid_count),
          heritage_flags: profile.heritage_flags,
+         heritage: Heritage.display(profile.heritage_flags),
          first_seen_at: first_seen_at,
          account_age_days: account_age_days(first_seen_at)
        }}
@@ -94,13 +101,15 @@ defmodule PidroServer.Profiles do
   end
 
   @doc """
-  Arity-2 shim for the lifetime-counter completion hook (PID-44). Delegates to
-  `apply_completed_game/3` with the default options so the historical call shape
-  keeps working; ratings now move too (see the `/3` doc).
+  Arity-2 shim for the lifetime-counter completion hook (PID-44). Delegates with
+  empty `scores` + default options so the historical call shape keeps working;
+  ratings and XP now move too (see the `/4` doc). With empty scores, XP for these
+  callers is `0 + win_bonus` for winners and `0` for losers — production always
+  passes real scores from `stats.ex`.
   """
   @spec apply_completed_game(map(), atom() | String.t()) :: :ok
   def apply_completed_game(player_results, winner),
-    do: apply_completed_game(player_results, winner, [])
+    do: apply_completed_game(player_results, winner, %{}, [])
 
   @doc """
   Applies one completed game to the participating users' profiles, inside the
@@ -113,6 +122,15 @@ defmodule PidroServer.Profiles do
   `:abandoned` reserved-for ids). Bots never appear (the caller skips them). Ids
   that are not valid UUIDs are logged and skipped rather than crashing the
   surrounding transaction.
+
+  ## Veteran XP (PID-49) — every completed game, NOT rated-gated
+
+  In the SAME per-participant loop as the counters (dedication, not skill), each
+  valid-UUID participant earns `Progression.xp_for_game(team_score, won?)` from
+  the per-team `scores` map (`%{north_south: int, east_west: int}`, atom- or
+  string-keyed). `veteran_xp` is incremented and `veteran_level` is recomputed
+  from the new total. This runs for single-player and bot-filled games too — XP
+  is NOT behind `rated_game?/1` (which stays exclusive to the rating block).
 
   ## Ratings (PID-47) — bot-seat policy (authoritative, v1)
 
@@ -138,13 +156,18 @@ defmodule PidroServer.Profiles do
 
   The `opts` keyword is a forward seam only; pass `[]` (no options read in v1).
   """
-  @spec apply_completed_game(map(), atom() | String.t(), keyword()) :: :ok
-  def apply_completed_game(player_results, winner, _opts) when is_map(player_results) do
-    # 1. Lifetime counters (PID-44): bump every valid-UUID participant.
+  @spec apply_completed_game(map(), atom() | String.t(), map(), keyword()) :: :ok
+  def apply_completed_game(player_results, winner, scores, opts \\ [])
+
+  def apply_completed_game(player_results, winner, scores, _opts)
+      when is_map(player_results) do
+    # 1. Lifetime counters (PID-44) + veteran XP (PID-49): every valid-UUID
+    #    participant, regardless of rated status.
     Enum.each(player_results, fn {user_id, result} ->
       case Ecto.UUID.cast(user_id) do
         {:ok, valid_id} ->
           apply_one(valid_id, win_from_result?(result))
+          apply_xp(valid_id, result, scores)
 
         :error ->
           Logger.warning("Profiles.apply_completed_game skipping non-UUID id #{inspect(user_id)}")
@@ -157,7 +180,7 @@ defmodule PidroServer.Profiles do
     :ok
   end
 
-  def apply_completed_game(_player_results, _winner, _opts), do: :ok
+  def apply_completed_game(_player_results, _winner, _scores, _opts), do: :ok
 
   @doc """
   Recomputes a single user's lifetime counters from `game_stats` history and
@@ -177,12 +200,19 @@ defmodule PidroServer.Profiles do
     wins = Enum.count(games, &won_game?(&1, user_id))
     losses = games_played - wins
 
+    # Veteran XP is a commutative per-game sum, so the rebuild mirrors the live
+    # path exactly (same xp_for_game/2 inputs). Order-agnostic, idempotent.
+    veteran_xp =
+      Enum.reduce(games, 0, fn game, acc -> acc + xp_for_history_game(game, user_id) end)
+
     with {:ok, profile} <- get_or_create_profile(user_id) do
       profile
       |> PlayerProfile.changeset(%{
         games_played: games_played,
         wins: wins,
-        losses: losses
+        losses: losses,
+        veteran_xp: veteran_xp,
+        veteran_level: Progression.level_for_xp(veteran_xp)
       })
       |> Repo.update()
     end
@@ -574,6 +604,96 @@ defmodule PidroServer.Profiles do
     :ok
   end
 
+  # Live XP writer (PID-49), inside the surrounding completion transaction.
+  # Increments veteran_xp by the per-game award, then recomputes the
+  # veteran_level cache from the post-inc total. The XP inc is commutative; the
+  # level set is a pure function of the new XP.
+  defp apply_xp(user_id, result, scores) do
+    won? = win_from_result?(result)
+    team_score = team_score_for(result, scores)
+    delta = Progression.xp_for_game(team_score, won?)
+    {:ok, _profile} = get_or_create_profile(user_id)
+
+    from(p in PlayerProfile, where: p.user_id == ^user_id)
+    |> Repo.update_all(inc: [veteran_xp: delta])
+
+    new_xp =
+      Repo.one(from p in PlayerProfile, where: p.user_id == ^user_id, select: p.veteran_xp)
+
+    from(p in PlayerProfile, where: p.user_id == ^user_id)
+    |> Repo.update_all(set: [veteran_level: Progression.level_for_xp(new_xp)])
+
+    :ok
+  end
+
+  # Per-game XP contribution for the rebuild: reuses won_game?/2 for the win
+  # bonus and reads the user's team score from the stored final_scores
+  # (string-keyed JSONB tolerant). Legacy rows missing a team's score floor to 0.
+  defp xp_for_history_game(%GameStats{} = game, user_id) do
+    won? = won_game?(game, user_id)
+    team = team_for_user(game, user_id)
+    team_score = score_for_team(game.final_scores, team)
+    Progression.xp_for_game(team_score, won?)
+  end
+
+  # Live path: read scores[result.team], tolerating atom/string keys on both the
+  # result map's team and the scores map. Defaults to 0 when absent.
+  defp team_score_for(result, scores) do
+    score_for_team(scores, team_from_result(result))
+  end
+
+  defp team_from_result(%{team: team}), do: team
+  defp team_from_result(%{"team" => team}), do: team
+  defp team_from_result(_result), do: nil
+
+  # Rebuild path: the user's team from the stored result, with the same
+  # position-vs-player_ids fallback won_game?/2 uses for legacy rows.
+  defp team_for_user(game, user_id) do
+    case get_player_result(game, user_id) do
+      %{team: team} ->
+        team
+
+      %{"team" => team} ->
+        team
+
+      _ ->
+        case get_player_position(game, user_id) do
+          pos when pos in [:north, :south] -> :north_south
+          pos when pos in [:east, :west] -> :east_west
+          _ -> nil
+        end
+    end
+  end
+
+  # Tolerant team-score read: atom OR string team key against an atom- OR
+  # string-keyed scores map. Non-integer / absent values floor to 0.
+  defp score_for_team(scores, team) when is_map(scores) and not is_nil(team) do
+    value =
+      Map.get(scores, team) ||
+        Map.get(scores, to_string(team)) ||
+        atom_keyed_score(scores, team)
+
+    if is_integer(value), do: value, else: 0
+  end
+
+  defp score_for_team(_scores, _team), do: 0
+
+  # When `team` is a string (JSONB result) but `scores` is atom-keyed (in-memory).
+  defp atom_keyed_score(scores, team) when is_binary(team) do
+    case safe_existing_atom(team) do
+      {:ok, atom} -> Map.get(scores, atom)
+      :error -> nil
+    end
+  end
+
+  defp atom_keyed_score(_scores, _team), do: nil
+
+  defp safe_existing_atom(string) do
+    {:ok, String.to_existing_atom(string)}
+  rescue
+    ArgumentError -> :error
+  end
+
   # Incremental path: atom-keyed in-memory result map built by
   # Stats.build_player_results/3.
   defp win_from_result?(%{result: :win}), do: true
@@ -583,28 +703,31 @@ defmodule PidroServer.Profiles do
   defp win_from_result?(_result), do: false
 
   # Rebuild path: persisted GameStats with string-keyed JSONB player_results.
-  # Mirrors Stats.count_user_wins/2 — read the stored result, falling back to
-  # position-vs-winner inference for historical rows written before
-  # player_results existed.
+  # An explicitly-stored result (win OR loss) is authoritative; only rows with
+  # NO recorded result (legacy rows written before player_results existed) fall
+  # back to position-vs-winner inference. The fallback relies on player_ids
+  # order, which is unreliable for modern rows whose player_ids come from an
+  # unordered map — so it must never be reached when a result is present.
   defp won_game?(%GameStats{} = game, user_id) do
     case get_player_result(game, user_id) do
-      %{result: :win} ->
-        true
+      %{result: :win} -> true
+      %{"result" => "win"} -> true
+      %{result: :loss} -> false
+      %{"result" => "loss"} -> false
+      _ -> won_game_by_position?(game, user_id)
+    end
+  end
 
-      %{"result" => "win"} ->
-        true
+  defp won_game_by_position?(%GameStats{} = game, user_id) do
+    winner = game.winner
+    position = get_player_position(game, user_id)
 
-      _ ->
-        winner = game.winner
-        position = get_player_position(game, user_id)
-
-        case {winner, position} do
-          {:north_south, pos} when pos in [:north, :south] -> true
-          {:east_west, pos} when pos in [:east, :west] -> true
-          {"north_south", pos} when pos in [:north, :south] -> true
-          {"east_west", pos} when pos in [:east, :west] -> true
-          _ -> false
-        end
+    case {winner, position} do
+      {:north_south, pos} when pos in [:north, :south] -> true
+      {:east_west, pos} when pos in [:east, :west] -> true
+      {"north_south", pos} when pos in [:north, :south] -> true
+      {"east_west", pos} when pos in [:east, :west] -> true
+      _ -> false
     end
   end
 
