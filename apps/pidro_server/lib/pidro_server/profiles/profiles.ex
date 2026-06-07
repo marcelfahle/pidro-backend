@@ -19,8 +19,13 @@ defmodule PidroServer.Profiles do
 
   alias PidroServer.Accounts.User
   alias PidroServer.Profiles.PlayerProfile
+  alias PidroServer.Profiles.RatingState
+  alias PidroServer.Rating
   alias PidroServer.Repo
   alias PidroServer.Stats.GameStats
+
+  @typedoc "A player rating `{mu, sigma}`, as `PidroServer.Rating`."
+  @type rating :: {float(), float()}
 
   @doc """
   Returns the profile for a user, creating a default row lazily if absent.
@@ -162,7 +167,304 @@ defmodule PidroServer.Profiles do
     {:ok, length(user_ids)}
   end
 
+  @doc """
+  Pure per-game rating update — the parity seam shared by the rerating job
+  (PID-46) and live completion wiring (PID-47).
+
+  Given one game's `player_results` map and `winner`, plus a `prior_ratings` map
+  `%{user_id => {mu, sigma}}` for the participating users, returns
+  `{:rated, updated_ratings}` where `updated_ratings` is `prior_ratings` with the
+  four participants replaced by their new `{mu, sigma}`; or `:unrated` if the game
+  does not satisfy `rated_game?/1`.
+
+  Pure: no DB. Tolerates atom- or string-keyed JSONB `player_results`. Missing
+  priors default to `Rating.default/0`. The caller owns where priors come from
+  (rebuild: an in-memory accumulator; PID-47: the players' stored profile rows).
+
+  Keys in the returned map keep the user-id form as it appears in
+  `player_results` (string after a JSONB round-trip).
+  """
+  @spec rate_game(map(), atom() | String.t(), %{optional(String.t()) => rating()}) ::
+          {:rated, %{optional(String.t()) => rating()}} | :unrated
+  def rate_game(player_results, winner, prior_ratings) do
+    case rated_game?(player_results) do
+      {:ok, {{team_a, members_a}, {_team_b, members_b}}} ->
+        winner_str = normalize_team(winner)
+
+        # Orient teams by the stored winner so the winning roster goes first.
+        {winners_ids, losers_ids} =
+          if team_a == winner_str do
+            {members_a, members_b}
+          else
+            {members_b, members_a}
+          end
+
+        winner_priors = Enum.map(winners_ids, &prior_for(prior_ratings, &1))
+        loser_priors = Enum.map(losers_ids, &prior_for(prior_ratings, &1))
+
+        %{winners: new_winners, losers: new_losers} =
+          Rating.rate(winner_priors, loser_priors)
+
+        updated =
+          prior_ratings
+          |> zip_ratings(winners_ids, new_winners)
+          |> zip_ratings(losers_ids, new_losers)
+
+        {:rated, updated}
+
+      :error ->
+        :unrated
+    end
+  end
+
+  @doc """
+  Wipes every profile's rating to `Rating.default/0` and recomputes it from the
+  full `game_stats` history in a fixed total order, seeded from defaults.
+
+  Deterministic and idempotent: re-running produces byte-identical
+  `rating_mu`/`rating_sigma`/`rating_games_count`. Runs entirely inside one
+  transaction (reset + replay + persist + cursor advance commit atomically).
+  Returns `{:ok, %{profiles: persisted_count, games: rated_game_count}}`.
+  """
+  @spec rerate_all() :: {:ok, %{profiles: non_neg_integer(), games: non_neg_integer()}}
+  def rerate_all do
+    {default_mu, default_sigma} = Rating.default()
+
+    Repo.transaction(fn ->
+      # 1. Reset all ratings to the exact Rating.default/0 (not the rounded
+      #    schema default) so replayed values and the accumulator seed match.
+      Repo.update_all(PlayerProfile,
+        set: [rating_mu: default_mu, rating_sigma: default_sigma, rating_games_count: 0]
+      )
+
+      # 2. Replay all games in a deterministic total order from an empty
+      #    accumulator (each newly-seen user defaults inside rate_game/3).
+      games = Repo.all(ordered_games_query())
+
+      {acc, counts, last_game} =
+        Enum.reduce(games, {%{}, %{}, nil}, fn game, {acc, counts, _last} ->
+          {acc, counts} = replay_game(game, acc, counts)
+          {acc, counts, game}
+        end)
+
+      # 3. Persist only touched users (untouched users already hold the reset
+      #    default + count 0).
+      persist_ratings(acc, counts, :overwrite_count)
+
+      # 4. Advance / clear the cursor.
+      set_cursor(last_game)
+
+      %{profiles: map_size(acc), games: counts |> Map.values() |> Enum.sum() |> div(4)}
+    end)
+  end
+
+  @doc """
+  Applies only games completed strictly after the stored composite cursor, using
+  the current stored profile ratings as priors, then advances the cursor.
+
+  Equivalent to continuing the `rerate_all/0` accumulator from where it left off:
+  the priors at the cursor are exactly the persisted post-cursor-game ratings.
+  μ/σ are overwritten; `rating_games_count` is incremented (we are extending, not
+  recomputing from zero). Runs inside one transaction.
+
+  Assumes **monotonic `completed_at` arrival** — games are written in roughly
+  completion order, so "after the cursor" is the genuinely-new set. A game that
+  arrives out of order (a backfill with an old `completed_at`, or a same-second
+  tie sorting before the cursor) is skipped; `rerate_all/0` is the authoritative
+  repair and re-sorts and replays everything. Same drift-then-rebuild contract as
+  the PID-44 counters. Returns `{:ok, %{games: rated_game_count}}`.
+  """
+  @spec rerate_incremental() :: {:ok, %{games: non_neg_integer()}}
+  def rerate_incremental do
+    Repo.transaction(fn ->
+      cursor = load_cursor()
+      games = Repo.all(games_after_cursor_query(cursor))
+
+      # Seed the accumulator from CURRENT stored profile ratings for the users
+      # in this batch (unseen users default lazily inside rate_game/3).
+      batch_user_ids =
+        games
+        |> Enum.flat_map(&participant_ids/1)
+        |> Enum.uniq()
+
+      acc = load_priors(batch_user_ids)
+
+      {acc, counts, last_game} =
+        Enum.reduce(games, {acc, %{}, nil}, fn game, {acc, counts, _last} ->
+          {acc, counts} = replay_game(game, acc, counts)
+          {acc, counts, game}
+        end)
+
+      persist_ratings(acc, counts, :increment_count)
+      if last_game, do: set_cursor(last_game)
+
+      %{games: counts |> Map.values() |> Enum.sum() |> div(4)}
+    end)
+  end
+
   # --- Private helpers ---
+
+  # Pure rated-game predicate. A game is rated iff `player_results` has exactly
+  # 4 distinct valid-UUID keys, split 2 per team. Returns
+  # `{:ok, {{team_a, [ids]}, {team_b, [ids]}}}` (team strings) or `:error`.
+  #
+  # PID-47 owns the FINAL policy and may tighten this (e.g. exclude games with
+  # any :abandoned / :substitute seat, or guest seats). It is a shared predicate:
+  # both the live path and the rebuild must use the same one.
+  defp rated_game?(player_results) when is_map(player_results) do
+    valid =
+      Enum.flat_map(player_results, fn {user_id, result} ->
+        case Ecto.UUID.cast(user_id) do
+          {:ok, _} -> [{user_id, team_of(result)}]
+          :error -> []
+        end
+      end)
+
+    ids = Enum.map(valid, fn {id, _team} -> id end)
+
+    with true <- length(valid) == 4,
+         true <- length(Enum.uniq(ids)) == 4,
+         [{team_a, members_a}, {team_b, members_b}] <-
+           valid
+           |> Enum.group_by(fn {_id, team} -> team end, fn {id, _team} -> id end)
+           |> Enum.to_list(),
+         true <- length(members_a) == 2 and length(members_b) == 2 do
+      {:ok, {{team_a, members_a}, {team_b, members_b}}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp rated_game?(_player_results), do: :error
+
+  defp team_of(%{team: team}), do: normalize_team(team)
+  defp team_of(%{"team" => team}), do: normalize_team(team)
+  defp team_of(_result), do: nil
+
+  defp normalize_team(team) when is_atom(team) and not is_nil(team), do: Atom.to_string(team)
+  defp normalize_team(team), do: team
+
+  defp prior_for(prior_ratings, user_id) do
+    Map.get(prior_ratings, user_id) || Rating.default()
+  end
+
+  defp zip_ratings(acc, ids, new_ratings) do
+    ids
+    |> Enum.zip(new_ratings)
+    |> Enum.reduce(acc, fn {id, rating}, acc -> Map.put(acc, id, rating) end)
+  end
+
+  defp ordered_games_query do
+    from(gs in GameStats, order_by: [asc: gs.completed_at, asc: gs.inserted_at, asc: gs.id])
+  end
+
+  defp games_after_cursor_query(nil), do: ordered_games_query()
+
+  defp games_after_cursor_query({c_at, c_ins, c_id}) do
+    from(gs in GameStats,
+      where:
+        gs.completed_at > ^c_at or
+          (gs.completed_at == ^c_at and gs.inserted_at > ^c_ins) or
+          (gs.completed_at == ^c_at and gs.inserted_at == ^c_ins and gs.id > ^c_id),
+      order_by: [asc: gs.completed_at, asc: gs.inserted_at, asc: gs.id]
+    )
+  end
+
+  # Apply one game through the shared step, bumping per-user counts on a rated
+  # game and leaving acc/counts untouched on an unrated one.
+  defp replay_game(game, acc, counts) do
+    case rate_game(game.player_results, game.winner, acc) do
+      {:rated, updated} ->
+        counts =
+          game
+          |> participant_ids()
+          |> Enum.reduce(counts, fn id, counts -> Map.update(counts, id, 1, &(&1 + 1)) end)
+
+        {updated, counts}
+
+      :unrated ->
+        {acc, counts}
+    end
+  end
+
+  # The valid-UUID participant ids of a rated game (empty list for unrated).
+  defp participant_ids(game) do
+    case rated_game?(game.player_results) do
+      {:ok, {{_team_a, members_a}, {_team_b, members_b}}} -> members_a ++ members_b
+      :error -> []
+    end
+  end
+
+  defp load_priors(user_ids) do
+    from(p in PlayerProfile,
+      where: p.user_id in ^user_ids,
+      select: {p.user_id, p.rating_mu, p.rating_sigma}
+    )
+    |> Repo.all()
+    |> Map.new(fn {user_id, mu, sigma} -> {user_id, {mu, sigma}} end)
+  end
+
+  # Overwrite each touched user's μ/σ; either overwrite the count (full rebuild)
+  # or increment it (incremental). Lazily creates a profile row if absent.
+  defp persist_ratings(acc, counts, count_mode) do
+    Enum.each(acc, fn {user_id, {mu, sigma}} ->
+      {:ok, _profile} = get_or_create_profile(user_id)
+      count = Map.get(counts, user_id, 0)
+
+      set =
+        case count_mode do
+          :overwrite_count -> [rating_mu: mu, rating_sigma: sigma, rating_games_count: count]
+          :increment_count -> [rating_mu: mu, rating_sigma: sigma]
+        end
+
+      query = from(p in PlayerProfile, where: p.user_id == ^user_id)
+
+      case count_mode do
+        :overwrite_count -> Repo.update_all(query, set: set)
+        :increment_count -> Repo.update_all(query, set: set, inc: [rating_games_count: count])
+      end
+    end)
+  end
+
+  # --- Cursor ---
+
+  defp load_cursor do
+    case Repo.get(RatingState, RatingState.singleton_id()) do
+      %RatingState{last_completed_at: nil} ->
+        nil
+
+      %RatingState{last_game_id: nil} ->
+        nil
+
+      %RatingState{} = state ->
+        {state.last_completed_at, state.last_inserted_at, state.last_game_id}
+
+      nil ->
+        nil
+    end
+  end
+
+  defp set_cursor(nil) do
+    upsert_cursor(%{last_completed_at: nil, last_inserted_at: nil, last_game_id: nil})
+  end
+
+  defp set_cursor(%GameStats{} = game) do
+    upsert_cursor(%{
+      last_completed_at: game.completed_at,
+      last_inserted_at: game.inserted_at,
+      last_game_id: game.id
+    })
+  end
+
+  defp upsert_cursor(attrs) do
+    state =
+      Repo.get(RatingState, RatingState.singleton_id()) ||
+        %RatingState{id: RatingState.singleton_id()}
+
+    state
+    |> RatingState.changeset(attrs)
+    |> Repo.insert_or_update!()
+  end
 
   defp apply_one(user_id, won?) do
     {:ok, _profile} = get_or_create_profile(user_id)
