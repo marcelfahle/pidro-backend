@@ -2,6 +2,7 @@ defmodule PidroServer.ProfilesTest do
   use PidroServer.DataCase, async: true
 
   alias PidroServer.Profiles
+  alias PidroServer.Profiles.Achievement
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Stats
 
@@ -137,6 +138,37 @@ defmodule PidroServer.ProfilesTest do
       assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
       assert Enum.map(view.heritage, & &1.key) == [:played_pidro_one, :legacy_level]
     end
+
+    test "achievements list is empty for a fresh profile; catalog shows all locked" do
+      user = insert_user()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user.id)
+      assert view.achievements == []
+
+      # The active catalog (6 defs) is present, all unearned; dormant not shown.
+      assert length(view.achievements_catalog) == 6
+      assert Enum.all?(view.achievements_catalog, &(&1.earned == false))
+      keys = view.achievements_catalog |> Enum.map(& &1.key) |> Enum.sort()
+      assert keys == Enum.sort(~w(player winner winstreak ace the_loser partnership)a)
+      refute Enum.any?(view.achievements_catalog, &(&1.key in ~w(homerun forcer)a))
+    end
+
+    test "achievements list shows earned defs joined to catalog display copy" do
+      user_id = Ecto.UUID.generate()
+      assert :awarded = Profiles.award_achievement(user_id, :player, 1, %{count: 10})
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
+      assert [earned] = view.achievements
+      assert earned.key == :player
+      assert earned.name == "Player"
+      assert earned.description == "Finish 10 games."
+      assert earned.tier == 1
+      assert %DateTime{} = earned.awarded_at
+
+      # The earned def is flagged earned in the catalog view.
+      player_catalog = Enum.find(view.achievements_catalog, &(&1.key == :player))
+      assert player_catalog.earned == true
+    end
   end
 
   describe "apply_completed_game/2" do
@@ -144,7 +176,7 @@ defmodule PidroServer.ProfilesTest do
       user_id = Ecto.UUID.generate()
       player_results = %{user_id => result_for(:north_south, :north_south, :north)}
 
-      assert :ok = Profiles.apply_completed_game(player_results, :north_south)
+      assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
 
       {:ok, profile} = Profiles.get_or_create_profile(user_id)
       assert profile.games_played == 1
@@ -156,7 +188,7 @@ defmodule PidroServer.ProfilesTest do
       user_id = Ecto.UUID.generate()
       player_results = %{user_id => result_for(:east_west, :north_south, :east)}
 
-      assert :ok = Profiles.apply_completed_game(player_results, :north_south)
+      assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
 
       {:ok, profile} = Profiles.get_or_create_profile(user_id)
       assert profile.games_played == 1
@@ -173,7 +205,7 @@ defmodule PidroServer.ProfilesTest do
         u2 => result_for(:east_west, :north_south, :east)
       }
 
-      assert :ok = Profiles.apply_completed_game(player_results, :north_south)
+      assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
 
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(u1)
       assert {:ok, %{losses: 1}} = Profiles.get_or_create_profile(u2)
@@ -191,7 +223,7 @@ defmodule PidroServer.ProfilesTest do
         }
       }
 
-      assert :ok = Profiles.apply_completed_game(player_results, :north_south)
+      assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
 
       {:ok, profile} = Profiles.get_or_create_profile(user_id)
       assert profile.wins == 1
@@ -205,7 +237,7 @@ defmodule PidroServer.ProfilesTest do
         "dev_host" => result_for(:east_west, :north_south, :east)
       }
 
-      assert :ok = Profiles.apply_completed_game(player_results, :north_south)
+      assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
 
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(valid)
       assert Repo.aggregate(PlayerProfile, :count) == 1
@@ -260,8 +292,8 @@ defmodule PidroServer.ProfilesTest do
       }
 
       # Incremental
-      assert :ok = Profiles.apply_completed_game(results1, :north_south)
-      assert :ok = Profiles.apply_completed_game(results2, :east_west)
+      assert {:ok, _} = Profiles.apply_completed_game(results1, :north_south)
+      assert {:ok, _} = Profiles.apply_completed_game(results2, :east_west)
 
       {:ok, inc_u1} = Profiles.get_or_create_profile(u1)
       {:ok, inc_u2} = Profiles.get_or_create_profile(u2)
@@ -364,6 +396,51 @@ defmodule PidroServer.ProfilesTest do
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(u1)
       assert {:ok, %{losses: 1}} = Profiles.get_or_create_profile(u2)
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(u3)
+    end
+  end
+
+  describe "achievement awards (PID-50)" do
+    test "award_achievement/4 inserts a row and returns :awarded; a duplicate returns :already" do
+      user_id = Ecto.UUID.generate()
+
+      assert :awarded = Profiles.award_achievement(user_id, :player, 1, %{count: 10})
+      assert :already = Profiles.award_achievement(user_id, :player, 1, %{count: 12})
+
+      # No duplicate row — the unique index holds.
+      assert Repo.aggregate(
+               from(a in Achievement, where: a.user_id == ^user_id),
+               :count
+             ) == 1
+    end
+
+    test "ensure_achievements/2 returns only the newly-inserted keys; re-running returns []" do
+      user_id = Ecto.UUID.generate()
+
+      awards = [{:player, 1, %{}}, {:winner, 1, %{}}]
+      assert Enum.sort(Profiles.ensure_achievements(user_id, awards)) == [:player, :winner]
+      assert Profiles.ensure_achievements(user_id, awards) == []
+    end
+
+    test "permanence: an earned row is never removed or downgraded" do
+      user_id = Ecto.UUID.generate()
+      assert :awarded = Profiles.award_achievement(user_id, :winstreak, 1, %{streak: 3})
+
+      # A rebuild over an empty history recomputes sub-threshold counts but must
+      # not remove the row (no delete/downgrade path exists).
+      assert {:ok, _} = Profiles.rebuild_from_history(user_id)
+
+      assert [%Achievement{achievement_key: "winstreak", tier: 1}] =
+               Profiles.list_achievements(user_id)
+    end
+
+    test "list_achievements/1 returns only the user's own rows" do
+      a = Ecto.UUID.generate()
+      b = Ecto.UUID.generate()
+      assert :awarded = Profiles.award_achievement(a, :player)
+      assert :awarded = Profiles.award_achievement(b, :winner)
+
+      assert Profiles.list_achievements(a) |> Enum.map(& &1.achievement_key) == ["player"]
+      assert Profiles.list_achievements(b) |> Enum.map(& &1.achievement_key) == ["winner"]
     end
   end
 end

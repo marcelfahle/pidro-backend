@@ -323,7 +323,12 @@ defmodule PidroServer.Stats do
           Repo.transaction(fn ->
             case save_game_result(stats_attrs) do
               {:ok, stats} ->
-                :ok = Profiles.apply_completed_game(player_results, winner, scores)
+                # PID-50: apply_completed_game now returns the per-user
+                # newly-earned achievement keys. PID-52 will wire this into the
+                # post-game payload; for now we capture and discard it.
+                {:ok, _newly_earned} =
+                  Profiles.apply_completed_game(player_results, winner, scores)
+
                 stats
 
               {:error, changeset} ->

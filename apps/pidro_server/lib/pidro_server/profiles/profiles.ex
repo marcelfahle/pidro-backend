@@ -18,6 +18,9 @@ defmodule PidroServer.Profiles do
   import Ecto.Query, warn: false
 
   alias PidroServer.Accounts.User
+  alias PidroServer.Achievements
+  alias PidroServer.Achievements.Catalog
+  alias PidroServer.Profiles.Achievement
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Profiles.RatingState
   alias PidroServer.Progression
@@ -72,6 +75,8 @@ defmodule PidroServer.Profiles do
   def get_profile_for_screen(user_id) do
     with {:ok, profile} <- get_or_create_profile(user_id) do
       first_seen_at = first_seen_at(user_id)
+      earned = list_achievements(user_id)
+      earned_keys = MapSet.new(earned, & &1.achievement_key)
 
       {:ok,
        %{
@@ -95,9 +100,58 @@ defmodule PidroServer.Profiles do
          heritage_flags: profile.heritage_flags,
          heritage: Heritage.display(profile.heritage_flags),
          first_seen_at: first_seen_at,
-         account_age_days: account_age_days(first_seen_at)
+         account_age_days: account_age_days(first_seen_at),
+         # PID-50: earned achievements (joined to Catalog for display copy) +
+         # an optional active-catalog view with an `earned` flag so a UI can
+         # show locked achievements. Dormant defs are NOT surfaced.
+         achievements: screen_achievements(earned),
+         achievements_catalog: screen_catalog(earned_keys)
        }}
     end
+  end
+
+  # Joins the user's earned rows to the Catalog for display copy, ordered by
+  # award time. Unknown keys (a def removed from the catalog) are dropped.
+  defp screen_achievements(earned) do
+    earned
+    |> Enum.sort_by(& &1.awarded_at, DateTime)
+    |> Enum.flat_map(fn row ->
+      case safe_existing_atom(row.achievement_key) do
+        {:ok, key} ->
+          def = Enum.find(Catalog.all(), &(&1.key == key))
+
+          if def do
+            [
+              %{
+                key: key,
+                name: def.name,
+                description: def.description,
+                tier: row.tier,
+                awarded_at: row.awarded_at
+              }
+            ]
+          else
+            []
+          end
+
+        :error ->
+          []
+      end
+    end)
+  end
+
+  # The active catalog annotated with an `earned` flag (cheap: in-memory data +
+  # an already-loaded earned-key set).
+  defp screen_catalog(earned_keys) do
+    Enum.map(Catalog.active(), fn def ->
+      %{
+        key: def.key,
+        name: def.name,
+        description: def.description,
+        tier: def.tier,
+        earned: MapSet.member?(earned_keys, Atom.to_string(def.key))
+      }
+    end)
   end
 
   @doc """
@@ -107,7 +161,8 @@ defmodule PidroServer.Profiles do
   callers is `0 + win_bonus` for winners and `0` for losers — production always
   passes real scores from `stats.ex`.
   """
-  @spec apply_completed_game(map(), atom() | String.t()) :: :ok
+  @spec apply_completed_game(map(), atom() | String.t()) ::
+          {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
   def apply_completed_game(player_results, winner),
     do: apply_completed_game(player_results, winner, %{}, [])
 
@@ -155,8 +210,21 @@ defmodule PidroServer.Profiles do
   cursor — see the cursor-coherence contract in `rerate_incremental/0`'s `@doc`.
 
   The `opts` keyword is a forward seam only; pass `[]` (no options read in v1).
+
+  ## Achievements (PID-50) + the newly-earned-keys return (PID-52 seam)
+
+  After counters/XP/rating, evaluates the active `Catalog` achievements for each
+  valid-UUID participant (live `ctx`: post-update aggregates, this game's
+  `game_view`, and the user's ordered history incl. this game — the row was
+  inserted earlier in this same transaction) and idempotent-upserts the awards.
+
+  **Returns `{:ok, %{user_id => [newly_earned_key]}}`** — the keys awarded for
+  the FIRST time this call (empty list / absent when nothing new). PID-50 does
+  not build the post-game payload (that's PID-52); it only produces the data at
+  the seam so PID-52 can consume it without re-querying.
   """
-  @spec apply_completed_game(map(), atom() | String.t(), map(), keyword()) :: :ok
+  @spec apply_completed_game(map(), atom() | String.t(), map(), keyword()) ::
+          {:ok, %{optional(Ecto.UUID.t()) => [atom()]}}
   def apply_completed_game(player_results, winner, scores, opts \\ [])
 
   def apply_completed_game(player_results, winner, scores, _opts)
@@ -177,10 +245,15 @@ defmodule PidroServer.Profiles do
     # 2. Ratings (PID-47): rated 4-human games only, priors from stored rows.
     apply_live_rating(player_results, winner)
 
-    :ok
+    # 3. Achievements (PID-50): per valid-UUID participant, evaluate active defs
+    #    against the post-update aggregates + this game + ordered history, and
+    #    idempotent-upsert. Returns the per-user newly-earned keys (PID-52 seam).
+    newly_earned = apply_live_achievements(player_results, scores)
+
+    {:ok, newly_earned}
   end
 
-  def apply_completed_game(_player_results, _winner, _scores, _opts), do: :ok
+  def apply_completed_game(_player_results, _winner, _scores, _opts), do: {:ok, %{}}
 
   @doc """
   Recomputes a single user's lifetime counters from `game_stats` history and
@@ -192,8 +265,14 @@ defmodule PidroServer.Profiles do
   @spec rebuild_from_history(Ecto.UUID.t()) ::
           {:ok, PlayerProfile.t()} | {:error, term()}
   def rebuild_from_history(user_id) do
+    # Canonical total order (`[asc: completed_at, asc: inserted_at, asc: id]`):
+    # the win-streak evaluator needs a stable consecutive ordering, and it must
+    # match the order the live path's history query sees so awards stay in parity.
     games =
-      from(gs in GameStats, where: ^user_id in gs.player_ids)
+      from(gs in GameStats,
+        where: ^user_id in gs.player_ids,
+        order_by: [asc: gs.completed_at, asc: gs.inserted_at, asc: gs.id]
+      )
       |> Repo.all()
 
     games_played = length(games)
@@ -206,15 +285,34 @@ defmodule PidroServer.Profiles do
       Enum.reduce(games, 0, fn game, acc -> acc + xp_for_history_game(game, user_id) end)
 
     with {:ok, profile} <- get_or_create_profile(user_id) do
-      profile
-      |> PlayerProfile.changeset(%{
-        games_played: games_played,
-        wins: wins,
-        losses: losses,
-        veteran_xp: veteran_xp,
-        veteran_level: Progression.level_for_xp(veteran_xp)
-      })
-      |> Repo.update()
+      result =
+        profile
+        |> PlayerProfile.changeset(%{
+          games_played: games_played,
+          wins: wins,
+          losses: losses,
+          veteran_xp: veteran_xp,
+          veteran_level: Progression.level_for_xp(veteran_xp)
+        })
+        |> Repo.update()
+
+      # Achievements (PID-50): re-award all active defs from the full ordered
+      # history. Idempotent (on_conflict: :nothing) and never removes/downgrades
+      # — permanence holds even if a def now evaluates false. Same evaluator as
+      # the live path; the ctx history is the identical total order, so the
+      # earned-key set matches the live path by construction.
+      ctx = %{
+        user_id: user_id,
+        aggregates: %{games_played: games_played, wins: wins},
+        this_game: nil,
+        history: Enum.map(games, &history_game_view(&1, user_id))
+      }
+
+      ctx
+      |> Achievements.evaluate_active()
+      |> then(&ensure_achievements(user_id, &1))
+
+      result
     end
   end
 
@@ -235,6 +333,71 @@ defmodule PidroServer.Profiles do
     Enum.each(user_ids, &rebuild_from_history/1)
 
     {:ok, length(user_ids)}
+  end
+
+  # --- Achievements context (PID-50) ---
+
+  @doc """
+  All earned achievement rows for a user (permanent; one per `achievement_key`).
+  """
+  @spec list_achievements(Ecto.UUID.t()) :: [Achievement.t()]
+  def list_achievements(user_id) do
+    from(a in Achievement, where: a.user_id == ^user_id)
+    |> Repo.all()
+  end
+
+  @doc """
+  Idempotently awards one achievement to a user.
+
+  Insert with `on_conflict: :nothing` against the unique `[:user_id,
+  :achievement_key]` index. Returns `:awarded` when a row was actually inserted
+  (newly earned this call) or `:already` when the conflict absorbed it (already
+  earned). Permanent — there is no remove/downgrade path.
+  """
+  @spec award_achievement(Ecto.UUID.t(), atom() | String.t(), pos_integer(), map()) ::
+          :awarded | :already
+  def award_achievement(user_id, key, tier \\ 1, metadata \\ %{}) do
+    now = DateTime.utc_now()
+
+    # insert_all + on_conflict: :nothing gives a reliable affected-row count:
+    # 1 when actually inserted (newly earned), 0 when the unique conflict
+    # absorbed it (already earned). A plain Repo.insert returns a struct with the
+    # client-generated binary_id in BOTH cases, so it cannot distinguish them.
+    {count, _} =
+      Repo.insert_all(
+        Achievement,
+        [
+          %{
+            id: Ecto.UUID.generate(),
+            user_id: user_id,
+            achievement_key: to_string(key),
+            tier: tier,
+            awarded_at: now,
+            metadata: metadata,
+            inserted_at: now,
+            updated_at: now
+          }
+        ],
+        on_conflict: :nothing,
+        conflict_target: [:user_id, :achievement_key]
+      )
+
+    if count == 1, do: :awarded, else: :already
+  end
+
+  @doc """
+  Awards a batch of `{key, tier, metadata}` and returns the list of keys that
+  were **newly** awarded (the `:awarded` subset). Used by both the live seam and
+  rebuild; re-running with an already-earned set returns `[]`.
+  """
+  @spec ensure_achievements(Ecto.UUID.t(), [{atom(), pos_integer(), map()}]) :: [atom()]
+  def ensure_achievements(user_id, awards) do
+    Enum.flat_map(awards, fn {key, tier, metadata} ->
+      case award_achievement(user_id, key, tier, metadata) do
+        :awarded -> [key]
+        :already -> []
+      end
+    end)
   end
 
   @doc """
@@ -499,6 +662,96 @@ defmodule PidroServer.Profiles do
 
       :unrated ->
         :ok
+    end
+  end
+
+  # Live achievements (PID-50). For each valid-UUID participant: build the ctx
+  # from the post-update aggregates (re-read in this txn), this game's view, and
+  # the user's ordered history (incl. this game — already inserted earlier in
+  # this transaction), evaluate active defs, and idempotent-upsert. Returns the
+  # per-user newly-earned keys as `%{user_id => [key]}`.
+  defp apply_live_achievements(player_results, scores) do
+    player_results
+    |> Enum.reduce(%{}, fn {user_id, result}, acc ->
+      case Ecto.UUID.cast(user_id) do
+        {:ok, valid_id} ->
+          aggregates =
+            Repo.one(
+              from p in PlayerProfile,
+                where: p.user_id == ^valid_id,
+                select: %{games_played: p.games_played, wins: p.wins}
+            ) || %{games_played: 0, wins: 0}
+
+          this_game = live_game_view(player_results, scores, result)
+
+          ctx = %{
+            user_id: valid_id,
+            aggregates: aggregates,
+            this_game: this_game,
+            history: ordered_history_views(valid_id)
+          }
+
+          newly =
+            ctx
+            |> Achievements.evaluate_active()
+            |> then(&ensure_achievements(valid_id, &1))
+
+          if newly == [], do: acc, else: Map.put(acc, valid_id, newly)
+
+        :error ->
+          acc
+      end
+    end)
+  end
+
+  # The user's full ordered history as `game_view`s, in the canonical total
+  # order — the same order rebuild_from_history/1 uses, so the streak evaluator
+  # sees an identical sequence in both paths.
+  defp ordered_history_views(user_id) do
+    from(gs in GameStats,
+      where: ^user_id in gs.player_ids,
+      order_by: [asc: gs.completed_at, asc: gs.inserted_at, asc: gs.id]
+    )
+    |> Repo.all()
+    |> Enum.map(&history_game_view(&1, user_id))
+  end
+
+  # Build a normalized game_view from the live in-scope data for one participant.
+  defp live_game_view(player_results, scores, result) do
+    team = team_from_result(result)
+    won? = win_from_result?(result)
+    team_score = score_for_team(scores, team)
+    opponent_score = score_for_team(scores, opponent_team(team))
+
+    %{
+      won?: won?,
+      team_score: team_score,
+      opponent_score: opponent_score,
+      partnered_win?: won? and match?({:ok, _}, rated_game?(player_results))
+    }
+  end
+
+  # Build a normalized game_view from a persisted GameStats row for one user,
+  # reusing the same tolerant team/score/result helpers the counters use.
+  defp history_game_view(%GameStats{} = game, user_id) do
+    team = team_for_user(game, user_id)
+    won? = won_game?(game, user_id)
+    team_score = score_for_team(game.final_scores, team)
+    opponent_score = score_for_team(game.final_scores, opponent_team(team))
+
+    %{
+      won?: won?,
+      team_score: team_score,
+      opponent_score: opponent_score,
+      partnered_win?: won? and match?({:ok, _}, rated_game?(game.player_results))
+    }
+  end
+
+  defp opponent_team(team) do
+    case normalize_team(team) do
+      "north_south" -> "east_west"
+      "east_west" -> "north_south"
+      _ -> nil
     end
   end
 

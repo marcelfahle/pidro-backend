@@ -14,6 +14,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   alias PidroServer.Stats.GameStats
 
   @delta 1.0e-9
+  @base ~U[2026-06-07 12:00:00Z]
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -96,7 +97,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     # rollback after the profile increment — asserting atomicity.
     result =
       Repo.transaction(fn ->
-        :ok = Profiles.apply_completed_game(player_results, :north_south)
+        {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
         Repo.rollback(:forced)
       end)
 
@@ -132,7 +133,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       results = %{human => result_for(:north_south, :north_south, :north)}
       seed_completed("SOLO", :north_south, results)
 
-      :ok = Profiles.apply_completed_game(results, :north_south)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south)
 
       # Untouched ratings hold the (rounded) schema default, not Rating.default/0.
       p = profile(human)
@@ -152,7 +153,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       }
 
       seed_completed("THREE", :north_south, results)
-      :ok = Profiles.apply_completed_game(results, :north_south)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south)
 
       for id <- ids do
         p = profile(id)
@@ -202,7 +203,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
       result =
         Repo.transaction(fn ->
-          :ok = Profiles.apply_completed_game(results, :north_south)
+          {:ok, _} = Profiles.apply_completed_game(results, :north_south)
           Repo.rollback(:forced)
         end)
 
@@ -247,7 +248,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
       scores = %{north_south: 62, east_west: 45}
       seed_completed("XP4", :north_south, results)
-      :ok = Profiles.apply_completed_game(results, :north_south, scores)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south, scores)
 
       # Winners: 62 + 50 = 112; losers: 45 (no bonus).
       for id <- [n, s] do
@@ -269,7 +270,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       scores = %{north_south: 62, east_west: 45}
 
       seed_completed("XPSOLO", :north_south, results)
-      :ok = Profiles.apply_completed_game(results, :north_south, scores)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south, scores)
 
       p = profile(human)
       # XP accrues (dedication) while the skill rating stays untouched.
@@ -293,7 +294,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
       scores = %{north_south: 62, east_west: 45}
       seed_completed("XPABANDON", :north_south, results)
-      :ok = Profiles.apply_completed_game(results, :north_south, scores)
+      {:ok, _} = Profiles.apply_completed_game(results, :north_south, scores)
 
       p = profile(user_id)
       assert p.veteran_xp == 112
@@ -349,7 +350,245 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
   end
 
+  describe "achievements (PID-50)" do
+    alias PidroServer.Profiles.Achievement
+
+    test "10th game awards :player exactly at the threshold, not before" do
+      u = Ecto.UUID.generate()
+
+      for n <- 1..9 do
+        complete_solo("PLAYER#{n}", u, :north_south, DateTime.add(@base, n))
+      end
+
+      refute "player" in earned_keys(u)
+
+      complete_solo("PLAYER10", u, :north_south, DateTime.add(@base, 10))
+      assert "player" in earned_keys(u)
+    end
+
+    test "5th win awards :winner exactly at the threshold" do
+      u = Ecto.UUID.generate()
+
+      # 4 wins, then a loss, then the 5th win.
+      for n <- 1..4 do
+        complete_solo("WIN#{n}", u, :north_south, DateTime.add(@base, n))
+      end
+
+      refute "winner" in earned_keys(u)
+      # A loss does not count toward wins.
+      complete_solo("WINLOSS", u, :east_west, DateTime.add(@base, 5))
+      refute "winner" in earned_keys(u)
+
+      complete_solo("WIN5", u, :north_south, DateTime.add(@base, 6))
+      assert "winner" in earned_keys(u)
+    end
+
+    test "3 straight wins award :winstreak; a prior loss does not block it" do
+      u = Ecto.UUID.generate()
+
+      complete_solo("WS_L", u, :east_west, DateTime.add(@base, 1))
+      complete_solo("WS_W1", u, :north_south, DateTime.add(@base, 2))
+      complete_solo("WS_W2", u, :north_south, DateTime.add(@base, 3))
+      refute "winstreak" in earned_keys(u)
+
+      complete_solo("WS_W3", u, :north_south, DateTime.add(@base, 4))
+      assert "winstreak" in earned_keys(u)
+    end
+
+    test "an opponent-shutout win awards :ace" do
+      u = Ecto.UUID.generate()
+
+      complete_solo("ACE_NO", u, :north_south, DateTime.add(@base, 1), %{
+        north_south: 62,
+        east_west: 10
+      })
+
+      refute "ace" in earned_keys(u)
+
+      complete_solo("ACE_YES", u, :north_south, DateTime.add(@base, 2), %{
+        north_south: 62,
+        east_west: -3
+      })
+
+      assert "ace" in earned_keys(u)
+    end
+
+    test "a negative-finish game awards :the_loser" do
+      u = Ecto.UUID.generate()
+
+      # User sits on north_south, loses (east_west wins), and finishes negative.
+      complete_solo("LOSER", u, :east_west, DateTime.add(@base, 1), %{
+        north_south: -8,
+        east_west: 62
+      })
+
+      assert "the_loser" in earned_keys(u)
+    end
+
+    test ":partnership needs a full 4-human 2v2 win, not a bot-filled game" do
+      solo = Ecto.UUID.generate()
+
+      # A solo (1-human) win is not a partnered win.
+      complete_solo("PART_SOLO", solo, :north_south, DateTime.add(@base, 1))
+      refute "partnership" in earned_keys(solo)
+
+      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      complete_4human("PART_FULL", {n, e, s, w}, :north_south, DateTime.add(@base, 2))
+
+      # Winners earn partnership; losers do not.
+      assert "partnership" in earned_keys(n)
+      assert "partnership" in earned_keys(s)
+      refute "partnership" in earned_keys(e)
+      refute "partnership" in earned_keys(w)
+    end
+
+    test "awards are permanent + idempotent (no dup rows, no downgrade on rebuild)" do
+      u = Ecto.UUID.generate()
+
+      complete_solo("PERM_W1", u, :north_south, DateTime.add(@base, 1))
+      complete_solo("PERM_W2", u, :north_south, DateTime.add(@base, 2))
+      complete_solo("PERM_W3", u, :north_south, DateTime.add(@base, 3))
+      assert "winstreak" in earned_keys(u)
+
+      # Break the streak with later losses — the earned row must survive.
+      complete_solo("PERM_L1", u, :east_west, DateTime.add(@base, 4))
+      complete_solo("PERM_L2", u, :east_west, DateTime.add(@base, 5))
+      assert "winstreak" in earned_keys(u)
+
+      # A full rebuild recomputes a now-broken streak but never removes the row.
+      assert {:ok, _} = Profiles.rebuild_all()
+      assert "winstreak" in earned_keys(u)
+
+      # No duplicate rows for the key.
+      count =
+        Repo.aggregate(
+          from(a in Achievement, where: a.user_id == ^u and a.achievement_key == "winstreak"),
+          :count
+        )
+
+      assert count == 1
+    end
+
+    test "apply_completed_game returns per-user newly-earned keys; not re-reported next game" do
+      u = Ecto.UUID.generate()
+
+      for n <- 1..9 do
+        complete_solo("RET#{n}", u, :north_south, DateTime.add(@base, n))
+      end
+
+      # The 10th completion crosses :player; capture its return value directly.
+      results = %{u => result_for(:north_south, :north_south, :north)}
+      scores = %{north_south: 62, east_west: 30}
+      seed_completed("RET10", :north_south, results, DateTime.add(@base, 10))
+      assert {:ok, newly} = Profiles.apply_completed_game(results, :north_south, scores)
+      assert :player in Map.fetch!(newly, u)
+
+      # A subsequent game does NOT re-report :player (idempotent).
+      results2 = %{u => result_for(:north_south, :north_south, :north)}
+      seed_completed("RET11", :north_south, results2, DateTime.add(@base, 11))
+      assert {:ok, newly2} = Profiles.apply_completed_game(results2, :north_south, scores)
+      refute :player in Map.get(newly2, u, [])
+    end
+
+    test "live award set == rebuild award set (headline parity guard)" do
+      [a, b, c, d] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      # A scripted sequence exercising counters, streaks, shutouts, partnered wins.
+      complete_4human("P1", {a, b, c, d}, :north_south, DateTime.add(@base, 1), %{
+        north_south: 62,
+        east_west: -5
+      })
+
+      complete_4human("P2", {a, b, c, d}, :north_south, DateTime.add(@base, 2))
+      complete_4human("P3", {a, b, c, d}, :north_south, DateTime.add(@base, 3))
+      complete_4human("P4", {a, b, c, d}, :east_west, DateTime.add(@base, 4))
+
+      live = earned_snapshot([a, b, c, d])
+
+      assert {:ok, _} = Profiles.rebuild_all()
+
+      rebuilt = earned_snapshot([a, b, c, d])
+      assert live == rebuilt
+    end
+
+    test "rebuild is idempotent (running it twice awards nothing the second time)" do
+      u = Ecto.UUID.generate()
+      complete_solo("IDEM1", u, :north_south, DateTime.add(@base, 1))
+      complete_solo("IDEM2", u, :north_south, DateTime.add(@base, 2))
+      complete_solo("IDEM3", u, :north_south, DateTime.add(@base, 3))
+
+      assert {:ok, _} = Profiles.rebuild_all()
+      first = earned_keys(u)
+      assert {:ok, _} = Profiles.rebuild_all()
+      assert earned_keys(u) == first
+
+      assert Repo.aggregate(from(a in Achievement, where: a.user_id == ^u), :count) ==
+               length(first)
+    end
+
+    test "dormant achievements never appear after completions or a rebuild" do
+      [a, b, c, d] = for _ <- 1..4, do: Ecto.UUID.generate()
+      complete_4human("DORM", {a, b, c, d}, :north_south, DateTime.add(@base, 1))
+      assert {:ok, _} = Profiles.rebuild_all()
+
+      dormant = ~w(homerun forcer full_house unstoppable)
+      all_earned = Repo.all(Achievement) |> Enum.map(& &1.achievement_key)
+      refute Enum.any?(dormant, &(&1 in all_earned))
+    end
+
+    test "adding a def is trivial: a synthetic active def is picked up by both paths" do
+      # Inject a config override so :player's threshold is 1 — i.e. exactly the
+      # kind of data-only change "adding/tuning a def" represents — and assert
+      # BOTH the live path and rebuild pick it up with no other code change.
+      Application.put_env(:pidro_server, PidroServer.Achievements.Catalog,
+        thresholds: %{player: 1}
+      )
+
+      on_exit(fn -> Application.delete_env(:pidro_server, PidroServer.Achievements.Catalog) end)
+
+      u = Ecto.UUID.generate()
+      complete_solo("TRIV", u, :north_south, DateTime.add(@base, 1))
+      assert "player" in earned_keys(u)
+
+      assert {:ok, _} = Profiles.rebuild_all()
+      assert "player" in earned_keys(u)
+    end
+  end
+
   # --- helpers ---
+
+  # Seed + apply a single-human game (the rest of the table is bots / absent),
+  # with controllable winner, completed_at, and scores.
+  # The user always sits on north_south; pass winner: :north_south for a win,
+  # :east_west for a loss.
+  defp complete_solo(room_code, user_id, winner, completed_at, scores \\ nil) do
+    results = %{user_id => result_for(:north_south, winner, :north)}
+    scores = scores || %{north_south: 62, east_west: 45}
+
+    {:ok, _} =
+      Stats.save_game_result(%{
+        room_code: room_code,
+        winner: winner,
+        final_scores: scores,
+        bid_amount: 8,
+        bid_team: :north_south,
+        duration_seconds: 300,
+        completed_at: completed_at,
+        player_ids: Map.keys(results),
+        player_results: results
+      })
+
+    {:ok, _} = Profiles.apply_completed_game(results, winner, scores)
+    results
+  end
+
+  defp earned_keys(user_id) do
+    user_id |> Profiles.list_achievements() |> Enum.map(& &1.achievement_key) |> Enum.sort()
+  end
+
+  defp earned_snapshot(user_ids) do
+    Map.new(user_ids, fn id -> {id, earned_keys(id)} end)
+  end
 
   defp complete_4human_xp(room_code, {n, e, s, w}, winner, scores) do
     results = %{
@@ -372,7 +611,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
         player_results: results
       })
 
-    :ok = Profiles.apply_completed_game(results, winner, scores)
+    {:ok, _} = Profiles.apply_completed_game(results, winner, scores)
     results
   end
 
@@ -391,8 +630,10 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   end
 
   # Seed a game_stats row AND run the live completion update, mirroring the
-  # save_completed_game/4 transaction (insert + apply_completed_game).
-  defp complete_4human(room_code, {n, e, s, w}, winner, completed_at \\ nil) do
+  # save_completed_game/4 transaction (insert + apply_completed_game). The same
+  # `scores` are persisted AND passed live, so the live and rebuild paths agree
+  # on score-derived achievements (ace / the_loser).
+  defp complete_4human(room_code, {n, e, s, w}, winner, completed_at \\ nil, scores \\ nil) do
     results = %{
       n => result_for(:north_south, winner, :north),
       e => result_for(:east_west, winner, :east),
@@ -400,17 +641,18 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       w => result_for(:east_west, winner, :west)
     }
 
-    seed_completed(room_code, winner, results, completed_at)
-    :ok = Profiles.apply_completed_game(results, winner)
+    scores = scores || %{north_south: 62, east_west: 45}
+    seed_completed(room_code, winner, results, completed_at, scores)
+    {:ok, _} = Profiles.apply_completed_game(results, winner, scores)
     results
   end
 
-  defp seed_completed(room_code, winner, results, completed_at \\ nil) do
+  defp seed_completed(room_code, winner, results, completed_at \\ nil, scores \\ nil) do
     {:ok, _} =
       Stats.save_game_result(%{
         room_code: room_code,
         winner: winner,
-        final_scores: %{north_south: 62, east_west: 45},
+        final_scores: scores || %{north_south: 62, east_west: 45},
         bid_amount: 8,
         bid_team: :north_south,
         duration_seconds: 300,
