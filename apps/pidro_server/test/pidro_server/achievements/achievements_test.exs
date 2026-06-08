@@ -11,7 +11,7 @@ defmodule PidroServer.AchievementsTest do
       won?: Keyword.get(opts, :won?, false),
       team_score: Keyword.get(opts, :team_score, 0),
       opponent_score: Keyword.get(opts, :opponent_score, 30),
-      partnered_win?: Keyword.get(opts, :partnered_win?, false)
+      partner_id: Keyword.get(opts, :partner_id, nil)
     }
   end
 
@@ -106,17 +106,38 @@ defmodule PidroServer.AchievementsTest do
     end
   end
 
-  describe "partnership (:single_game_predicate partnered_win, 1)" do
-    test "earns on a 4-human 2v2 win" do
-      assert :partnership in keys(ctx(this_game: gv(won?: true, partnered_win?: true)))
+  describe "partnership (:same_partner_wins, 10)" do
+    # Helpers to build histories of won/lost games with a given partner.
+    defp won_with(partner, n), do: List.duplicate(gv(won?: true, partner_id: partner), n)
+    defp lost_with(partner, n), do: List.duplicate(gv(won?: false, partner_id: partner), n)
+
+    test "earns at 10 wins with the SAME partner, not at 9" do
+      refute :partnership in keys(ctx(history: won_with("p_x", 9)))
+      assert :partnership in keys(ctx(history: won_with("p_x", 10)))
+      assert :partnership in keys(ctx(history: won_with("p_x", 25)))
     end
 
-    test "does not earn on a bot-filled game (not a partnered win)" do
-      refute :partnership in keys(ctx(this_game: gv(won?: true, partnered_win?: false)))
+    test "does NOT earn when 10 wins are spread across DIFFERENT partners" do
+      history = Enum.map(1..10, fn i -> gv(won?: true, partner_id: "p_#{i}") end)
+      refute :partnership in keys(ctx(history: history))
     end
 
-    test "does not earn on a 2v2 loss" do
-      refute :partnership in keys(ctx(this_game: gv(won?: false, partnered_win?: false)))
+    test "takes the max over partners (8 with X + 10 with Y earns; mixed never sums)" do
+      history = won_with("p_x", 8) ++ won_with("p_y", 10)
+      assert :partnership in keys(ctx(history: history))
+
+      history2 = won_with("p_x", 8) ++ won_with("p_y", 9)
+      refute :partnership in keys(ctx(history: history2))
+    end
+
+    test "losses with a partner do not count" do
+      history = won_with("p_x", 9) ++ lost_with("p_x", 5)
+      refute :partnership in keys(ctx(history: history))
+    end
+
+    test "wins with no real partner (partner_id nil) do not count" do
+      history = List.duplicate(gv(won?: true, partner_id: nil), 20)
+      refute :partnership in keys(ctx(history: history))
     end
   end
 
@@ -127,8 +148,8 @@ defmodule PidroServer.AchievementsTest do
       ctx =
         ctx(
           aggregates: %{games_played: 1000, wins: 1000},
-          this_game: gv(won?: true, team_score: 62, opponent_score: -20, partnered_win?: true),
-          history: List.duplicate(gv(won?: true), 50)
+          this_game: gv(won?: true, team_score: 62, opponent_score: -20, partner_id: "px"),
+          history: List.duplicate(gv(won?: true, partner_id: "px"), 50)
         )
 
       earned = keys(ctx)

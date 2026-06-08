@@ -45,7 +45,7 @@ defmodule PidroServer.Achievements.CatalogTest do
       assert Catalog.threshold(:player) == 10
       assert Catalog.threshold(:winner) == 5
       assert Catalog.threshold(:winstreak) == 3
-      assert Catalog.threshold(:partnership) == 1
+      assert Catalog.threshold(:partnership) == 10
     end
 
     test "a config override wins over the default (proves config-tunable)" do

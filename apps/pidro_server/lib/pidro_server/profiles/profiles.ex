@@ -1041,7 +1041,7 @@ defmodule PidroServer.Profiles do
                 select: %{games_played: p.games_played, wins: p.wins}
             ) || %{games_played: 0, wins: 0}
 
-          this_game = live_game_view(player_results, scores, result)
+          this_game = live_game_view(player_results, scores, result, valid_id)
 
           ctx = %{
             user_id: valid_id,
@@ -1076,7 +1076,7 @@ defmodule PidroServer.Profiles do
   end
 
   # Build a normalized game_view from the live in-scope data for one participant.
-  defp live_game_view(player_results, scores, result) do
+  defp live_game_view(player_results, scores, result, user_id) do
     team = team_from_result(result)
     won? = win_from_result?(result)
     team_score = score_for_team(scores, team)
@@ -1086,7 +1086,7 @@ defmodule PidroServer.Profiles do
       won?: won?,
       team_score: team_score,
       opponent_score: opponent_score,
-      partnered_win?: won? and match?({:ok, _}, rated_game?(player_results))
+      partner_id: partner_id_for(player_results, to_string(user_id))
     }
   end
 
@@ -1102,9 +1102,38 @@ defmodule PidroServer.Profiles do
       won?: won?,
       team_score: team_score,
       opponent_score: opponent_score,
-      partnered_win?: won? and match?({:ok, _}, rated_game?(game.player_results))
+      partner_id: partner_id_for(game.player_results, to_string(user_id))
     }
   end
+
+  # The user's PARTNER in a game: the other valid-UUID human on the SAME team.
+  # Derived from the shared rated_game?/1 structure, so a partner is returned
+  # ONLY for a true 4-distinct-human 2v2 game (solo/bot-filled → nil). Tolerant
+  # of atom- or string-keyed JSONB player_results (rated_game?/1 keeps the key
+  # form as it appears, so we compare against the stringified user_id). Returns
+  # the partner's user_id string, or nil when there is no real human partner.
+  defp partner_id_for(player_results, user_id_str) when is_map(player_results) do
+    case rated_game?(player_results) do
+      {:ok, {{_team_a, members_a}, {_team_b, members_b}}} ->
+        members =
+          cond do
+            user_id_str in normalize_ids(members_a) -> members_a
+            user_id_str in normalize_ids(members_b) -> members_b
+            true -> []
+          end
+
+        members
+        |> Enum.map(&to_string/1)
+        |> Enum.find(&(&1 != user_id_str))
+
+      :error ->
+        nil
+    end
+  end
+
+  defp partner_id_for(_player_results, _user_id_str), do: nil
+
+  defp normalize_ids(ids), do: Enum.map(ids, &to_string/1)
 
   defp opponent_team(team) do
     case normalize_team(team) do

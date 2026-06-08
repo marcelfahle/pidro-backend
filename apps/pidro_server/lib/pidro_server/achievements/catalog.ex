@@ -98,11 +98,11 @@ defmodule PidroServer.Achievements.Catalog do
     %Def{
       key: :partnership,
       name: "Partnership",
-      description: "Win a full 4-player game alongside your partner.",
+      description: "Win 10 games with the same partner.",
       tier: 1,
       status: :active,
-      evaluator: {:single_game_predicate, :partnered_win},
-      threshold: 1
+      evaluator: :same_partner_wins,
+      threshold: 10
     },
 
     # --- DORMANT (defined as data, NOT evaluated — needs per-hand capture) ----

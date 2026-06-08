@@ -425,21 +425,56 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       assert "the_loser" in earned_keys(u)
     end
 
-    test ":partnership needs a full 4-human 2v2 win, not a bot-filled game" do
-      solo = Ecto.UUID.generate()
-
-      # A solo (1-human) win is not a partnered win.
-      complete_solo("PART_SOLO", solo, :north_south, DateTime.add(@base, 1))
-      refute "partnership" in earned_keys(solo)
-
+    test ":partnership earns at 10 wins with the SAME partner; 9 does not" do
+      # n + s are fixed partners on north_south; they win 9 games together.
       [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
-      complete_4human("PART_FULL", {n, e, s, w}, :north_south, DateTime.add(@base, 2))
 
-      # Winners earn partnership; losers do not.
+      for i <- 1..9 do
+        complete_4human("PART_SAME#{i}", {n, e, s, w}, :north_south, DateTime.add(@base, i))
+      end
+
+      refute "partnership" in earned_keys(n)
+      refute "partnership" in earned_keys(s)
+
+      # The 10th win with the same partner crosses the threshold for both winners.
+      complete_4human("PART_SAME10", {n, e, s, w}, :north_south, DateTime.add(@base, 10))
       assert "partnership" in earned_keys(n)
       assert "partnership" in earned_keys(s)
+
+      # The losers (e, w) won 0 games, so they never earn.
       refute "partnership" in earned_keys(e)
       refute "partnership" in earned_keys(w)
+    end
+
+    test ":partnership does NOT earn when 10 wins are spread across DIFFERENT partners" do
+      # `hero` wins 10 north_south games, but with a DIFFERENT partner each time,
+      # so no single partner reaches the threshold.
+      hero = Ecto.UUID.generate()
+
+      for i <- 1..10 do
+        partner = Ecto.UUID.generate()
+        e = Ecto.UUID.generate()
+        w = Ecto.UUID.generate()
+        # hero sits north, the fresh partner sits south — both win.
+        complete_4human(
+          "PART_DIFF#{i}",
+          {hero, e, partner, w},
+          :north_south,
+          DateTime.add(@base, i)
+        )
+      end
+
+      refute "partnership" in earned_keys(hero)
+    end
+
+    test ":partnership does not count a solo / bot-filled win (no real partner)" do
+      solo = Ecto.UUID.generate()
+
+      for i <- 1..12 do
+        complete_solo("PART_SOLO#{i}", solo, :north_south, DateTime.add(@base, i))
+      end
+
+      refute "partnership" in earned_keys(solo)
     end
 
     test "awards are permanent + idempotent (no dup rows, no downgrade on rebuild)" do
@@ -511,6 +546,23 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       assert {:ok, _} = Profiles.rebuild_all()
 
       rebuilt = earned_snapshot([a, b, c, d])
+      assert live == rebuilt
+    end
+
+    test ":partnership live award == rebuild award (parity at the threshold)" do
+      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+
+      for i <- 1..10 do
+        complete_4human("PARTPAR#{i}", {n, e, s, w}, :north_south, DateTime.add(@base, i))
+      end
+
+      live = earned_snapshot([n, e, s, w])
+      assert "partnership" in live[n]
+      assert "partnership" in live[s]
+
+      assert {:ok, _} = Profiles.rebuild_all()
+
+      rebuilt = earned_snapshot([n, e, s, w])
       assert live == rebuilt
     end
 
