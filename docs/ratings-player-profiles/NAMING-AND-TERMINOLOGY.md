@@ -179,9 +179,50 @@ Provisional / Unrated / Calibrating / Placement / Settling In
 
 ## 7. Open decisions
 
-- [ ] Pick a naming set (or mix) for Veteran + Skill; resolve the "Master" collision.
-- [ ] Rename the Veteran layer title vs. its level-20 title overload.
-- [ ] Redefine the Partnership achievement (§3 A/B/C).
-- [ ] Keep vs. rename the borrowed-metaphor legacy achievements (Homerun/Full House/Ace).
-- [ ] Schedule the per-hand-facts follow-up to activate the dormant four (§4).
-- [ ] Choose Playstyle labels + "Provisional" label.
+- [x] Pick a naming set → **Set A for both** Veteran + Skill (2026-06-08). Master collision resolved (Veteran = tenure words, no "Master"; Skill keeps "Master" at top).
+- [x] Redefine the Partnership achievement → **Option A: "Win N games with the same partner"** (see §8).
+- [x] Schedule the per-hand-facts follow-up → ticketed: **PID-56** (enabler) blocks **PID-57 Homerun · PID-58 Forcer · PID-59 Full House · PID-60 Unstoppable**.
+- [ ] Veteran "long names on mobile" → short/full forms (see §9); confirm short forms.
+- [ ] Keep vs. rename the borrowed-metaphor legacy achievements (Homerun/Full House/Ace) — tracked on PID-57/59.
+- [ ] Choose Playstyle labels + "Provisional" label (defaults stand for now).
+- [ ] Visual differentiation of Skill vs Dedication (see §10) — design.
+
+---
+
+## 8. Decision: chosen names (2026-06-08)
+
+**Set A** is the chosen direction for both ladders. The two ladders deliberately use different word-pools so they never collide and the dedication≠skill split is reinforced.
+
+- **Veteran (dedication, tenure words):** Newcomer · Regular · Old Hand · Table Fixture · Mainstay · Pillar of the Table · Living Legend · Hall of Famer
+- **Skill (competence words):** Unrated · Novice · Steady Hand · Sharp · Cardsharp · Master
+- **Partnership achievement → "Win N games with the same partner"** (loyalty/chemistry). N is config-tunable; launch default **10**. Computable from `game_stats.player_results` (your partner = the other player on your team; group wins by partner id). Replaces the tautological "win alongside your partner."
+
+## 9. Mobile: short vs full title forms
+
+Concern: full tenure titles ("Pillar of the Table", "Hall of Famer") are long for tiny screens. Plan: store **both** a short and a full form; UI shows the **short** form in chips/badges/HUD and the **full** form on the profile detail / tab / preview.
+
+| Level | Full (detail/profile) | Short (chip/HUD) |
+|------|------------------------|------------------|
+| 1 | Newcomer | Newcomer |
+| 5 | Regular | Regular |
+| 10 | Old Hand | Old Hand |
+| 20 | Table Fixture | Fixture |
+| 35 | Mainstay | Mainstay |
+| 50 | Pillar of the Table | Pillar |
+| 75 | Living Legend | Legend |
+| 100 | Hall of Famer | Hall of Fame |
+
+Implementation: the `titles` config becomes `level => %{full:, short:}` (or two maps); `Progression.title_for_level/1` returns full, add `short_title_for_level/1`. Small, no rules impact. (Skill bands are already short; no short-form needed there.)
+
+## 10. Visual differentiation — keeping Skill and Dedication apart
+
+The risk is two badges that *look* the same sitting side by side. Ideas to make the two axes instantly distinct:
+
+- **Lean on the number asymmetry.** Dedication has a **level number 1–100** as its hero; Skill has **no number** (bands only). Always show the number for dedication, never for skill. That alone separates them.
+- **Different visual grammar:**
+  - *Dedication* = **accumulation** motif — a progress ring/bar, chevrons, or service-stripes that visibly *build up*; a "membership card" feel. Brand-neutral color; the **number + title** are the focus.
+  - *Skill* = **a single emblem** (crest / medal / shield) that **swaps** as you rank up; owns the competitive/metallic palette (tier colors). No progress bar — it's a standing, not a journey.
+- **Iconography:** Dedication → time/place (table, seat, hourglass, calendar). Skill → merit (star, medal, crest).
+- **Always label the axis:** "Lvl 23 · Old Hand" (with a small "Experience"/"Dedication" caption) vs. "Sharp" (caption "Skill"). Never rely on the badge alone.
+- **Separate cards/rows**, not twin side-by-side badges of the same shape — co-location of identical shapes is what creates the confusion.
+- **Provisional = a distinct "calibrating" state** (ghost/dashed crest, "Unrated · placing"), since it's the most common early state players will see.
