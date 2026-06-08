@@ -21,20 +21,26 @@ Dedication uses *tenure* words and Skill uses *competence* words on purpose: the
 
 ## Veteran — dedication
 
-Continuous level 1–100 (XP-driven, never resets). Named milestone titles attach at thresholds. Use the **short** form in chips/HUD, the **full** form on the profile/detail/preview.
+Continuous level 1–100 (XP-driven, never resets), then an **uncapped Prestige** tail past 100. Named milestone titles attach at level thresholds. Use the **short** form in chips/HUD, the **full** form on the profile/detail/preview.
 
-| Level | Full | Short |
-|------|------|-------|
-| 1 | Newcomer | Newcomer |
-| 5 | Regular | Regular |
-| 10 | Old Hand | Old Hand |
-| 20 | Table Fixture | Fixture |
-| 35 | Mainstay | Mainstay |
-| 50 | Pillar of the Table | Pillar |
-| 75 | Living Legend | Legend |
-| 100 | Hall of Famer | Hall of Fame |
+The curve is a re-paced power law — `threshold(level) = 80 · level²` — **data-calibrated** against Pidro 1 (~78 XP/game; top player 5.0M XP over 63,336 games). It replaces the old exponential curve where the top titles were mathematically unreachable. Every title is now reachable, and Hall of Famer is a genuine ~top-1% honor.
 
-Backend gives you `veteran_level` (number), `veteran_xp`, `veteran_title`, and `veteran_progress` (into / span, or "max"). Lean on the **level number** as the hero of this axis.
+| Level | Full | Short | Total XP | ≈ games | Who reaches it* |
+|------|------|-------|---------|---------|-----------------|
+| 1 | Newcomer | Newcomer | 0 | 0 | everyone |
+| 5 | Regular | Regular | 2,000 | ~25 | early dopamine |
+| 10 | Old Hand | Old Hand | 8,000 | ~100 | early dopamine |
+| 20 | Table Fixture | Fixture | 32,000 | ~410 | ~top 18% |
+| 35 | Mainstay | Mainstay | 98,000 | ~1,260 | ~top 10% |
+| 50 | Pillar of the Table | Pillar | 200,000 | ~2,560 | ~top 5% |
+| 75 | Living Legend | Legend | 450,000 | ~5,770 | ~top 2% |
+| 100 | Hall of Famer | Hall of Fame | 800,000 | ~10,250 | ~top 1% (~240 lifers) |
+
+\* % of the ~27,500 Pidro 1 players who have any finished-game history (of ~70k accounts — the rest import as Newcomer).
+
+**Prestige (past Hall of Famer):** every **500,000 XP** beyond the level-100 cap adds one Prestige star, uncapped. The all-time top player (5.0M XP) lands at **Hall of Famer ★8**; #30 (1.94M XP) at ★2. Render it as a small, quiet star/number on top of the Hall of Famer badge — it's a lifer flex, deliberately understated (dedication, not skill).
+
+Backend gives you `veteran_level` (number), `veteran_xp`, `veteran_title`, `veteran_progress` (into / span, or "max"), `veteran_prestige` (integer, 0 below the cap), and `veteran_prestige_progress` (into / step toward the next star, or null). Lean on the **level number** (and the Prestige star) as the hero of this axis.
 
 ## Skill — competence
 
