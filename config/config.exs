@@ -60,18 +60,21 @@ config :pidro_server, PidroServer.Rating.Tier,
   platinum_min: 26.0,
   master_min: 34.0
 
-# Veteran progression (PID-49). XP curve + bonuses + milestone titles carried
-# from Pidro 1 (so PID-53 imports land on the same level). win_bonus 50 is the
-# proven legacy value; extra_bonus is the events lever (flat, no streaks yet).
-# titles are launch PLACEHOLDERS, not final copy — tunable. Curve thresholds are
-# generated from the params below; set `thresholds:` here to override verbatim.
+# Veteran progression (PID-49). XP curve + bonuses + milestone titles. win_bonus
+# 50 is the proven legacy Pidro 1 value (so PID-53 imports earn the same totals);
+# extra_bonus is the events lever (flat, no streaks yet). titles are launch
+# PLACEHOLDERS, not final copy — tunable. The curve is a re-paced power law
+# (threshold(level) = round(curve_coefficient * level ** curve_exponent)),
+# data-calibrated against Pidro 1: L100 caps at 800k XP, then Prestige adds one
+# star per prestige_step (500k) XP past the cap (top player 5.0M → ★8). Set
+# `thresholds:` to override the level boundaries verbatim.
 config :pidro_server, PidroServer.Progression,
   win_bonus: 50,
   extra_bonus: 0,
   max_level: 100,
-  curve_base_growth: 300,
-  curve_growth_divisor: 7,
-  curve_point_divisor: 4,
+  curve_coefficient: 80,
+  curve_exponent: 2.0,
+  prestige_step: 500_000,
   # thresholds: nil,  # optional explicit ascending list; nil = generate from params
   titles: %{
     1 => "Rookie",

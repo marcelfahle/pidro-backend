@@ -10,8 +10,8 @@ defmodule PidroServer.Profiles.PostGameSummaryTest do
 
   doctest PostGameSummary
 
-  # XP totals chosen against the legacy threshold list [83, 174, 276, ...]:
-  # level 1 = [0, 82], level 2 = [83, 173], level 3 = [174, 275].
+  # XP totals chosen against the power-law threshold list (80·level²):
+  # level 1 = [0, 319], level 2 = [320, 719], level 3 = [720, 1279].
   defp before(opts \\ []) do
     %{
       veteran_xp: Keyword.get(opts, :veteran_xp, 0),
@@ -55,7 +55,7 @@ defmodule PidroServer.Profiles.PostGameSummaryTest do
       assert summary.veteran_title_before == "Rookie"
       assert summary.veteran_title == "Rookie"
       assert summary.title_changed == false
-      assert summary.veteran_progress == %{into: 0, span: 83, max: false}
+      assert summary.veteran_progress == %{into: 0, span: 320, max: false}
       assert summary.achievements_unlocked == []
       assert summary.rating == nil
       assert summary.rated == false
@@ -64,9 +64,9 @@ defmodule PidroServer.Profiles.PostGameSummaryTest do
 
   describe "leveled_up" do
     test "crossing a threshold sets leveled_up: true and a higher level" do
-      # 0 -> 180 crosses level 1 (<=82) and level 2 (<=173) into level 3.
+      # 0 -> 800 crosses level 2 (>=320) and level 3 (>=720) into level 3.
       summary =
-        PostGameSummary.build(before(veteran_xp: 0), casual_deltas(veteran_xp_after: 180))
+        PostGameSummary.build(before(veteran_xp: 0), casual_deltas(veteran_xp_after: 800))
 
       assert summary.veteran_level_before == 1
       assert summary.veteran_level == 3
@@ -208,7 +208,7 @@ defmodule PidroServer.Profiles.PostGameSummaryTest do
 
     test "a finite progress maps to %{into, span, max: false}" do
       summary = PostGameSummary.build(before(), casual_deltas(veteran_xp_after: 0))
-      assert summary.veteran_progress == %{into: 0, span: 83, max: false}
+      assert summary.veteran_progress == %{into: 0, span: 320, max: false}
     end
   end
 

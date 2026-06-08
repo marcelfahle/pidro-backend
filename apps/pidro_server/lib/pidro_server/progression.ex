@@ -1,20 +1,36 @@
 defmodule PidroServer.Progression do
   @moduledoc """
   Pure veteran-progression math: XP per completed game, XP → level, level →
-  milestone title, plus level-progress helpers.
+  milestone title, level-progress helpers, plus the uncapped Prestige tail.
 
-  Faithful to Pidro 1 (carried so PID-53 imports land on the same level):
+  XP award is faithful to Pidro 1 (carried so PID-53 imports land on the same
+  total): winner = team final score + 50; loser = team final score. (legacy:
+  pidro_api/lib/pidro_api/game_results.ex:185-211; confirmed by
+  pidro_api/test/features/game_results_test.exs:156-160 — winner 66+50=116,
+  loser 54.)
 
-    * XP award — winner = team final score + 50; loser = team final score.
-      (legacy: pidro_api/lib/pidro_api/game_results.ex:185-211; confirmed by
-      pidro_api/test/features/game_results_test.exs:156-160 — winner 66+50=116,
-      loser 54)
-    * Level curve — cumulative thresholds `floor(lvl + 300*2^(lvl/7))` then
-      `÷4`; `level = count(thresholds <= xp) + 1`, capped at `max_level`.
-      (legacy: pidro_api/lib/pidro_api_web/views/user_view.ex:378-405)
+  The level curve is a re-paced **power law**, data-calibrated against the real
+  Pidro 1 distribution (~78 XP/player/game; top player ≈ 5.02M total XP over
+  ~63k games). The old legacy-exponential curve put L100 in the tens of millions
+  of XP — unreachable even for the top player — so it is replaced with:
+
+      threshold(1) = 0
+      threshold(level) = round(coefficient * level ** exponent)   (level 2..max)
+
+  With the defaults (`coefficient` 80, `exponent` 2.0, `max_level` 100) the
+  titled ladder is reachable: L5=2,000, L10=8,000, L20=32,000, L50=200,000,
+  L75=450,000, **L100=800,000**. `level = count(thresholds <= xp) + 1`, capped
+  at `max_level`.
+
+  Past the L100 cap the ladder continues forever via **Prestige** — one extra
+  star per `prestige_step` XP (default 500,000) earned beyond the L100 threshold.
+  Calibrated so the real top player (5.02M XP) lands at Hall of Famer ★8
+  (`floor((5_020_512 - 800_000) / 500_000) == 8`).
 
   XP is a per-game sum (order-agnostic), so totals are rebuildable by summation.
-  Bonuses, curve params, max_level, and milestone titles are config-tunable
+  Levels and prestige are PURE functions of total XP — recomputed on read, never
+  authoritative on their own (no migration; XP stays canonical). Bonuses, curve
+  params, `max_level`, `prestige_step`, and milestone titles are config-tunable
   (see `config :pidro_server, PidroServer.Progression`); titles are launch
   placeholders, not final copy.
 
@@ -29,8 +45,8 @@ defmodule PidroServer.Progression do
       iex> PidroServer.Progression.level_for_xp(0)
       1
 
-      iex> PidroServer.Progression.level_for_xp(83)
-      2
+      iex> PidroServer.Progression.level_for_xp(2000)
+      5
 
   """
 
@@ -41,9 +57,9 @@ defmodule PidroServer.Progression do
     win_bonus: 50,
     extra_bonus: 0,
     max_level: 100,
-    curve_base_growth: 300,
-    curve_growth_divisor: 7,
-    curve_point_divisor: 4,
+    curve_coefficient: 80,
+    curve_exponent: 2.0,
+    prestige_step: 500_000,
     thresholds: nil,
     titles: %{
       1 => "Rookie",
@@ -58,50 +74,37 @@ defmodule PidroServer.Progression do
   }
 
   @doc """
-  Builds the ascending threshold list for the given curve params.
+  Builds the ascending threshold list for the given power-law curve params.
 
-  Generator (legacy, source of truth): `lvl` runs `1..max_level`; each level's
-  increment is `floor(lvl + base_growth * 2^(lvl/growth_divisor))` accumulated,
-  and the stored threshold is `floor(points / point_divisor)`. Ascending list,
-  e.g. `[83, 174, 276, 388, 512, ...]`. For tests/tools and runtime
-  regeneration when config params differ from the compile-time defaults.
+  Conceptually `threshold(1) = 0` and
+  `threshold(level) = round(coefficient * level ** exponent)` for `level` in
+  `2..max_level` (using `:math.pow`). The returned list is the
+  *level-entry boundaries for levels 2..max_level* — i.e. the leading `0` for
+  level 1 is omitted, since `level_for_xp/1` counts boundaries crossed and adds
+  1. With the defaults this is `[320, 720, 1280, 2000, ...]` (99 entries).
+  For tests/tools and runtime regeneration when config params differ from the
+  compile-time defaults.
   """
-  @spec build_thresholds(pos_integer(), number(), number(), number()) :: [non_neg_integer()]
-  def build_thresholds(max_level, base_growth, growth_divisor, point_divisor)
+  @spec build_thresholds(pos_integer(), number(), number()) :: [non_neg_integer()]
+  def build_thresholds(max_level, coefficient, exponent)
       when is_integer(max_level) and max_level >= 1 do
-    {thresholds, _points} =
-      Enum.reduce(1..max_level, {[], 0}, fn lvl, {acc, points} ->
-        increment = trunc(Float.floor(lvl + base_growth * :math.pow(2, lvl / growth_divisor)))
-        points = points + increment
-        {[trunc(Float.floor(points / point_divisor)) | acc], points}
-      end)
-
-    Enum.reverse(thresholds)
+    case max_level do
+      1 -> []
+      _ -> Enum.map(2..max_level, fn level -> round(coefficient * :math.pow(level, exponent)) end)
+    end
   end
 
-  # Compile-time legacy default (used when config :thresholds is nil and the
-  # config curve params match the defaults). This is the exact Pidro 1 array,
-  # computed once at compile time by inlining the generator above.
-  @legacy_thresholds (fn ->
-                        {thresholds, _points} =
-                          Enum.reduce(1..@defaults.max_level, {[], 0}, fn lvl, {acc, points} ->
-                            increment =
-                              trunc(
-                                Float.floor(
-                                  lvl +
-                                    @defaults.curve_base_growth *
-                                      :math.pow(2, lvl / @defaults.curve_growth_divisor)
-                                )
-                              )
-
-                            points = points + increment
-
-                            {[trunc(Float.floor(points / @defaults.curve_point_divisor)) | acc],
-                             points}
-                          end)
-
-                        Enum.reverse(thresholds)
-                      end).()
+  # Compile-time default threshold list (used when config :thresholds is nil and
+  # the config curve params match the defaults). Computed once at compile time by
+  # inlining the generator above.
+  @default_thresholds (fn ->
+                         Enum.map(2..@defaults.max_level, fn level ->
+                           round(
+                             @defaults.curve_coefficient *
+                               :math.pow(level, @defaults.curve_exponent)
+                           )
+                         end)
+                       end).()
 
   @doc """
   XP earned for one completed game by one participant.
@@ -135,11 +138,14 @@ defmodule PidroServer.Progression do
 
   ## Examples
 
-      iex> PidroServer.Progression.level_for_xp(82)
+      iex> PidroServer.Progression.level_for_xp(319)
       1
 
-      iex> PidroServer.Progression.level_for_xp(174)
-      3
+      iex> PidroServer.Progression.level_for_xp(320)
+      2
+
+      iex> PidroServer.Progression.level_for_xp(800_000)
+      100
 
   """
   @spec level_for_xp(non_neg_integer()) :: pos_integer()
@@ -181,10 +187,10 @@ defmodule PidroServer.Progression do
   ## Examples
 
       iex> PidroServer.Progression.next_level_at(0)
-      83
+      320
 
-      iex> PidroServer.Progression.next_level_at(83)
-      174
+      iex> PidroServer.Progression.next_level_at(320)
+      720
 
   """
   @spec next_level_at(non_neg_integer()) :: non_neg_integer() | :max
@@ -204,10 +210,10 @@ defmodule PidroServer.Progression do
   ## Examples
 
       iex> PidroServer.Progression.level_progress(0)
-      {0, 83}
+      {0, 320}
 
-      iex> PidroServer.Progression.level_progress(100)
-      {17, 91}
+      iex> PidroServer.Progression.level_progress(320)
+      {0, 400}
 
   """
   @spec level_progress(non_neg_integer()) :: {non_neg_integer(), pos_integer()} | :max
@@ -229,7 +235,65 @@ defmodule PidroServer.Progression do
     end
   end
 
-  @doc "The full threshold list (config-overridable). For tests/tools."
+  @doc """
+  Prestige tier for a cumulative XP total — `0` below the L100 cap, then one
+  extra star per `prestige_step` XP past the cap. Uncapped (the infinite tail).
+
+  `prestige_for_xp(xp) = 0` when `xp < threshold(max_level)`; else
+  `floor((xp - threshold(max_level)) / prestige_step)`.
+
+  ## Examples
+
+      iex> PidroServer.Progression.prestige_for_xp(799_999)
+      0
+
+      iex> PidroServer.Progression.prestige_for_xp(1_300_000)
+      1
+
+      iex> PidroServer.Progression.prestige_for_xp(5_020_512)
+      8
+
+  """
+  @spec prestige_for_xp(non_neg_integer()) :: non_neg_integer()
+  def prestige_for_xp(xp) when is_integer(xp) and xp >= 0 do
+    cap = cap_threshold()
+
+    if xp < cap do
+      0
+    else
+      div(xp - cap, config(:prestige_step))
+    end
+  end
+
+  @doc """
+  Progress toward the next Prestige star as `{xp_into_step, prestige_step}` once
+  at/over the L100 cap, or `nil` below the cap (no prestige ring to render yet).
+
+  ## Examples
+
+      iex> PidroServer.Progression.prestige_progress(799_999)
+      nil
+
+      iex> PidroServer.Progression.prestige_progress(800_000)
+      {0, 500_000}
+
+      iex> PidroServer.Progression.prestige_progress(1_300_000)
+      {0, 500_000}
+
+  """
+  @spec prestige_progress(non_neg_integer()) :: {non_neg_integer(), pos_integer()} | nil
+  def prestige_progress(xp) when is_integer(xp) and xp >= 0 do
+    cap = cap_threshold()
+
+    if xp < cap do
+      nil
+    else
+      step = config(:prestige_step)
+      {rem(xp - cap, step), step}
+    end
+  end
+
+  @doc "The full threshold list (boundaries for levels 2..max_level). For tests/tools."
   @spec thresholds() :: [non_neg_integer()]
   def thresholds do
     case config(:thresholds) do
@@ -238,23 +302,30 @@ defmodule PidroServer.Progression do
 
       _ ->
         max_level = config(:max_level)
-        base_growth = config(:curve_base_growth)
-        growth_divisor = config(:curve_growth_divisor)
-        point_divisor = config(:curve_point_divisor)
+        coefficient = config(:curve_coefficient)
+        exponent = config(:curve_exponent)
 
-        if {max_level, base_growth, growth_divisor, point_divisor} ==
-             {@defaults.max_level, @defaults.curve_base_growth, @defaults.curve_growth_divisor,
-              @defaults.curve_point_divisor} do
-          @legacy_thresholds
+        if {max_level, coefficient, exponent} ==
+             {@defaults.max_level, @defaults.curve_coefficient, @defaults.curve_exponent} do
+          @default_thresholds
         else
-          build_thresholds(max_level, base_growth, growth_divisor, point_divisor)
+          build_thresholds(max_level, coefficient, exponent)
         end
     end
   end
 
-  @doc "Full map of default config (bonuses, curve params, max_level, titles)."
+  @doc "Full map of default config (bonuses, curve params, max_level, prestige, titles)."
   @spec defaults() :: map()
   def defaults, do: @defaults
+
+  # The XP at which the L100 cap (the top level) begins — the last threshold
+  # boundary, i.e. threshold(max_level). 0 when max_level is 1 (no boundaries).
+  defp cap_threshold do
+    case List.last(thresholds()) do
+      nil -> 0
+      cap -> cap
+    end
+  end
 
   defp config(key) when is_map_key(@defaults, key) do
     app_config = Application.get_env(:pidro_server, __MODULE__, [])

@@ -142,9 +142,26 @@ defmodule PidroServer.ProfilesTest do
       assert view.veteran_xp == 0
       assert view.veteran_level == 1
       assert view.veteran_title == "Rookie"
-      assert view.veteran_progress == {0, 83}
+      assert view.veteran_progress == {0, 320}
+      # Below the L100 cap: no prestige, no ring.
+      assert view.veteran_prestige == 0
+      assert view.veteran_prestige_progress == nil
       assert view.heritage == []
       assert view.heritage_flags == %{}
+    end
+
+    test "prestige + progress derive from stored XP past the L100 cap" do
+      user_id = Ecto.UUID.generate()
+      {:ok, profile} = Profiles.get_or_create_profile(user_id)
+
+      profile
+      |> PlayerProfile.changeset(%{veteran_xp: 1_300_000})
+      |> Repo.update!()
+
+      assert {:ok, view} = Profiles.get_profile_for_screen(user_id)
+      assert view.veteran_level == 100
+      assert view.veteran_prestige == 1
+      assert view.veteran_prestige_progress == {0, 500_000}
     end
 
     test "veteran fields derive from stored XP" do
@@ -499,6 +516,8 @@ defmodule PidroServer.ProfilesTest do
           veteran_xp: 1480,
           veteran_title: "Seasoned",
           veteran_progress: {120, 210},
+          veteran_prestige: 0,
+          veteran_prestige_progress: nil,
           playstyle_bidding_wins: 30,
           playstyle_bidding_attempts: 49,
           bidding_win_rate: 0.61,
@@ -569,7 +588,9 @@ defmodule PidroServer.ProfilesTest do
                level: screen.veteran_level,
                xp: screen.veteran_xp,
                title: screen.veteran_title,
-               progress: [120, 210]
+               progress: [120, 210],
+               prestige: 0,
+               prestige_progress: nil
              }
 
       assert public.heritage == screen.heritage
@@ -584,6 +605,23 @@ defmodule PidroServer.ProfilesTest do
 
       assert public.achievements == screen.achievements
       assert public.achievements_catalog == screen.achievements_catalog
+    end
+
+    test "surfaces prestige + encoded prestige_progress past the L100 cap" do
+      screen =
+        screen_fixture(%{
+          veteran_level: 100,
+          veteran_xp: 1_300_000,
+          veteran_progress: :max,
+          veteran_prestige: 1,
+          veteran_prestige_progress: {0, 500_000}
+        })
+
+      public = Profiles.public_profile(screen)
+
+      assert public.veteran.prestige == 1
+      assert public.veteran.prestige_progress == [0, 500_000]
+      assert public.veteran.progress == "max"
     end
 
     test "accepts a user_id and reuses get_profile_for_screen/1 internally" do

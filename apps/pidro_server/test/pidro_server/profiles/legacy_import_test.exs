@@ -38,10 +38,11 @@ defmodule PidroServer.Profiles.LegacyImportTest do
     test "maps XP -> level via the shared curve, keeps XP verbatim" do
       user = insert_user()
 
-      assert {:ok, p} = Profiles.import_legacy_progression(user.id, %{xp: 174})
-      assert p.veteran_xp == 174
-      assert p.veteran_level == Progression.level_for_xp(174)
-      assert p.veteran_level == 3
+      # 32_000 XP lands on the L20 milestone under the re-paced power-law curve.
+      assert {:ok, p} = Profiles.import_legacy_progression(user.id, %{xp: 32_000})
+      assert p.veteran_xp == 32_000
+      assert p.veteran_level == Progression.level_for_xp(32_000)
+      assert p.veteran_level == 20
     end
 
     test "xp: 0 -> level 1" do

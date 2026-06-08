@@ -212,6 +212,11 @@ defmodule PidroServer.Profiles do
          veteran_xp: profile.veteran_xp,
          veteran_title: Progression.title_for_level(Progression.level_for_xp(profile.veteran_xp)),
          veteran_progress: Progression.level_progress(profile.veteran_xp),
+         # Prestige (uncapped tail past the L100 cap) — recomputed from canonical
+         # XP on read, never stored. `veteran_prestige_progress` is nil below the
+         # cap (no ring) and `{into, step}` at/over it.
+         veteran_prestige: Progression.prestige_for_xp(profile.veteran_xp),
+         veteran_prestige_progress: Progression.prestige_progress(profile.veteran_xp),
          playstyle_bidding_wins: profile.playstyle_bidding_wins,
          playstyle_bidding_attempts: profile.playstyle_bidding_attempts,
          # PID-51 derived playstyle view (raw counters kept above — internal):
@@ -317,12 +322,14 @@ defmodule PidroServer.Profiles do
       # Skill — tier + state ONLY (μ/σ derived away here, never emitted)
       skill: %{tier: tier, provisional: provisional},
 
-      # Veteran
+      # Veteran (+ uncapped Prestige tail past the L100 cap)
       veteran: %{
         level: screen.veteran_level,
         xp: screen.veteran_xp,
         title: screen.veteran_title,
-        progress: encode_progress(screen.veteran_progress)
+        progress: encode_progress(screen.veteran_progress),
+        prestige: Map.get(screen, :veteran_prestige, 0),
+        prestige_progress: encode_prestige_progress(Map.get(screen, :veteran_prestige_progress))
       },
 
       # Heritage (already a display list)
@@ -347,6 +354,12 @@ defmodule PidroServer.Profiles do
   # pair becomes a 2-element `[into, span]` list and the cap becomes "max".
   defp encode_progress({into, span}), do: [into, span]
   defp encode_progress(:max), do: "max"
+
+  # Prestige progress is `{into, step} | nil`. The tuple becomes a 2-element
+  # `[into, step]` list (JSON-safe); below the cap there is no ring, so `nil`
+  # passes through as JSON null.
+  defp encode_prestige_progress({into, step}), do: [into, step]
+  defp encode_prestige_progress(nil), do: nil
 
   # Joins the user's earned rows to the Catalog for display copy, ordered by
   # award time. Unknown keys (a def removed from the catalog) are dropped.
