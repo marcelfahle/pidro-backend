@@ -46,6 +46,8 @@ defmodule PidroServerWeb.Router do
     # Auth routes without authentication
     post "/auth/register", AuthController, :register
     post "/auth/login", AuthController, :login
+    post "/auth/password-reset", AuthController, :request_password_reset
+    post "/auth/password-reset/confirm", AuthController, :reset_password
 
     # Room routes without authentication
     get "/rooms", RoomController, :index

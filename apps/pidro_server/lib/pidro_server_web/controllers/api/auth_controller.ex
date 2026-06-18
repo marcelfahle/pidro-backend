@@ -24,8 +24,11 @@ defmodule PidroServerWeb.API.AuthController do
 
   use PidroServerWeb, :controller
   use OpenApiSpex.ControllerSpecs
+  import Swoosh.Email
+  require Logger
 
   alias PidroServer.Accounts.{Auth, Token}
+  alias PidroServer.Mailer
   alias PidroServerWeb.API.UserJSON
   alias PidroServerWeb.Schemas.{UserSchemas, ErrorSchemas}
 
@@ -198,6 +201,41 @@ defmodule PidroServerWeb.API.AuthController do
     end
   end
 
+  @doc """
+  Request a password reset link.
+  """
+  @spec request_password_reset(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def request_password_reset(conn, %{"identifier" => identifier}) do
+    with {:ok, reset} <- Auth.request_password_reset(identifier) do
+      maybe_log_debug_password_reset(reset)
+      maybe_deliver_password_reset(reset)
+
+      conn
+      |> put_status(:ok)
+      |> json(%{data: password_reset_request_response(reset)})
+    end
+  end
+
+  def request_password_reset(conn, _params) do
+    conn
+    |> put_status(:ok)
+    |> json(%{data: password_reset_request_response(nil)})
+  end
+
+  @doc """
+  Reset a password using a reset token.
+  """
+  @spec reset_password(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def reset_password(conn, %{"token" => token, "password" => password}) do
+    with {:ok, user} <- Auth.reset_user_password(token, password) do
+      token = Token.generate(user)
+
+      conn
+      |> put_view(UserJSON)
+      |> render(:show, %{user: user, token: token})
+    end
+  end
+
   operation(:me,
     summary: "Get current authenticated user",
     description: """
@@ -273,5 +311,81 @@ defmodule PidroServerWeb.API.AuthController do
     conn
     |> put_view(UserJSON)
     |> render(:show, %{user: user})
+  end
+
+  defp password_reset_request_response(reset) do
+    response = %{
+      message: "If an account exists for that username or email, a reset link has been sent."
+    }
+
+    if expose_debug_password_reset?() && reset do
+      Map.merge(response, %{
+        reset_token: reset.token,
+        reset_url: password_reset_url(reset.token)
+      })
+    else
+      response
+    end
+  end
+
+  defp maybe_deliver_password_reset(nil), do: :ok
+
+  defp maybe_deliver_password_reset(%{user: %{email: email} = user, token: token})
+       when is_binary(email) and email != "" do
+    reset_url = password_reset_url(token)
+
+    email =
+      new()
+      |> to({user.username || email, email})
+      |> from({"Pidro", System.get_env("MAIL_FROM_ADDRESS") || "noreply@pidro.online"})
+      |> subject("Reset your Pidro password")
+      |> text_body("""
+      Reset your Pidro password:
+
+      #{reset_url}
+
+      This link expires in 1 hour.
+      """)
+      |> html_body("""
+      <p>Reset your Pidro password:</p>
+      <p><a href="#{reset_url}">Choose a new password</a></p>
+      <p>This link expires in 1 hour.</p>
+      """)
+
+    case Mailer.deliver(email) do
+      {:ok, _metadata} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Password reset email delivery failed: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp maybe_deliver_password_reset(_reset), do: :ok
+
+  defp maybe_log_debug_password_reset(nil), do: :ok
+
+  defp maybe_log_debug_password_reset(%{user: user, token: token}) do
+    if expose_debug_password_reset?() do
+      Logger.warning("DEV PASSWORD RESET LINK for #{user.username}: #{password_reset_url(token)}")
+    end
+
+    :ok
+  end
+
+  defp password_reset_url(token) do
+    base_url =
+      :pidro_server
+      |> Application.get_env(:password_reset, [])
+      |> Keyword.get(:reset_url_base, System.get_env("WEB_URL") || "http://localhost:5173")
+
+    "#{String.trim_trailing(base_url, "/")}/reset-password?token=#{URI.encode_www_form(token)}"
+  end
+
+  defp expose_debug_password_reset? do
+    :pidro_server
+    |> Application.get_env(:password_reset, [])
+    |> Keyword.get(:debug_tokens, false)
   end
 end

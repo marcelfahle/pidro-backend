@@ -66,6 +66,10 @@ config :pidro_server, PidroServerWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :pidro_server, dev_routes: true
 
+config :pidro_server, :password_reset,
+  debug_tokens: true,
+  reset_url_base: "http://localhost:5173"
+
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
 

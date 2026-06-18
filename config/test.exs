@@ -23,6 +23,10 @@ config :pidro_server, PidroServerWeb.Endpoint,
 # In test we don't send emails
 config :pidro_server, PidroServer.Mailer, adapter: Swoosh.Adapters.Test
 
+config :pidro_server, :password_reset,
+  debug_tokens: true,
+  reset_url_base: "http://localhost:5173"
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

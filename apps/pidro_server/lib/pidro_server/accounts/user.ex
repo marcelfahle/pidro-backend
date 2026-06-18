@@ -17,6 +17,8 @@ defmodule PidroServer.Accounts.User do
     field(:email, :string)
     field(:password, :string, virtual: true)
     field(:password_hash, :string)
+    field(:password_reset_token_hash, :binary)
+    field(:password_reset_sent_at, :utc_datetime_usec)
     field(:guest, :boolean, default: false)
 
     timestamps(type: :utc_datetime_usec)
@@ -66,6 +68,27 @@ defmodule PidroServer.Accounts.User do
     )
     |> unique_constraint(:username)
     |> unique_constraint(:email)
+  end
+
+  @doc """
+  Builds a changeset for updating a user's password.
+  """
+  def password_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:password])
+    |> validate_required(:password)
+    |> validate_length(:password, min: 8)
+    |> put_password_hash()
+    |> put_change(:password_reset_token_hash, nil)
+    |> put_change(:password_reset_sent_at, nil)
+  end
+
+  @doc """
+  Stores password-reset token metadata.
+  """
+  def password_reset_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:password_reset_token_hash, :password_reset_sent_at])
   end
 
   @doc false

@@ -77,6 +77,20 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :invalid_or_expired_password_reset_token}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN",
+          title: "Invalid reset link",
+          detail: "Password reset link is invalid or expired"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :not_found}) do
     conn
     |> put_status(:not_found)

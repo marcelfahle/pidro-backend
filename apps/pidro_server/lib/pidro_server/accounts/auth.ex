@@ -34,6 +34,8 @@ defmodule PidroServer.Accounts.Auth do
   alias PidroServer.Repo
 
   @default_user_page_size 30
+  @password_reset_token_bytes 32
+  @password_reset_max_age_seconds 60 * 60
 
   @doc """
   Registers a new user with the given attributes.
@@ -188,6 +190,62 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   @doc """
+  Requests a password reset for a username or email address.
+
+  Returns `{:ok, nil}` when the account does not exist so callers can avoid
+  account enumeration. When a user is found, stores a hashed reset token and
+  returns the raw token for delivery.
+  """
+  def request_password_reset(identifier) when is_binary(identifier) do
+    case get_user_by_username_or_email(identifier) do
+      nil ->
+        {:ok, nil}
+
+      %User{} = user ->
+        token = generate_password_reset_token()
+        token_hash = hash_password_reset_token(token)
+
+        with {:ok, user} <-
+               user
+               |> User.password_reset_changeset(%{
+                 password_reset_token_hash: token_hash,
+                 password_reset_sent_at: DateTime.utc_now()
+               })
+               |> Repo.update() do
+          {:ok, %{user: user, token: token}}
+        end
+    end
+  end
+
+  def request_password_reset(_identifier), do: {:ok, nil}
+
+  @doc """
+  Resets a user's password with a valid password-reset token.
+  """
+  def reset_user_password(token, password) when is_binary(token) and is_binary(password) do
+    token_hash = hash_password_reset_token(token)
+    cutoff = DateTime.add(DateTime.utc_now(), -@password_reset_max_age_seconds, :second)
+
+    query =
+      from u in User,
+        where: u.password_reset_token_hash == ^token_hash,
+        where: u.password_reset_sent_at > ^cutoff
+
+    case Repo.one(query) do
+      nil ->
+        {:error, :invalid_or_expired_password_reset_token}
+
+      %User{} = user ->
+        user
+        |> User.password_changeset(%{password: password})
+        |> Repo.update()
+    end
+  end
+
+  def reset_user_password(_token, _password),
+    do: {:error, :invalid_or_expired_password_reset_token}
+
+  @doc """
   Fetches a map of users by their IDs.
 
   Returns a map where keys are user IDs and values are user structs.
@@ -294,6 +352,29 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   defp valid_uuid?(_), do: false
+
+  defp get_user_by_username_or_email(identifier) do
+    normalized = String.trim(identifier)
+    normalized_email = String.downcase(normalized)
+
+    Repo.one(
+      from u in User,
+        where:
+          u.username == ^normalized or
+            fragment("lower(?)", u.email) == ^normalized_email,
+        limit: 1
+    )
+  end
+
+  defp generate_password_reset_token do
+    @password_reset_token_bytes
+    |> :crypto.strong_rand_bytes()
+    |> Base.url_encode64(padding: false)
+  end
+
+  defp hash_password_reset_token(token) do
+    :crypto.hash(:sha256, token)
+  end
 
   @doc """
   Lists recent users for development purposes.
