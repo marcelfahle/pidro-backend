@@ -132,6 +132,8 @@ defmodule Pidro.Game.Play do
     |> GameState.update(:killed_cards, killed_cards)
     |> GameState.update(:players, new_players)
     |> record_cards_killed_event(killed_cards)
+    |> eliminate_players_without_trumps()
+    |> ensure_current_turn_is_active()
   end
 
   # =============================================================================
@@ -604,6 +606,58 @@ defmodule Pidro.Game.Play do
       # Player is out of trumps, eliminate them
       eliminate_player(state, position)
     end
+  end
+
+  defp eliminate_players_without_trumps(%Types.GameState{trump_suit: nil} = state), do: state
+
+  defp eliminate_players_without_trumps(%Types.GameState{} = state) do
+    Enum.reduce(Types.all_positions(), state, fn position, acc_state ->
+      player = acc_state.players[position]
+
+      cond do
+        is_nil(player) or player.eliminated? ->
+          acc_state
+
+        Trump.has_trump?(player.hand, acc_state.trump_suit) ->
+          acc_state
+
+        true ->
+          {:ok, updated_state} = eliminate_player(acc_state, position)
+          updated_state
+      end
+    end)
+  end
+
+  defp ensure_current_turn_is_active(%Types.GameState{phase: :playing} = state) do
+    case state.players[state.current_turn] do
+      %Player{eliminated?: false} ->
+        state
+
+      _ ->
+        GameState.update(
+          state,
+          :current_turn,
+          next_active_player_after(state.current_turn, state.players)
+        )
+    end
+  end
+
+  defp ensure_current_turn_is_active(%Types.GameState{} = state), do: state
+
+  defp next_active_player_after(nil, players) do
+    Enum.find(Types.all_positions(), &active_player?(players, &1))
+  end
+
+  defp next_active_player_after(position, players) do
+    position
+    |> Stream.iterate(&Types.next_position/1)
+    |> Stream.drop(1)
+    |> Stream.take(4)
+    |> Enum.find(&active_player?(players, &1))
+  end
+
+  defp active_player?(players, position) do
+    match?(%Player{eliminated?: false}, players[position])
   end
 
   # Advances turn to next player or completes trick if all have played

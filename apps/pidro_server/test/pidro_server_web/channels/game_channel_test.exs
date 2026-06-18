@@ -193,6 +193,27 @@ defmodule PidroServerWeb.GameChannelTest do
     end
   end
 
+  describe "dealer selection action" do
+    test "player can trigger dealer selection", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      ref = push(socket, "select_dealer", %{})
+      assert_reply ref, :ok, %{}, 1000
+
+      assert_eventually(fn ->
+        {:ok, state} = GameAdapter.get_state(room_code)
+        state.phase != :dealer_selection || state.dealer_selection_cuts != nil
+      end)
+    end
+  end
+
   describe "bid action" do
     test "player can make a bid", %{
       user1: user,
@@ -915,6 +936,21 @@ defmodule PidroServerWeb.GameChannelTest do
 
       {:ok, turn_timer} ->
         {:ok, turn_timer}
+    end
+  end
+
+  defp assert_eventually(fun, attempts \\ 40)
+
+  defp assert_eventually(_fun, 0) do
+    flunk("timed out waiting for condition")
+  end
+
+  defp assert_eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(fun, attempts - 1)
     end
   end
 

@@ -43,8 +43,7 @@ defmodule Pidro.ServerTest do
     test "applies valid action and returns new state" do
       {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 0)
 
-      # Get initial state to check legal actions
-      state = Server.get_state(pid)
+      # Get initial legal actions
       actions = Server.legal_actions(pid, :north)
 
       # After select_dealer, phase pauses at :dealer_selection with cuts populated.
@@ -65,6 +64,19 @@ defmodule Pidro.ServerTest do
       {:ok, pid} = Server.start_link()
       # Try an action that's not legal in initial phase
       assert {:error, _reason} = Server.apply_action(pid, :north, {:bid, 10})
+    end
+
+    test "does not allow dealer selection to be repeated while cuts are visible" do
+      {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 10_000)
+
+      assert {:ok, state} = Server.apply_action(pid, :north, :select_dealer)
+      assert state.phase == :dealer_selection
+      assert state.dealer_selection_cuts != nil
+
+      assert Server.legal_actions(pid, :north) == []
+
+      assert {:error, {:invalid_action, :select_dealer, :dealer_selection}} =
+               Server.apply_action(pid, :east, :select_dealer)
     end
 
     test "updates server state after successful action" do

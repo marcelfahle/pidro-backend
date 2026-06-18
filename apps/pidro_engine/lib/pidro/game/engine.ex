@@ -287,7 +287,7 @@ defmodule Pidro.Game.Engine do
   # Note: Dealer selection is typically automatic via Dealing.select_dealer
   # This action is included for completeness but may not be used in practice
   defp dispatch_action(
-         %Types.GameState{phase: :dealer_selection} = state,
+         %Types.GameState{phase: :dealer_selection, dealer_selection_cuts: nil} = state,
          _position,
          :select_dealer
        ) do
@@ -297,11 +297,27 @@ defmodule Pidro.Game.Engine do
   defp dispatch_action(
          %Types.GameState{phase: :dealer_selection} = state,
          _position,
+         :select_dealer
+       ) do
+    Errors.error({:invalid_action, :select_dealer, state.phase})
+  end
+
+  defp dispatch_action(
+         %Types.GameState{phase: :dealer_selection, dealer_selection_cuts: nil} = state,
+         _position,
          {:cut_deck, _pos}
        ) do
     # For now, dealer selection is handled automatically
     # This could be extended to support manual dealer selection
     Dealing.select_dealer(state)
+  end
+
+  defp dispatch_action(
+         %Types.GameState{phase: :dealer_selection} = state,
+         _position,
+         {:cut_deck, _pos}
+       ) do
+    Errors.error({:invalid_action, :cut_deck, state.phase})
   end
 
   # Bidding Phase
@@ -388,9 +404,16 @@ defmodule Pidro.Game.Engine do
   # Returns legal actions for the current phase
   # Called by legal_actions/2 after basic validation
 
-  defp get_legal_actions_for_phase(%Types.GameState{phase: :dealer_selection}, _position) do
+  defp get_legal_actions_for_phase(
+         %Types.GameState{phase: :dealer_selection, dealer_selection_cuts: nil},
+         _position
+       ) do
     # Any player can trigger dealer selection
     [:select_dealer]
+  end
+
+  defp get_legal_actions_for_phase(%Types.GameState{phase: :dealer_selection}, _position) do
+    []
   end
 
   defp get_legal_actions_for_phase(%Types.GameState{phase: :dealing}, _position) do

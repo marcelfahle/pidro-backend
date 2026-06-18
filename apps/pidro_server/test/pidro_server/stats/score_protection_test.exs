@@ -134,6 +134,58 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       assert hd(events).position == "north"
     end
 
+    test "completed bot games only persist human player ids" do
+      host_id = Ecto.UUID.generate()
+      bot_east = "bot_BOTS_east"
+      bot_south = "bot_BOTS_south"
+      bot_west = "bot_BOTS_west"
+
+      seats = %{
+        north: Seat.new_human(:north, host_id),
+        east: %Seat{
+          position: :east,
+          occupant_type: :human,
+          user_id: bot_east,
+          status: :connected,
+          substitute: true
+        },
+        south: %Seat{
+          position: :south,
+          occupant_type: :human,
+          user_id: bot_south,
+          status: :connected,
+          substitute: true
+        },
+        west: %Seat{
+          position: :west,
+          occupant_type: :human,
+          user_id: bot_west,
+          status: :connected,
+          substitute: true
+        }
+      }
+
+      room = %{
+        code: "BOTS",
+        created_at: DateTime.utc_now(),
+        seats: seats
+      }
+
+      assert :ok =
+               Stats.save_completed_game(room, :north_south, %{
+                 north_south: 66,
+                 east_west: -7
+               })
+
+      saved_game = Repo.get_by!(GameStats, room_code: "BOTS")
+
+      assert saved_game.player_ids == [host_id]
+      assert Map.has_key?(saved_game.player_results, host_id)
+      refute Map.has_key?(saved_game.player_results, bot_east)
+      refute Map.has_key?(saved_game.player_results, bot_south)
+      refute Map.has_key?(saved_game.player_results, bot_west)
+    end
+
     test "user stats exposes abandonment metrics" do
       user_id = Ecto.UUID.generate()
 

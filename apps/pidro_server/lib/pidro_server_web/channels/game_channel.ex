@@ -15,6 +15,7 @@ defmodule PidroServerWeb.GameChannel do
   * `"declare_trump"` - Winner declares trump: `%{"suit" => "hearts"}`
   * `"play_card"` - Player plays a card: `%{"card" => %{"rank" => 14, "suit" => "spades"}}`
   * `"select_hand"` - Dealer selects cards to keep: `%{"cards" => [%{"rank" => 14, "suit" => "hearts"}, ...]}`
+  * `"select_dealer"` - Triggers the automatic dealer-selection cut ceremony
   * `"ready"` - Player signals ready to start (optional)
 
   ## Outgoing Events (to clients)
@@ -269,6 +270,7 @@ defmodule PidroServerWeb.GameChannel do
   - `"declare_trump"` - Declare trump suit (players only)
   - `"play_card"` - Play a card from hand (players only)
   - `"select_hand"` - Select cards to keep during dealer rob (players only)
+  - `"select_dealer"` - Trigger automatic dealer selection (players only)
   - `"ready"` - Signal ready status (players only)
 
   Spectators cannot perform game actions and will receive an error.
@@ -354,6 +356,14 @@ defmodule PidroServerWeb.GameChannel do
         {:error, reason} ->
           {:reply, {:error, %{reason: reason}}, socket}
       end
+    end
+  end
+
+  def handle_in("select_dealer", _params, socket) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot select dealer"}}, socket}
+    else
+      apply_game_action(socket, :select_dealer)
     end
   end
 

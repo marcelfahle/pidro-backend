@@ -305,6 +305,7 @@ defmodule PidroServer.Stats do
         duration_seconds = max(1, DateTime.diff(DateTime.utc_now(), room.created_at, :second))
         abandonment_events = list_abandonments_for_room(room_code)
         player_results = build_player_results(room.seats, winner, abandonment_events)
+        player_results = reject_bot_results(player_results)
 
         stats_attrs = %{
           room_code: room_code,
@@ -389,6 +390,15 @@ defmodule PidroServer.Stats do
   end
 
   defp classify_seat(_seat), do: :skip
+
+  defp reject_bot_results(player_results) when is_map(player_results) do
+    Map.reject(player_results, fn {user_id, _result} -> bot_user_id?(user_id) end)
+  end
+
+  defp reject_bot_results(_player_results), do: %{}
+
+  defp bot_user_id?(user_id) when is_binary(user_id), do: String.starts_with?(user_id, "bot_")
+  defp bot_user_id?(_user_id), do: false
 
   defp build_result(participation, position, winner) do
     team = team_for_position(position)
