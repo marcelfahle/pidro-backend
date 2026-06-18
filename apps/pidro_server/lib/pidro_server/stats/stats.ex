@@ -6,6 +6,7 @@ defmodule PidroServer.Stats do
 
   require Logger
   import Ecto.Query, warn: false
+  alias PidroServer.Profiles
   alias PidroServer.Repo
   alias PidroServer.Stats.{AbandonmentEvent, GameStats}
 
@@ -256,6 +257,85 @@ defmodule PidroServer.Stats do
   def build_player_results(_seats, _winner, _abandonment_events), do: %{}
 
   @doc """
+  Builds per-player bidding facts from the live `GameState.events` log + the
+  room's `seats` at game completion (PID-51).
+
+  The `events` list is appended-only across the whole game, so it holds one
+  `{:bidding_complete, position, amount}` per hand (the winning seat + amount).
+  This pure folder reads ONLY `:bidding_complete` events:
+
+    * **attempts** — every human-resolved seat participates in every hand's
+      bidding, so each such user's `attempts` == the number of `:bidding_complete`
+      events (the hand count). A player who left mid-game is still attributed to
+      their seat's resolved id for the whole game (same FINAL-seat-state
+      attribution `build_player_results/3` uses).
+    * **wins / won_bid_sum** — for each `:bidding_complete{position, amount}`,
+      resolve `position → user_id` via `seats` (reusing `classify_seat/1`); if it
+      resolves to a human, increment that user's `wins` by 1 and `won_bid_sum` by
+      `amount`. Positions resolving to a bot (no user_id) contribute nothing.
+
+  Returns `%{user_id => %{"attempts" => n, "wins" => m, "won_bid_sum" => s}}`
+  (string keys, mirroring the JSONB round-trip shape). Users who participated but
+  never won a bid still get a row (`wins: 0, won_bid_sum: 0`).
+
+  Tolerant base case: `events` not a list, `seats` not a map, or no
+  `:bidding_complete` present → `%{}` (legacy / bot-only / missing — contributes
+  zero on accumulate and rebuild).
+  """
+  @spec build_player_bidding(list() | nil, map()) :: map()
+  def build_player_bidding(events, seats) when is_list(events) and is_map(seats) do
+    completions =
+      Enum.filter(events, fn
+        {:bidding_complete, _position, _amount} -> true
+        _ -> false
+      end)
+
+    hand_count = length(completions)
+
+    if hand_count == 0 do
+      %{}
+    else
+      # Resolve every human-occupied seat to its user_id and seed an empty
+      # accumulator (so participants who never won a bid still record attempts).
+      position_to_user =
+        Enum.reduce(seats, %{}, fn {position, seat}, acc ->
+          case classify_seat(seat) do
+            {:record, user_id, _participation} -> Map.put(acc, position, user_id)
+            :skip -> acc
+          end
+        end)
+
+      base =
+        Map.new(Map.values(position_to_user), fn user_id ->
+          {user_id, %{"attempts" => hand_count, "wins" => 0, "won_bid_sum" => 0}}
+        end)
+
+      Enum.reduce(completions, base, fn {:bidding_complete, position, amount}, acc ->
+        case Map.get(position_to_user, position) do
+          nil ->
+            acc
+
+          user_id ->
+            Map.update!(acc, user_id, fn facts ->
+              facts
+              |> Map.update!("wins", &(&1 + 1))
+              |> Map.update!("won_bid_sum", &(&1 + win_amount(amount)))
+            end)
+        end
+      end)
+    end
+  end
+
+  def build_player_bidding(_events, _seats), do: %{}
+
+  defp win_amount(amount) when is_integer(amount), do: amount
+  defp win_amount(_amount), do: 0
+
+  # Pulls the GameState.events list when present, tolerating a nil game_state.
+  defp events_of(%{events: events}) when is_list(events), do: events
+  defp events_of(_game_state), do: []
+
+  @doc """
   Records a player abandonment when Phase 3 fires.
 
   Called when a disconnected player's seat becomes permanently bot-filled
@@ -293,8 +373,15 @@ defmodule PidroServer.Stats do
 
   @doc """
   Persists the final game result exactly once for a finished room.
+
+  On a successful first save, returns `{:ok, summaries}` where `summaries` is the
+  ephemeral `%{user_id => post_game_summary_map}` from
+  `Profiles.apply_completed_game/4` (PID-52). On the idempotent short-circuit
+  (already saved) or a rolled-back transaction, returns `:ok` — no summary is
+  ever surfaced for a re-fire or a rollback.
   """
-  @spec save_completed_game(map(), atom(), map(), map() | nil) :: :ok
+  @spec save_completed_game(map(), atom(), map(), map() | nil) ::
+          {:ok, %{optional(Ecto.UUID.t()) => map()}} | :ok
   def save_completed_game(%{code: room_code} = room, winner, scores, game_state \\ nil) do
     case Repo.get_by(GameStats, room_code: room_code) do
       %GameStats{} ->
@@ -306,6 +393,7 @@ defmodule PidroServer.Stats do
         abandonment_events = list_abandonments_for_room(room_code)
         player_results = build_player_results(room.seats, winner, abandonment_events)
         player_results = reject_bot_results(player_results)
+        player_bidding = build_player_bidding(events_of(game_state), room.seats)
 
         stats_attrs = %{
           room_code: room_code,
@@ -316,13 +404,31 @@ defmodule PidroServer.Stats do
           duration_seconds: duration_seconds,
           completed_at: DateTime.utc_now(),
           player_ids: Map.keys(player_results),
-          player_results: player_results
+          player_results: player_results,
+          player_bidding: player_bidding
         }
 
-        case save_game_result(stats_attrs) do
-          {:ok, _stats} ->
+        result =
+          Repo.transaction(fn ->
+            case save_game_result(stats_attrs) do
+              {:ok, _stats} ->
+                # PID-52: apply_completed_game returns the per-user ephemeral
+                # post-game summaries; carry them out of the transaction so the
+                # caller can push them per-player after the commit.
+                {:ok, summaries} =
+                  Profiles.apply_completed_game(player_results, winner, scores, player_bidding)
+
+                summaries
+
+              {:error, changeset} ->
+                Repo.rollback(changeset)
+            end
+          end)
+
+        case result do
+          {:ok, summaries} ->
             Logger.info("Saved game stats for room #{room_code}")
-            :ok
+            {:ok, summaries}
 
           {:error, changeset} ->
             Logger.error("Failed to save game stats for room #{room_code}: #{inspect(changeset)}")

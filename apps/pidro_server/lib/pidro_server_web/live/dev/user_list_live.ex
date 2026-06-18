@@ -10,6 +10,7 @@ defmodule PidroServerWeb.Dev.UserListLive do
   alias PidroServer.Accounts.Auth
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Profiles
   alias PidroServer.Stats
 
   @per_page 30
@@ -251,6 +252,12 @@ defmodule PidroServerWeb.Dev.UserListLive do
                     Win rate
                   </th>
                   <th class="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-[0.16em] text-stone-500">
+                    Level
+                  </th>
+                  <th class="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-[0.16em] text-stone-500">
+                    Skill tier
+                  </th>
+                  <th class="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-[0.16em] text-stone-500">
                     Joined
                   </th>
                   <th class="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-[0.16em] text-stone-500">
@@ -303,6 +310,19 @@ defmodule PidroServerWeb.Dev.UserListLive do
                   </td>
                   <td class="px-4 py-3 text-sm font-semibold text-stone-700">
                     {format_percent(row_stats(@stats_by_user, user.id).win_rate)}
+                  </td>
+                  <td class="px-4 py-3 text-sm font-semibold text-stone-700">
+                    Lvl {row_summary(@summaries_by_user, user.id).veteran_level}
+                  </td>
+                  <td class="px-4 py-3 text-sm">
+                    <% summary = row_summary(@summaries_by_user, user.id) %>
+                    <%= if summary.provisional do %>
+                      <span class="rounded-md bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">
+                        Provisional
+                      </span>
+                    <% else %>
+                      <span class="font-semibold text-stone-700">{tier_label(summary.tier)}</span>
+                    <% end %>
                   </td>
                   <td class="px-4 py-3 text-sm text-stone-600">
                     {format_datetime(user.inserted_at)}
@@ -401,7 +421,9 @@ defmodule PidroServerWeb.Dev.UserListLive do
   defp load_users(socket) do
     page = Auth.list_users(filters_to_opts(socket.assigns.filters))
     users = page.entries
-    stats_by_user = users |> Enum.map(& &1.id) |> Stats.get_user_stats_map()
+    user_ids = Enum.map(users, & &1.id)
+    stats_by_user = Stats.get_user_stats_map(user_ids)
+    summaries_by_user = Profiles.summaries_for(user_ids)
 
     summary =
       Auth.user_admin_summary()
@@ -411,6 +433,7 @@ defmodule PidroServerWeb.Dev.UserListLive do
     |> assign(:users, users)
     |> assign(:page, page)
     |> assign(:stats_by_user, stats_by_user)
+    |> assign(:summaries_by_user, summaries_by_user)
     |> assign(:summary, summary)
   end
 
@@ -458,6 +481,13 @@ defmodule PidroServerWeb.Dev.UserListLive do
       games_abandoned: 0
     })
   end
+
+  defp row_summary(summaries_by_user, user_id) do
+    Map.get(summaries_by_user, user_id, %{veteran_level: 1, tier: :provisional, provisional: true})
+  end
+
+  defp tier_label(tier) when is_atom(tier), do: tier |> Atom.to_string() |> String.capitalize()
+  defp tier_label(_tier), do: "Unknown"
 
   defp parse_page(page) when is_binary(page) do
     case Integer.parse(page) do

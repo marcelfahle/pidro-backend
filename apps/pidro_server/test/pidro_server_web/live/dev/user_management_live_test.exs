@@ -5,6 +5,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
 
   alias PidroServer.Accounts.Auth
   alias PidroServer.AccountsFixtures
+  alias PidroServer.Profiles
   alias PidroServer.Stats
 
   test "lists players with search filters and summary stats", %{conn: conn} do
@@ -82,6 +83,61 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
     render_click(view, "confirm_delete")
     assert_redirect(view, ~p"/dev/users")
     refute Auth.get_user(user.id)
+  end
+
+  test "detail page shows progression for a player with a populated profile", %{conn: conn} do
+    user = AccountsFixtures.user_fixture(%{username: "veteran_player"})
+
+    # Real import path: carries veteran XP/level + heritage flags.
+    {:ok, _profile} =
+      Profiles.import_legacy_progression(user.id, %{
+        xp: 5000,
+        badges: ["Champion"],
+        founding_member: true,
+        premium: true
+      })
+
+    # Earn at least one achievement through the real award path.
+    :awarded = Profiles.award_achievement(user.id, :player)
+
+    {:ok, _view, html} = live(conn, ~p"/dev/users/#{user.id}")
+
+    assert html =~ "Progression"
+    # Veteran level + title (level_for_xp(5000) is well above level 1).
+    assert html =~ "Lvl "
+    assert html =~ "5000 XP total"
+    # A fresh import is Provisional (skill left at default, count 0).
+    assert html =~ "Provisional"
+    # Internal estimator line is surfaced for admins.
+    assert html =~ "Internal"
+    # Mastery: the awarded achievement name.
+    assert html =~ "Player"
+    # Heritage: migrated player flags.
+    assert html =~ "Played Pidro 1"
+  end
+
+  test "detail page renders cleanly for a never-played user", %{conn: conn} do
+    user = AccountsFixtures.user_fixture(%{username: "rookie_player"})
+
+    {:ok, _view, html} = live(conn, ~p"/dev/users/#{user.id}")
+
+    assert html =~ "Progression"
+    assert html =~ "Provisional"
+    assert html =~ "No achievements earned yet"
+    assert html =~ "Not enough data yet"
+  end
+
+  test "list shows level and skill tier cells", %{conn: conn} do
+    user = AccountsFixtures.user_fixture(%{username: "list_progression_player"})
+
+    {:ok, _profile} = Profiles.import_legacy_progression(user.id, %{xp: 5000})
+
+    {:ok, _view, html} = live(conn, ~p"/dev/users")
+
+    assert html =~ "Level"
+    assert html =~ "Skill tier"
+    assert html =~ "Lvl "
+    assert html =~ "Provisional"
   end
 
   defp save_game(user, room_code, result) do

@@ -40,6 +40,53 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   trick_transition_delay_ms: 1_500,
   hand_transition_delay_ms: 3_000
 
+# Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
+# Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
+# ordinal distribution.
+#
+# Provisional clears once EITHER gate opens: games_count >= provisional_min_games
+# OR sigma < provisional_max_sigma. Games-count is the reliable driver — OpenSkill
+# sigma floors ~6.06 with the default model, so a sub-6.06 sigma gate would never
+# clear; provisional_max_sigma sits just above the floor as a fast-converger early
+# out, while min_games guarantees everyone reaches a real band after 10 rated games.
+# provisional_max_sigma stays below the 8.333 schema default so never-rated users
+# remain provisional.
+config :pidro_server, PidroServer.Rating.Tier,
+  provisional_min_games: 10,
+  provisional_max_sigma: 6.5,
+  bronze_min: 0.0,
+  silver_min: 10.0,
+  gold_min: 18.0,
+  platinum_min: 26.0,
+  master_min: 34.0
+
+# Veteran progression (PID-49). XP curve + bonuses + milestone titles. win_bonus
+# 50 is the proven legacy Pidro 1 value (so PID-53 imports earn the same totals);
+# extra_bonus is the events lever (flat, no streaks yet). titles are launch
+# PLACEHOLDERS, not final copy — tunable. The curve is a re-paced power law
+# (threshold(level) = round(curve_coefficient * level ** curve_exponent)),
+# data-calibrated against Pidro 1: L100 caps at 800k XP, then Prestige adds one
+# star per prestige_step (500k) XP past the cap (top player 5.0M → ★8). Set
+# `thresholds:` to override the level boundaries verbatim.
+config :pidro_server, PidroServer.Progression,
+  win_bonus: 50,
+  extra_bonus: 0,
+  max_level: 100,
+  curve_coefficient: 80,
+  curve_exponent: 2.0,
+  prestige_step: 500_000,
+  # thresholds: nil,  # optional explicit ascending list; nil = generate from params
+  titles: %{
+    1 => "Rookie",
+    5 => "Apprentice",
+    10 => "Journeyman",
+    20 => "Veteran",
+    35 => "Expert",
+    50 => "Master",
+    75 => "Grandmaster",
+    100 => "Legend"
+  }
+
 # Configures the endpoint
 config :pidro_server, PidroServerWeb.Endpoint,
   url: [host: "localhost"],
