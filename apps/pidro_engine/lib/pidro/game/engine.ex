@@ -478,11 +478,6 @@ defmodule Pidro.Game.Engine do
     []
   end
 
-  defp get_legal_actions_for_phase(%Types.GameState{phase: :complete}, _position) do
-    # Game is over, no actions available
-    []
-  end
-
   # =============================================================================
   # Validation Helpers
   # =============================================================================
@@ -732,16 +727,12 @@ defmodule Pidro.Game.Engine do
   # Non-automatic phases: check if we can transition to next phase
   defp handle_automatic_phase(%Types.GameState{} = state) do
     if can_auto_transition?(state) do
-      case StateMachine.next_phase(state.phase, state) do
-        {:error, _reason} ->
-          {:ok, state}
+      next_phase = StateMachine.next_phase(state.phase, state)
 
-        next_phase when is_atom(next_phase) ->
-          # Transition to next phase and call maybe_auto_transition to handle it
-          # This ensures automatic phases (like :dealing after :dealer_selection) get handled
-          new_state = %{state | phase: next_phase}
-          maybe_auto_transition(new_state)
-      end
+      # Transition to the next phase and recursively handle automatic work
+      # such as dealing after dealer selection.
+      new_state = %{state | phase: next_phase}
+      maybe_auto_transition(new_state)
     else
       {:ok, state}
     end

@@ -68,6 +68,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
                   :second_deal,
                   :playing,
                   :scoring,
+                  :hand_complete,
                   :complete
                 ])
             ) do

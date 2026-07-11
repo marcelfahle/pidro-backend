@@ -2947,8 +2947,6 @@ defmodule PidroServer.Games.RoomManager do
     %{room | turn_timer: nil}
   end
 
-  defp cancel_active_turn_timer(%Room{turn_timer: nil} = room, _room_code, _reason), do: room
-
   defp cancel_active_turn_timer(%Room{} = room, room_code, reason) do
     timer = room.turn_timer
     TurnTimer.cancel_timer(timer)

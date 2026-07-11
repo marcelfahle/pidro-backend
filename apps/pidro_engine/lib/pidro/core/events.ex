@@ -190,7 +190,7 @@ defmodule Pidro.Core.Events do
     bid = %Bid{
       position: position,
       amount: amount,
-      timestamp: System.system_time(:millisecond)
+      timestamp: length(state.bids)
     }
 
     %{state | bids: state.bids ++ [bid], highest_bid: {position, amount}}
@@ -200,7 +200,7 @@ defmodule Pidro.Core.Events do
     bid = %Bid{
       position: position,
       amount: :pass,
-      timestamp: System.system_time(:millisecond)
+      timestamp: length(state.bids)
     }
 
     %{state | bids: state.bids ++ [bid]}

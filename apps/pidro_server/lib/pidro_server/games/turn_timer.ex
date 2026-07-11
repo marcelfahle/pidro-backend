@@ -27,7 +27,16 @@ defmodule PidroServer.Games.TurnTimer do
           remaining_ms: non_neg_integer()
         }
 
-  @spec start_timer(pid(), String.t(), key(), :seat | :room, atom() | nil, atom(), non_neg_integer(), non_neg_integer()) ::
+  @spec start_timer(
+          pid(),
+          String.t(),
+          key(),
+          :seat | :room,
+          atom() | nil,
+          atom(),
+          non_neg_integer(),
+          non_neg_integer()
+        ) ::
           t()
   def start_timer(
         target_pid,

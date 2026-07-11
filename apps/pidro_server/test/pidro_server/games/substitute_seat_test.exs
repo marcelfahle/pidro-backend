@@ -17,6 +17,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
     end
 
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     case GenServer.whereis(PidroServer.Games.Bots.BotSupervisor) do
       nil -> start_supervised!(PidroServer.Games.Bots.BotSupervisor)

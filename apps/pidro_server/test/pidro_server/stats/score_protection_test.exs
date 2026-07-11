@@ -17,6 +17,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
     end
 
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     case GenServer.whereis(PidroServer.Games.Bots.BotSupervisor) do
       nil -> start_supervised!(PidroServer.Games.Bots.BotSupervisor)
@@ -171,7 +172,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
         seats: seats
       }
 
-      assert :ok =
+      assert {:ok, %{^host_id => _summary}} =
                Stats.save_completed_game(room, :north_south, %{
                  north_south: 66,
                  east_west: -7

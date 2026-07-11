@@ -12,7 +12,6 @@ defmodule PidroServer.Games.RoomManagerTest do
   """
 
   use ExUnit.Case, async: false
-  require Logger
 
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
   alias PidroServer.Games.Room.Positions
@@ -28,6 +27,7 @@ defmodule PidroServer.Games.RoomManagerTest do
 
     # Reset state between tests
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     :ok
   end

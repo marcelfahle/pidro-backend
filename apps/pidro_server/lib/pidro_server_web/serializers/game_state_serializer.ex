@@ -50,8 +50,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       scores: Map.get(state, :cumulative_scores, %{}),
       cumulative_scores: Map.get(state, :cumulative_scores, %{}),
       winner: Map.get(state, :winner),
-      dealer_selection_cuts:
-        serialize_position_cards(Map.get(state, :dealer_selection_cuts))
+      dealer_selection_cuts: serialize_position_cards(Map.get(state, :dealer_selection_cuts))
     }
   end
 

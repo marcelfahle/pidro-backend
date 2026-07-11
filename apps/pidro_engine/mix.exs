@@ -12,7 +12,7 @@ defmodule PidroEngine.MixProject do
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
-      elixir: "~> 1.19",
+      elixir: "~> 1.20",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -179,15 +179,15 @@ defmodule PidroEngine.MixProject do
       {:accessible, "~> 0.3"},
 
       # Test dependencies
-      {:stream_data, "~> 1.0", only: [:dev, :test]},
+      {:stream_data, "~> 1.3", only: [:dev, :test]},
 
       # Dev/Test dependencies
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7.19", only: [:dev, :test], runtime: false},
 
       # Dev-only dependencies
-      {:benchee, "~> 1.0", only: :dev, runtime: false},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+      {:benchee, "~> 1.5.1", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.40.3", only: :dev, runtime: false}
     ]
   end
 end

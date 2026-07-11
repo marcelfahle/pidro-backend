@@ -301,7 +301,7 @@ defmodule Pidro.Core.Binary do
   defp decode_suit(3), do: {:ok, :spades}
   defp decode_suit(_), do: {:error, :invalid_suit}
 
-  @spec encode_phase(Types.phase()) :: 0..8
+  @spec encode_phase(Types.phase()) :: 0..9
   defp encode_phase(:dealer_selection), do: 0
   defp encode_phase(:dealing), do: 1
   defp encode_phase(:bidding), do: 2
@@ -311,8 +311,9 @@ defmodule Pidro.Core.Binary do
   defp encode_phase(:playing), do: 6
   defp encode_phase(:scoring), do: 7
   defp encode_phase(:complete), do: 8
+  defp encode_phase(:hand_complete), do: 9
 
-  @spec decode_phase(0..8) :: {:ok, Types.phase()} | {:error, :invalid_phase}
+  @spec decode_phase(0..9) :: {:ok, Types.phase()} | {:error, :invalid_phase}
   defp decode_phase(0), do: {:ok, :dealer_selection}
   defp decode_phase(1), do: {:ok, :dealing}
   defp decode_phase(2), do: {:ok, :bidding}
@@ -322,6 +323,7 @@ defmodule Pidro.Core.Binary do
   defp decode_phase(6), do: {:ok, :playing}
   defp decode_phase(7), do: {:ok, :scoring}
   defp decode_phase(8), do: {:ok, :complete}
+  defp decode_phase(9), do: {:ok, :hand_complete}
   defp decode_phase(_), do: {:error, :invalid_phase}
 
   @spec encode_positions(Types.position() | nil, Types.position() | nil) :: {0..4, 0..4}
@@ -415,7 +417,7 @@ defmodule Pidro.Core.Binary do
         # Calculate how many bits were consumed
         hand_binary = encode_hand(hand)
         hand_bit_size = bit_size(hand_binary)
-        <<_consumed::bitstring-size(hand_bit_size), remaining::bitstring>> = rest
+        <<_consumed::bitstring-size(^hand_bit_size), remaining::bitstring>> = rest
 
         player = %Player{
           position: position,
@@ -442,7 +444,7 @@ defmodule Pidro.Core.Binary do
         # Calculate how many bits were consumed
         deck_binary = encode_hand(deck)
         deck_bit_size = bit_size(deck_binary)
-        <<_consumed::bitstring-size(deck_bit_size), remaining::bitstring>> = bitstring
+        <<_consumed::bitstring-size(^deck_bit_size), remaining::bitstring>> = bitstring
         {:ok, deck, remaining}
 
       error ->

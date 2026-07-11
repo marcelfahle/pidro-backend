@@ -7,6 +7,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   single room responses, room lists, and room creation responses.
   """
 
+  alias PidroServer.Accounts.Auth
   alias PidroServer.Games.Room.{Positions, Seat}
   alias PidroServerWeb.Serializers.GameStateSerializer
 
@@ -25,7 +26,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{room: room_data, assigned_position: "north"}}
   """
   def show(assigns) do
-    data = %{room: room(assigns)}
+    data = %{room: room(assigns.room, users_for_rooms([assigns.room]))}
     data = maybe_add_assigned_position(data, assigns)
     %{data: data}
   end
@@ -42,7 +43,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{rooms: [room_data1, room_data2]}}
   """
   def index(%{rooms: rooms}) do
-    %{data: %{rooms: Enum.map(rooms, &room/1)}}
+    %{data: %{rooms: serialize_rooms(rooms)}}
   end
 
   @doc """
@@ -57,7 +58,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{room: room_data, code: "A1B2"}}
   """
   def created(%{room: room}) do
-    %{data: %{room: room(room), code: room.code}}
+    %{data: %{room: room(room, users_for_rooms([room])), code: room.code}}
   end
 
   @doc """
@@ -67,12 +68,17 @@ defmodule PidroServerWeb.API.RoomJSON do
   substitute_needed, and spectatable. Each category contains serialized room data.
   """
   def lobby(%{lobby: lobby}) do
+    rooms =
+      lobby.my_rejoinable ++ lobby.open_tables ++ lobby.substitute_needed ++ lobby.spectatable
+
+    users = users_for_rooms(rooms)
+
     %{
       data: %{
-        my_rejoinable: Enum.map(lobby.my_rejoinable, &room/1),
-        open_tables: Enum.map(lobby.open_tables, &room/1),
-        substitute_needed: Enum.map(lobby.substitute_needed, &room/1),
-        spectatable: Enum.map(lobby.spectatable, &room/1)
+        my_rejoinable: serialize_rooms(lobby.my_rejoinable, users),
+        open_tables: serialize_rooms(lobby.open_tables, users),
+        substitute_needed: serialize_rooms(lobby.substitute_needed, users),
+        spectatable: serialize_rooms(lobby.spectatable, users)
       }
     }
   end
@@ -111,6 +117,10 @@ defmodule PidroServerWeb.API.RoomJSON do
   def room(%{room: room}), do: room(room)
 
   def room(room) when is_map(room) do
+    room(room, users_for_rooms([room]))
+  end
+
+  defp room(room, users) do
     %{
       code: room.code,
       host_id: room.host_id,
@@ -125,15 +135,40 @@ defmodule PidroServerWeb.API.RoomJSON do
       max_players: room.max_players,
       max_spectators: room.max_spectators || 10,
       created_at: DateTime.to_iso8601(room.created_at),
-      seats: serialize_room_seats(Map.get(room, :seats, %{}))
+      seats: serialize_room_seats(Map.get(room, :seats, %{}), users)
     }
   end
 
-  defp serialize_room_seats(seats) when map_size(seats) == 0, do: %{}
+  defp serialize_rooms(rooms), do: serialize_rooms(rooms, users_for_rooms(rooms))
+  defp serialize_rooms(rooms, users), do: Enum.map(rooms, &room(&1, users))
 
-  defp serialize_room_seats(seats) do
-    Map.new(seats, fn {position, seat} -> {position, Seat.serialize(seat)} end)
+  defp users_for_rooms(rooms) do
+    rooms
+    |> Enum.flat_map(&Positions.player_ids/1)
+    |> Enum.uniq()
+    |> Auth.get_users_map()
   end
+
+  defp serialize_room_seats(seats, _users) when map_size(seats) == 0, do: %{}
+
+  defp serialize_room_seats(seats, users) do
+    Map.new(seats, fn {position, seat} ->
+      {position, seat |> Seat.serialize() |> Map.put(:username, seat_username(seat, users))}
+    end)
+  end
+
+  defp seat_username(%Seat{occupant_type: :bot}, _users), do: "Bot"
+
+  defp seat_username(%Seat{user_id: "bot_" <> _}, _users), do: "Bot"
+
+  defp seat_username(%Seat{user_id: user_id}, users) when is_binary(user_id) do
+    case Map.get(users, user_id) do
+      nil -> nil
+      user -> user.username
+    end
+  end
+
+  defp seat_username(_seat, _users), do: nil
 
   @doc false
   defp serialize_positions(positions) do

@@ -82,7 +82,9 @@ defmodule PidroServer.Games.Bots.TimeoutStrategyTest do
 
     test "delegates dealer rob selection and room-owned dealer selection" do
       assert {:ok, {:select_hand, :choose_6_cards}, "timeout auto-play"} =
-               TimeoutStrategy.pick_action([{:select_hand, :choose_6_cards}], %{phase: :second_deal})
+               TimeoutStrategy.pick_action([{:select_hand, :choose_6_cards}], %{
+                 phase: :second_deal
+               })
 
       assert {:ok, :select_dealer, "timeout auto-play"} =
                TimeoutStrategy.pick_action([:select_dealer], %{phase: :dealer_selection})

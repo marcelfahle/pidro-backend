@@ -13,10 +13,7 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
     end
 
     RoomManager.reset_for_test()
-
-    on_exit(fn ->
-      RoomManager.reset_for_test()
-    end)
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     :ok
   end

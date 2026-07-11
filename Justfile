@@ -6,35 +6,44 @@ default:
     @just --list
 
 bootstrap:
-    kamal server bootstrap
+    bundle exec kamal server bootstrap
     ssh root@{{server_ip}} 'ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw --force enable'
 
 setup:
-    kamal setup
+    bundle exec kamal setup
 
 deploy:
-    kamal deploy
+    bundle exec kamal deploy
 
 migrate:
-    kamal app exec --primary "bin/pidro_server eval \"PidroServer.Release.migrate()\""
+    bundle exec kamal app exec --primary "bin/pidro_server eval \"PidroServer.Release.migrate()\""
+
+backup:
+    ops/backup-production
+
+install-backup-timer:
+    ops/install-backup-timer
+
+smoke:
+    ops/smoke-production
+
+quality:
+    mix precommit
 
 rollback version:
-    kamal rollback {{version}}
+    bundle exec kamal rollback {{version}}
 
 logs:
-    kamal app logs -f
+    bundle exec kamal app logs -f
 
 console:
-    kamal app exec --primary --interactive "bin/pidro_server remote"
+    bundle exec kamal app exec --primary --interactive "bin/pidro_server remote"
 
 boot-postgres:
-    kamal accessory boot postgres
+    bundle exec kamal accessory boot postgres
 
 postgres-logs:
-    kamal accessory logs postgres
+    bundle exec kamal accessory logs postgres
 
 health:
-    curl -fsS http://{{server_ip}}/up
-
-health-domain:
     curl -fsS https://app.pidro.online/up

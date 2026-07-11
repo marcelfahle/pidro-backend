@@ -1,5 +1,9 @@
 service: pidro-backend
 image: marcelfahle/pidro-backend
+minimum_version: 2.12.0
+retain_containers: 5
+deploy_timeout: 60
+drain_timeout: 30
 
 servers:
   web:
@@ -35,8 +39,10 @@ env:
     PORT: "4000"
     POOL_SIZE: "20"
     CORS_ORIGINS: "https://play.pidro.online,https://app.pidro.online"
-    ENABLE_DEV_ROUTES: "true"
-    DEV_BASIC_AUTH_USERNAME: "admin"
+    WEB_URL: "https://play.pidro.online"
+    MAIL_FROM_ADDRESS: "noreply@pidro.online"
+    MAIL_REPLY_TO: "support@pidro.net"
+    ENABLE_DEV_ROUTES: "false"
     DB_HOST: postgres
     DB_PORT: "5432"
     DB_NAME: pidro_prod
@@ -44,12 +50,17 @@ env:
   secret:
     - SECRET_KEY_BASE
     - POSTGRES_PASSWORD
-    - DEV_BASIC_AUTH_PASSWORD
+
+logging:
+  driver: local
+  options:
+    max-size: "20m"
+    max-file: "5"
 
 accessories:
   postgres:
     service: postgres
-    image: postgres:17
+    image: postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
     host: 95.217.3.224
     port: "127.0.0.1:5432:5432"
     env:
@@ -59,4 +70,4 @@ accessories:
       secret:
         - POSTGRES_PASSWORD
     directories:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres18-data:/var/lib/postgresql

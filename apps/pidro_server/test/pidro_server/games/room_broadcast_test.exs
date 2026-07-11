@@ -7,6 +7,7 @@ defmodule PidroServer.Games.RoomBroadcastTest do
 
   setup do
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     # Create a user for the test socket
     user = AccountsFixtures.user_fixture()

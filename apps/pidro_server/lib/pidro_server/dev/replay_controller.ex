@@ -243,10 +243,12 @@ defmodule PidroServer.Dev.ReplayController do
 
   # Private Functions
 
+  defp event_type({type, _player, _first, _second}), do: type
   defp event_type({type, _player, _data}), do: type
   defp event_type({type, _data}), do: type
   defp event_type(type) when is_atom(type), do: type
 
+  defp event_player({_type, player, _first, _second}) when is_atom(player), do: player
   defp event_player({_type, player, _data}) when is_atom(player), do: player
   defp event_player({_type, player}) when is_atom(player), do: player
   defp event_player(_), do: nil
@@ -342,16 +344,12 @@ defmodule PidroServer.Dev.ReplayController do
     events
     |> Enum.with_index()
     |> Enum.reduce_while({initial_state, :not_found}, fn {_event, index}, {state, _} ->
-      case Replay.replay(Enum.take(events, index + 1)) do
-        {:ok, new_state} ->
-          if new_state.phase == target_phase && state.phase != target_phase do
-            {:halt, {new_state, {:ok, index}}}
-          else
-            {:cont, {new_state, :not_found}}
-          end
+      {:ok, new_state} = Replay.replay(Enum.take(events, index + 1))
 
-        {:error, _} ->
-          {:cont, {state, :not_found}}
+      if new_state.phase == target_phase && state.phase != target_phase do
+        {:halt, {new_state, {:ok, index}}}
+      else
+        {:cont, {new_state, :not_found}}
       end
     end)
     |> elem(1)

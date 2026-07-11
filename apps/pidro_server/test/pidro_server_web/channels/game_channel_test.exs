@@ -26,6 +26,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
     # Reset RoomManager state
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     # Create 4 test users
     users =
