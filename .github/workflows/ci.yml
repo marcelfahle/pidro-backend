@@ -52,6 +52,8 @@ jobs:
             apps/pidro_server/priv/plts
           key: ${{ runner.os }}-otp-29.0.3-elixir-1.20.2-${{ hashFiles('mix.lock') }}
 
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
       - run: mix deps.get --only test
       - run: mix precommit
 
