@@ -63,11 +63,11 @@ if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
       case {
-             System.get_env("DB_HOST"),
-             System.get_env("DB_NAME"),
-             System.get_env("DB_USER"),
-             System.get_env("DB_PASSWORD") || System.get_env("POSTGRES_PASSWORD")
-           } do
+        System.get_env("DB_HOST"),
+        System.get_env("DB_NAME"),
+        System.get_env("DB_USER"),
+        System.get_env("DB_PASSWORD") || System.get_env("POSTGRES_PASSWORD")
+      } do
         {host, database, user, password}
         when is_binary(host) and is_binary(database) and is_binary(user) and is_binary(password) ->
           port = System.get_env("DB_PORT") || "5432"
@@ -108,9 +108,14 @@ if config_env() == :prod do
 
   cors_origins =
     case System.get_env("CORS_ORIGINS") do
-      nil -> :all
-      "*" -> :all
-      origins -> origins |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
+      nil ->
+        raise "environment variable CORS_ORIGINS is missing"
+
+      "*" ->
+        :all
+
+      origins ->
+        origins |> String.split(",", trim: true) |> Enum.map(&String.trim/1)
     end
 
   check_origin =

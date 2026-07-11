@@ -29,7 +29,6 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - **NotFoundError**: 404 Not Found response for missing resources
   """
 
-  require OpenApiSpex
   alias OpenApiSpex.Schema
 
   @doc """

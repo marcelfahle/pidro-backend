@@ -22,6 +22,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
     end
 
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     # BotSupervisor needed for Phase 2 (SubstituteBot spawning)
     case GenServer.whereis(PidroServer.Games.Bots.BotSupervisor) do

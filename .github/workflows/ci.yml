@@ -1,0 +1,78 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:18.4@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MIX_ENV: test
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0.3"
+          elixir-version: "1.20.2"
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            deps
+            _build
+            apps/pidro_server/priv/plts
+          key: ${{ runner.os }}-otp-29.0.3-elixir-1.20.2-${{ hashFiles('mix.lock') }}
+
+      - run: mix deps.get --only test
+      - run: mix precommit
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build --tag pidro-backend:ci .
+
+  deployment-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.5"
+          bundler-cache: true
+      - run: bundle exec kamal config > /dev/null
+      - run: bundle exec bundle-audit check --update
+      - run: bash -n .kamal/hooks/* ops/backup-production ops/credo-diff ops/install-backup-timer ops/server/pidro-backup ops/smoke-production

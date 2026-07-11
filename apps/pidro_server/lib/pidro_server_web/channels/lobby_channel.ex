@@ -40,7 +40,6 @@ defmodule PidroServerWeb.LobbyChannel do
   """
 
   use PidroServerWeb, :channel
-  require Logger
 
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.PresenceAggregator

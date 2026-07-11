@@ -26,6 +26,7 @@ defmodule PidroServer.Performance.LoadTest do
 
     # Clear any existing rooms
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     :ok
   end

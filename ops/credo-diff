@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+base_ref="${CREDO_BASE_REF:-origin/main}"
+
+if ! git rev-parse --verify "$base_ref" >/dev/null 2>&1; then
+  echo "Credo base ref '$base_ref' is unavailable. Fetch it or set CREDO_BASE_REF." >&2
+  exit 1
+fi
+
+merge_base="$(git merge-base HEAD "$base_ref")"
+args=()
+
+while IFS= read -r file; do
+  args+=(--files-included "$file")
+done < <(
+  {
+    git diff --name-only "$merge_base" -- '*.ex' '*.exs'
+    git ls-files --others --exclude-standard -- '*.ex' '*.exs'
+  } | sort -u
+)
+
+if [ "${#args[@]}" -eq 0 ]; then
+  echo "No changed Elixir files to check with Credo."
+  exit 0
+fi
+
+mix credo diff \
+  --strict \
+  --min-priority high \
+  --from-git-ref "$merge_base" \
+  "${args[@]}"

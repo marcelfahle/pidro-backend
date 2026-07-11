@@ -1642,8 +1642,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               </div>
             <% end %>
           </dl>
-          
-    <!-- Scores -->
+
+          <!-- Scores -->
           <%= if Map.has_key?(@game_state, :scores) do %>
             <div class="mt-6">
               <h4 class="text-sm font-medium text-zinc-500 mb-3">Scores</h4>
@@ -1827,8 +1827,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           </div>
         </div>
       <% end %>
-      
-    <!-- Full State JSON (collapsible) -->
+
+      <!-- Full State JSON (collapsible) -->
       <details class="bg-white shadow overflow-hidden sm:rounded-lg">
         <summary class="px-4 py-5 sm:px-6 cursor-pointer hover:bg-zinc-50">
           <div class="flex items-center justify-between">

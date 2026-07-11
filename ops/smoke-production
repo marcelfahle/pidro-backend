@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+base_url="${PIDRO_BASE_URL:-https://app.pidro.online}"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+health_body="$(curl --fail --silent --show-error --max-time 15 "$base_url/up")"
+test "$health_body" = "ok"
+
+lobby_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$base_url/api/v1/lobby")"
+test "$lobby_status" = "401"
+
+dev_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$base_url/dev/games")"
+test "$dev_status" = "404"
+
+curl --silent --show-error --dump-header "$tmp_dir/cors.headers" --output /dev/null \
+  --max-time 15 \
+  --request OPTIONS \
+  --header 'Origin: https://play.pidro.online' \
+  --header 'Access-Control-Request-Method: GET' \
+  "$base_url/api/v1/lobby"
+
+grep -Eiq '^access-control-allow-origin: https://play\.pidro\.online\r?$' "$tmp_dir/cors.headers"
+
+socket_status="$(curl --http1.1 --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --max-time 15 \
+  --header 'Connection: Upgrade' \
+  --header 'Upgrade: websocket' \
+  --header 'Sec-WebSocket-Version: 13' \
+  --header 'Sec-WebSocket-Key: cGlkcm8tc21va2UtdGVzdA==' \
+  "$base_url/socket/websocket?vsn=2.0.0")"
+test "$socket_status" = "403"
+
+echo "Production smoke checks passed for ${base_url}."

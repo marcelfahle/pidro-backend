@@ -33,7 +33,8 @@ defmodule PidroServer.Games.Bots.BotBrain do
   @doc """
   Computes a bot delay using a base delay, symmetric random variance, and floor.
   """
-  @spec compute_delay(non_neg_integer(), non_neg_integer(), non_neg_integer()) :: non_neg_integer()
+  @spec compute_delay(non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
+          non_neg_integer()
   def compute_delay(base_ms, variance_ms, min_ms) do
     raw_delay =
       if variance_ms > 0 do

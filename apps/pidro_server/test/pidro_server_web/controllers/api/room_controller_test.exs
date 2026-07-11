@@ -12,6 +12,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     end
 
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
     :ok
   end
 
@@ -32,7 +33,16 @@ defmodule PidroServerWeb.API.RoomControllerTest do
           "bot_difficulty" => "basic"
         })
 
-      code = json_response(conn, 201)["data"]["code"]
+      data = json_response(conn, 201)["data"]
+      code = data["code"]
+
+      assert data["room"]["seats"]["north"]["username"] == user.username
+
+      assert data["room"]["seats"]
+             |> Map.values()
+             |> Enum.filter(&(&1["occupant_type"] == "bot"))
+             |> Enum.all?(&(&1["username"] == "Bot"))
+
       assert {:ok, room} = RoomManager.get_room(code)
       assert room.metadata.single_player == true
     end
@@ -55,9 +65,11 @@ defmodule PidroServerWeb.API.RoomControllerTest do
         |> get_in(["data", "rooms"])
 
       codes = Enum.map(rooms, & &1["code"])
+      serialized_public_room = Enum.find(rooms, &(&1["code"] == public_room.code))
 
       assert public_room.code in codes
       refute solo_room.code in codes
+      assert serialized_public_room["seats"]["north"]["username"] == public_host.username
     end
   end
 end

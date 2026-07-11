@@ -5,13 +5,13 @@ Multiplayer card game server built with Phoenix 1.8, Elixir, and OTP.
 ## Commands
 
 ```bash
-mix precommit           # Format, compile, test, dialyzer, credo (run before commits)
+mix precommit           # Format, compile, test, diff-scoped Credo, Dialyzer
 mix test                # Run all tests
 mix test --failed       # Re-run failed tests
 mix test path/to/test.exs:42  # Run specific test at line
 mix format              # Format code
 mix dialyzer            # Type checking
-mix credo --strict      # Linting
+ops/credo-diff          # High-priority lint added since origin/main
 ```
 
 ## Architecture

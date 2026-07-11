@@ -23,6 +23,7 @@ defmodule PidroServer.Games.Bots.BotManagerTest do
     end
 
     RoomManager.reset_for_test()
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
 
     # Ensure BotSupervisor is running
     case GenServer.whereis(PidroServer.Games.Bots.BotSupervisor) do

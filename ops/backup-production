@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+server="${PIDRO_SERVER_SSH:-root@95.217.3.224}"
+remote_tmp="/tmp/pidro-backup.$$"
+
+scp -q "$repo_root/ops/server/pidro-backup" "$server:$remote_tmp"
+
+ssh "$server" \
+  "install -o root -g root -m 0750 '$remote_tmp' /usr/local/sbin/pidro-backup && rm -f '$remote_tmp' && /usr/local/sbin/pidro-backup"

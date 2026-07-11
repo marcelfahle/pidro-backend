@@ -477,7 +477,12 @@ defmodule PidroServerWeb.Dev.GameListLive do
             </div>
           </div>
 
-          <form phx-submit="save_pacing" phx-change="update_pacing_form" class="mt-6 space-y-6">
+          <form
+            id="pacing-form"
+            phx-submit="save_pacing"
+            phx-change="update_pacing_form"
+            class="mt-6 space-y-6"
+          >
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <%= for field <- @pacing_fields do %>
                 <div class="rounded-md border border-stone-200 bg-stone-50/60 p-4">
@@ -1167,12 +1172,6 @@ defmodule PidroServerWeb.Dev.GameListLive do
          socket
          |> close_modal()
          |> put_flash(:error, "Game #{room_code} not found")}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> close_modal()
-         |> put_flash(:error, "Failed to delete game: #{inspect(reason)}")}
     end
   end
 

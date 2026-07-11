@@ -523,8 +523,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                   data-email-preview
                   sandbox=""
                   class="h-[30rem] w-full bg-white"
-                >
-                </iframe>
+                ></iframe>
               </div>
 
               <div class={panel_class()}>

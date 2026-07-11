@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+backup_dir="${PIDRO_BACKUP_DIR:-/var/backups/pidro}"
+retention_days="${PIDRO_BACKUP_RETENTION_DAYS:-30}"
+postgres_container="${PIDRO_POSTGRES_CONTAINER:-postgres}"
+database="${PIDRO_DATABASE:-pidro_prod}"
+database_user="${PIDRO_DATABASE_USER:-pidro}"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+final_path="${backup_dir}/pidro-${timestamp}.dump"
+partial_path="${final_path}.partial"
+
+mkdir -p "$backup_dir" /run/lock
+
+exec 9>/run/lock/pidro-backup.lock
+if ! flock -n 9; then
+  echo "A Pidro backup is already running; skipping this invocation."
+  exit 0
+fi
+
+cleanup() {
+  rm -f "$partial_path"
+}
+trap cleanup EXIT
+
+docker inspect "$postgres_container" >/dev/null
+
+docker exec "$postgres_container" \
+  pg_dump \
+  --username="$database_user" \
+  --dbname="$database" \
+  --format=custom \
+  --compress=9 \
+  --no-owner \
+  --no-acl >"$partial_path"
+
+test -s "$partial_path"
+docker exec -i "$postgres_container" pg_restore --list <"$partial_path" >/dev/null
+
+mv "$partial_path" "$final_path"
+sha256sum "$final_path" >"${final_path}.sha256"
+
+find "$backup_dir" -type f \
+  \( -name 'pidro-*.dump' -o -name 'pidro-*.dump.sha256' \) \
+  -mtime "+$retention_days" -delete
+
+trap - EXIT
+echo "Created and verified ${final_path}"

@@ -94,7 +94,8 @@ defmodule Pidro.Core.Types do
   6. `:second_deal` - Deal to 6 cards each, dealer robs pack
   7. `:playing` - Trick-taking phase
   8. `:scoring` - Calculate and apply scores
-  9. `:complete` - Game over (one team reached 62)
+  9. `:hand_complete` - Prepare the next hand when the game has no winner
+  10. `:complete` - Game over (one team reached 62)
   """
   @type phase ::
           :dealer_selection
@@ -105,6 +106,7 @@ defmodule Pidro.Core.Types do
           | :second_deal
           | :playing
           | :scoring
+          | :hand_complete
           | :complete
 
   # =============================================================================
@@ -200,6 +202,8 @@ defmodule Pidro.Core.Types do
     """
     field(:position, Pidro.Core.Types.position(), enforce: true)
     field(:amount, Pidro.Core.Types.bid_amount() | :pass, enforce: true)
+    # Zero-based logical sequence. The legacy field name is retained for
+    # serialized-state compatibility.
     field(:timestamp, integer(), default: 0)
   end
 
@@ -360,6 +364,7 @@ defmodule Pidro.Core.Types do
       :second_deal,
       :playing,
       :scoring,
+      :hand_complete,
       :complete
     ]
   end

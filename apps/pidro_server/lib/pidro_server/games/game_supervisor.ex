@@ -195,5 +195,4 @@ defmodule PidroServer.Games.GameSupervisor do
     |> Enum.map(fn {_, pid, _, _} -> pid end)
     |> Enum.filter(&is_pid/1)
   end
-
 end

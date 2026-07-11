@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+  echo "Refusing to build a production image from a dirty worktree." >&2
+  git status --short >&2
+  exit 1
+fi

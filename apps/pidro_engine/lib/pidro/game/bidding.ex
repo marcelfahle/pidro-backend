@@ -212,7 +212,7 @@ defmodule Pidro.Game.Bidding do
         bid = %Types.Bid{
           position: position,
           amount: amount,
-          timestamp: System.system_time(:millisecond)
+          timestamp: length(state.bids)
         }
 
         # Get the team of the bidder
@@ -284,7 +284,7 @@ defmodule Pidro.Game.Bidding do
       pass = %Types.Bid{
         position: position,
         amount: :pass,
-        timestamp: System.system_time(:millisecond)
+        timestamp: length(state.bids)
       }
 
       # Update state

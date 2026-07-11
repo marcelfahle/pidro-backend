@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+test -n "${KAMAL_VERSION:-}"
+
+bundle exec kamal app exec --primary --version="$KAMAL_VERSION" \
+  'bin/pidro_server eval "PidroServer.Release.migrate()"'

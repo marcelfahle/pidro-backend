@@ -68,6 +68,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
                   :second_deal,
                   :playing,
                   :scoring,
+                  :hand_complete,
                   :complete
                 ])
             ) do
@@ -262,32 +263,20 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
   # =============================================================================
 
   describe "Move cache properties" do
-    test "cache hit is faster than cache miss" do
-      states =
-        for hand_number <- 1..50 do
-          %{create_test_state() | hand_number: hand_number}
-        end
+    test "cache hit does not recompute legal actions" do
+      MoveCache.clear()
+      state = create_test_state()
+      expected = Engine.legal_actions(state, :north)
 
-      {miss_time, _} =
-        :timer.tc(fn ->
-          Enum.each(states, fn state ->
-            MoveCache.get_or_compute(state, :north, fn ->
-              Engine.legal_actions(state, :north)
-            end)
-          end)
-        end)
+      assert expected ==
+               MoveCache.get_or_compute(state, :north, fn ->
+                 expected
+               end)
 
-      {hit_time, _} =
-        :timer.tc(fn ->
-          Enum.each(states, fn state ->
-            MoveCache.get_or_compute(state, :north, fn ->
-              Engine.legal_actions(state, :north)
-            end)
-          end)
-        end)
-
-      assert hit_time < miss_time,
-             "Cache hit batch (#{hit_time}μs) should be faster than miss batch (#{miss_time}μs)"
+      assert expected ==
+               MoveCache.get_or_compute(state, :north, fn ->
+                 flunk("cache hit unexpectedly recomputed legal actions")
+               end)
     end
 
     test "cache returns same results as direct computation" do

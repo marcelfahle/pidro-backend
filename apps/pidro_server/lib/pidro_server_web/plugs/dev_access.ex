@@ -38,7 +38,8 @@ defmodule PidroServerWeb.Plugs.DevAccess do
       not enabled? ->
         not_found(conn)
 
-      is_binary(username) and byte_size(username) > 0 and is_binary(password) and byte_size(password) > 0 ->
+      is_binary(username) and byte_size(username) > 0 and is_binary(password) and
+          byte_size(password) > 0 ->
         BasicAuth.basic_auth(conn, username: username, password: password)
 
       true ->
