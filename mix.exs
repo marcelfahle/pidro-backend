@@ -33,8 +33,8 @@ defmodule PidroBackend.MixProject do
   defp aliases do
     [
       precommit: [
-        "format --check-formatted",
         "hex.audit",
+        "format --check-formatted",
         "compile --warnings-as-errors",
         "test",
         &credo_diff/1,
