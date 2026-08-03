@@ -1,7 +1,7 @@
 # Kamal on Hetzner
 
 This repo is pinned to Erlang 29.0.3, Elixir 1.20.2, Ruby 4.0.5,
-Kamal 2.12.0, Phoenix 1.8.9, Phoenix LiveView 1.2.6, and PostgreSQL
+Kamal 2.12.0, Phoenix 1.8.9, Phoenix LiveView 1.2.8, and PostgreSQL
 18.4. The Mix lockfile pins the remaining Hex dependencies, and the production
 container base images are pinned by digest.
 
