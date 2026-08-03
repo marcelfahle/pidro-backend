@@ -11,6 +11,8 @@ defmodule PidroServer.Games.Bots.BotManagerTest do
   use ExUnit.Case, async: false
 
   alias PidroServer.Games.Bots.BotManager
+  alias PidroServer.Games.Bots.BotPlayer
+  alias PidroServer.Games.Bots.SubstituteBot
   alias PidroServer.Games.RoomManager
 
   # async: false required because RoomManager and BotManager are singleton GenServers
@@ -126,6 +128,50 @@ defmodule PidroServer.Games.Bots.BotManagerTest do
       assert :sys.get_state(pid).delay_ms_override == 0
 
       cleanup_bots(room.code)
+    end
+  end
+
+  describe "game PubSub resilience" do
+    test "bot stays alive when the post-game progression summary is broadcast" do
+      {:ok, room} = RoomManager.create_room("host_user", %{})
+
+      pid =
+        start_supervised!(
+          {BotPlayer, room_code: room.code, position: :east, strategy: :random, delay_ms: 0},
+          restart: :temporary
+        )
+
+      ref = Process.monitor(pid)
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room.code}",
+        {:progression_summary, room.code, %{"host_user" => %{xp_delta: 10}}}
+      )
+
+      refute_receive {:DOWN, ^ref, :process, ^pid, _reason}, 100
+      assert Process.alive?(pid)
+    end
+
+    test "substitute bot stays alive when the post-game progression summary is broadcast" do
+      {:ok, room} = RoomManager.create_room("host_user", %{})
+
+      pid =
+        start_supervised!(
+          {SubstituteBot, room_code: room.code, position: :east},
+          restart: :temporary
+        )
+
+      ref = Process.monitor(pid)
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room.code}",
+        {:progression_summary, room.code, %{"host_user" => %{xp_delta: 10}}}
+      )
+
+      refute_receive {:DOWN, ^ref, :process, ^pid, _reason}, 100
+      assert Process.alive?(pid)
     end
   end
 

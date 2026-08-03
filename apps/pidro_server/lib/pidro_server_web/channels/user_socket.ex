@@ -14,7 +14,7 @@ defmodule PidroServerWeb.UserSocket do
 
   Clients must provide a valid JWT token when connecting:
 
-      socket.connect("ws://localhost:4000/socket", {token: "eyJhbG..."})
+      new Socket("ws://localhost:4000/socket", {authToken: "eyJhbG..."})
 
   The token is verified using PidroServer.Accounts.Token and must be valid
   and not expired (30 day expiry).
@@ -42,7 +42,21 @@ defmodule PidroServerWeb.UserSocket do
   * `:error` - If authentication fails
   """
   @impl true
-  def connect(%{"token" => token}, socket, _connect_info) do
+  def connect(_params, socket, %{auth_token: token}) when is_binary(token) and token != "" do
+    authenticate(token, socket)
+  end
+
+  # Keep query-param authentication during the rolling migration so already
+  # released clients continue to connect while new clients move the JWT out of
+  # the WebSocket URL and into Sec-WebSocket-Protocol.
+  def connect(%{"token" => token}, socket, _connect_info) when is_binary(token) and token != "" do
+    authenticate(token, socket)
+  end
+
+  # Reject connections without a token
+  def connect(_params, _socket, _connect_info), do: :error
+
+  defp authenticate(token, socket) do
     case PidroServer.Accounts.Token.verify(token) do
       {:ok, user_id} ->
         # Generate or retrieve session_id based on user_id
@@ -60,9 +74,6 @@ defmodule PidroServerWeb.UserSocket do
         :error
     end
   end
-
-  # Reject connections without a token
-  def connect(_params, _socket, _connect_info), do: :error
 
   @doc """
   Returns a unique identifier for the socket connection.

@@ -13,7 +13,15 @@ defmodule PidroServerWeb.UserSocketTest do
   use PidroServerWeb.ChannelCase, async: false
 
   alias PidroServer.Accounts
+  alias PidroServerWeb.Endpoint
   alias PidroServerWeb.UserSocket
+
+  test "endpoint exposes WebSocket auth tokens to connect_info" do
+    assert {"/socket", UserSocket, socket_options} =
+             Enum.find(Endpoint.__sockets__(), fn {path, _, _} -> path == "/socket" end)
+
+    assert socket_options[:auth_token] == true
+  end
 
   describe "connect/3 with valid token" do
     setup do
@@ -32,6 +40,11 @@ defmodule PidroServerWeb.UserSocketTest do
 
     test "successfully connects with valid token", %{token: token, user: user} do
       assert {:ok, socket} = connect(UserSocket, %{"token" => token})
+      assert socket.assigns.user_id == user.id
+    end
+
+    test "connects with a valid WebSocket auth token", %{token: token, user: user} do
+      assert {:ok, socket} = connect(UserSocket, %{}, connect_info: %{auth_token: token})
       assert socket.assigns.user_id == user.id
     end
 
@@ -82,6 +95,11 @@ defmodule PidroServerWeb.UserSocketTest do
 
     test "rejects connection with invalid token" do
       assert :error = connect(UserSocket, %{"token" => "invalid_token_123"})
+    end
+
+    test "rejects an invalid WebSocket auth token" do
+      assert :error =
+               connect(UserSocket, %{}, connect_info: %{auth_token: "invalid_token_123"})
     end
 
     test "rejects connection with expired token" do

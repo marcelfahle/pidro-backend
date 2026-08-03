@@ -88,6 +88,10 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   end
 
   @impl true
+  def handle_info({:progression_summary, _room_code, _summaries}, state),
+    do: {:noreply, state}
+
+  @impl true
   def handle_info({:turn_timer_started, _payload}, state), do: {:noreply, state}
 
   @impl true

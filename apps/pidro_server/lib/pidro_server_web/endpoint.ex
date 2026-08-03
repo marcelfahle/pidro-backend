@@ -17,6 +17,7 @@ defmodule PidroServerWeb.Endpoint do
 
   # WebSocket for game channels
   socket "/socket", PidroServerWeb.UserSocket,
+    auth_token: true,
     websocket: true,
     longpoll: false
 
