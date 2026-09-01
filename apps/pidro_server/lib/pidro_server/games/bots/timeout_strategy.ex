@@ -14,7 +14,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
     action =
       case Map.get(game_state, :phase) do
         :bidding ->
-          :pass
+          pick_bid_action(legal_actions)
 
         :declaring ->
           pick_declared_trump(legal_actions, game_state)
@@ -30,6 +30,20 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
       end
 
     {:ok, action, "timeout auto-play"}
+  end
+
+  # The dealer cannot pass once the other three players have passed
+  # (:dealer_must_bid), so passing is only safe when the engine offers it.
+  # Otherwise take the minimum forced bid — never discard the turn.
+  @spec pick_bid_action([term()]) :: term()
+  defp pick_bid_action(legal_actions) do
+    if :pass in legal_actions do
+      :pass
+    else
+      legal_actions
+      |> Enum.filter(&match?({:bid, _}, &1))
+      |> Enum.min_by(fn {:bid, amount} -> amount end)
+    end
   end
 
   @spec pick_declared_trump([term()], map()) :: term()

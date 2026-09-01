@@ -9,6 +9,11 @@ defmodule PidroServer.Games.Bots.TimeoutStrategyTest do
                TimeoutStrategy.pick_action([:pass, {:bid, 8}], %{phase: :bidding})
     end
 
+    test "takes the minimum bid when the dealer is forced to bid" do
+      assert {:ok, {:bid, 6}, "timeout auto-play"} =
+               TimeoutStrategy.pick_action([{:bid, 7}, {:bid, 6}, {:bid, 8}], %{phase: :bidding})
+    end
+
     test "chooses the suit with the highest trump count when declaring" do
       game_state = %{
         phase: :declaring,
