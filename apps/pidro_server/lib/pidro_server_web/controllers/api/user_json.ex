@@ -47,13 +47,15 @@ defmodule PidroServerWeb.API.UserJSON do
   @doc false
   # Private function to transform a user struct into a JSON-serializable map.
   #
-  # Includes user fields (id, username, email, guest, inserted_at, updated_at)
-  # but explicitly excludes password_hash for security.
+  # Includes user fields (id, username, email, display_name, guest,
+  # inserted_at, updated_at) but explicitly excludes password_hash,
+  # token_version, last_seen_at and install_id.
   defp user(user) do
     %{
       id: user.id,
       username: user.username,
       email: user.email,
+      display_name: user.display_name,
       guest: user.guest,
       inserted_at: DateTime.to_iso8601(user.inserted_at),
       updated_at: DateTime.to_iso8601(user.updated_at)

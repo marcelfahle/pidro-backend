@@ -74,10 +74,15 @@ defmodule PidroServer.Accounts.Auth do
   Retrieves the user by username and verifies the provided password against
   the stored hashed password using Bcrypt.
 
+  A user without a `password_hash` (a guest) can never log in with a
+  password: the call runs a dummy Bcrypt verify so the response time matches
+  a real check, then returns invalid credentials.
+
   ## Returns
 
     - `{:ok, user}` - Credentials are valid
-    - `{:error, :invalid_credentials}` - Username not found or password is incorrect
+    - `{:error, :invalid_credentials}` - Username not found, password is
+      incorrect, or the account has no password
 
   ## Examples
 
@@ -93,6 +98,10 @@ defmodule PidroServer.Accounts.Auth do
   def authenticate_user(username, password) do
     case get_user_by_username(username) do
       nil ->
+        {:error, :invalid_credentials}
+
+      %User{password_hash: nil} ->
+        Bcrypt.no_user_verify()
         {:error, :invalid_credentials}
 
       user ->
@@ -322,18 +331,23 @@ defmodule PidroServer.Accounts.Auth do
 
   @doc """
   Builds a changeset for admin profile edits.
+
+  Uses `User.admin_changeset/2`, the only public-facing path that may toggle
+  `guest`. It is reachable from the dev admin panel only.
   """
   def change_user(%User{} = user, attrs \\ %{}) do
     user
-    |> User.changeset(admin_user_attrs(attrs))
+    |> User.admin_changeset(admin_user_attrs(attrs))
   end
 
   @doc """
   Updates user profile fields managed from the admin panel.
+
+  Uses `User.admin_changeset/2` so the admin panel can toggle `guest`.
   """
   def update_user(%User{} = user, attrs) do
     user
-    |> User.changeset(admin_user_attrs(attrs))
+    |> User.admin_changeset(admin_user_attrs(attrs))
     |> Repo.update()
   end
 

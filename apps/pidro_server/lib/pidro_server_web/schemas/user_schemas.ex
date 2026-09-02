@@ -48,6 +48,13 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           description: "User's email address",
           example: "john@example.com"
         },
+        display_name: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 40,
+          description: "Optional display name shown at the table; null when unset",
+          example: "Anna"
+        },
         guest: %Schema{
           type: :boolean,
           description: "Whether this is a guest account (temporary, unauthenticated)",
@@ -71,6 +78,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         "id" => "550e8400-e29b-41d4-a716-446655440000",
         "username" => "john_doe",
         "email" => "john@example.com",
+        "display_name" => nil,
         "guest" => false,
         "inserted_at" => "2024-11-02T10:30:00Z",
         "updated_at" => "2024-11-02T10:30:00Z"
@@ -205,6 +213,13 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
               minLength: 8,
               maxLength: 255,
               example: "secure_password_123"
+            },
+            display_name: %Schema{
+              type: :string,
+              nullable: true,
+              maxLength: 40,
+              description: "Optional display name (trimmed, at most 40 characters)",
+              example: "Anna"
             }
           },
           required: [:username, :email, :password]
