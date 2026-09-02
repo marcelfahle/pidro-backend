@@ -6,7 +6,7 @@ defmodule PidroServerWeb.ApiSpec do
   View the interactive documentation at `/api/openapi` in development mode.
   """
 
-  alias OpenApiSpex.{Info, OpenApi, Paths, Server, Components, SecurityScheme}
+  alias OpenApiSpex.{Components, Info, OpenApi, Paths, SecurityScheme, Server}
   alias PidroServerWeb.{Endpoint, Router}
   @behaviour OpenApi
 
@@ -26,8 +26,9 @@ defmodule PidroServerWeb.ApiSpec do
 
         ## Features
 
-        - User authentication with JWT tokens
-        - Room management (create, join, leave)
+        - User authentication with JWT tokens; guest accounts created from an invite and upgraded in place
+        - Room management (create, join, leave) and host controls (seat, lock, kick)
+        - Invite links: one shareable code per table with an optional seat hint
         - Real-time gameplay via WebSocket channels
         - Game statistics tracking
         - Admin panel for monitoring
@@ -55,6 +56,14 @@ defmodule PidroServerWeb.ApiSpec do
         | `password_reset_confirm` | `POST /api/v1/auth/password-reset/confirm` | 5 per 15 minutes | client IP |
         | `room_create` | `POST /api/v1/rooms` | 10 per minute | authenticated user |
         | `room_lookup` | `GET /api/v1/rooms/:code` | 120 per minute | client IP |
+        | `room_join` | `POST /api/v1/rooms/:code/join` | 30 per minute | authenticated user |
+        | `invite_mint` | `POST /api/v1/rooms/:code/invites`, `POST /api/v1/invites/:code/regenerate` | 10 per minute | authenticated user |
+        | `invite_preview` | `GET /api/v1/invites/:code` | 60 per minute | client IP |
+        | `invite_redeem` | `POST /api/v1/invites/:code/redeem` | 10 per minute | authenticated user |
+        | `guest_create` | `POST /api/v1/auth/guest` | 10 per hour | client IP |
+        | `guest_create_daily` | `POST /api/v1/auth/guest` | 40 per day | client IP |
+        | `guest_create_install` | `POST /api/v1/auth/guest` | 3 per hour | hashed `install_id` param (skipped when absent) |
+        | `auth_upgrade` | `POST /api/v1/auth/upgrade` | 10 per 10 minutes | client IP |
 
         A request over its limit is answered `429 Too Many Requests` with a `Retry-After` header
         (whole seconds until the window resets, at least 1) and the error body below with code
@@ -93,8 +102,12 @@ defmodule PidroServerWeb.ApiSpec do
         - `201 Created` - Resource created successfully
         - `204 No Content` - Request succeeded with no response body
         - `401 Unauthorized` - Authentication required or token invalid
+        - `403 Forbidden` - Not the host (`NOT_OWNER`) or kicked from the table (`KICKED`)
         - `404 Not Found` - Resource not found
+        - `409 Conflict` - The target refuses the action in its current state (`SEAT_TAKEN` with `next_open`, `TABLE_FULL`, `ROOM_NOT_WAITING`, `INVITE_LIMIT`, `NOT_A_GUEST`, `EMAIL_TAKEN`, `USERNAME_TAKEN`)
+        - `410 Gone` - The invite or its table no longer accepts players (`TABLE_STARTED`, `TABLE_CLOSED`, `INVITE_EXPIRED`, `INVITE_REVOKED`, `INVITE_MOVED` with `next_code`)
         - `422 Unprocessable Entity` - Validation error
+        - `423 Locked` - The host locked the table (`TABLE_LOCKED`)
         - `429 Too Many Requests` - Rate limit exceeded; honour `Retry-After`
         - `503 Service Unavailable` - No free room code could be allocated (`ROOM_CODE_EXHAUSTED`); retry shortly
         """

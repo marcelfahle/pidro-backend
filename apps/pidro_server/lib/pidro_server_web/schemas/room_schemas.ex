@@ -11,8 +11,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Room Schemas ====================
 
-  # Schema for a Seat at the table.
   defmodule Seat do
+    @moduledoc "Schema for a Seat at the table."
+
     OpenApiSpex.schema(%{
       title: "Seat",
       description: "A seat at the table with occupant and connection state",
@@ -33,11 +34,23 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           nullable: true,
           description: "User ID of human occupant"
         },
+        username: %Schema{
+          type: :string,
+          nullable: true,
+          description:
+            "Occupant's username; \"Bot\" for bots, null when the id resolves to nobody"
+        },
+        display_name: %Schema{
+          type: :string,
+          nullable: true,
+          description:
+            "Occupant's display name; \"Bot\" for bots, null when unset or when the id resolves to nobody"
+        },
         status: %Schema{
           type: :string,
           enum: [:connected, :reconnecting, :grace, :bot_substitute],
           nullable: true,
-          description: "Connection status"
+          description: "Connection status; `reconnecting` in a waiting room is a held seat"
         },
         is_owner: %Schema{
           type: :boolean,
@@ -74,8 +87,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a Room object representing a game room.
   defmodule Room do
+    @moduledoc "Schema for a Room object representing a game room."
+
     OpenApiSpex.schema(%{
       title: "Room",
       description: "A game room for playing Pidro with up to 4 players",
@@ -100,9 +114,15 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         status: %Schema{
           type: :string,
-          enum: [:waiting, :playing, :finished],
+          enum: [:waiting, :ready, :playing, :finished],
           description: "Current status of the room",
           example: "waiting"
+        },
+        locked: %Schema{
+          type: :boolean,
+          description:
+            "Whether the host has locked the table against joins and invite redemptions",
+          example: false
         },
         max_players: %Schema{
           type: :integer,
@@ -128,18 +148,30 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           example: "2024-11-02T10:30:00Z"
         }
       },
-      required: [:code, :host_id, :player_count, :status, :max_players, :created_at, :seats],
+      required: [
+        :code,
+        :host_id,
+        :player_count,
+        :status,
+        :locked,
+        :max_players,
+        :created_at,
+        :seats
+      ],
       example: %{
         "code" => "A1B2",
         "host_id" => "user123",
         "player_count" => 2,
         "status" => "waiting",
+        "locked" => false,
         "max_players" => 4,
         "seats" => %{
           "north" => %{
             "position" => "north",
             "occupant_type" => "human",
             "user_id" => "user123",
+            "username" => "marcel",
+            "display_name" => "Marcel",
             "status" => "connected",
             "is_owner" => true,
             "substitute" => false,
@@ -178,8 +210,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a single room response.
   defmodule RoomResponse do
+    @moduledoc "Schema for a single room response."
+
     OpenApiSpex.schema(%{
       title: "RoomResponse",
       description: "Response containing a single room object",
@@ -219,8 +252,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a list of rooms response.
   defmodule RoomsResponse do
+    @moduledoc "Schema for a list of rooms response."
+
     OpenApiSpex.schema(%{
       title: "RoomsResponse",
       description: "Response containing a list of room objects",
@@ -266,8 +300,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for room creation response including the room code.
   defmodule RoomCreatedResponse do
+    @moduledoc "Schema for room creation response including the room code."
+
     OpenApiSpex.schema(%{
       title: "RoomCreatedResponse",
       description:
@@ -316,8 +351,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Game State Schemas ====================
 
-  # Schema for a Card object representing a playing card.
   defmodule Card do
+    @moduledoc "Schema for a Card object representing a playing card."
+
     OpenApiSpex.schema(%{
       title: "Card",
       description:
@@ -347,8 +383,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a Bid object representing a player's bid.
   defmodule Bid do
+    @moduledoc "Schema for a Bid object representing a player's bid."
+
     OpenApiSpex.schema(%{
       title: "Bid",
       description: "A bid made by a player during the bidding phase",
@@ -377,8 +414,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a Play object representing a card played in a trick.
   defmodule Play do
+    @moduledoc "Schema for a Play object representing a card played in a trick."
+
     OpenApiSpex.schema(%{
       title: "Play",
       description: "A card played by a player in a trick",
@@ -410,8 +448,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a Trick object representing a completed trick.
   defmodule Trick do
+    @moduledoc "Schema for a Trick object representing a completed trick."
+
     OpenApiSpex.schema(%{
       title: "Trick",
       description: "A completed trick including legacy (`plays`) and frontend (`cards`) arrays",
@@ -512,8 +551,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for a Player object representing a player's state in the game.
   defmodule Player do
+    @moduledoc "Schema for a Player object representing a player's state in the game."
+
     OpenApiSpex.schema(%{
       title: "Player",
       description: "A player's current state in the game including hand and stats",
@@ -575,8 +615,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  # Schema for the complex game state response.
   defmodule GameStateResponse do
+    @moduledoc "Schema for the complex game state response."
+
     OpenApiSpex.schema(%{
       title: "GameStateResponse",
       description: "Complete game state for a room including all game information",

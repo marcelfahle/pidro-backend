@@ -57,9 +57,17 @@ defmodule PidroServerWeb.Router do
     post "/auth/password-reset/confirm", AuthController, :reset_password,
       private: %{rate_limit: [:password_reset_confirm]}
 
+    # Guest creation needs a valid invite (KD6); limited per address, per day
+    # and per install id (R12).
+    post "/auth/guest", AuthController, :guest,
+      private: %{rate_limit: [:guest_create, :guest_create_daily, :guest_create_install]}
+
     # Room routes without authentication
     get "/rooms", RoomController, :index
     get "/rooms/:code", RoomController, :show, private: %{rate_limit: [:room_lookup]}
+
+    # Invite preview for landing pages; never exposes the room code (KD2)
+    get "/invites/:code", InviteController, :show, private: %{rate_limit: [:invite_preview]}
   end
 
   # API v1 authenticated routes
@@ -67,6 +75,8 @@ defmodule PidroServerWeb.Router do
     pipe_through :api_authenticated
 
     get "/auth/me", AuthController, :me
+    delete "/auth/me", AuthController, :delete_me
+    post "/auth/upgrade", AuthController, :upgrade, private: %{rate_limit: [:auth_upgrade]}
 
     # Game state route (authenticated to prevent hand exposure)
     get "/rooms/:code/state", RoomController, :state
@@ -82,10 +92,27 @@ defmodule PidroServerWeb.Router do
 
     # Room routes with authentication
     post "/rooms", RoomController, :create, private: %{rate_limit: [:room_create]}
-    post "/rooms/:code/join", RoomController, :join
+    post "/rooms/:code/join", RoomController, :join, private: %{rate_limit: [:room_join]}
     delete "/rooms/:code/leave", RoomController, :leave
     post "/rooms/:code/open-seat", RoomController, :open_seat
     post "/rooms/:code/close-seat", RoomController, :close_seat
+
+    # Host controls for waiting rooms (R23)
+    post "/rooms/:code/seat", RoomController, :seat
+    post "/rooms/:code/lock", RoomController, :lock
+    post "/rooms/:code/kick", RoomController, :kick
+
+    # Invite routes (R1, R5, R6, R7); the mint bucket also covers regenerate
+    post "/rooms/:code/invites", RoomController, :create_invite,
+      private: %{rate_limit: [:invite_mint]}
+
+    post "/invites/:code/redeem", InviteController, :redeem,
+      private: %{rate_limit: [:invite_redeem]}
+
+    delete "/invites/:code", InviteController, :delete
+
+    post "/invites/:code/regenerate", InviteController, :regenerate,
+      private: %{rate_limit: [:invite_mint]}
 
     # Spectator routes with authentication
     post "/rooms/:code/watch", RoomController, :watch

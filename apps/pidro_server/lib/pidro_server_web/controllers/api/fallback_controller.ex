@@ -12,6 +12,13 @@ defmodule PidroServerWeb.API.FallbackController do
   - `{:error, %Ecto.Changeset{}}` - Validation errors from Ecto changesets
   - `{:error, :invalid_credentials}` - Authentication failures
   - `{:error, :not_found}` - Resource not found errors
+  - Invite and host-control atoms (KTD5): `:table_full`, `:room_not_waiting`,
+    `:invite_limit`, `:not_a_guest`, `:email_taken` and `:username_taken` answer
+    409; `:table_started`, `:table_closed`, `:invite_expired`, `:invite_revoked`
+    and `{:invite_moved, next_code}` answer 410; `:table_locked` answers 423;
+    `:kicked` answers 403; `{:seat_taken, next_open}` answers 409 with the open
+    positions while the bare `:seat_taken` keeps its 422 for room joins
+  - Any other atom answers 422 with the atom upcased as the code
   """
 
   use PidroServerWeb, :controller
@@ -373,6 +380,130 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  # ==================== Invite and host-control errors (KTD5) ====================
+  #
+  # Every clause below must stay above the `is_atom(reason)` catch-all, which
+  # would answer 422. The bare `:seat_taken` atom keeps its 422 above so
+  # `POST /rooms/:code/join` is unchanged; the tuple form is the invite redeem
+  # answer (R5).
+
+  def call(conn, {:error, {:seat_taken, next_open}}) when is_list(next_open) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [
+        %{
+          code: "SEAT_TAKEN",
+          title: "Seat taken",
+          detail: "The requested seat is already occupied",
+          next_open: Enum.map(next_open, &Atom.to_string/1)
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :table_full}) do
+    conflict(conn, "TABLE_FULL", "Table full", "Every seat at the table is taken")
+  end
+
+  def call(conn, {:error, :room_not_waiting}) do
+    conflict(
+      conn,
+      "ROOM_NOT_WAITING",
+      "Room not waiting",
+      "The room is no longer waiting for players"
+    )
+  end
+
+  def call(conn, {:error, :invite_limit}) do
+    conflict(conn, "INVITE_LIMIT", "Invite limit", "This room has reached its invite limit")
+  end
+
+  def call(conn, {:error, :not_a_guest}) do
+    conflict(conn, "NOT_A_GUEST", "Not a guest", "Only a guest account can be upgraded")
+  end
+
+  def call(conn, {:error, :email_taken}) do
+    conflict(conn, "EMAIL_TAKEN", "Email taken", "Another account uses that email address")
+  end
+
+  def call(conn, {:error, :username_taken}) do
+    conflict(conn, "USERNAME_TAKEN", "Username taken", "Another account uses that username")
+  end
+
+  def call(conn, {:error, :table_started}) do
+    gone(conn, "TABLE_STARTED", "Table started", "The game at this table has already started")
+  end
+
+  def call(conn, {:error, :table_closed}) do
+    gone(conn, "TABLE_CLOSED", "Table closed", "The table this invite opened no longer exists")
+  end
+
+  def call(conn, {:error, :invite_expired}) do
+    gone(conn, "INVITE_EXPIRED", "Invite expired", "This invite has expired")
+  end
+
+  def call(conn, {:error, :invite_revoked}) do
+    gone(conn, "INVITE_REVOKED", "Invite revoked", "The host revoked this invite")
+  end
+
+  def call(conn, {:error, {:invite_moved, next_code}}) do
+    conn
+    |> put_status(:gone)
+    |> json(%{
+      errors: [
+        %{
+          code: "INVITE_MOVED",
+          title: "Invite moved",
+          detail: "The host is at a new table; use the next code",
+          next_code: next_code
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :table_locked}) do
+    conn
+    |> put_status(:locked)
+    |> json(%{
+      errors: [
+        %{
+          code: "TABLE_LOCKED",
+          title: "Table locked",
+          detail: "The host has locked this table"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :kicked}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{
+      errors: [
+        %{
+          code: "KICKED",
+          title: "Kicked",
+          detail: "The host removed you from this table"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :seat_not_kickable}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "SEAT_NOT_KICKABLE",
+          title: "Seat not kickable",
+          detail: "Only a seated non-host player can be kicked"
+        }
+      ]
+    })
+  end
+
   # Must stay above the `is_atom(reason)` catch-all, which would answer 422.
   def call(conn, {:error, :room_code_exhausted}) do
     conn
@@ -400,6 +531,16 @@ defmodule PidroServerWeb.API.FallbackController do
         }
       ]
     })
+  end
+
+  defp conflict(conn, code, title, detail), do: error(conn, :conflict, code, title, detail)
+
+  defp gone(conn, code, title, detail), do: error(conn, :gone, code, title, detail)
+
+  defp error(conn, status, code, title, detail) do
+    conn
+    |> put_status(status)
+    |> json(%{errors: [%{code: code, title: title, detail: detail}]})
   end
 
   @doc false
