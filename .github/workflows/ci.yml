@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     services:
@@ -56,7 +56,7 @@ jobs:
       - run: mix precommit
 
   container:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     steps:
@@ -64,7 +64,7 @@ jobs:
       - run: docker build --tag pidro-backend:ci .
 
   deployment-config:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
