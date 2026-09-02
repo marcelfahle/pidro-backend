@@ -21,6 +21,8 @@ defmodule PidroServer.Application do
       # Bot infrastructure - available in all environments
       PidroServer.Games.Bots.BotSupervisor,
       PidroServer.Games.Bots.BotManager,
+      # Node-local rate-limit counters; must be up before the endpoint serves
+      {PidroServer.RateLimit, clean_period: :timer.minutes(1)},
       # Start to serve requests, typically the last entry
       PidroServerWeb.Endpoint
     ]

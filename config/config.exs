@@ -40,6 +40,21 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   trick_transition_delay_ms: 1_500,
   hand_transition_delay_ms: 3_000
 
+# Rate-limit policies for PidroServerWeb.Plugs.RateLimit: `limit` requests per
+# `scale_ms` window, keyed by the client address (:ip), the authenticated user
+# (:user) or the hashed identifier/email param (:identifier). Numeric only, no
+# boolean off switch. config/dev.exs restates every policy at 10x for the
+# frontend end-to-end harness, config/test.exs sets 1_000_000, and
+# config/runtime.exs merges RATE_LIMIT_<POLICY>_LIMIT / _SCALE_MS overrides.
+config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  login: %{limit: 10, scale_ms: 60_000, key: :ip},
+  register: %{limit: 10, scale_ms: 600_000, key: :ip},
+  password_reset: %{limit: 3, scale_ms: 900_000, key: :ip},
+  password_reset_identifier: %{limit: 3, scale_ms: 3_600_000, key: :identifier},
+  password_reset_confirm: %{limit: 5, scale_ms: 900_000, key: :ip},
+  room_create: %{limit: 10, scale_ms: 60_000, key: :user},
+  room_lookup: %{limit: 120, scale_ms: 60_000, key: :ip}
+
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
 # ordinal distribution.

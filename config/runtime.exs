@@ -59,6 +59,44 @@ if lifecycle_overrides != [] do
   config :pidro_server, PidroServer.Games.Lifecycle, Keyword.merge(existing, lifecycle_overrides)
 end
 
+# Rate-limit overrides via environment variables: RATE_LIMIT_<POLICY>_LIMIT and
+# RATE_LIMIT_<POLICY>_SCALE_MS (for example RATE_LIMIT_LOGIN_LIMIT=20). Limits
+# are numeric only; raise a limit instead of looking for an off switch.
+rate_limit_overrides =
+  [
+    {:login, :limit, "RATE_LIMIT_LOGIN_LIMIT"},
+    {:login, :scale_ms, "RATE_LIMIT_LOGIN_SCALE_MS"},
+    {:register, :limit, "RATE_LIMIT_REGISTER_LIMIT"},
+    {:register, :scale_ms, "RATE_LIMIT_REGISTER_SCALE_MS"},
+    {:password_reset, :limit, "RATE_LIMIT_PASSWORD_RESET_LIMIT"},
+    {:password_reset, :scale_ms, "RATE_LIMIT_PASSWORD_RESET_SCALE_MS"},
+    {:password_reset_identifier, :limit, "RATE_LIMIT_PASSWORD_RESET_IDENTIFIER_LIMIT"},
+    {:password_reset_identifier, :scale_ms, "RATE_LIMIT_PASSWORD_RESET_IDENTIFIER_SCALE_MS"},
+    {:password_reset_confirm, :limit, "RATE_LIMIT_PASSWORD_RESET_CONFIRM_LIMIT"},
+    {:password_reset_confirm, :scale_ms, "RATE_LIMIT_PASSWORD_RESET_CONFIRM_SCALE_MS"},
+    {:room_create, :limit, "RATE_LIMIT_ROOM_CREATE_LIMIT"},
+    {:room_create, :scale_ms, "RATE_LIMIT_ROOM_CREATE_SCALE_MS"},
+    {:room_lookup, :limit, "RATE_LIMIT_ROOM_LOOKUP_LIMIT"},
+    {:room_lookup, :scale_ms, "RATE_LIMIT_ROOM_LOOKUP_SCALE_MS"}
+  ]
+  |> Enum.reduce([], fn {policy, field, env_var}, acc ->
+    case System.get_env(env_var) do
+      nil -> acc
+      val -> [{policy, field, String.to_integer(val)} | acc]
+    end
+  end)
+
+if rate_limit_overrides != [] do
+  existing = Application.get_env(:pidro_server, PidroServerWeb.Plugs.RateLimit, [])
+
+  merged =
+    Enum.reduce(rate_limit_overrides, existing, fn {policy, field, value}, acc ->
+      Keyword.update!(acc, policy, &Map.put(&1, field, value))
+    end)
+
+  config :pidro_server, PidroServerWeb.Plugs.RateLimit, merged
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
