@@ -156,6 +156,31 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# ---------------------------------------------------------------------------
+# Well-known association files (AASA / assetlinks.json), served by
+# PidroServerWeb.WellKnownController. Production-correct defaults for every
+# environment; config/runtime.exs overrides each list from AASA_APP_IDS,
+# AASA_PATHS and ASSETLINKS only when that variable is set. `/app/*` stays
+# listed so the live Unity app's links survive the phase-2 proxy cutover.
+# Dev and preview Android packages get an entry once their fingerprints are
+# known; the list accepts more.
+# ---------------------------------------------------------------------------
+config :pidro_server, PidroServerWeb.WellKnownController,
+  ios_app_ids: [
+    "LSFK7YF82G.com.oneapps.pidro",
+    "LSFK7YF82G.com.marcelfahle.pidro3.dev",
+    "LSFK7YF82G.com.marcelfahle.pidro3.preview"
+  ],
+  ios_paths: ["/j/*", "/app/*"],
+  android_packages: [
+    %{
+      package: "com.oneapps.pidro",
+      fingerprints: [
+        "11:24:29:B7:D0:61:FA:FF:89:D2:F0:04:92:12:FF:18:24:90:C1:EF:CF:71:00:5D:51:6A:D6:92:66:88:1A:31"
+      ]
+    }
+  ]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

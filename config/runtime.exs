@@ -241,3 +241,33 @@ if config_env() == :prod do
   #
   # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
 end
+
+# ---------------------------------------------------------------------------
+# Well-known association files (AASA / assetlinks.json) env overrides.
+#
+# Applies in every environment. Defaults live in config/config.exs; each
+# variable below replaces its list only when set, and a set value is validated
+# at boot by PidroServerWeb.WellKnownController.env_overrides/1 (fingerprints
+# are upper-cased and must be 32 colon-separated hex pairs; malformed values
+# raise). An unset variable is never an error.
+#
+#   AASA_APP_IDS  comma list, e.g. "LSFK7YF82G.com.oneapps.pidro,LSFK7YF82G.com.example.dev"
+#   AASA_PATHS    comma list, e.g. "/j/*,/app/*"
+#   ASSETLINKS    "package:fp1|fp2,package2:fp3" with SHA-256 cert fingerprints
+#
+# Gated on the variables being present and the module being loadable: this
+# runtime.exs is shared by every umbrella app, and PidroServerWeb only exists
+# on pidro_server's code path (mix tasks run inside apps/pidro_engine skip it).
+# ---------------------------------------------------------------------------
+well_known_env = Map.take(System.get_env(), ["AASA_APP_IDS", "AASA_PATHS", "ASSETLINKS"])
+
+if well_known_env != %{} and Code.ensure_loaded?(PidroServerWeb.WellKnownController) do
+  well_known_existing =
+    Application.get_env(:pidro_server, PidroServerWeb.WellKnownController, [])
+
+  well_known_overrides = PidroServerWeb.WellKnownController.env_overrides(well_known_env)
+
+  config :pidro_server,
+         PidroServerWeb.WellKnownController,
+         Keyword.merge(well_known_existing, well_known_overrides)
+end

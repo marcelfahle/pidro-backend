@@ -118,4 +118,23 @@ defmodule PidroServerWeb.Router do
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
   end
+
+  # Domain-association files for iOS universal links and Android app links.
+  # No `accepts` plug on purpose: Apple's CDN and Google's verifier must get JSON
+  # for any Accept header, and the controller sets the content type itself.
+  pipeline :well_known do
+  end
+
+  scope "/", PidroServerWeb do
+    pipe_through :well_known
+
+    get "/.well-known/apple-app-site-association",
+        WellKnownController,
+        :apple_app_site_association
+
+    get "/.well-known/assetlinks.json", WellKnownController, :assetlinks
+
+    # Legacy root path Apple still probes before the well-known one.
+    get "/apple-app-site-association", WellKnownController, :apple_app_site_association
+  end
 end
