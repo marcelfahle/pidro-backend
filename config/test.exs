@@ -27,6 +27,8 @@ config :pidro_server, :password_reset,
   debug_tokens: true,
   reset_url_base: "http://localhost:5173"
 
+config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4002/j"
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

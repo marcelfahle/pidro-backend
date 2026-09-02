@@ -194,6 +194,12 @@ config :pidro_server, PidroServerWeb.WellKnownController,
     }
   ]
 
+# Invite links (PidroServer.Invites.url/1) are `<link_base_url>/<code>`, the
+# landing page proxied on pidro.online. config/dev.exs and config/test.exs point
+# at the local endpoint; config/runtime.exs replaces the value from
+# INVITE_LINK_BASE_URL when that variable is set.
+config :pidro_server, PidroServer.Invites, link_base_url: "https://pidro.online/j"
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

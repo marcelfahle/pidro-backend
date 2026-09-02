@@ -287,3 +287,22 @@ if well_known_env != %{} and Code.ensure_loaded?(PidroServerWeb.WellKnownControl
          PidroServerWeb.WellKnownController,
          Keyword.merge(well_known_existing, well_known_overrides)
 end
+
+# ---------------------------------------------------------------------------
+# Invite link base (PidroServer.Invites.url/1) env override.
+#
+# Applies in every environment. Defaults live in config/config.exs and the
+# per-environment files; INVITE_LINK_BASE_URL replaces `link_base_url` only
+# when set, e.g. "https://pidro.online/j". Gated like the well-known block
+# above: runtime.exs is shared by every umbrella app, and PidroServer.Invites
+# only exists on pidro_server's code path.
+# ---------------------------------------------------------------------------
+invite_link_base_url = System.get_env("INVITE_LINK_BASE_URL")
+
+if invite_link_base_url not in [nil, ""] and Code.ensure_loaded?(PidroServer.Invites) do
+  invites_existing = Application.get_env(:pidro_server, PidroServer.Invites, [])
+
+  config :pidro_server,
+         PidroServer.Invites,
+         Keyword.put(invites_existing, :link_base_url, invite_link_base_url)
+end

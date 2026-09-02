@@ -107,6 +107,9 @@ config :pidro_server, :password_reset,
   debug_tokens: true,
   reset_url_base: "http://localhost:5173"
 
+# Invite links open the local landing page; INVITE_LINK_BASE_URL overrides.
+config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4000/j"
+
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
 
