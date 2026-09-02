@@ -3,8 +3,12 @@ defmodule PidroServerWeb.Plugs.TrustedProxy do
   Restores the client address and scheme from kamal-proxy's `X-Forwarded-*`
   headers.
 
-  Mounted first in `PidroServerWeb.Endpoint`, so every later plug, the router
-  and `PidroServerWeb.Plugs.RateLimit` see the real client in `conn.remote_ip`.
+  Mounted first among the user plugs in `PidroServerWeb.Endpoint`, so every
+  later plug of the HTTP pipeline, the router and `PidroServerWeb.Plugs.RateLimit`
+  see the real client in `conn.remote_ip`. WebSocket upgrades are the exception:
+  `use Phoenix.Endpoint` injects `plug :socket_dispatch` ahead of every user plug
+  and halts on a socket path, so a socket connect never reaches this plug and any
+  socket-level use of the peer address needs its own check.
   Without it every production request would carry the proxy's bridge address
   and the per-IP limits would throttle everyone at once.
 

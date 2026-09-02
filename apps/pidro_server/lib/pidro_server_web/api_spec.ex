@@ -96,6 +96,7 @@ defmodule PidroServerWeb.ApiSpec do
         - `404 Not Found` - Resource not found
         - `422 Unprocessable Entity` - Validation error
         - `429 Too Many Requests` - Rate limit exceeded; honour `Retry-After`
+        - `503 Service Unavailable` - No free room code could be allocated (`ROOM_CODE_EXHAUSTED`); retry shortly
         """
       },
       paths: Paths.from_router(Router),

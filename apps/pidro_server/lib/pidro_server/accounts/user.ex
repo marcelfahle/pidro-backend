@@ -170,7 +170,10 @@ defmodule PidroServer.Accounts.User do
   # casts display_name so the rule lives in one place (R30).
   defp validate_display_name(changeset) do
     changeset
-    |> update_change(:display_name, &String.trim/1)
+    |> update_change(:display_name, fn
+      nil -> nil
+      name -> String.trim(name)
+    end)
     |> validate_length(:display_name, max: @display_name_max_length)
   end
 

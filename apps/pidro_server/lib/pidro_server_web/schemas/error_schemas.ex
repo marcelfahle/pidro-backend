@@ -386,4 +386,54 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       }
     }
   end
+
+  @doc """
+  Room codes exhausted error response schema (429 Room codes exhausted).
+
+  Returned by `PidroServerWeb.Plugs.RateLimit` when a route's policy window is
+  exhausted. The response also carries a `Retry-After` header holding the
+  number of whole seconds (rounded up, minimum 1) until the window resets.
+  Clients should wait at least that long before retrying.
+
+  ## HTTP Status Code
+  429 Room codes exhausted
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "ROOM_CODE_EXHAUSTED",
+            "title": "Room codes exhausted",
+            "detail": "No free room code could be allocated, please try again shortly"
+          }
+        ]
+      }
+  """
+  def room_code_exhausted_error do
+    %Schema{
+      type: :object,
+      title: "TooManyRequestsError",
+      description:
+        "No free room code could be allocated (429 Room codes exhausted); the Retry-After header holds the seconds to wait",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single ROOM_CODE_EXHAUSTED error object",
+          items: error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "ROOM_CODE_EXHAUSTED",
+            "title" => "Room codes exhausted",
+            "detail" => "No free room code could be allocated, please try again shortly"
+          }
+        ]
+      }
+    }
+  end
 end

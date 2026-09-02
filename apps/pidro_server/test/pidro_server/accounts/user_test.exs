@@ -27,6 +27,16 @@ defmodule PidroServer.Accounts.UserTest do
       assert get_change(changeset, :display_name) == "Anna"
     end
 
+    test "clears an existing display_name with nil or a blank value" do
+      user = %User{username: "anna_clear", display_name: "Anna"}
+
+      for value <- [nil, "", "   "] do
+        changeset = User.changeset(user, %{display_name: value})
+        assert changeset.valid?, inspect(changeset.errors)
+        assert Ecto.Changeset.get_field(changeset, :display_name) == nil
+      end
+    end
+
     test "treats a blank display_name as nil" do
       changeset = User.changeset(%User{}, %{username: "blank_name", display_name: "   "})
 

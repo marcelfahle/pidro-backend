@@ -158,6 +158,12 @@ defmodule PidroServerWeb.API.RoomController do
             "Rate limit exceeded; see Retry-After",
             "application/json",
             ErrorSchemas.too_many_requests_error()
+          ),
+        503 =>
+          Operation.response(
+            "No free room code could be allocated; retry shortly",
+            "application/json",
+            ErrorSchemas.room_code_exhausted_error()
           )
       }
     }

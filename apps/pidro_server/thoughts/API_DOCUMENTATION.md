@@ -746,6 +746,7 @@ All API errors follow a consistent JSON format for easy parsing and handling.
 | **404 Not Found** | Resource doesn't exist | Room not found, user not found |
 | **422 Unprocessable Entity** | Validation failed | Username taken, invalid email, room full |
 | **429 Too Many Requests** | Rate limit exceeded | Too many logins, registrations, password resets, room creations or room lookups from one client; see [Rate Limiting](#rate-limiting) |
+| 503 | Service Unavailable | No free room code could be allocated (`ROOM_CODE_EXHAUSTED`); retry shortly |
 | **500 Internal Server Error** | Server error | Unexpected server issue |
 
 ### Common Error Codes
