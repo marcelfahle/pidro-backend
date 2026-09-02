@@ -55,7 +55,10 @@ defmodule PidroServerWeb.API.AuthController do
       created:
         {"User created successfully", "application/json", UserSchemas.UserWithTokenResponse},
       unprocessable_entity:
-        {"Validation errors", "application/json", ErrorSchemas.validation_error()}
+        {"Validation errors", "application/json", ErrorSchemas.validation_error()},
+      too_many_requests:
+        {"Rate limit exceeded; see Retry-After", "application/json",
+         ErrorSchemas.too_many_requests_error()}
     ]
   )
 
@@ -137,7 +140,11 @@ defmodule PidroServerWeb.API.AuthController do
     request_body: {"Login credentials", "application/json", UserSchemas.LoginRequest},
     responses: [
       ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
-      unauthorized: {"Invalid credentials", "application/json", ErrorSchemas.unauthorized_error()}
+      unauthorized:
+        {"Invalid credentials", "application/json", ErrorSchemas.unauthorized_error()},
+      too_many_requests:
+        {"Rate limit exceeded; see Retry-After", "application/json",
+         ErrorSchemas.too_many_requests_error()}
     ]
   )
 
@@ -201,6 +208,44 @@ defmodule PidroServerWeb.API.AuthController do
     end
   end
 
+  operation(:request_password_reset,
+    summary: "Request a password reset link",
+    description: """
+    Sends a password reset link when an account matches the identifier (username
+    or email). The response is identical whether or not the account exists.
+
+    Rate limited per client IP and, additionally, per normalized identifier.
+    """,
+    request_body:
+      {"Password reset request", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         properties: %{
+           identifier: %OpenApiSpex.Schema{
+             type: :string,
+             description: "Username or email address of the account"
+           }
+         },
+         required: [:identifier]
+       }},
+    responses: [
+      ok:
+        {"Request accepted", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             data: %OpenApiSpex.Schema{
+               type: :object,
+               properties: %{message: %OpenApiSpex.Schema{type: :string}}
+             }
+           }
+         }},
+      too_many_requests:
+        {"Rate limit exceeded; see Retry-After", "application/json",
+         ErrorSchemas.too_many_requests_error()}
+    ]
+  )
+
   @doc """
   Request a password reset link.
   """
@@ -222,8 +267,43 @@ defmodule PidroServerWeb.API.AuthController do
     |> json(%{data: password_reset_request_response(nil)})
   end
 
+  operation(:reset_password,
+    summary: "Reset a password with a reset token",
+    description: """
+    Sets a new password for the account the reset token belongs to and returns
+    the user with a fresh authentication token. Rate limited per client IP.
+    """,
+    request_body:
+      {"Password reset confirmation", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         properties: %{
+           token: %OpenApiSpex.Schema{type: :string, description: "Reset token from the link"},
+           password: %OpenApiSpex.Schema{
+             type: :string,
+             format: :password,
+             description: "New password (minimum 8 characters)"
+           }
+         },
+         required: [:token, :password]
+       }},
+    responses: [
+      ok: {"Password reset", "application/json", UserSchemas.UserWithTokenResponse},
+      unprocessable_entity:
+        {"Invalid or expired reset token", "application/json", ErrorSchemas.validation_error()},
+      too_many_requests:
+        {"Rate limit exceeded; see Retry-After", "application/json",
+         ErrorSchemas.too_many_requests_error()}
+    ]
+  )
+
   @doc """
   Reset a password using a reset token.
+
+  `Auth.reset_user_password/2` changes the password, clears the reset token
+  and bumps `token_version` in one transaction. The token in the response is
+  minted from the user that transaction returns, so it carries the new
+  version while every token issued before the reset is revoked.
   """
   @spec reset_password(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def reset_password(conn, %{"token" => token, "password" => password}) do

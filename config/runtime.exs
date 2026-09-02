@@ -59,6 +59,53 @@ if lifecycle_overrides != [] do
   config :pidro_server, PidroServer.Games.Lifecycle, Keyword.merge(existing, lifecycle_overrides)
 end
 
+# Rate-limit overrides via environment variables: RATE_LIMIT_<POLICY>_LIMIT and
+# RATE_LIMIT_<POLICY>_SCALE_MS (for example RATE_LIMIT_LOGIN_LIMIT=20). Limits
+# are numeric only; raise a limit instead of looking for an off switch.
+rate_limit_overrides =
+  [
+    {:login, :limit, "RATE_LIMIT_LOGIN_LIMIT"},
+    {:login, :scale_ms, "RATE_LIMIT_LOGIN_SCALE_MS"},
+    {:register, :limit, "RATE_LIMIT_REGISTER_LIMIT"},
+    {:register, :scale_ms, "RATE_LIMIT_REGISTER_SCALE_MS"},
+    {:password_reset, :limit, "RATE_LIMIT_PASSWORD_RESET_LIMIT"},
+    {:password_reset, :scale_ms, "RATE_LIMIT_PASSWORD_RESET_SCALE_MS"},
+    {:password_reset_identifier, :limit, "RATE_LIMIT_PASSWORD_RESET_IDENTIFIER_LIMIT"},
+    {:password_reset_identifier, :scale_ms, "RATE_LIMIT_PASSWORD_RESET_IDENTIFIER_SCALE_MS"},
+    {:password_reset_confirm, :limit, "RATE_LIMIT_PASSWORD_RESET_CONFIRM_LIMIT"},
+    {:password_reset_confirm, :scale_ms, "RATE_LIMIT_PASSWORD_RESET_CONFIRM_SCALE_MS"},
+    {:room_create, :limit, "RATE_LIMIT_ROOM_CREATE_LIMIT"},
+    {:room_create, :scale_ms, "RATE_LIMIT_ROOM_CREATE_SCALE_MS"},
+    {:room_lookup, :limit, "RATE_LIMIT_ROOM_LOOKUP_LIMIT"},
+    {:room_lookup, :scale_ms, "RATE_LIMIT_ROOM_LOOKUP_SCALE_MS"}
+  ]
+  |> Enum.reduce([], fn {policy, field, env_var}, acc ->
+    case System.get_env(env_var) do
+      nil -> acc
+      val -> [{policy, field, String.to_integer(val)} | acc]
+    end
+  end)
+
+if rate_limit_overrides != [] do
+  existing = Application.get_env(:pidro_server, PidroServerWeb.Plugs.RateLimit, [])
+
+  merged =
+    Enum.reduce(rate_limit_overrides, existing, fn {policy, field, value}, acc ->
+      Keyword.update!(acc, policy, &Map.put(&1, field, value))
+    end)
+
+  config :pidro_server, PidroServerWeb.Plugs.RateLimit, merged
+end
+
+# Proxy header trust for PidroServerWeb.Plugs.TrustedProxy. Production runs
+# behind kamal-proxy, so the default is true there and false everywhere else.
+# TRUST_PROXY_HEADERS=false makes the rate limiter key on the TCP peer instead.
+trust_proxy_default = if config_env() == :prod, do: "true", else: "false"
+
+config :pidro_server,
+  trust_proxy_headers:
+    System.get_env("TRUST_PROXY_HEADERS", trust_proxy_default) in ~w(true TRUE 1 yes YES)
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
@@ -193,4 +240,34 @@ if config_env() == :prod do
   #     config :swoosh, :api_client, Swoosh.ApiClient.Req
   #
   # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
+end
+
+# ---------------------------------------------------------------------------
+# Well-known association files (AASA / assetlinks.json) env overrides.
+#
+# Applies in every environment. Defaults live in config/config.exs; each
+# variable below replaces its list only when set, and a set value is validated
+# at boot by PidroServerWeb.WellKnownController.env_overrides/1 (fingerprints
+# are upper-cased and must be 32 colon-separated hex pairs; malformed values
+# raise). An unset variable is never an error.
+#
+#   AASA_APP_IDS  comma list, e.g. "LSFK7YF82G.com.oneapps.pidro,LSFK7YF82G.com.example.dev"
+#   AASA_PATHS    comma list, e.g. "/j/*,/app/*"
+#   ASSETLINKS    "package:fp1|fp2,package2:fp3" with SHA-256 cert fingerprints
+#
+# Gated on the variables being present and the module being loadable: this
+# runtime.exs is shared by every umbrella app, and PidroServerWeb only exists
+# on pidro_server's code path (mix tasks run inside apps/pidro_engine skip it).
+# ---------------------------------------------------------------------------
+well_known_env = Map.take(System.get_env(), ["AASA_APP_IDS", "AASA_PATHS", "ASSETLINKS"])
+
+if well_known_env != %{} and Code.ensure_loaded?(PidroServerWeb.WellKnownController) do
+  well_known_existing =
+    Application.get_env(:pidro_server, PidroServerWeb.WellKnownController, [])
+
+  well_known_overrides = PidroServerWeb.WellKnownController.env_overrides(well_known_env)
+
+  config :pidro_server,
+         PidroServerWeb.WellKnownController,
+         Keyword.merge(well_known_existing, well_known_overrides)
 end

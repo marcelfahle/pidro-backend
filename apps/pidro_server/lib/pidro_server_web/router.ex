@@ -17,11 +17,14 @@ defmodule PidroServerWeb.Router do
   pipeline :api do
     plug :accepts, ["json"]
     plug OpenApiSpex.Plug.PutApiSpec, module: PidroServerWeb.ApiSpec
+    plug PidroServerWeb.Plugs.RateLimit
   end
 
   pipeline :api_authenticated do
     plug :accepts, ["json"]
     plug PidroServerWeb.Plugs.Authenticate
+    # After Authenticate so :user policies see conn.assigns.current_user
+    plug PidroServerWeb.Plugs.RateLimit
   end
 
   scope "/", PidroServerWeb do
@@ -43,15 +46,20 @@ defmodule PidroServerWeb.Router do
   scope "/api/v1", PidroServerWeb.API do
     pipe_through :api
 
-    # Auth routes without authentication
-    post "/auth/register", AuthController, :register
-    post "/auth/login", AuthController, :login
-    post "/auth/password-reset", AuthController, :request_password_reset
-    post "/auth/password-reset/confirm", AuthController, :reset_password
+    # Auth routes without authentication. `private: %{rate_limit: [...]}` names
+    # the PidroServerWeb.Plugs.RateLimit policies applied to the route.
+    post "/auth/register", AuthController, :register, private: %{rate_limit: [:register]}
+    post "/auth/login", AuthController, :login, private: %{rate_limit: [:login]}
+
+    post "/auth/password-reset", AuthController, :request_password_reset,
+      private: %{rate_limit: [:password_reset, :password_reset_identifier]}
+
+    post "/auth/password-reset/confirm", AuthController, :reset_password,
+      private: %{rate_limit: [:password_reset_confirm]}
 
     # Room routes without authentication
     get "/rooms", RoomController, :index
-    get "/rooms/:code", RoomController, :show
+    get "/rooms/:code", RoomController, :show, private: %{rate_limit: [:room_lookup]}
   end
 
   # API v1 authenticated routes
@@ -73,7 +81,7 @@ defmodule PidroServerWeb.Router do
     get "/lobby", RoomController, :lobby
 
     # Room routes with authentication
-    post "/rooms", RoomController, :create
+    post "/rooms", RoomController, :create, private: %{rate_limit: [:room_create]}
     post "/rooms/:code/join", RoomController, :join
     delete "/rooms/:code/leave", RoomController, :leave
     post "/rooms/:code/open-seat", RoomController, :open_seat
@@ -109,5 +117,24 @@ defmodule PidroServerWeb.Router do
       live_dashboard "/dashboard", metrics: PidroServerWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
+  end
+
+  # Domain-association files for iOS universal links and Android app links.
+  # No `accepts` plug on purpose: Apple's CDN and Google's verifier must get JSON
+  # for any Accept header, and the controller sets the content type itself.
+  pipeline :well_known do
+  end
+
+  scope "/", PidroServerWeb do
+    pipe_through :well_known
+
+    get "/.well-known/apple-app-site-association",
+        WellKnownController,
+        :apple_app_site_association
+
+    get "/.well-known/assetlinks.json", WellKnownController, :assetlinks
+
+    # Legacy root path Apple still probes before the well-known one.
+    get "/apple-app-site-association", WellKnownController, :apple_app_site_association
   end
 end

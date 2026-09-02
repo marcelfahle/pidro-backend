@@ -27,6 +27,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - **ValidationError**: 422 Unprocessable Entity response for validation failures
   - **UnauthorizedError**: 401 Unauthorized response for authentication failures
   - **NotFoundError**: 404 Not Found response for missing resources
+  - **TooManyRequestsError**: 429 Too Many Requests response from the rate limiter
   """
 
   alias OpenApiSpex.Schema
@@ -330,6 +331,106 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
             "code" => "ROOM_NOT_FOUND",
             "title" => "Room not found",
             "detail" => "The requested room does not exist"
+          }
+        ]
+      }
+    }
+  end
+
+  @doc """
+  Too Many Requests error response schema (429 Too Many Requests).
+
+  Returned by `PidroServerWeb.Plugs.RateLimit` when a route's policy window is
+  exhausted. The response also carries a `Retry-After` header holding the
+  number of whole seconds (rounded up, minimum 1) until the window resets.
+  Clients should wait at least that long before retrying.
+
+  ## HTTP Status Code
+  429 Too Many Requests
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "RATE_LIMITED",
+            "title": "Too Many Requests",
+            "detail": "Rate limit exceeded, retry after 42 seconds"
+          }
+        ]
+      }
+  """
+  def too_many_requests_error do
+    %Schema{
+      type: :object,
+      title: "TooManyRequestsError",
+      description:
+        "Rate limit exceeded (429 Too Many Requests); the Retry-After header holds the seconds to wait",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single RATE_LIMITED error object",
+          items: error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "RATE_LIMITED",
+            "title" => "Too Many Requests",
+            "detail" => "Rate limit exceeded, retry after 42 seconds"
+          }
+        ]
+      }
+    }
+  end
+
+  @doc """
+  Room codes exhausted error response schema (503 Service Unavailable).
+
+  Returned by `PidroServerWeb.API.FallbackController` when
+  `PidroServer.Games.RoomCodes.generate_unique/3` finds no free room code
+  within its attempt bound. This is not a rate limit: no `Retry-After` header
+  is sent. Clients should retry after a short delay.
+
+  ## HTTP Status Code
+  503 Service Unavailable
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "ROOM_CODE_EXHAUSTED",
+            "title": "Room codes exhausted",
+            "detail": "No free room code could be allocated, please try again shortly"
+          }
+        ]
+      }
+  """
+  def room_code_exhausted_error do
+    %Schema{
+      type: :object,
+      title: "RoomCodeExhaustedError",
+      description:
+        "No free room code could be allocated (503 Service Unavailable); retry after a short delay",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single ROOM_CODE_EXHAUSTED error object",
+          items: error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "ROOM_CODE_EXHAUSTED",
+            "title" => "Room codes exhausted",
+            "detail" => "No free room code could be allocated, please try again shortly"
           }
         ]
       }

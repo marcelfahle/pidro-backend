@@ -74,5 +74,29 @@ jobs:
           ruby-version: "4.0.5"
           bundler-cache: true
       - run: bundle exec kamal config > /dev/null
+      - name: Forbid forward_headers in config/deploy.yml
+        # Parses the YAML (any nesting, flow or block style, quoted keys) instead
+        # of grepping, so no spelling of the key slips past the policy.
+        run: |
+          ruby -ryaml -e '
+            def walk(node, path, hits)
+              case node
+              when Hash
+                node.each do |key, value|
+                  child = path + [key.to_s]
+                  hits << child.join(".") if key.to_s == "forward_headers"
+                  walk(value, child, hits)
+                end
+              when Array
+                node.each_with_index { |value, index| walk(value, path + [index.to_s], hits) }
+              end
+            end
+            hits = []
+            walk(YAML.safe_load_file("config/deploy.yml", aliases: true), [], hits)
+            unless hits.empty?
+              warn "config/deploy.yml must not set forward_headers (found at: #{hits.join(", ")}); see docs/deployment/kamal_hetzner.md"
+              exit 1
+            end
+          '
       - run: bundle exec bundle-audit check --update
       - run: bash -n .kamal/hooks/* ops/backup-production ops/credo-diff ops/install-backup-timer ops/server/pidro-backup ops/smoke-production

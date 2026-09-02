@@ -47,6 +47,53 @@ Use a low TTL like `300` for the first cutover.
 - Production developer routes are disabled. Do not add the developer Basic Auth
   password to the production secret contract.
 
+## Proxy headers and rate limiting
+
+The API rate limiter (`PidroServerWeb.Plugs.RateLimit`) keys most policies by
+client address, so the release must learn the real client behind kamal-proxy.
+
+- kamal-proxy terminates TLS and forwards to the container over the Docker
+  bridge network, so Phoenix sees the proxy's private address as the TCP peer.
+- [config/deploy.yml](../../config/deploy.yml) keeps kamal-proxy's
+  `forward_headers` at its default (off with TLS). kamal-proxy then strips any
+  client-supplied `X-Forwarded-*` headers and writes exactly one
+  `X-Forwarded-For` value: the true peer. Do not add a `forward_headers` key;
+  the `deployment-config` CI job fails if one appears.
+- `PidroServerWeb.Plugs.TrustedProxy`, the first plug in the endpoint, honours
+  `X-Forwarded-For` and `X-Forwarded-Proto` only when `TRUST_PROXY_HEADERS` is
+  true (the production default; false in dev and test) and the TCP peer is a
+  loopback, RFC 1918, CGNAT, IPv6 loopback, ULA or link-local address. It takes
+  the rightmost `X-Forwarded-For` value, so even if `forward_headers` were ever
+  enabled and client-supplied values were kept, the proxy-appended peer would
+  still win.
+- `TRUST_PROXY_HEADERS: "false"` under `env.clear` makes the limiter key on the
+  TCP peer instead; every client then shares the proxy's bucket, so use it only
+  to diagnose a limiter problem.
+- Limits are tuned with `RATE_LIMIT_<POLICY>_LIMIT` and
+  `RATE_LIMIT_<POLICY>_SCALE_MS`, where `<POLICY>` is one of `LOGIN`,
+  `REGISTER`, `PASSWORD_RESET`, `PASSWORD_RESET_IDENTIFIER`,
+  `PASSWORD_RESET_CONFIRM`, `ROOM_CREATE` or `ROOM_LOOKUP`, for example
+  `RATE_LIMIT_LOGIN_LIMIT: "20"`. There is no off switch: raise a limit and
+  redeploy. Never roll back a release to fix limiter behaviour.
+- Limits are per node and per fixed window; counters reset on restart.
+
+### One-time production check
+
+`ops/smoke-production` cannot see the derived client address, so verify the
+header contract once after the first deploy that carries the limiter:
+
+1. Add `RATE_LIMIT_LOGIN_LIMIT: "1"` under `env.clear` in
+   [config/deploy.yml](../../config/deploy.yml) and run `just deploy`.
+2. From your own network, `POST https://app.pidro.online/api/v1/auth/login`
+   twice within one minute (any credentials). The second response must be
+   `429` with a `Retry-After` header.
+3. From a second network (a phone on mobile data), send the same request
+   once. It must not be `429` (expect `401` for bad credentials). A `429` here
+   means the limiter keyed on the proxy address: check that
+   `TRUST_PROXY_HEADERS` is not `false` and that `forward_headers` has not been
+   enabled.
+4. Remove the override and run `just deploy` again.
+
 ## Release flow
 
 Run the local quality gate and deploy only from a clean commit:
@@ -68,6 +115,23 @@ The Kamal hooks enforce the release order:
 Use `just rollback <git-sha>` to restore a retained application image. Database
 migrations are not automatically reversed; restore the database only when a
 rollback is incompatible with the migrated schema.
+
+### Token payload rollback
+
+Auth tokens carry a versioned payload (`%{id, v}`) since the invite-prerequisites
+release. That change is roll-forward only: a release built before it cannot
+verify any token minted since the deploy and would reject every logged-in
+user, so `just rollback` must never cross that release.
+
+- Limiter problems are corrected by environment changes and a redeploy, never
+  by rolling back: raise `RATE_LIMIT_<POLICY>_LIMIT` (or `_SCALE_MS`), or set
+  `TRUST_PROXY_HEADERS: "false"` under `env.clear` while diagnosing.
+- If the versioned payload itself must be withdrawn, rotate `@signing_salt` in
+  `apps/pidro_server/lib/pidro_server/accounts/token.ex` and deploy forward;
+  every token dies and users log in again.
+- Legacy bare-id tokens are accepted until 30 days after the production deploy
+  of that release, not before 2026-10-02; whoever deploys writes the literal
+  date into the legacy clause in `token.ex`.
 
 ## Database backups
 

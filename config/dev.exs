@@ -66,6 +66,27 @@ config :pidro_server, PidroServerWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :pidro_server, dev_routes: true
 
+# Rate limits at 10x the production numbers so the frontend end-to-end harness
+# can register several accounts from one address. Restated by hand because
+# Config cannot read config.exs values; keep this table aligned with it.
+#
+#   policy                     production (config.exs)   dev (here)
+#   login                      10 per 60_000 ms          100 per 60_000 ms
+#   register                   10 per 600_000 ms         100 per 600_000 ms
+#   password_reset             3 per 900_000 ms          30 per 900_000 ms
+#   password_reset_identifier  3 per 3_600_000 ms        30 per 3_600_000 ms
+#   password_reset_confirm     5 per 900_000 ms          50 per 900_000 ms
+#   room_create                10 per 60_000 ms          100 per 60_000 ms
+#   room_lookup                120 per 60_000 ms         1_200 per 60_000 ms
+config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  login: %{limit: 100, scale_ms: 60_000, key: :ip},
+  register: %{limit: 100, scale_ms: 600_000, key: :ip},
+  password_reset: %{limit: 30, scale_ms: 900_000, key: :ip},
+  password_reset_identifier: %{limit: 30, scale_ms: 3_600_000, key: :identifier},
+  password_reset_confirm: %{limit: 50, scale_ms: 900_000, key: :ip},
+  room_create: %{limit: 100, scale_ms: 60_000, key: :user},
+  room_lookup: %{limit: 1_200, scale_ms: 60_000, key: :ip}
+
 config :pidro_server, :password_reset,
   debug_tokens: true,
   reset_url_base: "http://localhost:5173"

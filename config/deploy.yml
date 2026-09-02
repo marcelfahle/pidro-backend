@@ -13,6 +13,12 @@ ssh:
   user: root
 
 proxy:
+  # Keep kamal-proxy's forward_headers at its default (off with TLS). The proxy
+  # then discards client-supplied X-Forwarded-* headers and writes exactly one
+  # trusted X-Forwarded-For value, which PidroServerWeb.Plugs.TrustedProxy
+  # reads so rate limits key on the real client. Do not add a forward_headers
+  # key here: the deployment-config CI job fails if one appears. See
+  # docs/deployment/kamal_hetzner.md.
   host: app.pidro.online
   ssl: true
   app_port: 4000

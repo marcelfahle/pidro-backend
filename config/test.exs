@@ -59,5 +59,16 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   trick_transition_delay_ms: 30,
   hand_transition_delay_ms: 40
 
+# Rate limits are effectively unlimited in test. Rate-limit tests lower one
+# policy at a time with PidroServerWeb.RateLimitCase.with_limit/3.
+config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  login: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
+  register: %{limit: 1_000_000, scale_ms: 600_000, key: :ip},
+  password_reset: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
+  password_reset_identifier: %{limit: 1_000_000, scale_ms: 3_600_000, key: :identifier},
+  password_reset_confirm: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
+  room_create: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  room_lookup: %{limit: 1_000_000, scale_ms: 60_000, key: :ip}
+
 # Compile dev-only LiveView routes in test to satisfy verified route checks
 config :pidro_server, dev_routes: true

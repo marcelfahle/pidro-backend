@@ -21,6 +21,14 @@ defmodule PidroServerWeb.Endpoint do
     websocket: true,
     longpoll: false
 
+  # Restore the client address and scheme from kamal-proxy's X-Forwarded-*
+  # headers for the HTTP pipeline. A no-op unless :trust_proxy_headers is
+  # true and the TCP peer is proxy-side. WebSocket upgrades never reach this
+  # plug: `use Phoenix.Endpoint` injects `plug :socket_dispatch` ahead of every
+  # user plug and it halts on a socket path, so socket connect_info still sees
+  # the proxy address.
+  plug PidroServerWeb.Plugs.TrustedProxy
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),

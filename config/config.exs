@@ -40,6 +40,26 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   trick_transition_delay_ms: 1_500,
   hand_transition_delay_ms: 3_000
 
+# Rate-limit policies for PidroServerWeb.Plugs.RateLimit: `limit` requests per
+# `scale_ms` window, keyed by the client address (:ip), the authenticated user
+# (:user) or the hashed identifier/email param (:identifier). Numeric only, no
+# boolean off switch. config/dev.exs restates every policy at 10x for the
+# frontend end-to-end harness, config/test.exs sets 1_000_000, and
+# config/runtime.exs merges RATE_LIMIT_<POLICY>_LIMIT / _SCALE_MS overrides.
+config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  login: %{limit: 10, scale_ms: 60_000, key: :ip},
+  register: %{limit: 10, scale_ms: 600_000, key: :ip},
+  password_reset: %{limit: 3, scale_ms: 900_000, key: :ip},
+  password_reset_identifier: %{limit: 3, scale_ms: 3_600_000, key: :identifier},
+  password_reset_confirm: %{limit: 5, scale_ms: 900_000, key: :ip},
+  room_create: %{limit: 10, scale_ms: 60_000, key: :user},
+  room_lookup: %{limit: 120, scale_ms: 60_000, key: :ip}
+
+# PidroServerWeb.Plugs.TrustedProxy honours X-Forwarded-For / X-Forwarded-Proto
+# only when this is true and the TCP peer is proxy-side. config/runtime.exs sets
+# it from TRUST_PROXY_HEADERS (default true in prod, false everywhere else).
+config :pidro_server, trust_proxy_headers: false
+
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
 # ordinal distribution.
@@ -135,6 +155,31 @@ config :logger, :default_formatter,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+# ---------------------------------------------------------------------------
+# Well-known association files (AASA / assetlinks.json), served by
+# PidroServerWeb.WellKnownController. Production-correct defaults for every
+# environment; config/runtime.exs overrides each list from AASA_APP_IDS,
+# AASA_PATHS and ASSETLINKS only when that variable is set. `/app/*` stays
+# listed so the live Unity app's links survive the phase-2 proxy cutover.
+# Dev and preview Android packages get an entry once their fingerprints are
+# known; the list accepts more.
+# ---------------------------------------------------------------------------
+config :pidro_server, PidroServerWeb.WellKnownController,
+  ios_app_ids: [
+    "LSFK7YF82G.com.oneapps.pidro",
+    "LSFK7YF82G.com.marcelfahle.pidro3.dev",
+    "LSFK7YF82G.com.marcelfahle.pidro3.preview"
+  ],
+  ios_paths: ["/j/*", "/app/*"],
+  android_packages: [
+    %{
+      package: "com.oneapps.pidro",
+      fingerprints: [
+        "11:24:29:B7:D0:61:FA:FF:89:D2:F0:04:92:12:FF:18:24:90:C1:EF:CF:71:00:5D:51:6A:D6:92:66:88:1A:31"
+      ]
+    }
+  ]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

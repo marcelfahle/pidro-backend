@@ -152,6 +152,18 @@ defmodule PidroServerWeb.API.RoomController do
             "Validation error",
             "application/json",
             ErrorSchemas.validation_error()
+          ),
+        429 =>
+          Operation.response(
+            "Rate limit exceeded; see Retry-After",
+            "application/json",
+            ErrorSchemas.too_many_requests_error()
+          ),
+        503 =>
+          Operation.response(
+            "No free room code could be allocated; retry shortly",
+            "application/json",
+            ErrorSchemas.room_code_exhausted_error()
           )
       }
     }
@@ -184,7 +196,13 @@ defmodule PidroServerWeb.API.RoomController do
       responses: %{
         200 => Operation.response("Success", "application/json", RoomSchemas.RoomResponse),
         404 =>
-          Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error())
+          Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),
+        429 =>
+          Operation.response(
+            "Rate limit exceeded; see Retry-After",
+            "application/json",
+            ErrorSchemas.too_many_requests_error()
+          )
       }
     }
   end

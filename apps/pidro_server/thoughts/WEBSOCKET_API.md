@@ -65,14 +65,15 @@ The WebSocket connection requires a valid JWT token passed in the connection par
 - Must be provided when establishing the WebSocket connection
 - Is verified using `PidroServer.Accounts.Token.verify/1`
 - Has a 30-day expiration period
-- Contains the user's ID for authorization
+- Carries the signed payload `%{id: user_id, v: token_version}`; `v` is checked against
+  `users.token_version` by `PidroServer.Accounts.Auth.fetch_user_for_token/1` on every connect
 
 **Authentication Flow:**
 
 1. User logs in via REST API (`POST /api/auth/login`)
 2. Server returns a JWT token
 3. Client includes token in WebSocket connection params
-4. Server verifies token and associates user_id with the socket
+4. Server verifies the token, checks its version against the user's `token_version`, and assigns `user_id` to the socket
 5. Connection is established and channels can be joined
 
 **Authentication Errors:**
@@ -80,6 +81,20 @@ The WebSocket connection requires a valid JWT token passed in the connection par
 - Missing token: Connection rejected with `:error`
 - Invalid token: Connection rejected with `:error`
 - Expired token: Connection rejected with `:error`
+- Revoked token (version mismatch) or unknown user: Connection rejected with `:error`
+
+**Token Revocation:**
+
+- Bumping the user's `token_version` (`PidroServer.Accounts.Auth.bump_token_version/1`; a
+  password reset does the same inside its transaction) revokes every token minted before the bump.
+- Once the bump has committed, the server broadcasts `"disconnect"` on `user_socket:<user_id>`
+  (the topic `UserSocket.id/1` returns), which closes every live connection for that user.
+- A client still holding the old token gets `:error` on each reconnect until it logs in again;
+  treat a socket `:error` after a previously working token as "log in again", not "retry".
+- Legacy tokens minted before the versioned payload carry a bare user id and verify as version 0
+  until 30 days after the production deploy of the versioned payload, and not before 2026-10-02.
+- The payload change is roll-forward only; the emergency rollback is rotating the signing salt in
+  `PidroServer.Accounts.Token`, which invalidates every token.
 
 ---
 

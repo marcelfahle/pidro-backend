@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Every route probed here (/up, /api/v1/lobby, /dev/games, /socket/websocket)
+# must stay outside PidroServerWeb.Plugs.RateLimit's policies: a 429 would fail
+# the deploy. Default limits are at least 10x this script's volume anyway. The
+# X-Forwarded-For contract cannot be verified from here because nothing echoes
+# the derived address; see docs/deployment/kamal_hetzner.md for the one-time
+# production check.
+
 base_url="${PIDRO_BASE_URL:-https://app.pidro.online}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -31,5 +38,19 @@ socket_status="$(curl --http1.1 --silent --show-error --output /dev/null --write
   --header 'Sec-WebSocket-Key: cGlkcm8tc21va2UtdGVzdA==' \
   "$base_url/socket/websocket?vsn=2.0.0")"
 test "$socket_status" = "403"
+
+aasa_status="$(curl --silent --show-error --dump-header "$tmp_dir/aasa.headers" --output "$tmp_dir/aasa.body" \
+  --write-out '%{http_code}' --max-time 15 \
+  "$base_url/.well-known/apple-app-site-association")"
+test "$aasa_status" = "200"
+grep -Eiq '^content-type: application/json' "$tmp_dir/aasa.headers"
+grep -Fq 'com.oneapps.pidro' "$tmp_dir/aasa.body"
+
+assetlinks_status="$(curl --silent --show-error --dump-header "$tmp_dir/assetlinks.headers" --output "$tmp_dir/assetlinks.body" \
+  --write-out '%{http_code}' --max-time 15 \
+  "$base_url/.well-known/assetlinks.json")"
+test "$assetlinks_status" = "200"
+grep -Eiq '^content-type: application/json' "$tmp_dir/assetlinks.headers"
+grep -Fq 'com.oneapps.pidro' "$tmp_dir/assetlinks.body"
 
 echo "Production smoke checks passed for ${base_url}."

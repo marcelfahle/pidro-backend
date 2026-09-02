@@ -373,6 +373,21 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  # Must stay above the `is_atom(reason)` catch-all, which would answer 422.
+  def call(conn, {:error, :room_code_exhausted}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> json(%{
+      errors: [
+        %{
+          code: "ROOM_CODE_EXHAUSTED",
+          title: "Room codes exhausted",
+          detail: "No free room code could be allocated, please try again shortly"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, reason}) when is_atom(reason) do
     conn
     |> put_status(:unprocessable_entity)

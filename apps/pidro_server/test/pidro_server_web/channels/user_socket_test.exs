@@ -123,6 +123,67 @@ defmodule PidroServerWeb.UserSocketTest do
     end
   end
 
+  describe "token revocation" do
+    # Same salt as `PidroServer.Accounts.Token`, used to mint the legacy
+    # bare-id payload the public API no longer produces.
+    @signing_salt "pidro_auth_salt"
+
+    setup do
+      {:ok, user} =
+        Accounts.Auth.register_user(%{
+          username: "revokeuser",
+          email: "revoke@example.com",
+          password: "password123"
+        })
+
+      %{user: user, token: Accounts.Token.generate(user)}
+    end
+
+    test "a bumped version rejects the old token on both auth paths and accepts a fresh one",
+         %{user: user, token: token} do
+      assert {:ok, _socket} = connect(UserSocket, %{"token" => token})
+      :ok = Phoenix.PubSub.subscribe(PidroServer.PubSub, "user_socket:#{user.id}")
+
+      {:ok, bumped} = Accounts.Auth.bump_token_version(user)
+
+      assert_receive %Phoenix.Socket.Broadcast{topic: topic, event: "disconnect"}
+      assert topic == "user_socket:#{user.id}"
+
+      assert :error = connect(UserSocket, %{"token" => token})
+      assert :error = connect(UserSocket, %{}, connect_info: %{auth_token: token})
+
+      fresh = Accounts.Token.generate(bumped)
+      assert {:ok, socket} = connect(UserSocket, %{"token" => fresh})
+      assert socket.assigns.user_id == user.id
+      assert UserSocket.id(socket) == "user_socket:#{user.id}"
+      assert {:ok, _socket} = connect(UserSocket, %{}, connect_info: %{auth_token: fresh})
+    end
+
+    test "rejects a token for a deleted user", %{user: user, token: token} do
+      {:ok, _deleted} = Accounts.Auth.delete_user(user)
+
+      assert :error = connect(UserSocket, %{"token" => token})
+      assert :error = connect(UserSocket, %{}, connect_info: %{auth_token: token})
+    end
+
+    test "accepts a legacy bare-id token for a version-0 user", %{user: user} do
+      legacy = Phoenix.Token.sign(Endpoint, @signing_salt, user.id)
+
+      assert {:ok, socket} = connect(UserSocket, %{"token" => legacy})
+      assert socket.assigns.user_id == user.id
+      assert is_binary(socket.assigns.user_id)
+      assert UserSocket.id(socket) == "user_socket:#{user.id}"
+      assert {:ok, _socket} = connect(UserSocket, %{}, connect_info: %{auth_token: legacy})
+    end
+
+    test "rejects a legacy bare-id token once the version is bumped", %{user: user} do
+      legacy = Phoenix.Token.sign(Endpoint, @signing_salt, user.id)
+      {:ok, _bumped} = Accounts.Auth.bump_token_version(user)
+
+      assert :error = connect(UserSocket, %{"token" => legacy})
+    end
+  end
+
   describe "session_id uniqueness" do
     setup do
       {:ok, user} =
