@@ -529,7 +529,7 @@ curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
 
 An invite is a durable row, separate from the 4-character room code: **one link per table**. The
 host mints it, shares it, and friends land on a public preview before they sit down. The link is
-`<INVITE_LINK_BASE_URL>/<CODE>` (production default `https://pidro.online/j`).
+`<INVITE_LINK_BASE_URL>/<CODE>` (production default `https://www.pidro.online/j`).
 
 **Codes** are 8 characters from the Crockford Base32 alphabet, drawn from
 `:crypto.strong_rand_bytes/1` and stored upper-cased. Lookups are forgiving: dashes are stripped,
@@ -581,8 +581,8 @@ instead of `201`.
   "data": {
     "invite": {
       "code": "7KQ4M2XB",
-      "url": "https://pidro.online/j/7KQ4M2XB",
-      "share_text": "Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
+      "url": "https://www.pidro.online/j/7KQ4M2XB",
+      "share_text": "Come play Pidro with me 🃏 https://www.pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
       "seat_hint": "partner",
       "label": "Anna",
       "expires_at": "2026-09-03T10:30:00.000000Z",
@@ -630,6 +630,19 @@ cannot be turned into a room join.
 - `next_code` is present **only** when `state` is `moved`.
 
 An unknown code answers `404`. Limited at policy `invite_preview` (per client IP).
+
+#### Public Invite Page
+
+**Endpoint**: `GET /j/:code`
+**Authentication**: None
+
+Returns a server-rendered handoff page for the same public projection as the JSON preview. Open
+and moved invites offer a device-appropriate app handoff; inactive invites explain their state
+without offering a join action. Desktop browsers also receive a QR code. Share crawlers receive
+the Open Graph metadata and a minimal inert body. The response is always `Cache-Control:
+no-store`, varies by `User-Agent`, creates no session cookie, and never contains the private room
+code, user id, seat hint or label. Unknown codes receive a generic branded `404` without echoing
+the attempted code. This route shares the `invite_preview` IP limit with the JSON preview.
 
 #### Redeem an Invite
 

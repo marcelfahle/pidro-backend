@@ -117,7 +117,8 @@ These variables also go under `env.clear` in
 [config/deploy.yml](../../config/deploy.yml). All are optional; each replaces
 only the key it names, and defaults live in `config/config.exs`.
 
-- `INVITE_LINK_BASE_URL` (default `https://pidro.online/j`) is the base of every
+- `INVITE_LINK_BASE_URL` (default `https://www.pidro.online/j`) is the base of
+  every
   invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>` and
   `share_text` repeats the dashed code. It must point at the host serving the
   invite landing page, which is also the host whose
@@ -145,6 +146,19 @@ only the key it names, and defaults live in `config/config.exs`.
   grace period. This is the knob for "the host left the app to paste the link
   and came back to a dead table": raise it, redeploy, and the running rooms pick
   up the new value on the next sweep.
+
+The invite cutover is deliberately backend-first: deploy Phoenix, verify
+`https://app.pidro.online/j/<OPEN_CODE>`, then deploy the marketing-site rewrites
+for `/j/*`, both AASA paths and `/.well-known/*`. The public canonical host is
+`https://www.pidro.online`; the apex host redirects and must not be used for new
+Universal Links. After both deploys, run:
+
+```bash
+PIDRO_PUBLIC_URL=https://www.pidro.online PIDRO_INVITE_CODE=<OPEN_CODE> ops/smoke-production
+```
+
+The public-host checks fail on redirects, unexpected cookies, incorrect
+association caching, or invite metadata drift.
 
 ## Release flow
 

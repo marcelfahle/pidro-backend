@@ -43,12 +43,13 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         url: %Schema{
           type: :string,
           description: "Shareable link, `<link_base_url>/<code>`",
-          example: "https://pidro.online/j/7KQ4M2XB"
+          example: "https://www.pidro.online/j/7KQ4M2XB"
         },
         share_text: %Schema{
           type: :string,
           description: "Ready-to-paste share message with the link and the dashed code",
-          example: "Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB"
+          example:
+            "Come play Pidro with me 🃏 https://www.pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB"
         },
         seat_hint: %Schema{
           type: :string,
@@ -75,9 +76,9 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
       required: [:code, :url, :share_text, :seat_hint, :label, :expires_at, :state],
       example: %{
         "code" => "7KQ4M2XB",
-        "url" => "https://pidro.online/j/7KQ4M2XB",
+        "url" => "https://www.pidro.online/j/7KQ4M2XB",
         "share_text" =>
-          "Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
+          "Come play Pidro with me 🃏 https://www.pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
         "seat_hint" => "partner",
         "label" => "Anna",
         "expires_at" => "2026-09-03T15:30:00Z",
@@ -105,9 +106,9 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         "data" => %{
           "invite" => %{
             "code" => "7KQ4M2XB",
-            "url" => "https://pidro.online/j/7KQ4M2XB",
+            "url" => "https://www.pidro.online/j/7KQ4M2XB",
             "share_text" =>
-              "Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
+              "Come play Pidro with me 🃏 https://www.pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
             "seat_hint" => "partner",
             "label" => "Anna",
             "expires_at" => "2026-09-03T15:30:00Z",

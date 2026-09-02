@@ -78,13 +78,13 @@ in every environment.
 | `RATE_LIMIT_ROOM_LOOKUP_LIMIT` / `RATE_LIMIT_ROOM_LOOKUP_SCALE_MS` | `120` / `60000` | `GET /api/v1/rooms/:code`, per client IP |
 | `RATE_LIMIT_ROOM_JOIN_LIMIT` / `RATE_LIMIT_ROOM_JOIN_SCALE_MS` | `30` / `60000` | `POST /api/v1/rooms/:code/join`, per authenticated user |
 | `RATE_LIMIT_INVITE_MINT_LIMIT` / `RATE_LIMIT_INVITE_MINT_SCALE_MS` | `10` / `60000` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate`, per authenticated user |
-| `RATE_LIMIT_INVITE_PREVIEW_LIMIT` / `RATE_LIMIT_INVITE_PREVIEW_SCALE_MS` | `60` / `60000` | `GET /api/v1/invites/:code` (public landing page), per client IP |
+| `RATE_LIMIT_INVITE_PREVIEW_LIMIT` / `RATE_LIMIT_INVITE_PREVIEW_SCALE_MS` | `60` / `60000` | `GET /api/v1/invites/:code` and `GET /j/:code`, per client IP |
 | `RATE_LIMIT_INVITE_REDEEM_LIMIT` / `RATE_LIMIT_INVITE_REDEEM_SCALE_MS` | `10` / `60000` | `POST /api/v1/invites/:code/redeem`, per authenticated user |
 | `RATE_LIMIT_GUEST_CREATE_LIMIT` / `RATE_LIMIT_GUEST_CREATE_SCALE_MS` | `10` / `3600000` | `POST /api/v1/auth/guest`, per client IP |
 | `RATE_LIMIT_GUEST_CREATE_DAILY_LIMIT` / `RATE_LIMIT_GUEST_CREATE_DAILY_SCALE_MS` | `40` / `86400000` | same route, per client IP over a day |
 | `RATE_LIMIT_GUEST_CREATE_INSTALL_LIMIT` / `RATE_LIMIT_GUEST_CREATE_INSTALL_SCALE_MS` | `3` / `3600000` | same route, per hashed `install_id`; a request without one skips this policy |
 | `RATE_LIMIT_AUTH_UPGRADE_LIMIT` / `RATE_LIMIT_AUTH_UPGRADE_SCALE_MS` | `10` / `600000` | `POST /api/v1/auth/upgrade`, per client IP; keep it the same size as `register` so upgrade is not an email-existence oracle |
-| `INVITE_LINK_BASE_URL` | `https://pidro.online/j` | Base of an invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>`, and the code appears again in `share_text`. Point it at the host that serves the invite landing page; the dev and test environments point at the local endpoint |
+| `INVITE_LINK_BASE_URL` | `https://www.pidro.online/j` | Base of an invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>`, and the code appears again in `share_text`. Point it at a host that serves the page without redirecting; the dev and test environments point at the local endpoint |
 | `GUEST_REAPER_ENABLED` | `true` (`false` in test) | Runs the idle-guest sweep. `true`/`TRUE`/`1`/`yes`/`YES` enable it; anything else disables it. Disabled means the GenServer starts but never schedules a sweep |
 | `GUEST_REAPER_INTERVAL_MS` | `3600000` | Milliseconds between sweeps |
 | `GUEST_REAPER_MAX_IDLE_DAYS` | `30` | A guest whose `last_seen_at` (or `inserted_at` when it is nil) is older than this is deleted with the account-deletion recipe: room left, hosted invites revoked, `player_profiles`, `player_achievements`, `invite_redemptions`, `invite_events` and the `users` row removed in one transaction. Registered accounts are never touched |
@@ -103,6 +103,17 @@ node and per fixed window, so counters reset on restart and are not shared betwe
 alone leaves `enabled` and `max_idle_days` at their configured values. The reaper deletes
 accounts irreversibly: verify `GUEST_REAPER_MAX_IDLE_DAYS` before raising or lowering it, and set
 `GUEST_REAPER_ENABLED: "false"` to stop sweeps while investigating anything guest-related.
+
+The public invite host is `https://www.pidro.online`. It proxies `/j/*`, both AASA paths and
+`/.well-known/*` to the Phoenix origin without a redirect. Deploy Phoenix first, then the
+marketing-site proxy. After both are live, run the smoke with a currently open code:
+
+```bash
+PIDRO_PUBLIC_URL=https://www.pidro.online PIDRO_INVITE_CODE=7KQ4M2XB ops/smoke-production
+```
+
+This checks exact `200` responses (so redirects fail), association content and cache headers, the
+absence of auth cookies, canonical invite metadata and the invite page's `no-store` contract.
 
 ### Generating Secrets
 

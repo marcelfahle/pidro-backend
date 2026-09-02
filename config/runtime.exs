@@ -294,7 +294,7 @@ end
 #
 # Applies in every environment. Defaults live in config/config.exs and the
 # per-environment files; INVITE_LINK_BASE_URL replaces `link_base_url` only
-# when set, e.g. "https://pidro.online/j". Gated like the well-known block
+# when set, e.g. "https://www.pidro.online/j". Gated like the well-known block
 # above: runtime.exs is shared by every umbrella app, and PidroServer.Invites
 # only exists on pidro_server's code path.
 # ---------------------------------------------------------------------------
