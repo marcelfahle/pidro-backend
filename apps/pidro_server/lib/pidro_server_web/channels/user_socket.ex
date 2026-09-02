@@ -103,7 +103,16 @@ defmodule PidroServerWeb.UserSocket do
   * A unique socket identifier string in the format "user_socket:USER_ID"
   """
   @impl true
-  def id(socket), do: "user_socket:#{socket.assigns.user_id}"
+  def id(socket), do: topic(socket.assigns.user_id)
+
+  @doc """
+  The per-user socket topic, `"user_socket:<user_id>"`.
+
+  Single source of truth for the id `id/1` returns and the topic
+  `PidroServer.Accounts.Auth` broadcasts `"disconnect"` on.
+  """
+  @spec topic(String.t()) :: String.t()
+  def topic(user_id), do: "user_socket:#{user_id}"
 
   # Generates a unique session ID for a user connection.
   # Uses a combination of user_id and timestamp to create a stable session identifier.

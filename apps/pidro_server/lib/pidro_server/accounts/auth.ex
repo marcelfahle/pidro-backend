@@ -203,6 +203,10 @@ defmodule PidroServer.Accounts.Auth do
   @doc """
   Increments the user's `token_version` atomically and disconnects their sockets.
 
+  Phase 0 ships this without a production caller: `reset_user_password/2`
+  runs the same increment inside its own transaction. The account upgrade,
+  delete and logout flows of later phases call it directly.
+
   Every token minted before the increment fails `fetch_user_for_token/1`
   afterwards. Once the increment has committed, `"disconnect"` is broadcast
   on `"user_socket:<id>"`, which closes the user's live socket connections;
@@ -499,7 +503,7 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   defp broadcast_disconnect(%User{id: id}) do
-    PidroServerWeb.Endpoint.broadcast("user_socket:#{id}", "disconnect", %{})
+    PidroServerWeb.Endpoint.broadcast(PidroServerWeb.UserSocket.topic(id), "disconnect", %{})
   end
 
   defp generate_password_reset_token do
