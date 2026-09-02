@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" class="invite-document">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#071a36" />
+    <meta name="description" content={@page.description} />
+    <meta
+      name="robots"
+      content={if @page.state == :not_found, do: "noindex, nofollow", else: "index, follow"}
+    />
+
+    <title>{@page.title}</title>
+    <link :if={@page.canonical_url} rel="canonical" href={@page.canonical_url} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pidro" />
+    <meta property="og:title" content={@page.title} />
+    <meta property="og:description" content={@page.description} />
+    <meta :if={@page.canonical_url} property="og:url" content={@page.canonical_url} />
+    <meta property="og:image" content={static_url(@conn, ~p"/images/invite/social-card.png")} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Pidro playing cards on a blue card table" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={@page.title} />
+    <meta name="twitter:description" content={@page.description} />
+    <meta name="twitter:image" content={static_url(@conn, ~p"/images/invite/social-card.png")} />
+
+    <meta
+      :if={@page.canonical_url}
+      name="apple-itunes-app"
+      content={"app-id=1137091987, app-argument=#{@page.canonical_url}"}
+    />
+
+    <link rel="stylesheet" href={static_url(@conn, ~p"/assets/css/app.css")} />
+    <script
+      :if={!@crawler? and @page.device == :ios and @page.table_action == :join}
+      defer
+      src={static_url(@conn, ~p"/assets/js/invite.js")}
+    >
+    </script>
+  </head>
+  <body>
+    {@inner_content}
+  </body>
+</html>
