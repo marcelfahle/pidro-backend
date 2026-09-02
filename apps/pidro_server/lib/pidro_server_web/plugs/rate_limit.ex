@@ -26,6 +26,11 @@ defmodule PidroServerWeb.Plugs.RateLimit do
       hex-encoded, so neither the key nor the log ever holds the address. A
       missing, empty or non-binary param skips this policy only; the other
       policies on the route still apply.
+    * `:install_id` - `"<policy>:install:<hash>"`, the same truncated SHA-256
+      of the trimmed `install_id` param (case preserved: it is an opaque device
+      id, not an address). A missing, blank, non-binary or over-64-character
+      param skips this policy only, so a request without an install id is never
+      limited by it; an over-long id is skipped, not truncated.
 
   ## Responses
 
@@ -53,6 +58,7 @@ defmodule PidroServerWeb.Plugs.RateLimit do
   require Logger
 
   @default_limiter PidroServer.RateLimit
+  @install_id_max_length 64
 
   @impl Plug
   @spec init(keyword()) :: keyword()
@@ -127,7 +133,14 @@ defmodule PidroServerWeb.Plugs.RateLimit do
   defp bucket_key(conn, policy, :identifier) do
     case identifier_param(conn.params) do
       nil -> :skip
-      identifier -> "#{policy}:ident:#{hash_identifier(identifier)}"
+      identifier -> "#{policy}:ident:#{hash_param(identifier)}"
+    end
+  end
+
+  defp bucket_key(conn, policy, :install_id) do
+    case install_id_param(conn.params) do
+      nil -> :skip
+      install_id -> "#{policy}:install:#{hash_param(install_id)}"
     end
   end
 
@@ -144,9 +157,20 @@ defmodule PidroServerWeb.Plugs.RateLimit do
 
   defp normalize_identifier(_value), do: nil
 
-  defp hash_identifier(identifier) do
+  # Matches the 64-character cap on the guest-creation param; a longer value is
+  # skipped rather than truncated so it cannot collide with a legitimate id.
+  defp install_id_param(%{"install_id" => value}) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> if String.length(trimmed) > @install_id_max_length, do: nil, else: trimmed
+    end
+  end
+
+  defp install_id_param(_params), do: nil
+
+  defp hash_param(value) do
     :sha256
-    |> :crypto.hash(identifier)
+    |> :crypto.hash(value)
     |> binary_part(0, 16)
     |> Base.encode16(case: :lower)
   end

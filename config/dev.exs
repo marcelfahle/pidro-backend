@@ -78,6 +78,14 @@ config :pidro_server, dev_routes: true
 #   password_reset_confirm     5 per 900_000 ms          50 per 900_000 ms
 #   room_create                10 per 60_000 ms          100 per 60_000 ms
 #   room_lookup                120 per 60_000 ms         1_200 per 60_000 ms
+#   invite_mint                10 per 60_000 ms          100 per 60_000 ms
+#   invite_preview             60 per 60_000 ms          600 per 60_000 ms
+#   invite_redeem              10 per 60_000 ms          100 per 60_000 ms
+#   guest_create               10 per 3_600_000 ms       100 per 3_600_000 ms
+#   guest_create_daily         40 per 86_400_000 ms      400 per 86_400_000 ms
+#   guest_create_install       3 per 3_600_000 ms        30 per 3_600_000 ms
+#   room_join                  30 per 60_000 ms          300 per 60_000 ms
+#   auth_upgrade               10 per 600_000 ms         100 per 600_000 ms
 config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   login: %{limit: 100, scale_ms: 60_000, key: :ip},
   register: %{limit: 100, scale_ms: 600_000, key: :ip},
@@ -85,7 +93,15 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   password_reset_identifier: %{limit: 30, scale_ms: 3_600_000, key: :identifier},
   password_reset_confirm: %{limit: 50, scale_ms: 900_000, key: :ip},
   room_create: %{limit: 100, scale_ms: 60_000, key: :user},
-  room_lookup: %{limit: 1_200, scale_ms: 60_000, key: :ip}
+  room_lookup: %{limit: 1_200, scale_ms: 60_000, key: :ip},
+  invite_mint: %{limit: 100, scale_ms: 60_000, key: :user},
+  invite_preview: %{limit: 600, scale_ms: 60_000, key: :ip},
+  invite_redeem: %{limit: 100, scale_ms: 60_000, key: :user},
+  guest_create: %{limit: 100, scale_ms: 3_600_000, key: :ip},
+  guest_create_daily: %{limit: 400, scale_ms: 86_400_000, key: :ip},
+  guest_create_install: %{limit: 30, scale_ms: 3_600_000, key: :install_id},
+  room_join: %{limit: 300, scale_ms: 60_000, key: :user},
+  auth_upgrade: %{limit: 100, scale_ms: 600_000, key: :ip}
 
 config :pidro_server, :password_reset,
   debug_tokens: true,

@@ -68,7 +68,15 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   password_reset_identifier: %{limit: 1_000_000, scale_ms: 3_600_000, key: :identifier},
   password_reset_confirm: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
   room_create: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
-  room_lookup: %{limit: 1_000_000, scale_ms: 60_000, key: :ip}
+  room_lookup: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
+  invite_mint: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  invite_preview: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
+  invite_redeem: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  guest_create: %{limit: 1_000_000, scale_ms: 3_600_000, key: :ip},
+  guest_create_daily: %{limit: 1_000_000, scale_ms: 86_400_000, key: :ip},
+  guest_create_install: %{limit: 1_000_000, scale_ms: 3_600_000, key: :install_id},
+  room_join: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  auth_upgrade: %{limit: 1_000_000, scale_ms: 600_000, key: :ip}
 
 # Compile dev-only LiveView routes in test to satisfy verified route checks
 config :pidro_server, dev_routes: true

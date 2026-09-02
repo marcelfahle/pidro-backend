@@ -77,7 +77,23 @@ rate_limit_overrides =
     {:room_create, :limit, "RATE_LIMIT_ROOM_CREATE_LIMIT"},
     {:room_create, :scale_ms, "RATE_LIMIT_ROOM_CREATE_SCALE_MS"},
     {:room_lookup, :limit, "RATE_LIMIT_ROOM_LOOKUP_LIMIT"},
-    {:room_lookup, :scale_ms, "RATE_LIMIT_ROOM_LOOKUP_SCALE_MS"}
+    {:room_lookup, :scale_ms, "RATE_LIMIT_ROOM_LOOKUP_SCALE_MS"},
+    {:invite_mint, :limit, "RATE_LIMIT_INVITE_MINT_LIMIT"},
+    {:invite_mint, :scale_ms, "RATE_LIMIT_INVITE_MINT_SCALE_MS"},
+    {:invite_preview, :limit, "RATE_LIMIT_INVITE_PREVIEW_LIMIT"},
+    {:invite_preview, :scale_ms, "RATE_LIMIT_INVITE_PREVIEW_SCALE_MS"},
+    {:invite_redeem, :limit, "RATE_LIMIT_INVITE_REDEEM_LIMIT"},
+    {:invite_redeem, :scale_ms, "RATE_LIMIT_INVITE_REDEEM_SCALE_MS"},
+    {:guest_create, :limit, "RATE_LIMIT_GUEST_CREATE_LIMIT"},
+    {:guest_create, :scale_ms, "RATE_LIMIT_GUEST_CREATE_SCALE_MS"},
+    {:guest_create_daily, :limit, "RATE_LIMIT_GUEST_CREATE_DAILY_LIMIT"},
+    {:guest_create_daily, :scale_ms, "RATE_LIMIT_GUEST_CREATE_DAILY_SCALE_MS"},
+    {:guest_create_install, :limit, "RATE_LIMIT_GUEST_CREATE_INSTALL_LIMIT"},
+    {:guest_create_install, :scale_ms, "RATE_LIMIT_GUEST_CREATE_INSTALL_SCALE_MS"},
+    {:room_join, :limit, "RATE_LIMIT_ROOM_JOIN_LIMIT"},
+    {:room_join, :scale_ms, "RATE_LIMIT_ROOM_JOIN_SCALE_MS"},
+    {:auth_upgrade, :limit, "RATE_LIMIT_AUTH_UPGRADE_LIMIT"},
+    {:auth_upgrade, :scale_ms, "RATE_LIMIT_AUTH_UPGRADE_SCALE_MS"}
   ]
   |> Enum.reduce([], fn {policy, field, env_var}, acc ->
     case System.get_env(env_var) do
