@@ -123,6 +123,7 @@ defmodule PidroServer.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.12.0"},
       {:cors_plug, "~> 3.0"},
+      {:hammer, "~> 7.4"},
       {:credo, "~> 1.7.19", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4.7", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test},

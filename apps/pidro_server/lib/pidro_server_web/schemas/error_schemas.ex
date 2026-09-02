@@ -27,6 +27,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - **ValidationError**: 422 Unprocessable Entity response for validation failures
   - **UnauthorizedError**: 401 Unauthorized response for authentication failures
   - **NotFoundError**: 404 Not Found response for missing resources
+  - **TooManyRequestsError**: 429 Too Many Requests response from the rate limiter
   """
 
   alias OpenApiSpex.Schema
@@ -330,6 +331,56 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
             "code" => "ROOM_NOT_FOUND",
             "title" => "Room not found",
             "detail" => "The requested room does not exist"
+          }
+        ]
+      }
+    }
+  end
+
+  @doc """
+  Too Many Requests error response schema (429 Too Many Requests).
+
+  Returned by `PidroServerWeb.Plugs.RateLimit` when a route's policy window is
+  exhausted. The response also carries a `Retry-After` header holding the
+  number of whole seconds (rounded up, minimum 1) until the window resets.
+  Clients should wait at least that long before retrying.
+
+  ## HTTP Status Code
+  429 Too Many Requests
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "RATE_LIMITED",
+            "title": "Too Many Requests",
+            "detail": "Rate limit exceeded, retry after 42 seconds"
+          }
+        ]
+      }
+  """
+  def too_many_requests_error do
+    %Schema{
+      type: :object,
+      title: "TooManyRequestsError",
+      description:
+        "Rate limit exceeded (429 Too Many Requests); the Retry-After header holds the seconds to wait",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single RATE_LIMITED error object",
+          items: error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "RATE_LIMITED",
+            "title" => "Too Many Requests",
+            "detail" => "Rate limit exceeded, retry after 42 seconds"
           }
         ]
       }

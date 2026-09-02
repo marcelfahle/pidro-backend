@@ -21,6 +21,11 @@ defmodule PidroServerWeb.Endpoint do
     websocket: true,
     longpoll: false
 
+  # Restore the client address and scheme from kamal-proxy's X-Forwarded-*
+  # headers before anything else reads conn.remote_ip. A no-op unless
+  # :trust_proxy_headers is true and the TCP peer is proxy-side.
+  plug PidroServerWeb.Plugs.TrustedProxy
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
