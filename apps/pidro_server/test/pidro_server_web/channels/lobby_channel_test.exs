@@ -253,6 +253,34 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert serialized_room.metadata.name == "Test Room"
       assert serialized_room.metadata.mode == "competitive"
     end
+
+    test "seats carry the display name; a guest shows their name, not the generated username",
+         %{socket: socket} do
+      guest = PidroServer.AccountsFixtures.guest_fixture(%{display_name: "Anna"})
+      {:ok, room} = RoomManager.create_room(guest.id, %{name: "Guest table"})
+
+      {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      serialized_room = Enum.find(reply.rooms, fn r -> r.code == room.code end)
+      north = Enum.find(serialized_room.seats, fn seat -> seat.position == :north end)
+
+      assert north.player.id == guest.id
+      assert north.player.username == guest.username
+      assert north.player.display_name == "Anna"
+      refute north.player.display_name == guest.username
+    end
+
+    test "a seat whose id resolves to nobody carries display_name nil", %{socket: socket} do
+      {:ok, room} = RoomManager.create_room("dev_host", %{name: "Dev table"})
+
+      {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      serialized_room = Enum.find(reply.rooms, fn r -> r.code == room.code end)
+      north = Enum.find(serialized_room.seats, fn seat -> seat.position == :north end)
+
+      assert north.player.is_bot == true
+      assert north.player.display_name == nil
+    end
   end
 
   defp assert_push_for_room(event, room_code, attempts \\ 5)

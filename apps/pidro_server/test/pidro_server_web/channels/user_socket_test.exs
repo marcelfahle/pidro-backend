@@ -184,6 +184,44 @@ defmodule PidroServerWeb.UserSocketTest do
     end
   end
 
+  describe "last_seen_at touch on connect" do
+    alias PidroServer.Repo
+
+    setup do
+      {:ok, user} =
+        Accounts.Auth.register_user(%{
+          username: "seenuser",
+          email: "seen@example.com",
+          password: "password123"
+        })
+
+      %{user: user, token: Accounts.Token.generate(user)}
+    end
+
+    test "sets last_seen_at when it is nil", %{user: user, token: token} do
+      assert Accounts.Auth.get_user(user.id).last_seen_at == nil
+      before_connect = DateTime.utc_now()
+
+      assert {:ok, _socket} = connect(UserSocket, %{"token" => token})
+
+      seen_at = Accounts.Auth.get_user(user.id).last_seen_at
+      assert %DateTime{} = seen_at
+      assert DateTime.compare(seen_at, before_connect) in [:gt, :eq]
+    end
+
+    test "leaves a ten-minute-old last_seen_at unchanged", %{user: user, token: token} do
+      ten_minutes_ago = DateTime.add(DateTime.utc_now(), -600, :second)
+
+      user
+      |> Ecto.Changeset.change(last_seen_at: ten_minutes_ago)
+      |> Repo.update!()
+
+      assert {:ok, _socket} = connect(UserSocket, %{}, connect_info: %{auth_token: token})
+
+      assert Accounts.Auth.get_user(user.id).last_seen_at == ten_minutes_ago
+    end
+  end
+
   describe "session_id uniqueness" do
     setup do
       {:ok, user} =

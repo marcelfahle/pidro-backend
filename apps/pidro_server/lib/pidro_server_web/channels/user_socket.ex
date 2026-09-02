@@ -70,7 +70,10 @@ defmodule PidroServerWeb.UserSocket do
 
   defp authenticate(token, socket) do
     with {:ok, %{id: user_id} = claims} <- Token.verify(token),
-         {:ok, _user} <- Auth.fetch_user_for_token(claims) do
+         {:ok, user} <- Auth.fetch_user_for_token(claims) do
+      # Throttled to one write per user-hour inside touch_last_seen/1.
+      :ok = Auth.touch_last_seen(user)
+
       # Generate or retrieve session_id based on user_id
       # This allows the same session to be maintained across reconnects
       session_id = generate_session_id(user_id)

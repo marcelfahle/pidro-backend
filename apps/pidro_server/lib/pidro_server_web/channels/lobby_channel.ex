@@ -280,6 +280,7 @@ defmodule PidroServerWeb.LobbyChannel do
         %{
           id: user.id,
           username: user.username,
+          display_name: user.display_name,
           is_bot: false,
           # Placeholder for future avatar implementation
           avatar_url: nil
@@ -290,6 +291,7 @@ defmodule PidroServerWeb.LobbyChannel do
         %{
           id: player_id,
           username: "Bot/User #{String.slice(player_id, 0..5)}",
+          display_name: nil,
           is_bot: true,
           avatar_url: nil
         }
