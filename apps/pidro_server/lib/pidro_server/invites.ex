@@ -193,26 +193,70 @@ defmodule PidroServer.Invites do
   end
 
   @doc """
-  Writes the redemption row and increments `redeem_count` in one transaction
-  (R8). Call it after the seat is taken (KTD3).
+  Writes the first redemption row for an invite/user pair and increments
+  `redeem_count` in one transaction (R8). Concurrent repeats return the
+  existing row without incrementing the count. Call it after the seat is taken
+  (KTD3).
   """
   @spec record_redemption(Invite.t(), map()) ::
           {:ok, Redemption.t()} | {:error, Ecto.Changeset.t()}
   def record_redemption(%Invite{id: invite_id}, attrs) when is_map(attrs) do
-    changeset =
-      %Redemption{invite_id: invite_id, user_id: Map.get(attrs, :user_id)}
-      |> Redemption.changeset(stringify(attrs, :position))
+    changeset = redemption_changeset(invite_id, attrs)
 
     Repo.transaction(fn ->
-      case Repo.insert(changeset) do
-        {:ok, redemption} ->
+      case insert_redemption_once(changeset) do
+        {:ok, redemption, :created} ->
           bump_redeem_count(invite_id)
+          redemption
+
+        {:ok, redemption, :existing} ->
           redemption
 
         {:error, changeset} ->
           Repo.rollback(changeset)
       end
     end)
+  end
+
+  @doc """
+  Records a first-time seat claim atomically.
+
+  The redemption row, `redeem_count` increment and `seat_claimed` event are
+  written together. A concurrent repeat for the same invite/user pair returns
+  `:existing` and writes nothing else.
+  """
+  @spec record_claim(Invite.t(), map()) ::
+          {:ok, Redemption.t(), :created | :existing} | {:error, Ecto.Changeset.t()}
+  def record_claim(%Invite{id: invite_id}, attrs) when is_map(attrs) do
+    changeset = redemption_changeset(invite_id, attrs)
+
+    Repo.transaction(fn ->
+      case insert_redemption_once(changeset) do
+        {:ok, redemption, :created} ->
+          bump_redeem_count(invite_id)
+
+          event_attrs = %{
+            kind: "seat_claimed",
+            user_id: redemption.user_id,
+            platform: redemption.platform
+          }
+
+          case insert_event(invite_id, event_attrs) do
+            {:ok, _event} -> {redemption, :created}
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
+
+        {:ok, redemption, :existing} ->
+          {redemption, :existing}
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+    |> case do
+      {:ok, {redemption, status}} -> {:ok, redemption, status}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc "Writes one funnel event (R8); `kind` must be one of `Event.kinds/0`."
@@ -415,6 +459,36 @@ defmodule PidroServer.Invites do
       set: [updated_at: DateTime.utc_now()]
     )
   end
+
+  defp redemption_changeset(invite_id, attrs) do
+    %Redemption{invite_id: invite_id, user_id: Map.get(attrs, :user_id)}
+    |> Redemption.changeset(stringify(attrs, :position))
+  end
+
+  defp insert_redemption_once(changeset) do
+    if changeset.valid? do
+      invite_id = Ecto.Changeset.get_field(changeset, :invite_id)
+      user_id = Ecto.Changeset.get_field(changeset, :user_id)
+
+      {:ok, _result} =
+        Repo.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          ["invite-redemption:#{invite_id}:#{user_id}"]
+        )
+
+      case Repo.get_by(Redemption, invite_id: invite_id, user_id: user_id) do
+        %Redemption{} = redemption -> {:ok, redemption, :existing}
+        nil -> map_inserted_redemption(Repo.insert(changeset))
+      end
+    else
+      {:error, changeset}
+    end
+  end
+
+  defp map_inserted_redemption({:ok, %Redemption{} = redemption}),
+    do: {:ok, redemption, :created}
+
+  defp map_inserted_redemption({:error, changeset}), do: {:error, changeset}
 
   defp insert_event(invite_id, attrs) do
     %Event{invite_id: invite_id, user_id: Map.get(attrs, :user_id)}

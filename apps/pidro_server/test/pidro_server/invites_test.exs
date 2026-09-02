@@ -391,6 +391,19 @@ defmodule PidroServer.InvitesTest do
       assert reload(invite).redeem_count == 2
     end
 
+    test "returns the existing row for a repeated invite/user pair without incrementing" do
+      invite = create!()
+      user_id = Ecto.UUID.generate()
+
+      assert {:ok, %Redemption{id: redemption_id}} =
+               Invites.record_redemption(invite, %{user_id: user_id, position: "south"})
+
+      assert {:ok, %Redemption{id: ^redemption_id, position: "south"}} =
+               Invites.record_redemption(invite, %{user_id: user_id, position: "north"})
+
+      assert reload(invite).redeem_count == 1
+    end
+
     test "stores platform and source outside the known sets as unknown" do
       invite = create!()
 
@@ -544,6 +557,7 @@ defmodule PidroServer.InvitesTest do
         Invites.record_redemption(other, %{user_id: Ecto.UUID.generate(), position: "west"})
 
       assert Enum.sort(Invites.redemption_user_ids(invite)) == Enum.sort([a, b])
+      assert reload(invite).redeem_count == 2
       assert length(Invites.redemption_user_ids(other.id)) == 1
       assert Invites.redemption_user_ids(create!()) == []
     end

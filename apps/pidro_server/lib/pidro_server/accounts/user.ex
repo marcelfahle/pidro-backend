@@ -119,6 +119,7 @@ defmodule PidroServer.Accounts.User do
     |> validate_display_name()
     |> unique_constraint(:username)
     |> unique_constraint(:email)
+    |> unique_constraint(:email, name: :users_lower_email_index)
   end
 
   @doc """
@@ -175,6 +176,7 @@ defmodule PidroServer.Accounts.User do
     |> put_change(:guest, false)
     |> unique_constraint(:username)
     |> unique_constraint(:email)
+    |> unique_constraint(:email, name: :users_lower_email_index)
   end
 
   @doc """

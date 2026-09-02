@@ -43,7 +43,7 @@ defmodule PidroServer.Repo.Migrations.CreateInvites do
       timestamps(type: :utc_datetime_usec, updated_at: false)
     end
 
-    create index(:invite_redemptions, [:invite_id])
+    create unique_index(:invite_redemptions, [:invite_id, :user_id])
     create index(:invite_redemptions, [:user_id])
 
     # Insert-only funnel: kind is validated in the schema, not the database, so

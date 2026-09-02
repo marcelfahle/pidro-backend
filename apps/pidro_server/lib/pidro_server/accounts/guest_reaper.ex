@@ -171,18 +171,15 @@ defmodule PidroServer.Accounts.GuestReaper do
   end
 
   defp delete_guest(id) do
-    case Auth.get_user(id) do
-      %User{guest: true} = guest ->
-        case Auth.delete_user(guest) do
-          {:ok, _deleted} ->
-            true
+    case Auth.delete_guest(id) do
+      {:ok, _deleted} ->
+        true
 
-          {:error, reason} ->
-            Logger.error("GuestReaper could not delete guest #{id}: #{inspect(reason)}")
-            false
-        end
+      {:error, reason} when reason in [:not_found, :not_a_guest] ->
+        false
 
-      _upgraded_or_gone ->
+      {:error, reason} ->
+        Logger.error("GuestReaper could not delete guest #{id}: #{inspect(reason)}")
         false
     end
   rescue

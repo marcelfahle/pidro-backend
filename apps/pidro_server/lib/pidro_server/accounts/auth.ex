@@ -28,11 +28,13 @@ defmodule PidroServer.Accounts.Auth do
 
   ## Deletion
 
-  `delete_user/1` is the single deletion recipe (KTD8) shared by
-  `DELETE /api/v1/auth/me`, the guest reaper and the admin panel: it revokes
+  `delete_user/1` is the deletion recipe (KTD8) shared by
+  `DELETE /api/v1/auth/me` and the admin panel: it revokes
   the invites they host, deletes their personal rows and the user row in one
   database transaction, then performs the in-memory room cleanup and
-  broadcasts the disconnect after commit.
+  broadcasts the disconnect after commit. The guest reaper uses
+  `delete_guest/1`, which locks and reloads the account before applying the
+  same recipe so it cannot delete a concurrently upgraded account.
   `game_stats` and `abandonment_events` keep the bare id (KD9).
 
   ## Last seen
@@ -605,6 +607,38 @@ defmodule PidroServer.Accounts.Auth do
     end
   end
 
+  @doc """
+  Deletes a user only if the persisted row is still a guest.
+
+  The row is locked and reloaded in the same transaction as the deletion, so
+  a concurrent guest upgrade either completes first and is preserved, or
+  waits until the guest deletion has committed. Persistent deletion uses the
+  same recipe and post-commit cleanup as `delete_user/1`.
+  """
+  @spec delete_guest(Ecto.UUID.t()) ::
+          {:ok, User.t()} | {:error, :not_found | :not_a_guest | term()}
+  def delete_guest(id) when is_binary(id) do
+    result =
+      Repo.transaction(fn ->
+        query = from u in User, where: u.id == ^id, lock: "FOR UPDATE"
+
+        case Repo.one(query) do
+          nil -> Repo.rollback(:not_found)
+          %User{guest: false} -> Repo.rollback(:not_a_guest)
+          %User{guest: true} = guest -> delete_personal_rows_in_transaction(guest)
+        end
+      end)
+
+    case result do
+      {:ok, {deleted, hosted_rooms}} ->
+        after_delete(deleted, hosted_rooms)
+        {:ok, deleted}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp after_delete(%User{id: id} = user, hosted_rooms) do
     safely_after_delete(id, "vacate room seat", fn -> vacate_seat(id) end)
 
@@ -665,25 +699,27 @@ defmodule PidroServer.Accounts.Auth do
     end
   end
 
-  defp delete_personal_rows(%User{id: id} = user) do
-    Repo.transaction(fn ->
-      hosted_rooms = hosted_invite_rooms(id)
+  defp delete_personal_rows(%User{} = user) do
+    Repo.transaction(fn -> delete_personal_rows_in_transaction(user) end)
+  end
 
-      case Invites.revoke_hosted(id) do
-        {:ok, _revoked} -> :ok
-        {:error, reason} -> Repo.rollback(reason)
-      end
+  defp delete_personal_rows_in_transaction(%User{id: id} = user) do
+    hosted_rooms = hosted_invite_rooms(id)
 
-      Repo.delete_all(from p in PlayerProfile, where: p.user_id == ^id)
-      Repo.delete_all(from a in Achievement, where: a.user_id == ^id)
-      Repo.delete_all(from r in Redemption, where: r.user_id == ^id)
-      Repo.delete_all(from e in Event, where: e.user_id == ^id)
+    case Invites.revoke_hosted(id) do
+      {:ok, _revoked} -> :ok
+      {:error, reason} -> Repo.rollback(reason)
+    end
 
-      case Repo.delete(user) do
-        {:ok, deleted} -> {deleted, hosted_rooms}
-        {:error, changeset} -> Repo.rollback(changeset)
-      end
-    end)
+    Repo.delete_all(from p in PlayerProfile, where: p.user_id == ^id)
+    Repo.delete_all(from a in Achievement, where: a.user_id == ^id)
+    Repo.delete_all(from r in Redemption, where: r.user_id == ^id)
+    Repo.delete_all(from e in Event, where: e.user_id == ^id)
+
+    case Repo.delete(user) do
+      {:ok, deleted} -> {deleted, hosted_rooms}
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
   end
 
   defp guest_attrs(attrs) do

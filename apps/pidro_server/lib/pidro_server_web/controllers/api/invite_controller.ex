@@ -40,7 +40,6 @@ defmodule PidroServerWeb.API.InviteController do
   alias PidroServer.Games.RoomManager.Room
   alias PidroServer.Invites
   alias PidroServer.Invites.Invite
-  alias PidroServer.Repo
   alias PidroServerWeb.API.InviteJSON
   alias PidroServerWeb.Schemas.{ErrorSchemas, InviteSchemas}
 
@@ -342,28 +341,15 @@ defmodule PidroServerWeb.API.InviteController do
     source = analytics_value(params["source"])
 
     result =
-      Repo.transaction(fn ->
-        with {:ok, _redemption} <-
-               Invites.record_redemption(invite, %{
-                 user_id: user_id,
-                 position: position,
-                 platform: platform,
-                 source: source
-               }),
-             {:ok, _event} <-
-               Invites.record_event(invite, %{
-                 kind: "seat_claimed",
-                 user_id: user_id,
-                 platform: platform
-               }) do
-          :ok
-        else
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
+      Invites.record_claim(invite, %{
+        user_id: user_id,
+        position: position,
+        platform: platform,
+        source: source
+      })
 
     case result do
-      {:ok, :ok} ->
+      {:ok, _redemption, _status} ->
         :ok
 
       {:error, reason} ->

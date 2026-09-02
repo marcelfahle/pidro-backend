@@ -133,7 +133,9 @@ only the key it names, and defaults live in `config/config.exs`.
   `DELETE /api/v1/auth/me`: one database transaction revokes hosted invites
   and deletes `player_profiles`, `player_achievements`, `invite_redemptions`,
   `invite_events` and the `users` row; room-seat cleanup and disconnect happen
-  only after commit. Registered accounts are never touched. Both numeric
+  only after commit. The transaction locks and reloads the account and proceeds
+  only if it is still a guest, so a concurrently completed upgrade is never
+  reaped. Registered accounts are never touched. Both numeric
   values must be positive integers or application boot fails. Set
   `GUEST_REAPER_ENABLED: "false"` and redeploy before investigating anything
   guest-related; there is no undo.

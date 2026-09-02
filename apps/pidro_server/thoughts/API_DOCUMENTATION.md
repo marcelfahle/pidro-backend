@@ -328,7 +328,9 @@ which afterwards resolves to nobody (a seat's `username` and `display_name` rend
 subsequent request answers `401`.
 
 The same recipe backs the idle-guest reaper, which deletes guest accounts that have not been seen
-for 30 days (see [`thoughts/DEPLOYMENT.md`](DEPLOYMENT.md) for `GUEST_REAPER_*`).
+for 30 days. Its deletion transaction locks and reloads the row and proceeds only while it is
+still a guest, so an account whose concurrent upgrade completed is preserved. See
+[`thoughts/DEPLOYMENT.md`](DEPLOYMENT.md) for `GUEST_REAPER_*`.
 
 ### Token Lifetime and Revocation
 

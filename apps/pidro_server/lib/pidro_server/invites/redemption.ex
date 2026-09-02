@@ -60,6 +60,7 @@ defmodule PidroServer.Invites.Redemption do
     |> validate_required([:invite_id, :user_id, :position])
     |> validate_inclusion(:position, @positions)
     |> foreign_key_constraint(:invite_id)
+    |> unique_constraint(:user_id, name: :invite_redemptions_invite_id_user_id_index)
   end
 
   @doc """
