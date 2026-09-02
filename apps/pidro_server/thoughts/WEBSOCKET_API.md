@@ -591,6 +591,24 @@ A player has disconnected and entered Phase 1 reconnection.
 { user_id: "user123", position: "north" }
 ```
 
+This event now fires in **waiting rooms as well**. When the last game channel of a player in a
+`waiting` or `ready` room closes, their seat becomes a **held seat**: the seat status turns
+`reconnecting`, but nothing else in the cascade runs.
+
+- **No phase timer** is scheduled, so the seat is never escalated.
+- **No bot substitutes** for the player; bot substitution stays `playing`-only.
+- The seat still counts as taken in `positions` and `player_count`, but it **does not count
+  toward auto-start**: the room becomes `ready` and starts only when four positions are taken and
+  no human seat is held. So the host can leave the app to paste the invite link and the game will
+  not start without them.
+- The player reclaims the seat through the normal reconnect path — rejoining `game:<room_code>`
+  as the same user turns the seat back to `connected` and re-runs the ready check.
+- A held seat has no expiry. The designed exit for a player who never comes back is the host's
+  `POST /api/v1/rooms/:code/kick`. The seat is also vacated automatically when its player creates
+  or joins another room; if the held seat belongs to the host, the room is closed instead.
+
+Render a held seat as "away", not as an empty chair: the player's name is still on it.
+
 #### `player_reconnected`
 
 A player has successfully reconnected.
@@ -662,6 +680,53 @@ A new human player has joined as a substitute.
 ```javascript
 { position: "north", user_id: "user789" }
 ```
+
+#### `invite_redeemed`
+
+Somebody claimed a seat through the table's invite link. Broadcast to every socket on
+`game:<room_code>`, including the arriving player's own.
+
+```javascript
+{ position: "south", user_id: "user789", display_name: "Anna" }
+```
+
+`display_name` is the arriving player's display name, falling back to their username. It is the
+name to show at the seat immediately, without waiting for a room refresh.
+
+#### `seat_moved`
+
+A seat was moved through `POST /api/v1/rooms/:code/seat`: either the host moved a player, or a
+seated player moved themselves. Broadcast to every socket on the topic.
+
+```javascript
+{ user_id: "user789", from: "east", to: "west" }
+```
+
+The moved player's own channel follows the seat: it updates its position and re-tracks presence
+before pushing the event, so subsequent presence metadata carries the new position.
+
+#### `player_kicked`
+
+The host kicked a seat, so the remaining players can empty it. The kicked player's own channel is
+closed by the `kicked` event (below) before this one reaches it, so in practice only the other
+sockets see it.
+
+```javascript
+{ position: "east", user_id: "user789" }
+```
+
+#### `kicked`
+
+Pushed to the kicked player's own channel only. The channel then stops with reason
+`{:shutdown, :kicked}`, so expect the socket's close handler to fire right after.
+
+```javascript
+{ reason: "kicked" }
+```
+
+The account is on the room's kick list from this moment: joining, redeeming the invite or
+substituting into that room all answer `403 KICKED`. Do not auto-reconnect to this topic; send
+the player back to the lobby.
 
 #### `player_disconnected`
 
@@ -1218,7 +1283,7 @@ gameChannel.on("game_over", ({ winner, scores }) => {
 | `game_state` | Server → Client | Game state update | `{state: GameState}` |
 | `player_ready` | Server → Client | Player is ready | `{position: string}` |
 | `game_over` | Server → Client | Game ended | `{winner: string, scores: object}` |
-| `player_reconnecting` | Server → Client | Player entered reconnection | `{user_id: string, position: string}` |
+| `player_reconnecting` | Server → Client | Player entered reconnection; in a `waiting`/`ready` room this is a **held seat** (no timer, no bot, blocks auto-start) | `{user_id: string, position: string}` |
 | `player_reconnected` | Server → Client | Player reconnected | `{user_id: string, position: string}` |
 | `player_reclaimed_seat` | Server → Client | Player reclaimed seat from bot | `{user_id: string, position: string}` |
 | `bot_substitute_active` | Server → Client | Bot playing for disconnected player | `{position: string, user_id: string}` |
@@ -1228,6 +1293,10 @@ gameChannel.on("game_over", ({ winner, scores }) => {
 | `substitute_available` | Server → Client | Seat opened for substitute | `{position: string}` |
 | `substitute_seat_closed` | Server → Client | Vacant seat filled with bot | `{position: string}` |
 | `substitute_joined` | Server → Client | Substitute player joined | `{position: string, user_id: string}` |
+| `invite_redeemed` | Server → Client | A seat was claimed through the invite link | `{position: string, user_id: string, display_name: string}` |
+| `seat_moved` | Server → Client | A seat was moved by the host or by the player | `{user_id: string, from: string, to: string}` |
+| `player_kicked` | Server → Client | The host kicked a seat (in practice only the remaining players see it) | `{position: string, user_id: string}` |
+| `kicked` | Server → Client | Sent to the kicked player only; the channel then closes | `{reason: "kicked"}` |
 | `player_disconnected` | Server → Client | Player disconnected | `{user_id: string, position: string, reason: string, grace_period: boolean}` |
 | `spectator_left` | Server → Client | Spectator left | `{user_id: string, reason: string}` |
 | `presence_state` | Server → Client | Current presence state | `{[user_id]: {metas: Meta[]}}` |
@@ -1245,6 +1314,7 @@ interface Room {
   player_ids: string[];  // legacy, derived from positions
   spectator_ids: string[];
   status: "waiting" | "playing" | "finished";  // NOT "ready" or "in_progress"
+  locked: boolean;       // the host locked the table; joins and redeems answer 423
   max_players: number;
   max_spectators: number;
   created_at: string;
@@ -1262,8 +1332,20 @@ interface Seat {
   grace_expires_at: string | null;
   has_reservation: boolean;
   joined_at: string | null;
+  username: string | null;      // "Bot" for bot seats; null for vacant seats and deleted accounts
+  display_name: string | null;  // the name to show at the table; same fallbacks as username
 }
 ```
+
+`locked` is `false` unless the host called `POST /api/v1/rooms/:code/lock`. It is present in every
+room serialization: the REST room responses, the lobby channel's room lists and the invite redeem
+response.
+
+`username` and `display_name` are resolved per seat from the `users` table. Both are `"Bot"` for a
+bot seat and `null` for a vacant seat or for a user id that no longer resolves to an account (the
+account was deleted). `display_name` is additionally `null` for an account that never set one, so
+fall back to `username`. `display_name` is what a guest chose when they took the seat, so prefer
+it in the table UI.
 
 ### Game State Schema
 

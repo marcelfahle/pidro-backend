@@ -72,10 +72,27 @@ client address, so the release must learn the real client behind kamal-proxy.
 - Limits are tuned with `RATE_LIMIT_<POLICY>_LIMIT` and
   `RATE_LIMIT_<POLICY>_SCALE_MS`, where `<POLICY>` is one of `LOGIN`,
   `REGISTER`, `PASSWORD_RESET`, `PASSWORD_RESET_IDENTIFIER`,
-  `PASSWORD_RESET_CONFIRM`, `ROOM_CREATE` or `ROOM_LOOKUP`, for example
+  `PASSWORD_RESET_CONFIRM`, `ROOM_CREATE`, `ROOM_LOOKUP`, `ROOM_JOIN`,
+  `INVITE_MINT`, `INVITE_PREVIEW`, `INVITE_REDEEM`, `GUEST_CREATE`,
+  `GUEST_CREATE_DAILY`, `GUEST_CREATE_INSTALL` or `AUTH_UPGRADE`, for example
   `RATE_LIMIT_LOGIN_LIMIT: "20"`. There is no off switch: raise a limit and
   redeploy. Never roll back a release to fix limiter behaviour.
 - Limits are per node and per fixed window; counters reset on restart.
+- The invite and guest policies (production defaults in `config/config.exs`):
+  `INVITE_MINT` 10/min per user, `INVITE_PREVIEW` 60/min per IP,
+  `INVITE_REDEEM` 10/min per user, `ROOM_JOIN` 30/min per user,
+  `GUEST_CREATE` 10/hour per IP, `GUEST_CREATE_DAILY` 40/day per IP,
+  `GUEST_CREATE_INSTALL` 3/hour per hashed `install_id`, `AUTH_UPGRADE` 10 per
+  10 minutes per IP.
+- `GUEST_CREATE` is deliberately generous: a QR-code party behind one NAT is the
+  designed case, so the first symptom of a bad limit is real friends being
+  turned away, not abuse. A request without an `install_id` skips only
+  `GUEST_CREATE_INSTALL`; the two IP-keyed guest policies still apply.
+- Keep `AUTH_UPGRADE` the same size as `REGISTER`: a looser upgrade limit turns
+  the endpoint into an email-existence oracle.
+- `GET /api/v1/invites/:code` and `POST /api/v1/auth/guest` are the two new
+  unauthenticated routes, so `INVITE_PREVIEW` and the two IP-keyed
+  `GUEST_CREATE` policies are the ones to watch when a link is shared widely.
 
 ### One-time production check
 
@@ -93,6 +110,37 @@ header contract once after the first deploy that carries the limiter:
    `TRUST_PROXY_HEADERS` is not `false` and that `forward_headers` has not been
    enabled.
 4. Remove the override and run `just deploy` again.
+
+## Invites, guests and waiting rooms
+
+These variables also go under `env.clear` in
+[config/deploy.yml](../../config/deploy.yml). All are optional; each replaces
+only the key it names, and defaults live in `config/config.exs`.
+
+- `INVITE_LINK_BASE_URL` (default `https://pidro.online/j`) is the base of every
+  invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>` and
+  `share_text` repeats the dashed code. It must point at the host serving the
+  invite landing page, which is also the host whose
+  `/.well-known/apple-app-site-association` `AASA_PATHS` must cover `/j/*`. If
+  the landing host moves, change this **and** the AASA paths in the same deploy;
+  links already in the wild keep pointing at the old host until they expire
+  (24 hours).
+- `GUEST_REAPER_ENABLED` (default `true`; `true`/`TRUE`/`1`/`yes`/`YES` enable,
+  anything else disables), `GUEST_REAPER_INTERVAL_MS` (default `3600000`) and
+  `GUEST_REAPER_MAX_IDLE_DAYS` (default `30`) drive the idle-guest sweep. It
+  deletes guest accounts whose `last_seen_at` (or `inserted_at` when nil) is
+  older than the threshold, using the same irreversible recipe as
+  `DELETE /api/v1/auth/me`: leave the room, revoke hosted invites, then delete
+  `player_profiles`, `player_achievements`, `invite_redemptions`,
+  `invite_events` and the `users` row in one transaction. Registered accounts
+  are never touched. Set `GUEST_REAPER_ENABLED: "false"` and redeploy before
+  investigating anything guest-related; there is no undo.
+- `LIFECYCLE_INVITED_WAITING_TTL_MS` (default `7200000`, two hours) is how long
+  a `waiting` room with a live invite may sit idle with nobody connected before
+  the sweep closes it; without a live invite that sweep uses its fixed 5-minute
+  grace period. This is the knob for "the host left the app to paste the link
+  and came back to a dead table": raise it, redeploy, and the running rooms pick
+  up the new value on the next sweep.
 
 ## Release flow
 

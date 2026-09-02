@@ -45,10 +45,10 @@ This document catalogs all Phoenix.PubSub topics and message formats used in the
 
 ---
 
-### 3. `"game:#{room_code}"` - Game State Updates
-**Purpose:** Broadcast game state changes for specific room  
+### 3. `"game:#{room_code}"` - Game State and Room-Control Updates
+**Purpose:** Broadcast game state changes, and seat/invite changes, for a specific room  
 **Subscribers:** `GameChannel`, `GameAdapter`, `GameMonitorLive`  
-**Publisher:** `GameAdapter`
+**Publishers:** `GameAdapter` (game state), `RoomManager` (seat and invite control)
 
 #### Messages:
 
@@ -79,6 +79,30 @@ This document catalogs all Phoenix.PubSub topics and message formats used in the
 **Source:**  
 - State Update: [game_adapter.ex:262](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/lib/pidro_server/games/game_adapter.ex#L262)
 - Game Over: [game_adapter.ex:290](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/lib/pidro_server/games/game_adapter.ex#L290)
+
+#### Room-Control Messages (Publisher: `RoomManager`)
+
+`RoomManager` broadcasts seat- and invite-level tuples on the **same** `"game:#{room_code}"`
+topic, so they keep their ordering with the room updates. `GameChannel` has a matching
+`handle_info/2` clause for each and pushes a client event.
+
+| Tuple | Client event | Broadcast when |
+|-------|--------------|----------------|
+| `{:invite_redeemed, %{position: atom, user_id: string, display_name: string}}` | `"invite_redeemed"` | A seat is claimed through `POST /api/v1/invites/:code/redeem` |
+| `{:seat_moved, %{user_id: string, from: atom, to: atom}}` | `"seat_moved"` | `POST /api/v1/rooms/:code/seat` moved a seat; the moved player's own channel also updates its `position` assign and re-tracks presence |
+| `{:kicked, %{position: atom, user_id: string}}` | `"player_kicked"` | `POST /api/v1/rooms/:code/kick` vacated a seat |
+
+The kicked player's own channel is subscribed to the topic but in practice never renders
+`"player_kicked"`: `RoomManager` sends `{:force_disconnect, :kicked}` directly to that player's
+registered channel pids **before** the broadcast, so the channel pushes `"kicked"` and stops with
+`{:shutdown, :kicked}` first, after clearing its `room_code` assign so `terminate/2` does not
+re-hold the seat.
+
+`{:player_reconnecting, %{user_id: string, position: atom}}` is also broadcast here. Since phase 1
+it fires for `:waiting` and `:ready` rooms too, where it means a **held seat**: no phase timer, no
+bot substitution, and the room cannot auto-start until the seat is reclaimed.
+
+**Source:** [room_manager.ex](file:///Users/marcelfahle/code/pidro/_PIDRO2/code-ralph/pidro_backend/apps/pidro_server/lib/pidro_server/games/room_manager.ex) - `claim_seat/4`, `move_seat/4`, `kick_player/3`, `broadcast_player_reconnecting/3`
 
 ---
 

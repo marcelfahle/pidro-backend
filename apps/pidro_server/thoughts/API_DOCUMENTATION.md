@@ -143,10 +143,25 @@ require a valid token.
 
 **Endpoint**: `POST /api/v1/auth/login`
 
+The `username` field accepts **either the account's username or its email address**. An
+identifier containing `@` is matched against the email case-insensitively; anything else is
+matched against the username exactly. Both paths share the same constant-time failure, so a
+wrong identifier and a wrong password are indistinguishable. A guest account has no password
+and therefore never authenticates here.
+
 **Request Body**:
 ```json
 {
   "username": "john_doe",
+  "password": "secure_password_123"
+}
+```
+
+or
+
+```json
+{
+  "username": "john@example.com",
   "password": "secure_password_123"
 }
 ```
@@ -194,6 +209,127 @@ curl http://localhost:4000/api/v1/auth/me \
 }
 ```
 
+### Create a Guest Account
+
+**Endpoint**: `POST /api/v1/auth/guest`
+**Authentication**: None (the invite code is the ticket)
+
+A friend who taps an invite link can sit down without registering. The server creates a real
+`users` row with `guest: true` and a generated `guest_XXXXXXXX` username, so every game, rating
+and achievement the guest earns survives the later upgrade.
+
+**Request Body**:
+```json
+{
+  "display_name": "Anna",
+  "invite_code": "7KQ4-M2XB",
+  "install_id": "device-1",
+  "platform": "ios"
+}
+```
+
+- `display_name` (required) - the name shown at the table. NFKC-normalized and trimmed, 2-20
+  graphemes, no control or format characters, and it must not look like the name of a player
+  **connected** at the invite's table (compared casefolded with diacritics and non-alphanumerics
+  removed). Held seats are excluded, so a guest who lost her session can return under her own
+  name. A violation answers `422` with the field code `display_name`.
+- `invite_code` (required) - dashes and lower case are accepted; `I`/`L` read as `1` and `O` as `0`.
+- `install_id` (optional, ≤ 64 characters) - an opaque per-install id that keys the
+  `guest_create_install` rate-limit bucket. It is **never written to request logs** and never
+  appears in a response.
+- `platform` (optional) - `ios`, `android` or `web`; recorded on the invite's `guest_created`
+  funnel event. An unknown value answers `422`.
+
+**Response** (201 Created):
+```json
+{
+  "data": {
+    "user": {
+      "id": "0f2b8c1e-...",
+      "username": "guest_7Q4M2XBA",
+      "email": null,
+      "display_name": "Anna",
+      "guest": true,
+      "inserted_at": "2026-09-02T10:30:00.000000Z",
+      "updated_at": "2026-09-02T10:30:00.000000Z"
+    },
+    "token": "SFMyNTY...",
+    "state": "open"
+  }
+}
+```
+
+`state` is the invite's derived state (see [Invites](#invites-invites)), so the client knows
+whether to redeem immediately (`open`) or show the table's situation first (`full`, `locked`,
+`started`, `closed`, `moved`). Only `revoked` and `expired` refuse the guest: they answer `410`
+with `INVITE_REVOKED` / `INVITE_EXPIRED`. An unknown invite code answers `404`.
+
+Limited at policies `guest_create` and `guest_create_daily` (per client IP) and
+`guest_create_install` (per `install_id`; skipped when the param is absent or longer than 64
+characters).
+
+### Upgrade a Guest to a Registered Account
+
+**Endpoint**: `POST /api/v1/auth/upgrade`
+**Authentication**: Required (a guest token)
+
+Sets email, password and an optional username on the **same** user row, so nothing is migrated
+and nothing is lost. Every token minted before the upgrade is revoked (`token_version` is
+incremented); the response carries a fresh one. Open WebSocket connections are **not**
+disconnected.
+
+**Request Body**:
+```json
+{
+  "email": "anna@example.com",
+  "password": "secure_password_123",
+  "username": "anna"
+}
+```
+
+`username` is optional; without it the generated `guest_…` username is kept. The fields may also
+be nested under a `user` key.
+
+**Response** (200 OK):
+```json
+{
+  "data": {
+    "user": {
+      "id": "0f2b8c1e-...",
+      "username": "anna",
+      "email": "anna@example.com",
+      "display_name": "Anna",
+      "guest": false,
+      "inserted_at": "2026-09-02T10:30:00.000000Z",
+      "updated_at": "2026-09-02T11:05:00.000000Z"
+    },
+    "token": "SFMyNTY..."
+  }
+}
+```
+
+**Errors**: a caller who is already registered answers `409 NOT_A_GUEST`; an email already in use
+(case-insensitively) `409 EMAIL_TAKEN`; a username already in use `409 USERNAME_TAKEN`; invalid
+fields `422`. Limited at policy `auth_upgrade` (per client IP, the same size as `register`, so
+upgrade is not an email-existence oracle).
+
+### Delete Your Account
+
+**Endpoint**: `DELETE /api/v1/auth/me`
+**Authentication**: Required
+
+Leaves the caller's room, revokes every invite they host and clears those invites' labels, then
+deletes their `player_profiles`, `player_achievements`, `invite_redemptions` and `invite_events`
+rows together with the `users` row in one transaction, and finally broadcasts the socket
+disconnect. `game_stats` and `abandonment_events` rows are untouched: they keep the bare user id,
+which afterwards resolves to nobody (a seat's `username` and `display_name` render as `null`).
+
+**Response**: `204 No Content` with an empty body. The token is dead immediately; every
+subsequent request answers `401`.
+
+The same recipe backs the idle-guest reaper, which deletes guest accounts that have not been seen
+for 30 days (see [`thoughts/DEPLOYMENT.md`](DEPLOYMENT.md) for `GUEST_REAPER_*`).
+
 ### Token Lifetime and Revocation
 
 Tokens are signed with `Phoenix.Token` (`PidroServer.Accounts.Token`). The signed payload is
@@ -233,11 +369,21 @@ http://localhost:4000/api/v1
 
 #### Authentication (`/auth`)
 - `POST /auth/register` - Register new user
-- `POST /auth/login` - Login and get token
+- `POST /auth/login` - Login and get token (the `username` field accepts a username **or** an email)
+- `POST /auth/guest` - Create a guest account from an invite code
+- `POST /auth/upgrade` - Turn the calling guest into a registered account (requires auth)
 - `GET /auth/me` - Get current user (requires auth)
+- `DELETE /auth/me` - Delete the calling account (requires auth)
 
 #### Users (`/users`)
 - `GET /users/me/stats` - Get current user's game statistics (requires auth)
+
+#### Invites (`/invites`)
+- `POST /rooms/:code/invites` - Mint or update the room's invite link (host only, requires auth)
+- `GET /invites/:code` - Public preview of an invite (no auth)
+- `POST /invites/:code/redeem` - Claim a seat at the invite's table (requires auth)
+- `DELETE /invites/:code` - Revoke an invite (host only, requires auth)
+- `POST /invites/:code/regenerate` - Revoke and mint a replacement (host only, requires auth)
 
 #### Rooms (`/rooms`)
 - `GET /rooms` - List all available rooms
@@ -252,6 +398,9 @@ http://localhost:4000/api/v1
 - `DELETE /rooms/:code/unwatch` - Leave spectating (requires auth)
 - `POST /rooms/:code/open-seat` - Open a bot seat for substitute (requires auth)
 - `POST /rooms/:code/close-seat` - Close a vacant seat back to bot (requires auth)
+- `POST /rooms/:code/seat` - Move a player to a vacant seat in a waiting room (requires auth)
+- `POST /rooms/:code/lock` - Lock or unlock the table (host only, requires auth)
+- `POST /rooms/:code/kick` - Kick a seated player (host only, requires auth)
 
 ### Example: Creating and Joining a Room
 
@@ -374,6 +523,261 @@ curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
 }
 ```
 
+### Invites (`/invites`)
+
+An invite is a durable row, separate from the 4-character room code: **one link per table**. The
+host mints it, shares it, and friends land on a public preview before they sit down. The link is
+`<INVITE_LINK_BASE_URL>/<CODE>` (production default `https://pidro.online/j`).
+
+**Codes** are 8 characters from the Crockford Base32 alphabet, drawn from
+`:crypto.strong_rand_bytes/1` and stored upper-cased. Lookups are forgiving: dashes are stripped,
+the code is upper-cased, and `I`/`L` are read as `1` and `O` as `0`. So `7kq4-m2xb`, `7KQ4M2XB`
+and `7KQ4-M2XB` all reach the same invite. Invites expire **24 hours** after they are minted.
+
+**State** is derived at read time, never stored, in this order:
+
+| State | Meaning |
+|-------|---------|
+| `revoked` | The host revoked it (`DELETE` or `regenerate`) |
+| `moved` | It was superseded and the successor's table is still waiting; `next_code` carries the new code |
+| `expired` | Past `expires_at` |
+| `closed` | No live room with this invite's room id (the table is gone, or its code was recycled by another room) |
+| `started` | The room is `playing` or `finished` |
+| `locked` | The host locked the table |
+| `full` | All four positions are taken |
+| `open` | Anyone with the link can sit down |
+
+#### Mint or Update the Room's Invite
+
+**Endpoint**: `POST /api/v1/rooms/:code/invites`
+**Authentication**: Required (the room's host)
+
+The room must be `waiting` or `ready`. A **second mint on the same room updates the active invite
+in place**: the same code comes back with the new `seat_hint` and `label`, and the status is `200`
+instead of `201`.
+
+**Request Body** (all fields optional):
+```json
+{
+  "seat_hint": "partner",
+  "label": "Anna",
+  "supersedes": "7KQ4-M2XB"
+}
+```
+
+- `seat_hint` - `north`, `east`, `south`, `west`, `north_south`, `east_west` or `partner`.
+  `partner` resolves against the host's current seat at redeem time.
+- `label` - free text, at most 40 characters; a private note for the host ("Anna"). It is deleted
+  when the host deletes their account.
+- `supersedes` - the code of an earlier invite the **caller hosted**. That invite starts reading
+  `moved` with `next_code` pointing here, which is how "play again" forwards last night's link to
+  tonight's table.
+
+**Response** (201 Created, or 200 OK when the active invite was updated):
+```json
+{
+  "data": {
+    "invite": {
+      "code": "7KQ4M2XB",
+      "url": "https://pidro.online/j/7KQ4M2XB",
+      "share_text": "Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB",
+      "seat_hint": "partner",
+      "label": "Anna",
+      "expires_at": "2026-09-03T10:30:00.000000Z",
+      "state": "open"
+    }
+  }
+}
+```
+
+The room code never appears in an invite response.
+
+**Errors**: a non-host answers `403 NOT_OWNER`; a room that is not waiting `409 ROOM_NOT_WAITING`;
+more than 20 invites for one room `409 INVITE_LIMIT`; an unknown room `404`; an invalid
+`seat_hint` or an over-long `label` `422`. Limited at policy `invite_mint` (per user).
+
+#### Preview an Invite
+
+**Endpoint**: `GET /api/v1/invites/:code`
+**Authentication**: None
+
+The landing page's data. It deliberately **never contains the room code**, so a scraped link
+cannot be turned into a room join.
+
+**Response** (200 OK):
+```json
+{
+  "data": {
+    "invite": {
+      "code": "7KQ4M2XB",
+      "state": "open",
+      "host": "Marcel",
+      "seats_taken": 1,
+      "seats_total": 4,
+      "seat_hint": "partner",
+      "label": "Anna",
+      "expires_at": "2026-09-03T10:30:00.000000Z"
+    }
+  }
+}
+```
+
+- `host` is the host's `display_name`, falling back to their username, and `null` once the
+  account is gone.
+- `seats_taken` is `0` when the table is closed.
+- `next_code` is present **only** when `state` is `moved`.
+
+An unknown code answers `404`. Limited at policy `invite_preview` (per client IP).
+
+#### Redeem an Invite
+
+**Endpoint**: `POST /api/v1/invites/:code/redeem`
+**Authentication**: Required (a registered user or a guest created via `POST /auth/guest`)
+
+**Request Body** (all fields optional):
+```json
+{
+  "position": "south",
+  "platform": "ios",
+  "source": "imessage"
+}
+```
+
+- Without `position` the server tries the invite's seat hint and falls back to any open seat in
+  N/E/S/W order. `hint_honored` reports whether the hint was met (it is `true` when there was no
+  hint).
+- With `position` the seat is taken exactly or the request fails.
+- `platform` and `source` are recorded on the redemption row for the funnel; they never affect
+  seating.
+
+**Response** (200 OK):
+```json
+{
+  "data": {
+    "room": { "code": "A3F9", "locked": false, "seats": { "...": {} } },
+    "position": "south",
+    "hint_honored": true
+  }
+}
+```
+
+`room` is the full room object (see [Room Object Schema](WEBSOCKET_API.md#room-object-schema)),
+so this single call is enough to render the table and then join `game:<room_code>`.
+
+A caller **already seated at this table** gets `200` with their current seat and no second
+redemption is recorded, so a double tap on the link is harmless.
+
+**Errors**:
+
+| Status | Code | When |
+|--------|------|------|
+| `403` | `KICKED` | The host kicked this account from the room |
+| `404` | `NOT_FOUND` | Unknown invite code |
+| `409` | `SEAT_TAKEN` | An explicit `position` is occupied; the body carries `next_open` |
+| `409` | `TABLE_FULL` | All four seats are taken |
+| `410` | `TABLE_STARTED` | The game already started |
+| `410` | `TABLE_CLOSED` | The table no longer exists |
+| `410` | `INVITE_EXPIRED` | Past `expires_at` |
+| `410` | `INVITE_REVOKED` | The host revoked the invite |
+| `410` | `INVITE_MOVED` | Superseded; the body carries `next_code` |
+| `422` | `INVALID_POSITION` | `position` is not one of `north`/`east`/`south`/`west` |
+| `422` | `ALREADY_IN_ROOM` | The caller is connected in another room |
+| `423` | `TABLE_LOCKED` | The host locked the table |
+
+A caller whose seat in another room is only **held** (or bot-substituted) is evicted from that
+room automatically and seated here; only a live connection elsewhere answers `ALREADY_IN_ROOM`.
+
+Limited at policy `invite_redeem` (per user).
+
+#### Revoke an Invite
+
+**Endpoint**: `DELETE /api/v1/invites/:code`
+**Authentication**: Required (the invite's host)
+
+Marks the invite revoked. The row is **never deleted** and the code is never reissued, so an old
+link keeps answering `410 INVITE_REVOKED` instead of falling through to a stranger's table.
+
+**Response**: `204 No Content`. A non-host answers `403 NOT_OWNER`; an unknown code `404`.
+
+#### Regenerate an Invite
+
+**Endpoint**: `POST /api/v1/invites/:code/regenerate`
+**Authentication**: Required (the invite's host)
+
+Revokes the invite and mints a replacement for the same table with the same seat hint and label.
+This is the answer to a leaked link: the old code reads `revoked`, **not** `moved`, so it does not
+forward anybody to the new one.
+
+**Response** (201 Created): the same shape as a mint, carrying the new code.
+
+Limited at policy `invite_mint` (per user).
+
+### Host Controls in a Waiting Room
+
+The three endpoints below all require authentication, work only while the room is `waiting` or
+`ready` (`409 ROOM_NOT_WAITING` otherwise), and answer `200` with the full room object.
+
+#### Move a Seat
+
+**Endpoint**: `POST /api/v1/rooms/:code/seat`
+
+```json
+{ "position": "west", "user_id": "0f2b8c1e-..." }
+```
+
+The host may move any seated player; a seated non-host may move **only themselves**, which they do
+by omitting `user_id`. The target position must be vacant.
+
+**Response** (200 OK):
+```json
+{
+  "data": {
+    "room": {
+      "code": "A3F9",
+      "locked": false,
+      "positions": { "north": "…host id…", "east": null, "south": null, "west": "0f2b8c1e-..." },
+      "seats": {
+        "west": { "position": "west", "user_id": "0f2b8c1e-...", "username": "guest_7Q4M2XBA", "display_name": "Ben", "status": "connected" }
+      }
+    }
+  }
+}
+```
+
+**Errors**: a non-host moving somebody else `403 NOT_OWNER`; an occupied target `422 SEAT_TAKEN`
+(the same 422 contract as `POST /rooms/:code/join`); an unknown position `422 INVALID_POSITION`.
+
+#### Lock or Unlock the Table
+
+**Endpoint**: `POST /api/v1/rooms/:code/lock`
+
+```json
+{ "locked": true }
+```
+
+A locked table refuses `POST /rooms/:code/join` and invite redemptions with `423 TABLE_LOCKED`.
+Reclaiming a **held** seat still works, so locking never strands a player who stepped out. The
+room object carries the flag as `locked`.
+
+**Errors**: a non-host `403 NOT_OWNER`; a non-boolean `locked` `422`.
+
+#### Kick a Player
+
+**Endpoint**: `POST /api/v1/rooms/:code/kick`
+
+```json
+{ "position": "east" }
+```
+
+Vacates the seat, adds the account to the room's kick list, and closes that player's game channel
+with a `kicked` event. They cannot join, redeem or substitute into this room again: every later
+attempt answers `403 KICKED`. The kick list is **per account**, so a stranger who still holds the
+link can come back as a fresh guest — the host's answer to that is
+`POST /invites/:code/regenerate`.
+
+**Errors**: a non-host `403 NOT_OWNER`; the host's own seat, a bot seat or a vacant seat
+`422 SEAT_NOT_KICKABLE`.
+
 ---
 
 ## WebSocket API
@@ -491,8 +895,15 @@ gameChannel.join()
 | `player_left` | `{ player_id }` | Player left the game |
 | `turn_changed` | `{ current_player }` | Current turn changed |
 | `game_over` | `{ winner, scores }` | Game ended |
+| `invite_redeemed` | `{ position, user_id, display_name }` | Somebody claimed a seat through the invite link |
+| `seat_moved` | `{ user_id, from, to }` | The host (or the player themselves) moved a seat |
+| `player_kicked` | `{ position, user_id }` | The host kicked a seat; sent to everybody else |
+| `kicked` | `{ reason: "kicked" }` | Sent to the kicked player only, then the channel closes |
 | `presence_state` | Presence info | Who's currently online |
 | `presence_diff` | Presence changes | Online status changes |
+
+The full event list, including the waiting-room held-seat semantics of `player_reconnecting`,
+lives in [`thoughts/WEBSOCKET_API.md`](WEBSOCKET_API.md).
 
 **Example: Playing a Game**:
 ```javascript
@@ -746,9 +1157,13 @@ All API errors follow a consistent JSON format for easy parsing and handling.
 | **204 No Content** | Success, no response body | Successfully left room |
 | **400 Bad Request** | Invalid request format | Malformed JSON, missing fields |
 | **401 Unauthorized** | Authentication required/failed | Missing token, invalid credentials, expired token |
-| **404 Not Found** | Resource doesn't exist | Room not found, user not found |
+| **403 Forbidden** | Not allowed for this caller | Not the host of a room or invite (`NOT_OWNER`), kicked from the table (`KICKED`) |
+| **404 Not Found** | Resource doesn't exist | Room not found, user not found, unknown invite code |
+| **409 Conflict** | The request is valid but the current state refuses it | Seat taken on redeem, table full, room no longer waiting, invite limit, caller is not a guest, email or username already in use |
+| **410 Gone** | The table or invite is permanently past accepting this request | Game started, table closed, invite expired, revoked or moved |
 | **422 Unprocessable Entity** | Validation failed | Username taken, invalid email, room full |
-| **429 Too Many Requests** | Rate limit exceeded | Too many logins, registrations, password resets, room creations or room lookups from one client; see [Rate Limiting](#rate-limiting) |
+| **423 Locked** | The host locked the table | `POST /rooms/:code/join` and invite redeem while `locked` |
+| **429 Too Many Requests** | Rate limit exceeded | Too many logins, registrations, password resets, room creations or lookups, room joins, invite mints, previews or redeems, guest creations or upgrades from one client; see [Rate Limiting](#rate-limiting) |
 | 503 | Service Unavailable | No free room code could be allocated (`ROOM_CODE_EXHAUSTED`); retry shortly |
 | **500 Internal Server Error** | Server error | Unexpected server issue |
 
@@ -859,6 +1274,93 @@ Content-Type: application/json; charset=utf-8
 }
 ```
 
+#### Invite, Seat and Account Errors
+
+These arrive from the invite endpoints, the host controls and the guest/upgrade routes. Every one
+uses the standard envelope; two of them carry an extra field the client should act on.
+
+**409 Conflict**
+
+| Code | Field | Meaning |
+|------|-------|---------|
+| `SEAT_TAKEN` | `next_open` | The explicitly requested seat is occupied. `next_open` lists the still-open positions in N/E/S/W order, so the client can offer one immediately. Only `POST /invites/:code/redeem` answers 409 here; `POST /rooms/:code/join` keeps its historical `422 SEAT_TAKEN` |
+| `TABLE_FULL` | - | All four positions are taken |
+| `ROOM_NOT_WAITING` | - | The room is no longer `waiting`/`ready`, so it cannot be minted for, locked, kicked in or reseated |
+| `INVITE_LIMIT` | - | This room has already minted 20 invites |
+| `NOT_A_GUEST` | - | `POST /auth/upgrade` was called with a registered account's token |
+| `EMAIL_TAKEN` | - | Another account already uses that email (compared case-insensitively) |
+| `USERNAME_TAKEN` | - | Another account already uses that username |
+
+```json
+{
+  "errors": [
+    {
+      "code": "SEAT_TAKEN",
+      "title": "Seat taken",
+      "detail": "The requested seat is already occupied",
+      "next_open": ["east", "west"]
+    }
+  ]
+}
+```
+
+**410 Gone**
+
+| Code | Field | Meaning |
+|------|-------|---------|
+| `TABLE_STARTED` | - | The game at this table has already started |
+| `TABLE_CLOSED` | - | The table this invite opened no longer exists |
+| `INVITE_EXPIRED` | - | The invite is past its 24-hour lifetime |
+| `INVITE_REVOKED` | - | The host revoked the invite (or regenerated it) |
+| `INVITE_MOVED` | `next_code` | The host is at a new table; redeem `next_code` instead |
+
+```json
+{
+  "errors": [
+    {
+      "code": "INVITE_MOVED",
+      "title": "Invite moved",
+      "detail": "The host is at a new table; use the next code",
+      "next_code": "M2XB7KQ4"
+    }
+  ]
+}
+```
+
+**423 Locked**
+
+```json
+{
+  "errors": [
+    {
+      "code": "TABLE_LOCKED",
+      "title": "Table locked",
+      "detail": "The host has locked this table"
+    }
+  ]
+}
+```
+
+**403 Forbidden**
+
+```json
+{
+  "errors": [
+    {
+      "code": "KICKED",
+      "title": "Kicked",
+      "detail": "The host removed you from this table"
+    }
+  ]
+}
+```
+
+`KICKED` is permanent for that account and that room: joining, redeeming and substituting all
+answer it. `NOT_OWNER` (also 403) means the caller does not host the room or the invite.
+
+**422 Unprocessable Entity** adds `SEAT_NOT_KICKABLE` (the host's own seat, a bot seat or a vacant
+seat) and `INVALID_POSITION` (a position outside `north`/`east`/`south`/`west`).
+
 #### Game Errors
 
 ```json
@@ -933,14 +1435,27 @@ the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
 | `password_reset_confirm` | `POST /api/v1/auth/password-reset/confirm` | 5 per 900 s | client IP |
 | `room_create` | `POST /api/v1/rooms` | 10 per 60 s | authenticated user |
 | `room_lookup` | `GET /api/v1/rooms/:code` | 120 per 60 s | client IP |
+| `room_join` | `POST /api/v1/rooms/:code/join` | 30 per 60 s | authenticated user |
+| `invite_mint` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate` | 10 per 60 s | authenticated user |
+| `invite_preview` | `GET /api/v1/invites/:code` | 60 per 60 s | client IP |
+| `invite_redeem` | `POST /api/v1/invites/:code/redeem` | 10 per 60 s | authenticated user |
+| `guest_create` | `POST /api/v1/auth/guest` | 10 per 3600 s | client IP |
+| `guest_create_daily` | `POST /api/v1/auth/guest` | 40 per 86400 s | client IP |
+| `guest_create_install` | `POST /api/v1/auth/guest` | 3 per 3600 s | SHA-256 of the trimmed `install_id` param (case preserved: it is an opaque device id) |
+| `auth_upgrade` | `POST /api/v1/auth/upgrade` | 10 per 600 s | client IP |
 
-- A route may carry several policies (`/auth/password-reset` carries two); each counts in its own
-  bucket and the first one over its limit answers.
+- A route may carry several policies (`/auth/password-reset` carries two, `/auth/guest` carries
+  three); each counts in its own bucket and the first one over its limit answers.
 - **Client IP** is the address kamal-proxy forwards in `X-Forwarded-For`
   (`PidroServerWeb.Plugs.TrustedProxy`). An IPv4-mapped IPv6 peer collapses to IPv4 and a native
   IPv6 peer keys on its /64 prefix, so one household shares a bucket.
 - A `:user` policy with no authenticated user falls back to the IP key.
 - A missing or empty `identifier`/`email` param skips only the identifier policy.
+- A missing `install_id`, or one longer than 64 characters, skips only the `guest_create_install`
+  policy; the two IP-keyed guest policies still apply. The `guest_create` sizes assume a QR party
+  behind one NAT, which is the designed case rather than an abuse signal.
+- `auth_upgrade` is deliberately the same size as `register` so upgrade cannot be used as an
+  email-existence oracle.
 
 ### 429 Contract
 

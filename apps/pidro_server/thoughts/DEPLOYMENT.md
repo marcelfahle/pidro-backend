@@ -76,6 +76,19 @@ in every environment.
 | `RATE_LIMIT_PASSWORD_RESET_CONFIRM_LIMIT` / `RATE_LIMIT_PASSWORD_RESET_CONFIRM_SCALE_MS` | `5` / `900000` | `POST /api/v1/auth/password-reset/confirm`, per client IP |
 | `RATE_LIMIT_ROOM_CREATE_LIMIT` / `RATE_LIMIT_ROOM_CREATE_SCALE_MS` | `10` / `60000` | `POST /api/v1/rooms`, per authenticated user |
 | `RATE_LIMIT_ROOM_LOOKUP_LIMIT` / `RATE_LIMIT_ROOM_LOOKUP_SCALE_MS` | `120` / `60000` | `GET /api/v1/rooms/:code`, per client IP |
+| `RATE_LIMIT_ROOM_JOIN_LIMIT` / `RATE_LIMIT_ROOM_JOIN_SCALE_MS` | `30` / `60000` | `POST /api/v1/rooms/:code/join`, per authenticated user |
+| `RATE_LIMIT_INVITE_MINT_LIMIT` / `RATE_LIMIT_INVITE_MINT_SCALE_MS` | `10` / `60000` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate`, per authenticated user |
+| `RATE_LIMIT_INVITE_PREVIEW_LIMIT` / `RATE_LIMIT_INVITE_PREVIEW_SCALE_MS` | `60` / `60000` | `GET /api/v1/invites/:code` (public landing page), per client IP |
+| `RATE_LIMIT_INVITE_REDEEM_LIMIT` / `RATE_LIMIT_INVITE_REDEEM_SCALE_MS` | `10` / `60000` | `POST /api/v1/invites/:code/redeem`, per authenticated user |
+| `RATE_LIMIT_GUEST_CREATE_LIMIT` / `RATE_LIMIT_GUEST_CREATE_SCALE_MS` | `10` / `3600000` | `POST /api/v1/auth/guest`, per client IP |
+| `RATE_LIMIT_GUEST_CREATE_DAILY_LIMIT` / `RATE_LIMIT_GUEST_CREATE_DAILY_SCALE_MS` | `40` / `86400000` | same route, per client IP over a day |
+| `RATE_LIMIT_GUEST_CREATE_INSTALL_LIMIT` / `RATE_LIMIT_GUEST_CREATE_INSTALL_SCALE_MS` | `3` / `3600000` | same route, per hashed `install_id`; a request without one skips this policy |
+| `RATE_LIMIT_AUTH_UPGRADE_LIMIT` / `RATE_LIMIT_AUTH_UPGRADE_SCALE_MS` | `10` / `600000` | `POST /api/v1/auth/upgrade`, per client IP; keep it the same size as `register` so upgrade is not an email-existence oracle |
+| `INVITE_LINK_BASE_URL` | `https://pidro.online/j` | Base of an invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>`, and the code appears again in `share_text`. Point it at the host that serves the invite landing page; the dev and test environments point at the local endpoint |
+| `GUEST_REAPER_ENABLED` | `true` (`false` in test) | Runs the idle-guest sweep. `true`/`TRUE`/`1`/`yes`/`YES` enable it; anything else disables it. Disabled means the GenServer starts but never schedules a sweep |
+| `GUEST_REAPER_INTERVAL_MS` | `3600000` | Milliseconds between sweeps |
+| `GUEST_REAPER_MAX_IDLE_DAYS` | `30` | A guest whose `last_seen_at` (or `inserted_at` when it is nil) is older than this is deleted with the account-deletion recipe: room left, hosted invites revoked, `player_profiles`, `player_achievements`, `invite_redemptions`, `invite_events` and the `users` row removed in one transaction. Registered accounts are never touched |
+| `LIFECYCLE_INVITED_WAITING_TTL_MS` | `7200000` (2 hours) | How long a `waiting` room with a **live invite** may sit idle with no connected human or spectator before the periodic sweep closes it. Without a live invite that sweep uses its fixed 5-minute grace period. A room's invite window is the latest `expires_at` of its active invites, recomputed on every mint, revoke and regenerate; minting and redeeming both count as activity. Raise it if hosts report tables disappearing while they are out of the app sharing the link |
 | `TRUST_PROXY_HEADERS` | `true` in prod, `false` elsewhere | `PidroServerWeb.Plugs.TrustedProxy` honours `X-Forwarded-For` (rightmost value) and `X-Forwarded-Proto` when this is true and the TCP peer is a loopback, private, CGNAT, ULA or link-local address. `false` makes every client share the proxy's bucket; use only to diagnose the limiter |
 | `AASA_APP_IDS` | `config/config.exs` value | Comma-separated iOS app IDs (`TEAMID.bundle.id`) for `/.well-known/apple-app-site-association` |
 | `AASA_PATHS` | `/j/*,/app/*` | Comma-separated paths for the same file |
@@ -84,6 +97,12 @@ in every environment.
 Rate limits are numeric only; there is no off switch, raise a limit instead. The production
 defaults are in `config/config.exs`; `config/dev.exs` runs every limit at 10x. Limits are per
 node and per fixed window, so counters reset on restart and are not shared between nodes.
+
+`INVITE_LINK_BASE_URL` and the `GUEST_REAPER_*` variables are read in every environment by
+`config/runtime.exs`; each replaces only the key it names, so setting `GUEST_REAPER_INTERVAL_MS`
+alone leaves `enabled` and `max_idle_days` at their configured values. The reaper deletes
+accounts irreversibly: verify `GUEST_REAPER_MAX_IDLE_DAYS` before raising or lowering it, and set
+`GUEST_REAPER_ENABLED: "false"` to stop sweeps while investigating anything guest-related.
 
 ### Generating Secrets
 
