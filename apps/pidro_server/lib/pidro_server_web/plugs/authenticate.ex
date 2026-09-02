@@ -28,9 +28,12 @@ defmodule PidroServerWeb.Plugs.Authenticate do
 
   - Extracts the Authorization header (expects "Bearer <token>" format)
   - Verifies the token using `PidroServer.Accounts.Token.verify/1`
-  - Loads the user using `PidroServer.Accounts.Auth.get_user/1`
+  - Loads the user using `PidroServer.Accounts.Auth.fetch_user_for_token/1`,
+    which also rejects a token whose version no longer matches the user's
+    `token_version` (revoked by logout, password reset or account changes)
   - On success: assigns the user to `:current_user` and returns the connection
-  - On failure: returns 401 Unauthorized JSON response and halts the connection
+  - On failure (missing, malformed, invalid, expired or revoked token, or an
+    unknown user): returns 401 Unauthorized JSON response and halts the connection
   """
 
   import Plug.Conn
@@ -92,18 +95,11 @@ defmodule PidroServerWeb.Plugs.Authenticate do
 
   @doc false
   defp authenticate_token(conn, token) do
-    case Token.verify(token) do
-      {:ok, user_id} ->
-        case Auth.get_user(user_id) do
-          nil ->
-            unauthorized_response(conn)
-
-          user ->
-            assign(conn, :current_user, user)
-        end
-
-      {:error, _reason} ->
-        unauthorized_response(conn)
+    with {:ok, claims} <- Token.verify(token),
+         {:ok, user} <- Auth.fetch_user_for_token(claims) do
+      assign(conn, :current_user, user)
+    else
+      {:error, _reason} -> unauthorized_response(conn)
     end
   end
 

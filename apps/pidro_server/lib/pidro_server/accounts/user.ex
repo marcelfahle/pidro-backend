@@ -31,6 +31,9 @@ defmodule PidroServer.Accounts.User do
 
   @display_name_max_length 40
 
+  @typedoc "A user row."
+  @type t :: %__MODULE__{}
+
   schema "users" do
     field(:username, :string)
     field(:email, :string)

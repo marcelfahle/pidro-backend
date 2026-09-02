@@ -88,6 +88,58 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     end
   end
 
+  describe "token revocation" do
+    test "a bumped version yields 401 for the old token and 200 for a fresh one", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+      old_token = Token.generate(user)
+
+      assert json_response(me(conn, old_token), 200)
+
+      {:ok, bumped} = Auth.bump_token_version(user)
+
+      assert %{"errors" => %{"detail" => "Unauthorized"}} =
+               json_response(me(build_conn(), old_token), 401)
+
+      assert %{"user" => %{"id" => id}} =
+               json_response(me(build_conn(), Token.generate(bumped)), 200)["data"]
+
+      assert id == user.id
+    end
+
+    test "a completed password reset revokes the old token and the returned token works", %{
+      conn: conn
+    } do
+      user = AccountsFixtures.user_fixture(%{username: "reset_revokes"})
+      old_token = Token.generate(user)
+      assert json_response(me(conn, old_token), 200)
+
+      {:ok, %{token: reset_token}} = Auth.request_password_reset(user.username)
+
+      conn =
+        post(build_conn(), ~p"/api/v1/auth/password-reset/confirm", %{
+          "token" => reset_token,
+          "password" => "new password!"
+        })
+
+      assert %{"token" => new_token, "user" => %{"username" => "reset_revokes"}} =
+               json_response(conn, 200)["data"]
+
+      assert json_response(me(build_conn(), old_token), 401)
+
+      assert %{"user" => %{"id" => id}} =
+               json_response(me(build_conn(), new_token), 200)["data"]
+
+      assert id == user.id
+      assert {:ok, %{v: 1}} = Token.verify(new_token)
+    end
+  end
+
+  defp me(conn, token) do
+    conn
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> get(~p"/api/v1/auth/me")
+  end
+
   describe "password reset" do
     test "request returns a generic response and debug reset url for existing users", %{
       conn: conn

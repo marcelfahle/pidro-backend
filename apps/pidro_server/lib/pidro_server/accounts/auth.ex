@@ -6,6 +6,17 @@ defmodule PidroServer.Accounts.Auth do
   It handles password hashing using Bcrypt and interacts with the database through
   PidroServer.Repo.
 
+  ## Token revocation
+
+  Every token carries the user's `token_version` at mint time (see
+  `PidroServer.Accounts.Token`). `fetch_user_for_token/1` is the one place
+  that compares a token's version with the database; the `Authenticate` plug
+  and `UserSocket.connect/3` both go through it. `bump_token_version/1`
+  increments the version atomically, which invalidates every earlier token,
+  and then broadcasts `"disconnect"` on `"user_socket:<id>"` so live sockets
+  close. A password reset bumps the version in the same transaction as the
+  password change.
+
   ## Examples
 
       # Register a new user
@@ -30,6 +41,8 @@ defmodule PidroServer.Accounts.Auth do
   """
 
   import Ecto.Query
+  alias Ecto.Multi
+  alias PidroServer.Accounts.Token
   alias PidroServer.Accounts.User
   alias PidroServer.Repo
 
@@ -159,6 +172,67 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   @doc """
+  Loads the user a verified token belongs to and checks the token version.
+
+  This is the single place that compares a token's `v` claim with
+  `users.token_version`; both the `Authenticate` plug and
+  `UserSocket.connect/3` call it. A token minted before the last
+  `bump_token_version/1` is reported as revoked.
+
+  ## Returns
+
+    - `{:ok, user}` - The user exists and the token version matches
+    - `{:error, :not_found}` - No user with that id exists
+    - `{:error, :token_revoked}` - The user's `token_version` has moved on
+
+  ## Examples
+
+      iex> {:ok, claims} = PidroServer.Accounts.Token.verify(token)
+      iex> PidroServer.Accounts.Auth.fetch_user_for_token(claims)
+      {:ok, %PidroServer.Accounts.User{}}
+  """
+  @spec fetch_user_for_token(Token.claims()) ::
+          {:ok, User.t()} | {:error, :not_found | :token_revoked}
+  def fetch_user_for_token(%{id: id, v: v}) when is_binary(id) and is_integer(v) do
+    case get_user(id) do
+      nil -> {:error, :not_found}
+      %User{token_version: ^v} = user -> {:ok, user}
+      %User{} -> {:error, :token_revoked}
+    end
+  end
+
+  @doc """
+  Increments the user's `token_version` atomically and disconnects their sockets.
+
+  Every token minted before the increment fails `fetch_user_for_token/1`
+  afterwards. Once the increment has committed, `"disconnect"` is broadcast
+  on `"user_socket:<id>"`, which closes the user's live socket connections;
+  a client still holding the old token then fails every reconnect until it
+  logs in again.
+
+  Accepts a `%User{}` or a bare user id.
+
+  ## Returns
+
+    - `{:ok, user}` - The user with the new `token_version`
+    - `{:error, :not_found}` - No user with that id exists
+
+  ## Examples
+
+      iex> PidroServer.Accounts.Auth.bump_token_version(user)
+      {:ok, %PidroServer.Accounts.User{token_version: 1}}
+  """
+  @spec bump_token_version(User.t() | String.t()) :: {:ok, User.t()} | {:error, :not_found}
+  def bump_token_version(%User{id: id}), do: bump_token_version(id)
+
+  def bump_token_version(id) when is_binary(id) do
+    with {:ok, user} <- increment_token_version(Repo, id) do
+      broadcast_disconnect(user)
+      {:ok, user}
+    end
+  end
+
+  @doc """
   Fetches a user by their username.
 
   ## Returns
@@ -230,6 +304,20 @@ defmodule PidroServer.Accounts.Auth do
 
   @doc """
   Resets a user's password with a valid password-reset token.
+
+  The password change, the clearing of `password_reset_token_hash` and
+  `password_reset_sent_at`, and the `token_version` increment run in one
+  transaction, so a reset link cannot be replayed and every token minted
+  before the reset is revoked. The returned user reflects the committed row,
+  so a token minted from it carries the new version. The disconnect
+  broadcast fires only after the transaction has committed.
+
+  ## Returns
+
+    - `{:ok, user}` - The updated user
+    - `{:error, %Ecto.Changeset{}}` - The new password is invalid
+    - `{:error, :invalid_or_expired_password_reset_token}` - No live reset
+      token matches
   """
   def reset_user_password(token, password) when is_binary(token) and is_binary(password) do
     token_hash = hash_password_reset_token(token)
@@ -245,9 +333,20 @@ defmodule PidroServer.Accounts.Auth do
         {:error, :invalid_or_expired_password_reset_token}
 
       %User{} = user ->
-        user
-        |> User.password_changeset(%{password: password})
-        |> Repo.update()
+        Multi.new()
+        |> Multi.update(:password, User.password_changeset(user, %{password: password}))
+        |> Multi.run(:user, fn repo, %{password: updated} ->
+          increment_token_version(repo, updated.id)
+        end)
+        |> Repo.transaction()
+        |> case do
+          {:ok, %{user: user}} ->
+            broadcast_disconnect(user)
+            {:ok, user}
+
+          {:error, _step, reason, _changes} ->
+            {:error, reason}
+        end
     end
   end
 
@@ -378,6 +477,22 @@ defmodule PidroServer.Accounts.Auth do
             fragment("lower(?)", u.email) == ^normalized_email,
         limit: 1
     )
+  end
+
+  # Runs the atomic increment through the given repo (the transaction repo
+  # inside a Multi) and returns the updated row. Never broadcasts: a caller
+  # inside a transaction must wait for the commit before disconnecting.
+  defp increment_token_version(repo, id) do
+    query = from u in User, where: u.id == ^id, select: u
+
+    case repo.update_all(query, inc: [token_version: 1]) do
+      {1, [user]} -> {:ok, user}
+      {0, _} -> {:error, :not_found}
+    end
+  end
+
+  defp broadcast_disconnect(%User{id: id}) do
+    PidroServerWeb.Endpoint.broadcast("user_socket:#{id}", "disconnect", %{})
   end
 
   defp generate_password_reset_token do
