@@ -41,7 +41,6 @@ defmodule PidroServer.Accounts.Auth do
   """
 
   import Ecto.Query
-  alias Ecto.Multi
   alias PidroServer.Accounts.Token
   alias PidroServer.Accounts.User
   alias PidroServer.Repo
@@ -333,18 +332,26 @@ defmodule PidroServer.Accounts.Auth do
         {:error, :invalid_or_expired_password_reset_token}
 
       %User{} = user ->
-        Multi.new()
-        |> Multi.update(:password, User.password_changeset(user, %{password: password}))
-        |> Multi.run(:user, fn repo, %{password: updated} ->
-          increment_token_version(repo, updated.id)
-        end)
-        |> Repo.transaction()
-        |> case do
-          {:ok, %{user: user}} ->
+        # One transaction: password change (which also clears the reset
+        # token fields), then the atomic version bump. The disconnect
+        # broadcast waits for the commit.
+        result =
+          Repo.transaction(fn ->
+            with {:ok, updated} <-
+                   Repo.update(User.password_changeset(user, %{password: password})),
+                 {:ok, bumped} <- increment_token_version(Repo, updated.id) do
+              bumped
+            else
+              {:error, reason} -> Repo.rollback(reason)
+            end
+          end)
+
+        case result do
+          {:ok, user} ->
             broadcast_disconnect(user)
             {:ok, user}
 
-          {:error, _step, reason, _changes} ->
+          {:error, reason} ->
             {:error, reason}
         end
     end
