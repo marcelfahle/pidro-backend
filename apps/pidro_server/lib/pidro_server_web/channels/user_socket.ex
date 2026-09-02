@@ -17,11 +17,23 @@ defmodule PidroServerWeb.UserSocket do
       new Socket("ws://localhost:4000/socket", {authToken: "eyJhbG..."})
 
   The token is verified using PidroServer.Accounts.Token and must be valid
-  and not expired (30 day expiry).
+  and not expired (30 day expiry). Its version claim is then checked against
+  the user's `token_version` through
+  `PidroServer.Accounts.Auth.fetch_user_for_token/1`; a revoked token or a
+  deleted user is refused with `:error`.
+
+  ## Disconnects
+
+  `PidroServer.Accounts.Auth.bump_token_version/1` broadcasts `"disconnect"`
+  on `"user_socket:<user_id>"`, the topic `id/1` returns, which closes every
+  live connection for that user. A client holding the old token then fails
+  each reconnect until it logs in again.
   """
 
   use Phoenix.Socket
   require Logger
+
+  alias PidroServer.Accounts.{Auth, Token}
 
   # Define channels
   channel "lobby", PidroServerWeb.LobbyChannel
@@ -57,18 +69,19 @@ defmodule PidroServerWeb.UserSocket do
   def connect(_params, _socket, _connect_info), do: :error
 
   defp authenticate(token, socket) do
-    case PidroServer.Accounts.Token.verify(token) do
-      {:ok, user_id} ->
-        # Generate or retrieve session_id based on user_id
-        # This allows the same session to be maintained across reconnects
-        session_id = generate_session_id(user_id)
+    with {:ok, %{id: user_id} = claims} <- Token.verify(token),
+         {:ok, _user} <- Auth.fetch_user_for_token(claims) do
+      # Generate or retrieve session_id based on user_id
+      # This allows the same session to be maintained across reconnects
+      session_id = generate_session_id(user_id)
 
-        {:ok,
-         socket
-         |> assign(:user_id, user_id)
-         |> assign(:session_id, session_id)
-         |> assign(:connected_at, DateTime.utc_now())}
-
+      # user_id stays a bare id string: id/1, Presence and the channels read it.
+      {:ok,
+       socket
+       |> assign(:user_id, user_id)
+       |> assign(:session_id, session_id)
+       |> assign(:connected_at, DateTime.utc_now())}
+    else
       {:error, reason} ->
         Logger.warning("Socket connection failed: #{inspect(reason)}")
         :error

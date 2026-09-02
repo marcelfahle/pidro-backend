@@ -224,6 +224,11 @@ defmodule PidroServerWeb.API.AuthController do
 
   @doc """
   Reset a password using a reset token.
+
+  `Auth.reset_user_password/2` changes the password, clears the reset token
+  and bumps `token_version` in one transaction. The token in the response is
+  minted from the user that transaction returns, so it carries the new
+  version while every token issued before the reset is revoked.
   """
   @spec reset_password(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def reset_password(conn, %{"token" => token, "password" => password}) do

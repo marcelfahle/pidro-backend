@@ -1,8 +1,144 @@
 defmodule PidroServerWeb.API.AuthControllerTest do
   use PidroServerWeb.ConnCase, async: false
 
-  alias PidroServer.Accounts.Auth
+  alias PidroServer.Accounts.{Auth, Token, User}
   alias PidroServer.AccountsFixtures
+  alias PidroServer.Repo
+
+  describe "register" do
+    test "ignores guest in the request body", %{conn: conn} do
+      conn =
+        post(conn, ~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "register_guest",
+            "email" => "register_guest@example.com",
+            "password" => "password123",
+            "guest" => true
+          }
+        })
+
+      assert %{"user" => %{"username" => "register_guest", "guest" => false}} =
+               json_response(conn, 201)["data"]
+
+      refute Auth.get_user_by_username("register_guest").guest
+    end
+
+    test "stores a trimmed display_name", %{conn: conn} do
+      conn =
+        post(conn, ~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "register_named",
+            "email" => "register_named@example.com",
+            "password" => "password123",
+            "display_name" => "  Anna  "
+          }
+        })
+
+      assert %{"user" => %{"display_name" => "Anna"}} = json_response(conn, 201)["data"]
+    end
+
+    test "rejects a 41-character display_name with a validation error", %{conn: conn} do
+      conn =
+        post(conn, ~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "register_long",
+            "email" => "register_long@example.com",
+            "password" => "password123",
+            "display_name" => String.duplicate("a", 41)
+          }
+        })
+
+      assert %{"errors" => [%{"code" => "display_name", "detail" => detail}]} =
+               json_response(conn, 422)
+
+      assert detail =~ "at most 40"
+    end
+  end
+
+  describe "login" do
+    test "returns invalid credentials for a guest without a password", %{conn: conn} do
+      {:ok, guest} =
+        %User{}
+        |> User.guest_changeset(%{username: "guest_login"})
+        |> Repo.insert()
+
+      assert is_nil(guest.password_hash)
+
+      conn =
+        post(conn, ~p"/api/v1/auth/login", %{
+          "username" => "guest_login",
+          "password" => "anything"
+        })
+
+      assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} = json_response(conn, 401)
+    end
+  end
+
+  describe "me" do
+    test "includes a nil display_name for existing users", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> get(~p"/api/v1/auth/me")
+
+      assert %{"user" => %{"id" => id, "display_name" => nil}} = json_response(conn, 200)["data"]
+      assert id == user.id
+    end
+  end
+
+  describe "token revocation" do
+    test "a bumped version yields 401 for the old token and 200 for a fresh one", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+      old_token = Token.generate(user)
+
+      assert json_response(me(conn, old_token), 200)
+
+      {:ok, bumped} = Auth.bump_token_version(user)
+
+      assert %{"errors" => %{"detail" => "Unauthorized"}} =
+               json_response(me(build_conn(), old_token), 401)
+
+      assert %{"user" => %{"id" => id}} =
+               json_response(me(build_conn(), Token.generate(bumped)), 200)["data"]
+
+      assert id == user.id
+    end
+
+    test "a completed password reset revokes the old token and the returned token works", %{
+      conn: conn
+    } do
+      user = AccountsFixtures.user_fixture(%{username: "reset_revokes"})
+      old_token = Token.generate(user)
+      assert json_response(me(conn, old_token), 200)
+
+      {:ok, %{token: reset_token}} = Auth.request_password_reset(user.username)
+
+      conn =
+        post(build_conn(), ~p"/api/v1/auth/password-reset/confirm", %{
+          "token" => reset_token,
+          "password" => "new password!"
+        })
+
+      assert %{"token" => new_token, "user" => %{"username" => "reset_revokes"}} =
+               json_response(conn, 200)["data"]
+
+      assert json_response(me(build_conn(), old_token), 401)
+
+      assert %{"user" => %{"id" => id}} =
+               json_response(me(build_conn(), new_token), 200)["data"]
+
+      assert id == user.id
+      assert {:ok, %{v: 1}} = Token.verify(new_token)
+    end
+  end
+
+  defp me(conn, token) do
+    conn
+    |> put_req_header("authorization", "Bearer #{token}")
+    |> get(~p"/api/v1/auth/me")
+  end
 
   describe "password reset" do
     test "request returns a generic response and debug reset url for existing users", %{
