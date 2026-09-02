@@ -16,7 +16,8 @@ defmodule PidroServer.Games.RoomManagerTest do
   import ExUnit.CaptureLog
 
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomCodes, RoomManager}
-  alias PidroServer.Games.Room.Positions
+  alias PidroServer.Games.Room.{Positions, Seat}
+  alias PidroServer.RoomFixtures
 
   # Note: async: false is required because RoomManager is a singleton GenServer
 
@@ -1138,6 +1139,461 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, updated_room} = RoomManager.dev_set_position(room.code, :north, "user2")
 
       assert DateTime.compare(updated_room.last_activity, initial_activity) == :gt
+    end
+  end
+
+  describe "room identity" do
+    test "create_room/2 assigns a UUID id and the invite defaults" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+
+      assert {:ok, _uuid} = Ecto.UUID.cast(room.id)
+      assert room.locked == false
+      assert room.kicked_ids == []
+      assert room.invite_live_until == nil
+    end
+
+    test "every room gets its own id" do
+      {:ok, room1} = RoomManager.create_room("user1", %{})
+      {:ok, room2} = RoomManager.create_room("user2", %{})
+
+      assert room1.id != room2.id
+    end
+  end
+
+  describe "claim_seat/4 room identity" do
+    setup do
+      original = Application.get_env(:pidro_server, RoomCodes)
+
+      on_exit(fn ->
+        if original,
+          do: Application.put_env(:pidro_server, RoomCodes, original),
+          else: Application.delete_env(:pidro_server, RoomCodes)
+      end)
+
+      :ok
+    end
+
+    test "seats the caller with the live room id and refuses a stale id for a reused code" do
+      Application.put_env(:pidro_server, RoomCodes, generator: fn -> "ZZZZ" end)
+      {:ok, %{code: "ZZZZ", id: stale_id}} = RoomManager.create_room("host-a", %{})
+      :ok = RoomManager.leave_room("host-a")
+      {:ok, %{code: "ZZZZ", id: live_id}} = RoomManager.create_room("host-b", %{})
+
+      assert stale_id != live_id
+
+      assert {:error, :room_not_found} =
+               RoomManager.claim_seat("ZZZZ", stale_id, "guest", display_name: "Guest")
+
+      assert {:ok, room, :east, true} =
+               RoomManager.claim_seat("ZZZZ", live_id, "guest", display_name: "Guest")
+
+      assert room.positions[:east] == "guest"
+      assert Seat.connected_human?(room.seats[:east])
+      assert {:ok, %{positions: %{east: "guest"}}} = RoomManager.get_room("ZZZZ")
+    end
+
+    test "returns :room_not_found for an unknown code" do
+      assert {:error, :room_not_found} =
+               RoomManager.claim_seat("NOPE", Ecto.UUID.generate(), "guest", [])
+    end
+  end
+
+  describe "claim_seat/4" do
+    test "honours the seat hint and falls back on a second claim with the same hint" do
+      {room, [_host]} = RoomFixtures.waiting_room_fixture()
+
+      assert {:ok, _room, :south, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", hint: :south)
+
+      assert {:ok, updated, :east, false} =
+               RoomManager.claim_seat(room.code, room.id, "guest2", hint: :south)
+
+      assert updated.positions == %{north: "host", east: "guest2", south: "guest1", west: nil}
+    end
+
+    test "honours a team hint" do
+      {room, _ids} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:ok, _room, :west, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", hint: :east_west)
+    end
+
+    test "resolves :partner to the seat opposite the host after the host has moved" do
+      {room, [host]} = RoomFixtures.waiting_room_fixture()
+      {:ok, _moved} = RoomManager.move_seat(room.code, host, host, :east)
+
+      assert {:ok, updated, :west, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", hint: :partner)
+
+      assert updated.positions[:west] == "guest1"
+    end
+
+    test "returns :room_not_found for :partner when the host has no seat" do
+      {room, [_host]} = RoomFixtures.waiting_room_fixture()
+      {:ok, _room} = RoomManager.dev_set_position(room.code, :north, nil)
+
+      assert {:error, :room_not_found} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", hint: :partner)
+    end
+
+    test "an explicit taken position returns next_open in N/E/S/W order" do
+      {room, [_host]} = RoomFixtures.waiting_room_fixture()
+      {:ok, _room, :south} = RoomManager.join_room(room.code, "user2", :south)
+
+      assert {:error, {:seat_taken, [:east, :west]}} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", position: :north)
+
+      assert {:error, {:seat_taken, [:east, :west]}} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", position: :south)
+
+      assert {:ok, _room, :west, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", position: :west, hint: :north)
+    end
+
+    test "a caller already seated at the table gets the current seat and nothing changes" do
+      {room, [_host]} = RoomFixtures.waiting_room_fixture()
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      {:ok, seated, :east, true} = RoomManager.claim_seat(room.code, room.id, "guest1", [])
+      assert_receive {:invite_redeemed, %{user_id: "guest1"}}, 100
+
+      assert {:ok, again, :east, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", hint: :west)
+
+      assert again.positions == seated.positions
+      assert again.seats == seated.seats
+      assert again.last_activity == seated.last_activity
+      refute_receive {:invite_redeemed, _payload}, 50
+    end
+
+    test "a caller connected in another room gets :already_in_room" do
+      {room_a, _ids} = RoomFixtures.waiting_room_fixture(host_id: "host-a", seated: 2)
+      {room_b, _ids} = RoomFixtures.waiting_room_fixture(host_id: "host-b", prefix: "b")
+
+      assert {:error, :already_in_room} =
+               RoomManager.claim_seat(room_b.code, room_b.id, "user2", [])
+
+      assert {:ok, %{positions: %{east: "user2"}}} = RoomManager.get_room(room_a.code)
+    end
+
+    test "evicts a caller whose seat elsewhere is disconnected (U3 vacates it and holds waiting seats)" do
+      {room_a, [_host_a, "user2"]} =
+        RoomFixtures.waiting_room_fixture(host_id: "host-a", seated: 2)
+
+      {room_b, _ids} = RoomFixtures.waiting_room_fixture(host_id: "host-b", prefix: "b")
+
+      # Simulate a disconnected seat: today only the :playing cascade produces
+      # this state; U3 makes a waiting-room disconnect hold the seat like this.
+      :sys.replace_state(RoomManager, fn %RoomManager.State{} = manager_state ->
+        current = Map.fetch!(manager_state.rooms, room_a.code)
+        {:ok, held} = Seat.disconnect(current.seats[:east])
+        updated = %{current | seats: Map.put(current.seats, :east, held)}
+        %{manager_state | rooms: Map.put(manager_state.rooms, room_a.code, updated)}
+      end)
+
+      assert {:ok, seated, :east, true} =
+               RoomManager.claim_seat(room_b.code, room_b.id, "user2", [])
+
+      assert seated.positions[:east] == "user2"
+      # The caller is now tracked in room B: leaving removes them from B.
+      :ok = RoomManager.leave_room("user2")
+      assert {:ok, %{positions: %{east: nil}}} = RoomManager.get_room(room_b.code)
+    end
+
+    test "the fourth claim starts the game" do
+      {room, _ids} = RoomFixtures.waiting_room_fixture(seated: 3)
+
+      assert {:ok, %{status: :ready}, :west, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", [])
+
+      wait_until(fn ->
+        match?({:ok, %{status: :playing}}, RoomManager.get_room(room.code))
+      end)
+    end
+
+    test "broadcasts invite_redeemed with the display name on game:<code>" do
+      {room, _ids} = RoomFixtures.waiting_room_fixture()
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      assert {:ok, _room, :east, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", display_name: "Ada")
+
+      assert_receive {:invite_redeemed,
+                      %{position: :east, user_id: "guest1", display_name: "Ada"}},
+                     100
+
+      assert_receive {:room_update, %{positions: %{east: "guest1"}}}, 100
+      assert_receive {:room_updated, %{positions: %{east: "guest1"}}}, 100
+    end
+
+    test "touches last_activity" do
+      {room, _ids} = RoomFixtures.waiting_room_fixture()
+      old_time = DateTime.add(DateTime.utc_now(), -301, :second)
+      :ok = RoomManager.set_last_activity_for_test(room.code, old_time)
+
+      assert {:ok, updated, _position, true} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", [])
+
+      assert DateTime.compare(updated.last_activity, old_time) == :gt
+    end
+
+    test "refuses a room that is not waiting" do
+      room_code = create_playing_room()
+      {:ok, room} = RoomManager.get_room(room_code)
+
+      assert {:error, :room_not_available} =
+               RoomManager.claim_seat(room_code, room.id, "guest1", [])
+    end
+  end
+
+  describe "note_invite/2" do
+    test "stores the given value, including nil, and the room stays lobby-visible" do
+      {room, _ids} = RoomFixtures.waiting_room_fixture()
+      until = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      assert :ok = RoomManager.note_invite(room.code, until)
+      assert {:ok, %{invite_live_until: ^until} = live} = RoomManager.get_room(room.code)
+      assert RoomManager.visible_in_lobby?(live)
+      assert Enum.any?(RoomManager.list_lobby("someone").open_tables, &(&1.code == room.code))
+      assert Enum.any?(RoomManager.list_rooms(:waiting), &(&1.code == room.code))
+
+      assert :ok = RoomManager.note_invite(room.code, nil)
+      assert {:ok, %{invite_live_until: nil}} = RoomManager.get_room(room.code)
+    end
+
+    test "touches last_activity" do
+      {room, _ids} = RoomFixtures.waiting_room_fixture()
+      old_time = DateTime.add(DateTime.utc_now(), -301, :second)
+      :ok = RoomManager.set_last_activity_for_test(room.code, old_time)
+
+      :ok = RoomManager.note_invite(room.code, DateTime.utc_now())
+
+      {:ok, updated} = RoomManager.get_room(room.code)
+      assert DateTime.compare(updated.last_activity, old_time) == :gt
+    end
+
+    test "returns :room_not_found for an unknown code" do
+      assert {:error, :room_not_found} = RoomManager.note_invite("NOPE", nil)
+    end
+  end
+
+  describe "set_locked/3" do
+    test "the host locks and unlocks the table" do
+      {room, [host]} = RoomFixtures.waiting_room_fixture()
+
+      assert {:ok, %{locked: true}} = RoomManager.set_locked(room.code, host, true)
+      assert {:ok, %{locked: true}} = RoomManager.get_room(room.code)
+      assert {:error, :table_locked} = RoomManager.join_room(room.code, "user2")
+
+      assert {:error, :table_locked} =
+               RoomManager.claim_seat(room.code, room.id, "guest1", [])
+
+      assert {:ok, %{locked: false}} = RoomManager.set_locked(room.code, host, false)
+      assert {:ok, _room, :east} = RoomManager.join_room(room.code, "user2")
+    end
+
+    test "a locked room still accepts a reclaim of a disconnected seat" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+      {:ok, _locked} = RoomManager.set_locked(room.code, host, true)
+
+      :sys.replace_state(RoomManager, fn %RoomManager.State{} = manager_state ->
+        current = Map.fetch!(manager_state.rooms, room.code)
+        {:ok, held} = Seat.disconnect(current.seats[:east])
+        updated = %{current | seats: Map.put(current.seats, :east, held)}
+        %{manager_state | rooms: Map.put(manager_state.rooms, room.code, updated)}
+      end)
+
+      assert {:ok, reclaimed} = RoomManager.handle_player_reconnect(room.code, "user2")
+      assert Seat.connected_human?(reclaimed.seats[:east])
+      assert reclaimed.locked
+    end
+
+    test "a non-host gets :not_owner" do
+      {room, [_host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:error, :not_owner} = RoomManager.set_locked(room.code, "user2", true)
+      assert {:ok, %{locked: false}} = RoomManager.get_room(room.code)
+    end
+
+    test "refuses a room that is not waiting" do
+      room_code = create_playing_room()
+
+      assert {:error, :room_not_waiting} = RoomManager.set_locked(room_code, "user1", true)
+    end
+
+    test "broadcasts the room and lobby updates" do
+      {room, [host]} = RoomFixtures.waiting_room_fixture()
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      {:ok, _room} = RoomManager.set_locked(room.code, host, true)
+
+      assert_receive {:room_update, %{locked: true}}, 100
+      assert_receive {:room_updated, %{locked: true}}, 100
+    end
+  end
+
+  describe "kick_player/3" do
+    test "vacates the seat, records the id, notifies the channel and clears the mapping" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+      :ok = RoomManager.register_game_channel(room.code, "user2", self())
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room.code}")
+
+      assert {:ok, kicked} = RoomManager.kick_player(room.code, host, :east)
+
+      assert kicked.positions[:east] == nil
+      assert Seat.vacant?(kicked.seats[:east])
+      assert kicked.kicked_ids == ["user2"]
+      assert kicked.status == :waiting
+      assert_receive {:force_disconnect, :kicked}, 100
+      assert_receive {:kicked, %{position: :east, user_id: "user2"}}, 100
+      assert_receive {:room_update, %{positions: %{east: nil}}}, 100
+
+      assert {:error, :not_in_room} = RoomManager.leave_room("user2")
+      assert {:ok, _room} = RoomManager.create_room("user2", %{})
+    end
+
+    test "a kicked id is refused on join, claim and a later substitute join" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+      {:ok, _room} = RoomManager.kick_player(room.code, host, :east)
+
+      assert {:error, :kicked} = RoomManager.join_room(room.code, "user2")
+      assert {:error, :kicked} = RoomManager.claim_seat(room.code, room.id, "user2", [])
+
+      {:ok, _room, _pos} = RoomManager.join_room(room.code, "user3")
+      {:ok, _room, _pos} = RoomManager.join_room(room.code, "user4")
+      {:ok, _room, user5_position} = RoomManager.join_room(room.code, "user5")
+
+      wait_until(fn ->
+        match?({:ok, %{status: :playing}}, RoomManager.get_room(room.code))
+      end)
+
+      # Open a seat for substitutes: disconnect, skip the hiccup timer, open.
+      :ok = RoomManager.handle_player_disconnect(room.code, "user5")
+      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user5_position})
+
+      wait_until(fn ->
+        match?(
+          {:ok, %{seats: %{^user5_position => %{status: :bot_substitute}}}},
+          RoomManager.get_room(room.code)
+        )
+      end)
+
+      {:ok, _room} = RoomManager.open_seat(room.code, user5_position, host)
+
+      assert {:error, :kicked} = RoomManager.join_as_substitute(room.code, "user2")
+      assert {:ok, _room, ^user5_position} = RoomManager.join_as_substitute(room.code, "user6")
+    end
+
+    test "the host's own seat and vacant seats are not kickable" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:error, :seat_not_kickable} = RoomManager.kick_player(room.code, host, :north)
+      assert {:error, :seat_not_kickable} = RoomManager.kick_player(room.code, host, :west)
+      assert {:ok, %{positions: %{north: ^host, east: "user2"}}} = RoomManager.get_room(room.code)
+    end
+
+    test "a non-host gets :not_owner" do
+      {room, [_host, "user2", "user3"]} = RoomFixtures.waiting_room_fixture(seated: 3)
+
+      assert {:error, :not_owner} = RoomManager.kick_player(room.code, "user2", :south)
+      assert {:ok, %{positions: %{south: "user3"}}} = RoomManager.get_room(room.code)
+    end
+
+    test "refuses a room that is not waiting" do
+      room_code = create_playing_room()
+
+      assert {:error, :room_not_waiting} = RoomManager.kick_player(room_code, "user1", :east)
+    end
+  end
+
+  describe "move_seat/4" do
+    test "the host moves another player to a vacant seat and broadcasts seat_moved" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      assert {:ok, moved} = RoomManager.move_seat(room.code, host, "user2", :west)
+
+      assert moved.positions == %{north: host, east: nil, south: nil, west: "user2"}
+      assert Seat.vacant?(moved.seats[:east])
+      assert %Seat{position: :west, user_id: "user2", is_owner: false} = moved.seats[:west]
+      assert Seat.connected_human?(moved.seats[:west])
+      assert_receive {:seat_moved, %{user_id: "user2", from: :east, to: :west}}, 100
+      assert_receive {:room_update, %{positions: %{west: "user2"}}}, 100
+      assert_receive {:room_updated, %{positions: %{west: "user2"}}}, 100
+    end
+
+    test "keeps is_owner when the host moves themselves" do
+      {room, [host]} = RoomFixtures.waiting_room_fixture()
+
+      assert {:ok, moved} = RoomManager.move_seat(room.code, host, host, :south)
+
+      assert moved.host_id == host
+      assert moved.positions == %{north: nil, east: nil, south: host, west: nil}
+      assert Seat.owner?(moved.seats[:south])
+      assert Seat.vacant?(moved.seats[:north])
+      refute Seat.owner?(moved.seats[:north])
+    end
+
+    test "a non-host moving someone else gets :not_owner" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:error, :not_owner} = RoomManager.move_seat(room.code, "user2", host, :west)
+      assert {:ok, %{positions: %{north: ^host}}} = RoomManager.get_room(room.code)
+    end
+
+    test "a non-host moves themselves" do
+      {room, [_host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:ok, moved} = RoomManager.move_seat(room.code, "user2", "user2", :south)
+      assert moved.positions[:south] == "user2"
+      assert moved.positions[:east] == nil
+    end
+
+    test "moving onto a taken seat fails with :seat_taken" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:error, :seat_taken} = RoomManager.move_seat(room.code, host, "user2", :north)
+      assert {:error, :seat_taken} = RoomManager.move_seat(room.code, host, "user2", :east)
+    end
+
+    test "moving onto a held seat fails with :seat_taken" do
+      {room, [host, "user2", "user3"]} = RoomFixtures.waiting_room_fixture(seated: 3)
+
+      :sys.replace_state(RoomManager, fn %RoomManager.State{} = manager_state ->
+        current = Map.fetch!(manager_state.rooms, room.code)
+        {:ok, held} = Seat.disconnect(current.seats[:south])
+        updated = %{current | seats: Map.put(current.seats, :south, held)}
+        %{manager_state | rooms: Map.put(manager_state.rooms, room.code, updated)}
+      end)
+
+      assert {:error, :seat_taken} = RoomManager.move_seat(room.code, host, "user2", :south)
+      assert {:ok, %{positions: %{south: "user3"}}} = RoomManager.get_room(room.code)
+    end
+
+    test "an unseated target returns :player_not_in_room" do
+      {room, [host]} = RoomFixtures.waiting_room_fixture()
+
+      assert {:error, :player_not_in_room} =
+               RoomManager.move_seat(room.code, host, "stranger", :west)
+    end
+
+    test "rejects an invalid position" do
+      {room, [host]} = RoomFixtures.waiting_room_fixture()
+
+      assert {:error, :invalid_position} = RoomManager.move_seat(room.code, host, host, :middle)
+    end
+
+    test "refuses a room that is not waiting" do
+      room_code = create_playing_room()
+
+      assert {:error, :room_not_waiting} =
+               RoomManager.move_seat(room_code, "user1", "user1", :west)
     end
   end
 
