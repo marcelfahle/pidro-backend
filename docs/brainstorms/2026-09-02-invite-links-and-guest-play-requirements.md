@@ -48,12 +48,12 @@ controls in the waiting room.
 1. Taps the link in WhatsApp / iMessage / SMS / email / Telegram.
 2. Resolution (details in the platform matrix):
    - App installed and the OS honors the link → app opens on `/join/7KQ4M2XB`.
-   - Otherwise → landing page: "Marcel invited you to a Pidro table · 2 of 4 seats taken". Buttons: **Open app** (scheme / `intent://`), **Get the app** (store), **Play in browser** (desktop).
+   - Otherwise → landing page: "Marcel invited you to a Pidro table · 2 of 4 seats taken". Buttons: **Open app** (scheme / `intent://`), **Get the app** (store). (**Play in browser** is deferred with web join, see answered question 2; desktop shows the store buttons and a QR code.)
    - Not installed → store → first launch → app resolves the pending invite (Install Referrer / Detour / "Have a code?") → `/join/7KQ4M2XB`.
 3. `/join/:code` in the app: waits for auth hydration and socket, shows the table preview, then:
    - No session → one field: "What should we call you?" (prefilled from the invite label if any) → `POST /auth/guest` → token stored.
    - Existing session (guest or registered) → skip.
-4. `POST /invites/:code/redeem` with optional chosen seat → server claims a seat (hint → choice → any open) → client joins `game:<room>` → waiting room.
+4. `POST /invites/:code/redeem`, optionally with an explicitly chosen seat → server claims a seat → client joins `game:<room>` → waiting room. Without a chosen seat the server tries the invite's hint and falls back to any open seat automatically, reporting `hint_honored: false` so the client can toast "your partner seat was taken". With an explicitly chosen seat the server does not guess: a taken seat answers `409 SEAT_TAKEN` with `next_open`, and the client picks again.
 5. Plays. Game over → post-game summary → **"Save this result"** card: display name locked in, email + password (later: Apple/Google). Skip keeps playing as guest; the card returns after the next game and as a banner on the home screen, at most once a day.
 
 ### Returning guest
@@ -71,7 +71,7 @@ controls in the waiting room.
 - Canonical: `https://pidro.online/j/7KQ4M2XB` (apex 308s to `www`; both hosts in the AASA and in `associatedDomains`).
 - Optional query for attribution only, never for behavior: `?s=wa|im|sms|qr|copy`.
 - Share text (English v1, the codebase has no i18n): `Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB`. The code in plain text *is* the iOS fallback.
-- Scheme mirror: `pidro-mobile://j/7KQ4M2XB` (dev/preview: `pidro-mobile-dev://`, `pidro-mobile-preview://`).
+- Scheme mirror: `pidro-mobile://j/7KQ4M2XB` (dev/preview: `pidro-mobile-dev://`, `pidro-mobile-preview://`). Used only by the landing page's fallback button when the OS did not honor the HTTPS link. Accepted risk: another app installed on the invitee's own device could register the scheme and receive the code. The code is a table-scoped, multi-use, 24-hour, host-revocable invite (not an account credential), the server still decides room, seat and identity, and the alternative (manual code entry for every in-app-browser user) would cut the funnel where it is weakest. Revisit if invites ever carry more than table access.
 - Store links: Play `https://play.google.com/store/apps/details?id=com.oneapps.pidro&referrer=invite%3D7KQ4M2XB`; App Store `https://apps.apple.com/app/id1137091987?pt=…&ct=invite` (campaign params for analytics only).
 
 ## Landing page (`GET /j/:code`, Phoenix, browser pipeline)
@@ -80,7 +80,7 @@ controls in the waiting room.
 - Crawler user agents (`WhatsApp`, `facebookexternalhit`, `TelegramBot`, `Slackbot`, `Twitterbot`, `Discordbot`, `iMessage`/`Applebot`) get the OG-only response; nothing is counted or reserved on any GET.
 - Human on iOS: Smart App Banner meta (`apple-itunes-app`, `app-argument` = the link), primary **Open in app** button = `pidro-mobile://j/CODE` wrapped in a "didn't open? Get the app" timeout, secondary App Store button.
 - Human on Android: primary button = `intent://j/CODE#Intent;scheme=https;package=com.oneapps.pidro;S.browser_fallback_url=<play store with referrer>;end`, secondary Play button.
-- Desktop: **Play in browser** → `https://play.pidro.online/join/CODE`; QR of the same link for phone handoff.
+- Desktop: store buttons plus a QR of the link for phone handoff. **Play in browser** → `https://play.pidro.online/join/CODE` is deferred with web join (answered question 2, build-plan phase 6).
 - States: open (n/4 seats), full/playing (offer spectate later), closed/expired/revoked, table moved (host's new room).
 - Also served by Phoenix: `/.well-known/apple-app-site-association` (`application/json`, `details` for prod + dev + preview app ids, `components` path `/j/*`) and `/.well-known/assetlinks.json` (prod + dev + preview packages, Play App Signing fingerprint). `pidro.online` (Next.js on Vercel) adds `rewrites` for `/j/:code` and `/.well-known/:file` to `https://app.pidro.online/...`, and excludes both from its NextAuth middleware matcher. The legacy `/app/*` AASA path stays for the old client.
 
@@ -126,10 +126,10 @@ users (additions)
 | `POST /api/v1/rooms/:code/invites` `{seat_hint?, label?}` | host (any seated player in v2) | mint; returns `{code, url, share_text, seat_hint, expires_at}` |
 | `DELETE /api/v1/invites/:code` · `POST /api/v1/invites/:code/regenerate` | host | revoke / replace |
 | `GET /api/v1/invites/:code` | public, rate-limited | preview: host display name, seats taken, hint, state. Never exposes `room_code` |
-| `POST /api/v1/invites/:code/redeem` `{position?}` | guest or registered | validate → claim seat via `RoomManager` → `{room, position}`; 409 with `next_open` when the hint is taken; 410 for expired/closed |
+| `POST /api/v1/invites/:code/redeem` `{position?}` | guest or registered | validate → claim seat via `RoomManager` → `{room, position, hint_honored}`. Without `position`: try the hint, fall back to any open seat (`hint_honored: false`). With `position`: `409 SEAT_TAKEN` with `next_open` when that seat is taken. `410` for expired/closed/revoked |
 | `POST /api/v1/auth/guest` `{display_name, invite_code, install_id, platform}` | public, **requires a valid invite**, rate-limited per IP and install_id | creates `guest: true` row, returns token + user |
 | `POST /api/v1/auth/upgrade` `{email, password, username?}` | guest token | same id, `guest=false`, bump `token_version`, new token; 409 `EMAIL_TAKEN` / `USERNAME_TAKEN` |
-| `DELETE /api/v1/auth/me` | any | account + data deletion (Apple 5.1.1(v)); game_stats keep the bare UUID |
+| `DELETE /api/v1/auth/me` | any | account + data deletion (Apple 5.1.1(v)) per the retention rules in "Abuse, privacy, compliance": the `users` row, `player_profiles` and `player_achievements` are deleted; `game_stats` keeps the bare UUID, which then resolves to nobody |
 | `POST /api/v1/invites/deferred` `{platform, install_referrer?, fingerprint}` | any | server-side deferred resolution (Detour replaces this if we adopt its backend) |
 | `POST /api/v1/rooms/:code/seat` `{position}` · `POST …/lock` · `POST …/kick` | seated / host | move seat in the waiting room, lock table, remove a player |
 | `GET /j/:code` · `GET /.well-known/*` | public | landing page and association files |
@@ -170,10 +170,10 @@ Lobby channel pushes `room_updated` already; add `invite_redeemed` (`{position, 
 
 | Situation | iOS | Android | Web / desktop |
 |---|---|---|---|
-| Installed, tapped in Messages / WhatsApp / Mail / Safari | Universal Link opens app (after AASA CDN pickup, ~24 h). Fails silently if the user once chose "Open in Safari" → they land on the page → Open-app button | App Link opens app if `assetlinks.json` verified against the Play App Signing key; on Android 12+ a failed verification silently opens the browser | Landing → Play in browser |
+| Installed, tapped in Messages / WhatsApp / Mail / Safari | Universal Link opens app (after AASA CDN pickup, ~24 h). Fails silently if the user once chose "Open in Safari" → they land on the page → Open-app button | App Link opens app if `assetlinks.json` verified against the Play App Signing key; on Android 12+ a failed verification silently opens the browser | Landing page with store buttons + QR (Play in browser deferred) |
 | Installed, tapped inside Instagram / Messenger / TikTok / Telegram in-app browser | Landing page; Open-app = scheme (works from most WebViews on a real tap) | Landing page; `intent://` opens the app from Chrome-based WebViews | n/a |
 | URL pasted into the address bar | Never opens the app; landing page + button | Same | Same |
-| Not installed | Landing → App Store. First launch: Detour match (probabilistic, IP+UA+screen+locale+time window, optional clipboard with the iOS 16 paste prompt) or "Have a code?" screen. Expect 70–80 % automatic | Landing → Play with `referrer` → first launch reads Install Referrer → deterministic | Landing → Play in browser as guest |
+| Not installed | Landing → App Store. First launch: Detour match (probabilistic, IP+UA+screen+locale+time window, optional clipboard with the iOS 16 paste prompt) or "Have a code?" screen. Expect 70–80 % automatic | Landing → Play with `referrer` → first launch reads Install Referrer → deterministic | Landing page with store buttons + QR (Play in browser deferred) |
 | Chat app fetches the link for a preview | OG card only, no side effects (WhatsApp fetches while typing) | same | same |
 | Dev / preview builds | Need their own AASA entries and "Associated Domains Development" toggle; never works in Expo Go | Need their own assetlinks entries; check with `adb shell pm get-app-links com.oneapps.pidro` | – |
 | Link arrives before auth hydration / socket | `pendingInvite` store, act in `/join` once `hydrated && socket` | same | same |
@@ -185,6 +185,8 @@ Lobby channel pushes `room_updated` already; add `invite_redeemed` (`{position, 
 - Guest creation only against a valid invite; Hammer limits: guest create 5/h and 20/day per IP and per `install_id`; invite preview 30/min per IP; redeem 10/min per user; failed code lookups 20/h per IP with backoff. Public `GET /rooms/:code` gets the same treatment.
 - Display names: length 2–20, profanity list, no look-alike of the host's name at the same table.
 - Guest reaper: hard-delete `guest: true` rows with `last_seen_at` older than 30 days; `game_stats` keep the bare UUID. This is the GDPR retention policy; legal basis is legitimate interest (they joined a game).
+- Deletion and anonymization (applies to `DELETE /api/v1/auth/me` and to the reaper): delete the `users` row (username, email, display name, password hash, `install_id`), the user's `player_profiles` and `player_achievements` rows, and any `invite_redemptions` / `invite_events` rows carrying the user id. `game_stats` stores no names, only `player_ids` and per-id results, so the remaining UUID no longer resolves to a person and other players' records stay intact. Opponents' post-game screens show "Deleted player" for an id that no longer resolves.
+- Deferred-install matching (phase 4) is limited to what the match needs and is disclosed: the landing page stores a coarse fingerprint (client IP as seen by the proxy, OS family and major version, screen class, locale, timezone) with the invite code for at most 30 minutes, then hard-deletes it; the app sends the same fields once on first launch; a match returns only the invite code; nothing is shared with third parties, nothing is used for advertising or analytics beyond the funnel counter, and the privacy policy names the mechanism. Android prefers the deterministic Play Install Referrer and only falls back to the fingerprint match; "Have a code?" remains the always-available manual path.
 - In-app **Delete account** for guests and registered users before App Store submission (5.1.1(v)).
 - Later: `@expo/app-integrity` (App Attest / Play Integrity) on guest creation, Cloudflare Turnstile on the web form.
 - Never trust anything in the URL beyond the code; the server decides room, seat and identity.
@@ -213,7 +215,7 @@ Later, not now: host-bound permanent links ("join Marcel wherever he is"), invit
 1. **Host backgrounds the app to paste the link → fix it.** Waiting rooms get their own rule: a disconnected human seat in a `:waiting` room is held (not bot-substituted) and never counts toward the 4-seat auto-start; the room survives at least the idle TTL while an invite is live; the host reclaims the seat on reconnect. Bot substitution stays for `:playing` rooms only.
 2. **`play.pidro.online` is the Vite web app.** Web play is out of scope for now; iOS and Android have priority. The Phoenix landing page (needed for iOS/Android) still ships; the web `/join/:code` route and "Play in browser" button are deferred (the landing page shows store buttons only on desktop for now, plus the QR for phone handoff).
 3. **Play App Signing is in use and current.** Keep the existing fingerprint; verify with `adb shell pm get-app-links com.oneapps.pidro` on the first dev build.
-4. **Deferred matching runs in Phoenix, not Detour.** Detour's default sends every landing-page visitor's IP and device profile to Software Mansion's hosted service and needs an account there. We implement the same technique ourselves: the landing page posts a fingerprint hint, the app posts its fingerprint on first launch, the server matches within a 30-minute window. Android additionally reads Play Install Referrer for a deterministic match. "Have a code?" stays as the fallback.
+4. **Deferred matching runs in Phoenix, not Detour.** Detour's default sends every landing-page visitor's IP and device profile to Software Mansion's hosted service and needs an account there. We implement the same technique ourselves: the landing page posts a fingerprint hint, the app posts its fingerprint on first launch, the server matches within a 30-minute window and hard-deletes the fingerprint record afterwards (data minimization, retention and notice are defined in "Abuse, privacy, compliance"). Android additionally reads Play Install Referrer for a deterministic match. "Have a code?" stays as the fallback.
 5. **Host only mints invites** in v1.
 6. **English only, but an i18n layer from day one.** Add a thin `i18n-js` + `expo-localization` layer in mobile (`src/i18n/`, `en.json`) and route every new invite/guest string through it. Existing strings are not retrofitted in this feature.
 7. **"Play again" mints a new invite** and marks the old one `superseded_by`; the old link's landing page forwards to the new table while it is waiting.

@@ -29,7 +29,7 @@ The Pidro Server API provides a complete backend for building multiplayer Finnis
 ### Key Features
 
 - **User Management**: Registration, authentication, and profile management
-- **JWT Authentication**: Secure token-based authentication
+- **Token Authentication**: Signed, opaque `Phoenix.Token` bearer tokens with server-side revocation
 - **Room System**: Create and join game rooms with up to 4 players
 - **Real-time Gameplay**: WebSocket channels for live game updates
 - **Statistics Tracking**: Track wins, losses, and game performance
@@ -41,7 +41,7 @@ The Pidro Server API provides a complete backend for building multiplayer Finnis
 - **Framework**: Phoenix 1.8 (Elixir)
 - **Database**: PostgreSQL
 - **Real-time**: Phoenix Channels (WebSockets)
-- **Authentication**: Guardian (JWT)
+- **Authentication**: `Phoenix.Token` (`PidroServer.Accounts.Token`), not JWT
 - **API Docs**: OpenAPI 3.0 (via OpenApiSpex)
 
 ---
@@ -97,7 +97,10 @@ curl -X POST http://localhost:4000/api/v1/auth/register \
 
 ## Authentication
 
-The Pidro API uses JWT (JSON Web Tokens) for authentication. Most endpoints require a valid token.
+The Pidro API uses signed, opaque `Phoenix.Token` bearer tokens for authentication (see
+[Token Lifetime and Revocation](#token-lifetime-and-revocation)). They are **not** JWTs: clients
+must treat the token as an opaque string and never parse or validate it locally. Most endpoints
+require a valid token.
 
 ### Register a New User
 
@@ -165,7 +168,7 @@ The Pidro API uses JWT (JSON Web Tokens) for authentication. Most endpoints requ
 
 ### Using Your Token
 
-Include the JWT token in the `Authorization` header for authenticated requests:
+Include the token in the `Authorization` header for authenticated requests:
 
 ```bash
 curl http://localhost:4000/api/v1/auth/me \
@@ -387,13 +390,13 @@ ws://localhost:4000/socket/websocket
 
 ### Authentication
 
-Authenticate your socket connection by including the JWT token in the connection params:
+Authenticate your socket connection by including the token in the connection params:
 
 ```javascript
 import { Socket } from "phoenix"
 
 const socket = new Socket("ws://localhost:4000/socket/websocket", {
-  params: { token: yourJwtToken }
+  params: { token: yourToken }
 })
 
 socket.connect()
@@ -626,12 +629,12 @@ A typical flow for a new user starting a game:
    POST /api/v1/auth/register
    ```
 
-2. **Receive JWT token** from registration response
+2. **Receive the token** from the registration response
 
 3. **Connect to WebSocket** with token:
    ```javascript
    socket = new Socket("ws://localhost:4000/socket/websocket", {
-     params: { token: jwt_token }
+     params: { token: token }
    })
    socket.connect()
    ```

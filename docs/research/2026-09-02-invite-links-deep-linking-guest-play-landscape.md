@@ -11,7 +11,9 @@ Companion to the requirements doc. This file holds the *facts* (with sources and
 the requirements doc can stay opinionated and short. Anything marked **unverified** was
 repeated by several secondary sources but could not be traced to a primary one.
 
-## 1. Facts about our own setup (verified 2026-09-02)
+## 1. Facts about our own setup (verified 2026-09-02, pre-phase-0 baseline)
+
+> Baseline note: the statements below describe the repository **before** phase 0 (PR #19). Phase 0 added Hammer rate limiting on auth and room routes, CSPRNG room codes with collision retry, a trusted-proxy plug, versioned tokens, and removed `guest` from the public changeset. Items marked *(changed in phase 0)* no longer hold on `main`.
 
 - `https://www.pidro.online/.well-known/apple-app-site-association` is live, served by the
   marketing site (`/Users/mf/code/pidro/pidro-site2`, Next.js on Vercel, file in
@@ -40,10 +42,13 @@ repeated by several secondary sources but could not be traced to a primary one.
   key** (`game_stats.player_ids`, `player_profiles.user_id`, `player_achievements.user_id`).
   Upgrading a guest row in place carries all history with zero data migration.
 - Rooms live only in `RoomManager` memory (single GenServer). A deploy loses every room.
-  Room codes are 4 chars `A-Z0-9` from `Enum.random/1` with **no collision check**
-  (`room_manager.ex:2488`), and `GET /api/v1/rooms/:code` is public and unthrottled.
-- There is **no rate limiting** of any kind in the backend, and `guest` is mass-assignable
-  through `User.changeset/2` on the public register endpoint (`accounts/user.ex:61`).
+  Room codes were 4 chars `A-Z0-9` from `Enum.random/1` with **no collision check**
+  (`room_manager.ex:2488`), and `GET /api/v1/rooms/:code` was public and unthrottled
+  *(changed in phase 0: CSPRNG codes with collision retry, per-IP throttle on the lookup)*.
+- There was **no rate limiting** of any kind in the backend, and `guest` was mass-assignable
+  through `User.changeset/2` on the public register endpoint (`accounts/user.ex:61`)
+  *(changed in phase 0: Hammer limits on auth and room routes; `guest` is set only by the
+  internal `guest_changeset/2`)*.
 - Client: `expo-linking` is installed but never imported; no `associatedDomains`, no
   `intentFilters`, no `+native-intent.tsx`, no share/copy/QR UI, no OG tags in
   `packages/web/index.html`, no i18n layer, `packages/web` tests do not run in CI.
