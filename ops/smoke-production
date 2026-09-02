@@ -14,6 +14,36 @@ public_url="${public_url%/}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+assert_no_cookie() {
+  local headers="$1"
+  local label="$2"
+
+  if grep -Eiq '^set-cookie:' "$headers"; then
+    echo "Unexpected Set-Cookie header on $label" >&2
+    exit 1
+  fi
+}
+
+probe_invite() {
+  local label="$1"
+  local user_agent="$2"
+  local invite_url="$3"
+  local status
+
+  status="$(curl --silent --show-error \
+    --dump-header "$tmp_dir/invite-$label.headers" \
+    --output "$tmp_dir/invite-$label.body" \
+    --write-out '%{http_code}' --max-time 15 \
+    --header "User-Agent: $user_agent" \
+    "$invite_url")"
+
+  test "$status" = "200"
+  grep -Eiq '^content-type: text/html' "$tmp_dir/invite-$label.headers"
+  grep -Eiq '^cache-control: no-store' "$tmp_dir/invite-$label.headers"
+  grep -Eiq '^vary: user-agent' "$tmp_dir/invite-$label.headers"
+  assert_no_cookie "$tmp_dir/invite-$label.headers" "invite $label"
+}
+
 health_body="$(curl --fail --silent --show-error --max-time 15 "$backend_url/up")"
 test "$health_body" = "ok"
 
@@ -47,16 +77,18 @@ aasa_status="$(curl --silent --show-error --dump-header "$tmp_dir/aasa.headers" 
 test "$aasa_status" = "200"
 grep -Eiq '^content-type: application/json' "$tmp_dir/aasa.headers"
 grep -Eiq '^cache-control: public, max-age=3600' "$tmp_dir/aasa.headers"
-! grep -Eiq '^set-cookie:' "$tmp_dir/aasa.headers"
-grep -Fq 'com.oneapps.pidro' "$tmp_dir/aasa.body"
+assert_no_cookie "$tmp_dir/aasa.headers" "well-known AASA"
+grep -Fq 'LSFK7YF82G.com.oneapps.pidro' "$tmp_dir/aasa.body"
 grep -Fq '"/":"/j/*"' "$tmp_dir/aasa.body"
+grep -Fq '"/":"/app/*"' "$tmp_dir/aasa.body"
 
 root_aasa_status="$(curl --silent --show-error --dump-header "$tmp_dir/root-aasa.headers" --output "$tmp_dir/root-aasa.body" \
   --write-out '%{http_code}' --max-time 15 \
   "$public_url/apple-app-site-association")"
 test "$root_aasa_status" = "200"
 grep -Eiq '^content-type: application/json' "$tmp_dir/root-aasa.headers"
-! grep -Eiq '^set-cookie:' "$tmp_dir/root-aasa.headers"
+grep -Eiq '^cache-control: public, max-age=3600' "$tmp_dir/root-aasa.headers"
+assert_no_cookie "$tmp_dir/root-aasa.headers" "root AASA"
 cmp --silent "$tmp_dir/aasa.body" "$tmp_dir/root-aasa.body"
 
 assetlinks_status="$(curl --silent --show-error --dump-header "$tmp_dir/assetlinks.headers" --output "$tmp_dir/assetlinks.body" \
@@ -65,23 +97,28 @@ assetlinks_status="$(curl --silent --show-error --dump-header "$tmp_dir/assetlin
 test "$assetlinks_status" = "200"
 grep -Eiq '^content-type: application/json' "$tmp_dir/assetlinks.headers"
 grep -Eiq '^cache-control: public, max-age=3600' "$tmp_dir/assetlinks.headers"
-! grep -Eiq '^set-cookie:' "$tmp_dir/assetlinks.headers"
+assert_no_cookie "$tmp_dir/assetlinks.headers" "Asset Links"
 grep -Fq 'com.oneapps.pidro' "$tmp_dir/assetlinks.body"
+grep -Fq '11:24:29:B7:D0:61:FA:FF:89:D2:F0:04:92:12:FF:18:24:90:C1:EF:CF:71:00:5D:51:6A:D6:92:66:88:1A:31' "$tmp_dir/assetlinks.body"
 
 if test -n "${PIDRO_INVITE_CODE:-}"; then
   invite_url="$public_url/j/$PIDRO_INVITE_CODE"
-  invite_status="$(curl --silent --show-error --dump-header "$tmp_dir/invite.headers" --output "$tmp_dir/invite.body" \
-    --write-out '%{http_code}' --max-time 15 \
-    --header 'User-Agent: Slackbot-LinkExpanding 1.0' \
-    "$invite_url")"
 
-  test "$invite_status" = "200"
-  grep -Eiq '^content-type: text/html' "$tmp_dir/invite.headers"
-  grep -Eiq '^cache-control: no-store' "$tmp_dir/invite.headers"
-  grep -Eiq '^vary: user-agent' "$tmp_dir/invite.headers"
-  ! grep -Eiq '^set-cookie:' "$tmp_dir/invite.headers"
-  grep -Fq "<link rel=\"canonical\" href=\"$invite_url\"" "$tmp_dir/invite.body"
-  grep -Fq 'property="og:title"' "$tmp_dir/invite.body"
+  probe_invite crawler 'Slackbot-LinkExpanding 1.0' "$invite_url"
+  grep -Fq "<link rel=\"canonical\" href=\"$invite_url\"" "$tmp_dir/invite-crawler.body"
+  grep -Fq 'property="og:title"' "$tmp_dir/invite-crawler.body"
+
+  probe_invite ios 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' "$invite_url"
+  grep -Fq 'data-open-ios' "$tmp_dir/invite-ios.body"
+  grep -Fq 'pidro-mobile://j/' "$tmp_dir/invite-ios.body"
+
+  probe_invite android 'Mozilla/5.0 (Linux; Android 15; Pixel 9)' "$invite_url"
+  grep -Fq 'data-open-android' "$tmp_dir/invite-android.body"
+  grep -Fq 'package=com.oneapps.pidro' "$tmp_dir/invite-android.body"
+
+  probe_invite desktop 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6)' "$invite_url"
+  grep -Fq 'data-invite-qr' "$tmp_dir/invite-desktop.body"
+  grep -Fq 'data:image/svg+xml;base64,' "$tmp_dir/invite-desktop.body"
 fi
 
 echo "Production smoke checks passed for backend ${backend_url} and public host ${public_url}."

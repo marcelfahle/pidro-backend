@@ -17,20 +17,17 @@ defmodule PidroServerWeb.InvitePageController do
 
     case InvitePreview.get(code) do
       {:ok, preview} ->
-        page = InvitePage.present(preview, human_device(device))
+        page = InvitePage.present(preview, device)
         render(conn, :show, page: page, crawler?: crawler?)
 
       {:error, :not_found} ->
-        page = InvitePage.not_found(human_device(device))
+        page = InvitePage.not_found(device)
 
         conn
         |> put_status(:not_found)
         |> render(:not_found, page: page, crawler?: crawler?)
     end
   end
-
-  defp human_device(:crawler), do: :desktop
-  defp human_device(device), do: device
 
   defp prepare_response(conn) do
     static_origin = PidroServerWeb.Endpoint.static_url()

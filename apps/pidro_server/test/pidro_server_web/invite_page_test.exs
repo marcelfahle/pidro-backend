@@ -18,13 +18,19 @@ defmodule PidroServerWeb.InvitePageTest do
       assert desktop.qr_data_uri =~ "data:image/svg+xml;base64,"
     end
 
+    test "crawler presentation skips QR generation" do
+      page = InvitePage.present(preview(:open), :crawler)
+
+      assert page.show_qr == false
+      assert page.qr_data_uri == nil
+    end
+
     test "moved invites consistently hand off to and display the successor" do
       successor = %Invite{code: "BBBBBBBB"}
       invite = %Invite{code: "AAAAAAAA", successor: successor}
       page = InvitePage.present(preview(:moved, invite: invite), :desktop)
 
       assert page.code == successor.code
-      assert page.target_code == successor.code
       assert page.target_url =~ successor.code
       assert page.canonical_url =~ invite.code
       assert page.android_url =~ "/j/#{successor.code}#Intent"

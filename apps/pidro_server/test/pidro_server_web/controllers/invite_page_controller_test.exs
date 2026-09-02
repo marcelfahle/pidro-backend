@@ -37,6 +37,7 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert attribute(document, "meta[property='og:url']", "content") == canonical(invite.code)
       assert attribute(document, "meta[property='og:image']", "content") =~ "/images/invite/"
       assert attribute(document, "meta[name=apple-itunes-app]", "content") =~ "app-id=1137091987"
+      assert attribute(document, "meta[name=robots]", "content") == "noindex, nofollow"
       refute html_response(conn, 200) =~ room.code
       assert Repo.aggregate(Event, :count, :id) == event_count
       assert get_resp_header(conn, "cache-control") == ["no-store"]
@@ -61,6 +62,7 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert attribute(document, "meta[property='og:url']", "content") == canonical(invite.code)
       assert LazyHTML.query(document, "[data-crawler-preview]") |> LazyHTML.text() =~ "Pidro"
       assert LazyHTML.query(document, "[data-open-ios]") |> LazyHTML.to_tree() == []
+      assert LazyHTML.query(document, "[data-invite-qr]") |> LazyHTML.to_tree() == []
       assert LazyHTML.query(document, "script[src]") |> LazyHTML.to_tree() == []
     end
 
@@ -76,7 +78,7 @@ defmodule PidroServerWeb.InvitePageControllerTest do
         |> LazyHTML.from_document()
 
       assert attribute(ios, "[data-open-ios]", "href") == "pidro-mobile://j/#{invite.code}"
-      assert attribute(ios, "[data-open-ios]", "data-store-url") =~ "apps.apple.com"
+      assert attribute(ios, "[data-ios-fallback] a", "href") =~ "apps.apple.com"
       assert attribute(ios, "script[src]", "src") =~ "/assets/js/invite.js"
 
       android =
@@ -153,16 +155,22 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert attribute(document, "[data-store=apple]", "href") =~ "apps.apple.com"
     end
 
-    test "shares the API preview throttle", %{conn: conn} do
-      with_limit(:invite_preview, 1, 60_000)
+    test "limits each invite independently from the API preview and other invite codes", %{
+      conn: conn
+    } do
+      with_limit(:invite_page, 1, 60_000)
+      with_limit(:invite_preview, 0, 60_000)
       {host, room} = host_and_room()
       invite = mint!(room, host)
+      other = mint!(room, host)
 
       assert conn |> from_ip({10, 7, 0, 1}) |> get(~p"/j/#{invite.code}") |> response(200)
 
-      denied = build_conn() |> from_ip({10, 7, 0, 1}) |> get(~p"/j/#{invite.code}")
+      denied = build_conn() |> from_ip({10, 7, 0, 2}) |> get(~p"/j/#{invite.code}")
       assert %{"errors" => [%{"code" => "RATE_LIMITED"}]} = json_response(denied, 429)
       assert [_retry_after] = get_resp_header(denied, "retry-after")
+
+      assert build_conn() |> from_ip({10, 7, 0, 2}) |> get(~p"/j/#{other.code}") |> response(200)
     end
   end
 

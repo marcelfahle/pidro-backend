@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#071a36" />
     <meta name="description" content={@page.description} />
-    <meta
-      name="robots"
-      content={if @page.state == :not_found, do: "noindex, nofollow", else: "index, follow"}
-    />
+    <meta name="robots" content="noindex, nofollow" />
 
     <title>{@page.title}</title>
     <link :if={@page.canonical_url} rel="canonical" href={@page.canonical_url} />

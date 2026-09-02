@@ -44,7 +44,7 @@ defmodule PidroServerWeb.Router do
   scope "/", PidroServerWeb do
     pipe_through :invite_page
 
-    get "/j/:code", InvitePageController, :show, private: %{rate_limit: [:invite_preview]}
+    get "/j/:code", InvitePageController, :show, private: %{rate_limit: [:invite_page]}
   end
 
   # OpenAPI documentation routes

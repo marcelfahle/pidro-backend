@@ -78,7 +78,8 @@ in every environment.
 | `RATE_LIMIT_ROOM_LOOKUP_LIMIT` / `RATE_LIMIT_ROOM_LOOKUP_SCALE_MS` | `120` / `60000` | `GET /api/v1/rooms/:code`, per client IP |
 | `RATE_LIMIT_ROOM_JOIN_LIMIT` / `RATE_LIMIT_ROOM_JOIN_SCALE_MS` | `30` / `60000` | `POST /api/v1/rooms/:code/join`, per authenticated user |
 | `RATE_LIMIT_INVITE_MINT_LIMIT` / `RATE_LIMIT_INVITE_MINT_SCALE_MS` | `10` / `60000` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate`, per authenticated user |
-| `RATE_LIMIT_INVITE_PREVIEW_LIMIT` / `RATE_LIMIT_INVITE_PREVIEW_SCALE_MS` | `60` / `60000` | `GET /api/v1/invites/:code` and `GET /j/:code`, per client IP |
+| `RATE_LIMIT_INVITE_PREVIEW_LIMIT` / `RATE_LIMIT_INVITE_PREVIEW_SCALE_MS` | `60` / `60000` | `GET /api/v1/invites/:code`, per client IP |
+| `RATE_LIMIT_INVITE_PAGE_LIMIT` / `RATE_LIMIT_INVITE_PAGE_SCALE_MS` | `300` / `60000` | `GET /j/:code`, per hashed invite code; public traffic crosses Vercel, so it must not share one edge-IP bucket with API preview traffic |
 | `RATE_LIMIT_INVITE_REDEEM_LIMIT` / `RATE_LIMIT_INVITE_REDEEM_SCALE_MS` | `10` / `60000` | `POST /api/v1/invites/:code/redeem`, per authenticated user |
 | `RATE_LIMIT_GUEST_CREATE_LIMIT` / `RATE_LIMIT_GUEST_CREATE_SCALE_MS` | `10` / `3600000` | `POST /api/v1/auth/guest`, per client IP |
 | `RATE_LIMIT_GUEST_CREATE_DAILY_LIMIT` / `RATE_LIMIT_GUEST_CREATE_DAILY_SCALE_MS` | `40` / `86400000` | same route, per client IP over a day |
@@ -113,7 +114,10 @@ PIDRO_PUBLIC_URL=https://www.pidro.online PIDRO_INVITE_CODE=7KQ4M2XB ops/smoke-p
 ```
 
 This checks exact `200` responses (so redirects fail), association content and cache headers, the
-absence of auth cookies, canonical invite metadata and the invite page's `no-store` contract.
+absence of auth cookies, canonical invite metadata, all human device branches and the invite page's
+`no-store` contract. The landing-page limiter is per invite code because the Phoenix origin sees the
+Vercel edge address, not a stable end-user address; this keeps one busy page from starving mobile API
+previews.
 
 ### Generating Secrets
 

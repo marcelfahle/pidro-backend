@@ -16,7 +16,6 @@ if (openButton) {
     event.preventDefault();
     cancelFallback();
 
-    const fallbackUrl = openButton.dataset.storeUrl;
     const fallbackMessage = document.querySelector("[data-ios-fallback]");
 
     window.location.assign(openButton.href);
@@ -24,7 +23,6 @@ if (openButton) {
     fallbackTimer = window.setTimeout(() => {
       if (document.visibilityState !== "visible") return;
       if (fallbackMessage) fallbackMessage.hidden = false;
-      if (fallbackUrl) window.location.assign(fallbackUrl);
     }, 1500);
   });
 }

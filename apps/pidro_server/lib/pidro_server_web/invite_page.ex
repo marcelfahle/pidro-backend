@@ -14,7 +14,7 @@ defmodule PidroServerWeb.InvitePage do
   @android_package "com.oneapps.pidro"
   @seats_total 4
 
-  @type device :: :ios | :android | :desktop
+  @type device :: :ios | :android | :desktop | :crawler
 
   @doc "Builds the page assigns for a known public invite preview."
   @spec present(PidroServerWeb.InvitePreview.t(), device()) :: map()
@@ -33,8 +33,6 @@ defmodule PidroServerWeb.InvitePage do
       code: target.code,
       canonical_url: Invites.url(invite),
       target_url: target_url,
-      target_code: target.code,
-      host: host,
       seats_taken: preview.seats_taken,
       seats_total: @seats_total,
       seat_copy: "#{preview.seats_taken} of #{@seats_total} seats taken",
@@ -54,21 +52,16 @@ defmodule PidroServerWeb.InvitePage do
     %{
       state: :not_found,
       canonical_url: nil,
-      target_url: nil,
-      target_code: nil,
       title: "Come play Pidro",
       description: "This invite could not be found. Open Pidro to find a table and play.",
       eyebrow: "Invite not found",
       heading: "We couldn't find that invite",
       body:
         "The link may be incomplete or no longer available. You can still open Pidro and find a table.",
-      tone: :quiet,
       table_action: :none,
       app_store_url: @app_store_url,
       play_store_url: @play_store_base,
-      device: device,
-      show_qr: false,
-      qr_data_uri: nil
+      device: device
     }
   end
 
@@ -85,7 +78,6 @@ defmodule PidroServerWeb.InvitePage do
       eyebrow: "You're invited",
       heading: "#{host} saved you a seat",
       body: "Open Pidro and join the table. No registration detour — pick a name and play.",
-      tone: :open,
       table_action: :join
     }
   end
@@ -97,7 +89,6 @@ defmodule PidroServerWeb.InvitePage do
       eyebrow: "New table",
       heading: "#{host} started a new table",
       body: "This invite moved with the host. Continue with the fresh table link.",
-      tone: :moved,
       table_action: :successor
     }
   end
@@ -145,7 +136,6 @@ defmodule PidroServerWeb.InvitePage do
       eyebrow: eyebrow,
       heading: heading,
       body: body,
-      tone: :inactive,
       table_action: :none
     }
   end

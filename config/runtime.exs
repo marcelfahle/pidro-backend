@@ -83,6 +83,8 @@ rate_limit_overrides =
     {:invite_mint, :scale_ms, "RATE_LIMIT_INVITE_MINT_SCALE_MS"},
     {:invite_preview, :limit, "RATE_LIMIT_INVITE_PREVIEW_LIMIT"},
     {:invite_preview, :scale_ms, "RATE_LIMIT_INVITE_PREVIEW_SCALE_MS"},
+    {:invite_page, :limit, "RATE_LIMIT_INVITE_PAGE_LIMIT"},
+    {:invite_page, :scale_ms, "RATE_LIMIT_INVITE_PAGE_SCALE_MS"},
     {:invite_redeem, :limit, "RATE_LIMIT_INVITE_REDEEM_LIMIT"},
     {:invite_redeem, :scale_ms, "RATE_LIMIT_INVITE_REDEEM_SCALE_MS"},
     {:guest_create, :limit, "RATE_LIMIT_GUEST_CREATE_LIMIT"},

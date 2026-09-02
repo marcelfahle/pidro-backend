@@ -50,7 +50,7 @@ The current production topology adds a second reliability problem: `https://pidr
 
 **Landing request and metadata**
 
-- R1. Public `GET /j/:code` is IP-rate-limited with the existing invite-preview policy, normalizes and looks up the code, resolves the same invite state, host name, occupied-seat count and successor as the public invite API, and renders HTML without exposing `room_code`, user ids, labels, or other private fields. A known invite renders 200 for every state; an unknown code renders a branded 404. A throttled request keeps the existing compact 429 JSON contract and `Retry-After` header rather than adding a second limiter response path for HTML.
+- R1. Public `GET /j/:code` is rate-limited per hashed invite code with a dedicated landing-page policy, normalizes and looks up the code, resolves the same invite state, host name, occupied-seat count and successor as the public invite API, and renders HTML without exposing `room_code`, user ids, labels, or other private fields. The dedicated policy is necessary because the Phoenix origin sees Vercel edge addresses for public-host traffic; it also prevents a busy landing page from starving the mobile API's per-client preview bucket. A known invite renders 200 for every state; an unknown code renders a branded 404. A throttled request keeps the existing compact 429 JSON contract and `Retry-After` header rather than adding a second limiter response path for HTML.
 - R2. Every known invite response has a canonical `https://www.pidro.online/j/:code` URL, escaped state-aware `<title>` and description, Open Graph and Twitter card tags, and a 1200×630 branded Pidro image under 300 KB. An open invite names the host and seat count; inactive states do not advertise a table as joinable. Unknown invites use generic metadata.
 - R3. Recognized crawler user agents receive the same complete metadata and a minimal no-action body. No landing GET creates an event, redemption, guest, reservation or other durable write. Responses use `Cache-Control: no-store` and `Vary: User-Agent` so a crawler representation cannot be served to a person or outlive room state.
 
@@ -258,7 +258,7 @@ flowchart TD
 
 **Work:**
 
-- Add `/j/:code` to a purpose-built HTML pipeline with secure browser headers, the existing `RateLimit` plug and the invite root layout, avoiding session/flash/CSRF work that a read-only public page does not use. Tag the route with `invite_preview` instead of defining another policy.
+- Add `/j/:code` to a purpose-built HTML pipeline with secure browser headers, the existing `RateLimit` plug and the invite root layout, avoiding session/flash/CSRF work that a read-only public page does not use. Tag the route with a dedicated `invite_page` policy keyed by the hashed `code` path parameter; keep `invite_preview` independent and per client IP for the mobile API.
 - Resolve preview data once, construct state/device presentation assigns, and render 200 for known states or 404 for unknown codes.
 - Generate canonical, title, description, OG/Twitter, Smart Banner and robots metadata in the server response. Use successor URL/data for moved actions while retaining old-link explanatory copy.
 - Detect crawlers from the request UA and render metadata plus a minimal inert body with no scheme control or script.
