@@ -307,3 +307,38 @@ if invite_link_base_url not in [nil, ""] and Code.ensure_loaded?(PidroServer.Inv
          PidroServer.Invites,
          Keyword.put(invites_existing, :link_base_url, invite_link_base_url)
 end
+
+# ---------------------------------------------------------------------------
+# Idle-guest reaper (PidroServer.Accounts.GuestReaper) env overrides.
+#
+# Applies in every environment. Defaults live in config/config.exs and
+# config/test.exs; each variable replaces its key only when set:
+#
+#   GUEST_REAPER_ENABLED        true/false (the boolean idiom used above)
+#   GUEST_REAPER_INTERVAL_MS    milliseconds between sweeps
+#   GUEST_REAPER_MAX_IDLE_DAYS  days since last_seen_at (or inserted_at)
+#
+# Gated like the blocks above: runtime.exs is shared by every umbrella app,
+# and the reaper only exists on pidro_server's code path.
+# ---------------------------------------------------------------------------
+guest_reaper_overrides =
+  [
+    {:enabled, "GUEST_REAPER_ENABLED", &(&1 in ~w(true TRUE 1 yes YES))},
+    {:interval_ms, "GUEST_REAPER_INTERVAL_MS", &String.to_integer/1},
+    {:max_idle_days, "GUEST_REAPER_MAX_IDLE_DAYS", &String.to_integer/1}
+  ]
+  |> Enum.reduce([], fn {key, env_var, parse}, acc ->
+    case System.get_env(env_var) do
+      nil -> acc
+      val -> [{key, parse.(val)} | acc]
+    end
+  end)
+
+if guest_reaper_overrides != [] and Code.ensure_loaded?(PidroServer.Accounts.GuestReaper) do
+  guest_reaper_existing =
+    Application.get_env(:pidro_server, PidroServer.Accounts.GuestReaper, [])
+
+  config :pidro_server,
+         PidroServer.Accounts.GuestReaper,
+         Keyword.merge(guest_reaper_existing, guest_reaper_overrides)
+end

@@ -29,6 +29,10 @@ config :pidro_server, :password_reset,
 
 config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4002/j"
 
+# The reaper never schedules under the SQL sandbox; tests call
+# PidroServer.Accounts.GuestReaper.run_once/0 from their own process.
+config :pidro_server, PidroServer.Accounts.GuestReaper, enabled: false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

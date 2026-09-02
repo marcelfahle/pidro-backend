@@ -12,15 +12,26 @@ defmodule PidroServer.Accounts.User do
 
     * `registration_changeset/2` and `changeset/2` serve the public API. They
       cast `username`, `email`, `password` and `display_name` only.
-    * `guest_changeset/2` builds a guest row from `username` and
-      `display_name` and forces `guest: true`. It is internal to the server.
+    * `guest_changeset/2` builds a guest row from `username`, `display_name`
+      and `install_id` and forces `guest: true`. It is internal to the server.
+    * `upgrade_changeset/2` turns a guest into a registered account: it casts
+      `email`, `password` and an optional `username` and forces `guest: false`.
     * `admin_changeset/2` is `changeset/2` plus `guest`, for the dev admin
       panel and test fixtures.
 
+  ## Display names
+
+  One rule for every account (KD11, R11), applied by each changeset that
+  casts `display_name`: the value is NFKC-normalized and trimmed, must not
+  contain control or format characters (Unicode `Cc` and `Cf`, which covers
+  the zero-width joiner and bidi overrides), and is 2 to 20 graphemes long.
+  `name_key/1` derives the look-alike key guest creation compares against.
+
   `token_version` defaults to 0 both in the schema and in the database so a
   freshly inserted struct signs a valid token without a reload.
-  `last_seen_at` and `install_id` are reserved for later phases: no changeset
-  casts them, they are never logged, and the API does not expose them.
+  `last_seen_at` is written only by `PidroServer.Accounts.Auth.touch_last_seen/1`;
+  `install_id` is stored at guest creation. Neither is logged or exposed by
+  the API.
   """
 
   use Ecto.Schema
@@ -29,7 +40,18 @@ defmodule PidroServer.Accounts.User do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
-  @display_name_max_length 40
+  @display_name_min_graphemes 2
+  @display_name_max_graphemes 20
+  @install_id_max_length 64
+  @username_min_length 3
+  @password_min_length 8
+  @email_format ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+  # Unicode categories Cc (control) and Cf (format). The `u` modifier makes
+  # the property classes match codepoints rather than bytes.
+  @forbidden_name_chars ~r/[\p{Cc}\p{Cf}]/u
+  @combining_marks ~r/\p{Mn}/u
+  @non_alphanumerics ~r/[^\p{L}\p{N}]/u
 
   @typedoc "A user row."
   @type t :: %__MODULE__{}
@@ -67,7 +89,7 @@ defmodule PidroServer.Accounts.User do
     user
     |> changeset(attrs)
     |> validate_required(:password)
-    |> validate_length(:password, min: 8)
+    |> validate_length(:password, min: @password_min_length)
     |> put_password_hash()
   end
 
@@ -92,10 +114,8 @@ defmodule PidroServer.Accounts.User do
     user
     |> cast(attrs, [:username, :email, :password, :display_name])
     |> validate_required([:username])
-    |> validate_length(:username, min: 3)
-    |> validate_format(:email, ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-      message: "must be a valid email address"
-    )
+    |> validate_length(:username, min: @username_min_length)
+    |> validate_format(:email, @email_format, message: "must be a valid email address")
     |> validate_display_name()
     |> unique_constraint(:username)
     |> unique_constraint(:email)
@@ -105,25 +125,56 @@ defmodule PidroServer.Accounts.User do
   Builds a changeset for creating a guest account.
 
   Guests are created by the server, never from public params: this changeset
-  casts only `username` and `display_name`, forces `guest: true`, and leaves
-  `email` and `password_hash` nil. Username is required, at least 3 characters
-  and unique.
+  casts only `username`, `display_name` and `install_id` (at most 64
+  characters), forces `guest: true`, and leaves `email` and `password_hash`
+  nil. Username is required, at least 3 characters and unique.
 
   ## Parameters
     - user: The user struct (typically a new/empty one)
-    - attrs: The attributes map with `username` and optional `display_name`
+    - attrs: The attributes map with `username`, optional `display_name` and
+      optional `install_id`
 
   ## Returns
     A changeset with validation results and `guest` set to true
   """
   def guest_changeset(user, attrs) do
     user
-    |> cast(attrs, [:username, :display_name])
+    |> cast(attrs, [:username, :display_name, :install_id])
     |> validate_required([:username])
-    |> validate_length(:username, min: 3)
+    |> validate_length(:username, min: @username_min_length)
+    |> validate_length(:install_id, max: @install_id_max_length)
     |> validate_display_name()
     |> unique_constraint(:username)
     |> put_change(:guest, true)
+  end
+
+  @doc """
+  Builds the changeset that upgrades a guest into a registered account (R13).
+
+  Casts `email`, `password` and an optional `username`; requires email and
+  password; applies the email format of `changeset/2`, the password minimum
+  of `registration_changeset/2` and the username minimum when a username is
+  given; hashes the password and forces `guest: false`. The row keeps its id,
+  display name and, unless a username is given, its generated guest username.
+
+  ## Parameters
+    - user: The guest's user struct
+    - attrs: The attributes map with `email`, `password` and optional `username`
+
+  ## Returns
+    A changeset with validation results, the password hash and `guest` false
+  """
+  def upgrade_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:email, :password, :username])
+    |> validate_required([:username, :email, :password])
+    |> validate_length(:username, min: @username_min_length)
+    |> validate_format(:email, @email_format, message: "must be a valid email address")
+    |> validate_length(:password, min: @password_min_length)
+    |> put_password_hash()
+    |> put_change(:guest, false)
+    |> unique_constraint(:username)
+    |> unique_constraint(:email)
   end
 
   @doc """
@@ -152,7 +203,7 @@ defmodule PidroServer.Accounts.User do
     user
     |> cast(attrs, [:password])
     |> validate_required(:password)
-    |> validate_length(:password, min: 8)
+    |> validate_length(:password, min: @password_min_length)
     |> put_password_hash()
     |> put_change(:password_reset_token_hash, nil)
     |> put_change(:password_reset_sent_at, nil)
@@ -166,15 +217,86 @@ defmodule PidroServer.Accounts.User do
     |> cast(attrs, [:password_reset_token_hash, :password_reset_sent_at])
   end
 
-  # Trims display_name and bounds its length. Applied by every changeset that
-  # casts display_name so the rule lives in one place (R30).
+  @doc """
+  Derives the look-alike key of a display name (R11).
+
+  NFKD-decomposes the name, strips combining marks, downcases it and keeps
+  only letters and digits, so `Marcél`, `MARCEL` and `m a r c e l` share the
+  key `marcel`. When nothing alphanumeric remains (an emoji-only name), the
+  key is the NFKC-normalized, trimmed, downcased name itself, so two different
+  emoji names stay distinct. `nil` keys to `nil`.
+
+  ## Examples
+
+      iex> PidroServer.Accounts.User.name_key("Marcél")
+      "marcel"
+
+      iex> PidroServer.Accounts.User.name_key("m a r c e l")
+      "marcel"
+  """
+  @spec name_key(String.t() | nil) :: String.t() | nil
+  def name_key(nil), do: nil
+
+  def name_key(name) when is_binary(name) do
+    key =
+      name
+      |> nfkd()
+      |> String.replace(@combining_marks, "")
+      |> String.downcase()
+      |> String.replace(@non_alphanumerics, "")
+
+    if key == "" do
+      name |> nfkc() |> String.trim() |> String.downcase()
+    else
+      key
+    end
+  end
+
+  # The one display-name rule (KTD6): NFKC normalize and trim, reject control
+  # and format characters, then bound the grapheme count. Applied by every
+  # changeset that casts display_name. A blank name normalizes to nil, which
+  # clears the field.
   defp validate_display_name(changeset) do
     changeset
-    |> update_change(:display_name, fn
-      nil -> nil
-      name -> String.trim(name)
-    end)
-    |> validate_length(:display_name, max: @display_name_max_length)
+    |> update_change(:display_name, &normalize_display_name/1)
+    |> validate_change(:display_name, &forbid_control_and_format/2)
+    |> validate_length(:display_name,
+      min: @display_name_min_graphemes,
+      max: @display_name_max_graphemes
+    )
+  end
+
+  defp normalize_display_name(nil), do: nil
+
+  defp normalize_display_name(name) when is_binary(name) do
+    case name |> nfkc() |> String.trim() do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp forbid_control_and_format(:display_name, name) do
+    if String.valid?(name) and not Regex.match?(@forbidden_name_chars, name) do
+      []
+    else
+      [display_name: "must not contain control or format characters"]
+    end
+  end
+
+  # :unicode answers an error tuple for invalid UTF-8; the name then flows
+  # unchanged into forbid_control_and_format/2, which rejects it.
+  defp nfkc(name) do
+    case :unicode.characters_to_nfkc_binary(name) do
+      normalized when is_binary(normalized) -> normalized
+      _invalid -> name
+    end
+  end
+
+  defp nfkd(name) do
+    case :unicode.characters_to_nfkd_binary(name) do
+      normalized when is_binary(normalized) -> normalized
+      _invalid -> name
+    end
   end
 
   @doc false

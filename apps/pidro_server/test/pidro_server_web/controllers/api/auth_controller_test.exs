@@ -40,21 +40,21 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert %{"user" => %{"display_name" => "Anna"}} = json_response(conn, 201)["data"]
     end
 
-    test "rejects a 41-character display_name with a validation error", %{conn: conn} do
+    test "rejects a 21-character display_name with a validation error", %{conn: conn} do
       conn =
         post(conn, ~p"/api/v1/auth/register", %{
           "user" => %{
             "username" => "register_long",
             "email" => "register_long@example.com",
             "password" => "password123",
-            "display_name" => String.duplicate("a", 41)
+            "display_name" => String.duplicate("a", 21)
           }
         })
 
       assert %{"errors" => [%{"code" => "display_name", "detail" => detail}]} =
                json_response(conn, 422)
 
-      assert detail =~ "at most 40"
+      assert detail =~ "at most 20"
     end
   end
 

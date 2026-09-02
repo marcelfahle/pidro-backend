@@ -201,6 +201,16 @@ config :pidro_server, PidroServerWeb.WellKnownController,
 # INVITE_LINK_BASE_URL when that variable is set.
 config :pidro_server, PidroServer.Invites, link_base_url: "https://pidro.online/j"
 
+# Idle-guest reaper (PidroServer.Accounts.GuestReaper): every interval_ms it
+# deletes guest accounts idle for more than max_idle_days with the account
+# deletion recipe. config/test.exs disables it (the SQL sandbox has no owner
+# for a timer-driven sweep); config/runtime.exs merges GUEST_REAPER_ENABLED,
+# GUEST_REAPER_INTERVAL_MS and GUEST_REAPER_MAX_IDLE_DAYS when set.
+config :pidro_server, PidroServer.Accounts.GuestReaper,
+  enabled: true,
+  interval_ms: 3_600_000,
+  max_idle_days: 30
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

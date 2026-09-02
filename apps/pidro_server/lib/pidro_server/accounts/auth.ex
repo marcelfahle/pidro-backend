@@ -17,6 +17,28 @@ defmodule PidroServer.Accounts.Auth do
   close. A password reset bumps the version in the same transaction as the
   password change.
 
+  ## Guests
+
+  `create_guest_user/2` builds a `guest: true` row with a generated
+  `guest_<code>` username and rejects a display name whose
+  `User.name_key/1` is in the caller's taken list (R10, R11).
+  `upgrade_guest/2` turns that row into a registered account in place and
+  bumps `token_version` without a disconnect broadcast, so the guest's open
+  socket survives while every older token dies (R13, KTD7).
+
+  ## Deletion
+
+  `delete_user/1` is the single deletion recipe (KTD8) shared by
+  `DELETE /api/v1/auth/me`, the guest reaper and the admin panel: it vacates
+  the user's seat, revokes the invites they host, deletes their personal rows
+  and the user row in one transaction, then broadcasts the disconnect.
+  `game_stats` and `abandonment_events` keep the bare id (KD9).
+
+  ## Last seen
+
+  `touch_last_seen/1` writes `last_seen_at` at most once per hour per user
+  (R16). Callers minting a token or accepting a socket connect call it.
+
   ## Examples
 
       # Register a new user
@@ -41,13 +63,23 @@ defmodule PidroServer.Accounts.Auth do
   """
 
   import Ecto.Query
+
+  alias Ecto.Changeset
   alias PidroServer.Accounts.Token
   alias PidroServer.Accounts.User
+  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.RoomManager.Room
+  alias PidroServer.Invites
+  alias PidroServer.Invites.{Codes, Event, Invite, Redemption}
+  alias PidroServer.Profiles.{Achievement, PlayerProfile}
   alias PidroServer.Repo
 
   @default_user_page_size 30
   @password_reset_token_bytes 32
   @password_reset_max_age_seconds 60 * 60
+  @guest_username_prefix "guest_"
+  @guest_username_attempts 2
+  @last_seen_min_interval_seconds 60 * 60
 
   @doc """
   Registers a new user with the given attributes.
@@ -81,48 +113,80 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   @doc """
-  Authenticates a user by verifying their username and password.
+  Creates a guest account (R10, R11).
 
-  Retrieves the user by username and verifies the provided password against
-  the stored hashed password using Bcrypt.
+  Reads `display_name` (required) and `install_id` from `attrs` (atom or
+  string keys), generates the username as `guest_` plus a
+  `PidroServer.Invites.Codes` code, inserts with `User.guest_changeset/2` and
+  redraws once when the username is taken (KTD2). `taken_name_keys` are the
+  `User.name_key/1` values of the players connected at the invite's table;
+  a display name whose key is among them is rejected on `display_name`.
 
-  A user without a `password_hash` (a guest) can never log in with a
-  password: the call runs a dummy Bcrypt verify so the response time matches
-  a real check, then returns invalid credentials.
+  `opts[:generator]` replaces `Codes.generate/0`, which is how tests force a
+  collision.
+
+  ## Returns
+
+    - `{:ok, user}` - The guest row
+    - `{:error, changeset}` - Invalid display name, a taken look-alike name,
+      or both username draws collided
+  """
+  @spec create_guest_user(map(), [String.t()], keyword()) ::
+          {:ok, User.t()} | {:error, Changeset.t()}
+  def create_guest_user(attrs, taken_name_keys, opts \\ [])
+      when is_map(attrs) and is_list(taken_name_keys) and is_list(opts) do
+    generator = Keyword.get(opts, :generator, &Codes.generate/0)
+    insert_guest(guest_attrs(attrs), taken_name_keys, generator, @guest_username_attempts)
+  end
+
+  @doc """
+  Authenticates a user by an identifier and password (R14, KTD14).
+
+  An identifier containing `@` is looked up by `lower(email)` only; any
+  other identifier by exact username only, so a username shaped like
+  someone else's email can never shadow that email at login.
+
+  A miss, and a user without a `password_hash` (a guest), run a dummy
+  Bcrypt verify so the response time matches a real check, then answer
+  invalid credentials.
 
   ## Returns
 
     - `{:ok, user}` - Credentials are valid
-    - `{:error, :invalid_credentials}` - Username not found, password is
-      incorrect, or the account has no password
+    - `{:error, :invalid_credentials}` - No such user, wrong password, or the
+      account has no password
 
   ## Examples
 
       iex> PidroServer.Accounts.Auth.authenticate_user("jane_doe", "secure_pass123")
       {:ok, %PidroServer.Accounts.User{username: "jane_doe"}}
 
+      iex> PidroServer.Accounts.Auth.authenticate_user("jane@example.com", "secure_pass123")
+      {:ok, %PidroServer.Accounts.User{username: "jane_doe"}}
+
       iex> PidroServer.Accounts.Auth.authenticate_user("jane_doe", "wrong_password")
       {:error, :invalid_credentials}
-
-      iex> PidroServer.Accounts.Auth.authenticate_user("nonexistent_user", "password")
-      {:error, :invalid_credentials}
   """
-  def authenticate_user(username, password) do
-    case get_user_by_username(username) do
-      nil ->
-        {:error, :invalid_credentials}
-
-      %User{password_hash: nil} ->
-        Bcrypt.no_user_verify()
-        {:error, :invalid_credentials}
-
-      user ->
-        if Bcrypt.verify_pass(password, user.password_hash) do
+  @spec authenticate_user(term(), term()) :: {:ok, User.t()} | {:error, :invalid_credentials}
+  def authenticate_user(identifier, password)
+      when is_binary(identifier) and is_binary(password) do
+    case get_user_for_login(identifier) do
+      %User{password_hash: hash} = user when is_binary(hash) ->
+        if Bcrypt.verify_pass(password, hash) do
           {:ok, user}
         else
           {:error, :invalid_credentials}
         end
+
+      _missing_or_passwordless ->
+        Bcrypt.no_user_verify()
+        {:error, :invalid_credentials}
     end
+  end
+
+  def authenticate_user(_identifier, _password) do
+    Bcrypt.no_user_verify()
+    {:error, :invalid_credentials}
   end
 
   @doc """
@@ -236,6 +300,66 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   @doc """
+  Upgrades a guest into a registered account in place (R13, KTD7).
+
+  Reads `email`, `password` and an optional `username` from `attrs` (atom
+  or string keys). The email is pre-checked case-insensitively and the
+  username exactly; then `User.upgrade_changeset/2` and the `token_version`
+  increment run in one transaction, and the returned struct carries the new
+  version so a token minted from it is valid. A unique-constraint failure
+  in the race between the pre-check and the commit maps to the same atoms.
+
+  No disconnect is broadcast: the guest's open socket stays connected while
+  every token minted before the upgrade is revoked.
+
+  ## Returns
+
+    - `{:ok, user}` - The upgraded row with the bumped `token_version`
+    - `{:error, :not_a_guest}` - The user is already registered
+    - `{:error, :email_taken}` - Another account has that email (any case)
+    - `{:error, :username_taken}` - Another account has that username
+    - `{:error, changeset}` - Invalid attributes; nothing was written
+  """
+  @spec upgrade_guest(User.t(), map()) ::
+          {:ok, User.t()}
+          | {:error, :not_a_guest | :email_taken | :username_taken | Changeset.t()}
+  def upgrade_guest(%User{guest: false}, _attrs), do: {:error, :not_a_guest}
+
+  def upgrade_guest(%User{guest: true, id: id} = guest, attrs) when is_map(attrs) do
+    attrs = upgrade_attrs(attrs)
+
+    with :ok <- ensure_email_free(Map.get(attrs, :email), id),
+         :ok <- ensure_username_free(Map.get(attrs, :username), id) do
+      guest
+      |> User.upgrade_changeset(attrs)
+      |> update_and_bump_version()
+      |> map_upgrade_result()
+    end
+  end
+
+  @doc """
+  Records that the user was seen, at most once per hour (R16, KTD15).
+
+  One `update_all` guarded by `last_seen_at IS NULL OR last_seen_at < now()
+  - 1 hour`, so a busy user costs one write per hour rather than one per
+  request. Accepts a `%User{}` or a bare user id; an unknown id is a no-op.
+  """
+  @spec touch_last_seen(User.t() | String.t()) :: :ok
+  def touch_last_seen(%User{id: id}), do: touch_last_seen(id)
+
+  def touch_last_seen(id) when is_binary(id) do
+    now = DateTime.utc_now()
+    stale_before = DateTime.add(now, -@last_seen_min_interval_seconds, :second)
+
+    query =
+      from u in User,
+        where: u.id == ^id and (is_nil(u.last_seen_at) or u.last_seen_at < ^stale_before)
+
+    Repo.update_all(query, set: [last_seen_at: now])
+    :ok
+  end
+
+  @doc """
   Fetches a user by their username.
 
   ## Returns
@@ -339,18 +463,7 @@ defmodule PidroServer.Accounts.Auth do
         # One transaction: password change (which also clears the reset
         # token fields), then the atomic version bump. The disconnect
         # broadcast waits for the commit.
-        result =
-          Repo.transaction(fn ->
-            with {:ok, updated} <-
-                   Repo.update(User.password_changeset(user, %{password: password})),
-                 {:ok, bumped} <- increment_token_version(Repo, updated.id) do
-              bumped
-            else
-              {:error, reason} -> Repo.rollback(reason)
-            end
-          end)
-
-        case result do
+        case update_and_bump_version(User.password_changeset(user, %{password: password})) do
           {:ok, user} ->
             broadcast_disconnect(user)
             {:ok, user}
@@ -462,10 +575,188 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   @doc """
-  Deletes a user account. Historical game stats keep the raw player id.
+  Deletes a user account with the single deletion recipe (R15, KTD8).
+
+  In order: the user leaves their room (a missing seat is fine), the invites
+  they host are revoked and stripped of their labels, the `invite_live_until`
+  of every live room those invites belonged to is recomputed, then one
+  transaction deletes the user's `player_profiles`, `player_achievements`,
+  `invite_redemptions` and `invite_events` rows and the `users` row. The
+  disconnect is broadcast once the transaction has committed. `game_stats`
+  and `abandonment_events` keep the bare player id (KD9).
+
+  ## Returns
+
+    - `{:ok, user}` - The deleted row
+    - `{:error, changeset}` - The user row could not be deleted; nothing in
+      the transaction was written
   """
-  def delete_user(%User{} = user) do
-    Repo.delete(user)
+  @spec delete_user(User.t()) :: {:ok, User.t()} | {:error, Changeset.t()}
+  def delete_user(%User{id: id} = user) do
+    vacate_seat(id)
+    hosted_rooms = hosted_invite_rooms(id)
+    {:ok, _revoked} = Invites.revoke_hosted(id)
+    Enum.each(hosted_rooms, &recompute_invite_live_until/1)
+
+    case delete_personal_rows(user) do
+      {:ok, deleted} ->
+        broadcast_disconnect(deleted)
+        {:ok, deleted}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  defp vacate_seat(user_id) do
+    case RoomManager.leave_room(user_id) do
+      :ok -> :ok
+      {:error, :not_in_room} -> :ok
+    end
+  end
+
+  # The rooms whose active invites the user hosts, read before those invites
+  # are revoked so each live room's invite window can be recomputed after.
+  defp hosted_invite_rooms(user_id) do
+    now = DateTime.utc_now()
+
+    Repo.all(
+      from i in Invite,
+        where: i.host_user_id == ^user_id and is_nil(i.revoked_at) and i.expires_at > ^now,
+        distinct: true,
+        select: {i.room_id, i.room_code}
+    )
+  end
+
+  defp recompute_invite_live_until({room_id, room_code}) do
+    case RoomManager.get_room(room_code) do
+      {:ok, %Room{id: ^room_id}} ->
+        live_until =
+          case Invites.active_for_room(room_id) do
+            %Invite{expires_at: expires_at} -> expires_at
+            nil -> nil
+          end
+
+        RoomManager.note_invite(room_code, live_until)
+
+      _closed_or_recycled_code ->
+        :ok
+    end
+  end
+
+  defp delete_personal_rows(%User{id: id} = user) do
+    Repo.transaction(fn ->
+      Repo.delete_all(from p in PlayerProfile, where: p.user_id == ^id)
+      Repo.delete_all(from a in Achievement, where: a.user_id == ^id)
+      Repo.delete_all(from r in Redemption, where: r.user_id == ^id)
+      Repo.delete_all(from e in Event, where: e.user_id == ^id)
+
+      case Repo.delete(user) do
+        {:ok, deleted} -> deleted
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  defp guest_attrs(attrs) do
+    %{}
+    |> maybe_put_attr(:display_name, fetch_attr(attrs, :display_name))
+    |> maybe_put_attr(:install_id, fetch_attr(attrs, :install_id))
+  end
+
+  defp insert_guest(attrs, taken_name_keys, generator, attempts_left) do
+    username = @guest_username_prefix <> generator.()
+
+    changeset =
+      %User{}
+      |> User.guest_changeset(Map.put(attrs, :username, username))
+      |> Changeset.validate_required(:display_name)
+      |> reject_taken_name(taken_name_keys)
+
+    case Repo.insert(changeset) do
+      {:ok, user} ->
+        {:ok, user}
+
+      {:error, changeset} ->
+        if attempts_left > 1 and unique_error?(changeset, :username) do
+          insert_guest(attrs, taken_name_keys, generator, attempts_left - 1)
+        else
+          {:error, changeset}
+        end
+    end
+  end
+
+  defp reject_taken_name(changeset, []), do: changeset
+
+  defp reject_taken_name(changeset, taken_name_keys) do
+    name = Changeset.get_change(changeset, :display_name)
+
+    if is_binary(name) and User.name_key(name) in taken_name_keys do
+      Changeset.add_error(changeset, :display_name, "is already used at this table")
+    else
+      changeset
+    end
+  end
+
+  defp upgrade_attrs(attrs) do
+    %{}
+    |> maybe_put_attr(:email, fetch_attr(attrs, :email))
+    |> maybe_put_attr(:password, fetch_attr(attrs, :password))
+    |> maybe_put_attr(:username, fetch_attr(attrs, :username))
+  end
+
+  defp ensure_email_free(email, user_id) when is_binary(email) do
+    lowered = String.downcase(email)
+
+    taken? =
+      Repo.exists?(
+        from u in User,
+          where: fragment("lower(?)", u.email) == ^lowered and u.id != ^user_id
+      )
+
+    if taken?, do: {:error, :email_taken}, else: :ok
+  end
+
+  defp ensure_email_free(_email, _user_id), do: :ok
+
+  defp ensure_username_free(username, user_id) when is_binary(username) do
+    taken? = Repo.exists?(from u in User, where: u.username == ^username and u.id != ^user_id)
+
+    if taken?, do: {:error, :username_taken}, else: :ok
+  end
+
+  defp ensure_username_free(_username, _user_id), do: :ok
+
+  defp map_upgrade_result({:ok, user}), do: {:ok, user}
+
+  defp map_upgrade_result({:error, %Changeset{} = changeset}) do
+    cond do
+      unique_error?(changeset, :email) -> {:error, :email_taken}
+      unique_error?(changeset, :username) -> {:error, :username_taken}
+      true -> {:error, changeset}
+    end
+  end
+
+  defp map_upgrade_result({:error, reason}), do: {:error, reason}
+
+  defp unique_error?(%Changeset{errors: errors}, field) do
+    Enum.any?(errors, fn
+      {^field, {_message, opts}} -> Keyword.get(opts, :constraint) == :unique
+      _other -> false
+    end)
+  end
+
+  defp get_user_for_login(identifier) do
+    if String.contains?(identifier, "@") do
+      get_user_by_lower_email(identifier)
+    else
+      get_user_by_username(identifier)
+    end
+  end
+
+  defp get_user_by_lower_email(email) do
+    lowered = String.downcase(email)
+    Repo.one(from u in User, where: fragment("lower(?)", u.email) == ^lowered, limit: 1)
   end
 
   defp valid_uuid?(id) when is_binary(id) do
@@ -488,6 +779,20 @@ defmodule PidroServer.Accounts.Auth do
             fragment("lower(?)", u.email) == ^normalized_email,
         limit: 1
     )
+  end
+
+  # One transaction: apply the changeset, then the atomic version bump. The
+  # bump's returned row carries every committed change, so a token minted
+  # from it is valid. Never broadcasts; the caller decides after the commit.
+  defp update_and_bump_version(%Changeset{} = changeset) do
+    Repo.transaction(fn ->
+      with {:ok, updated} <- Repo.update(changeset),
+           {:ok, bumped} <- increment_token_version(Repo, updated.id) do
+        bumped
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
   end
 
   # Runs the atomic increment through the given repo (the transaction repo
@@ -582,12 +887,16 @@ defmodule PidroServer.Accounts.Auth do
 
   defp admin_user_attrs(attrs) when is_map(attrs) do
     %{}
-    |> maybe_put_attr(:username, Map.get(attrs, "username", Map.get(attrs, :username)))
-    |> maybe_put_attr(:email, Map.get(attrs, "email", Map.get(attrs, :email)))
-    |> maybe_put_attr(:guest, Map.get(attrs, "guest", Map.get(attrs, :guest)))
+    |> maybe_put_attr(:username, fetch_attr(attrs, :username))
+    |> maybe_put_attr(:email, fetch_attr(attrs, :email))
+    |> maybe_put_attr(:guest, fetch_attr(attrs, :guest))
   end
 
   defp admin_user_attrs(_attrs), do: %{}
+
+  # Reads `key` from an atom- or string-keyed params map, the string key
+  # winning as in the admin panel's form params.
+  defp fetch_attr(attrs, key), do: Map.get(attrs, Atom.to_string(key), Map.get(attrs, key))
 
   defp maybe_put_attr(attrs, _key, nil), do: attrs
   defp maybe_put_attr(attrs, key, value), do: Map.put(attrs, key, value)
