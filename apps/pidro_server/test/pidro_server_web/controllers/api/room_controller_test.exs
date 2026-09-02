@@ -3,7 +3,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
   alias PidroServer.Accounts.Token
   alias PidroServer.AccountsFixtures
-  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.{RoomCodes, RoomManager}
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -45,6 +45,35 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       assert {:ok, room} = RoomManager.get_room(code)
       assert room.metadata.single_player == true
+    end
+
+    test "returns 503 ROOM_CODE_EXHAUSTED when no free room code can be allocated", %{
+      conn: conn
+    } do
+      original = Application.get_env(:pidro_server, RoomCodes)
+
+      on_exit(fn ->
+        if original,
+          do: Application.put_env(:pidro_server, RoomCodes, original),
+          else: Application.delete_env(:pidro_server, RoomCodes)
+      end)
+
+      # Every draw yields the code already held by another room
+      Application.put_env(:pidro_server, RoomCodes, generator: fn -> "ZZZZ" end)
+      holder = AccountsFixtures.user_fixture()
+      {:ok, %{code: "ZZZZ"}} = RoomManager.create_room(holder.id, %{name: "Held"})
+
+      user = AccountsFixtures.user_fixture()
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> post(~p"/api/v1/rooms", %{"name" => "Crowded"})
+
+      assert %{"errors" => [%{"code" => "ROOM_CODE_EXHAUSTED"}]} = json_response(conn, 503)
+
+      assert {:ok, held} = RoomManager.get_room("ZZZZ")
+      assert held.host_id == holder.id
     end
   end
 

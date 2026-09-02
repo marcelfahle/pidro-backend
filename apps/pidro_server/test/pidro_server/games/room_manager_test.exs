@@ -13,7 +13,9 @@ defmodule PidroServer.Games.RoomManagerTest do
 
   use ExUnit.Case, async: false
 
-  alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
+  import ExUnit.CaptureLog
+
+  alias PidroServer.Games.{GameAdapter, Lifecycle, RoomCodes, RoomManager}
   alias PidroServer.Games.Room.Positions
 
   # Note: async: false is required because RoomManager is a singleton GenServer
@@ -56,6 +58,79 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, room2} = RoomManager.create_room("user2", %{})
 
       assert room1.code != room2.code
+    end
+  end
+
+  describe "create_room/2 room code allocation" do
+    # The :create_room handler reads an optional generator override from the
+    # app env at call time so collisions can be forced deterministically.
+    setup do
+      original = Application.get_env(:pidro_server, RoomCodes)
+
+      on_exit(fn ->
+        if original,
+          do: Application.put_env(:pidro_server, RoomCodes, original),
+          else: Application.delete_env(:pidro_server, RoomCodes)
+      end)
+
+      :ok
+    end
+
+    test "retries a colliding code and leaves the existing room untouched" do
+      Application.put_env(:pidro_server, RoomCodes, generator: fn -> "ZZZZ" end)
+      {:ok, %{code: "ZZZZ"}} = RoomManager.create_room("user1", %{name: "First"})
+      {:ok, _room, _position} = RoomManager.join_room("ZZZZ", "user2")
+
+      Application.put_env(:pidro_server, RoomCodes,
+        generator: sequence_generator(["ZZZZ", "YYYY"])
+      )
+
+      assert {:ok, %{code: "YYYY", host_id: "user3"}} = RoomManager.create_room("user3", %{})
+
+      assert {:ok, existing} = RoomManager.get_room("ZZZZ")
+      assert existing.host_id == "user1"
+      assert Enum.sort(Positions.player_ids(existing)) == ["user1", "user2"]
+      assert existing.metadata.name == "First"
+    end
+
+    test "replies :room_code_exhausted after 10 collisions and keeps the colliding room intact" do
+      Application.put_env(:pidro_server, RoomCodes, generator: fn -> "ZZZZ" end)
+      {:ok, %{code: "ZZZZ"}} = RoomManager.create_room("user1", %{name: "First"})
+      {:ok, _room, _position} = RoomManager.join_room("ZZZZ", "user2")
+
+      calls = :counters.new(1, [])
+
+      Application.put_env(:pidro_server, RoomCodes,
+        generator: fn ->
+          :counters.add(calls, 1, 1)
+          "ZZZZ"
+        end
+      )
+
+      log =
+        capture_log([level: :error], fn ->
+          assert {:error, :room_code_exhausted} = RoomManager.create_room("user3", %{})
+        end)
+
+      assert :counters.get(calls, 1) == 10
+      assert log =~ "live rooms: 1"
+
+      assert {:ok, existing} = RoomManager.get_room("ZZZZ")
+      assert existing.host_id == "user1"
+      assert Enum.sort(Positions.player_ids(existing)) == ["user1", "user2"]
+      assert existing.metadata.name == "First"
+      assert length(RoomManager.list_rooms(:all)) == 1
+
+      # The failed host was never tracked, so a later attempt with a free code succeeds
+      Application.delete_env(:pidro_server, RoomCodes)
+      assert {:ok, %{host_id: "user3"}} = RoomManager.create_room("user3", %{})
+    end
+
+    test "get_room/1 finds a room by its lowercased code" do
+      Application.put_env(:pidro_server, RoomCodes, generator: fn -> "ABCD" end)
+      {:ok, %{code: "ABCD"}} = RoomManager.create_room("user1", %{})
+
+      assert {:ok, %{code: "ABCD"}} = RoomManager.get_room("abcd")
     end
   end
 
@@ -1128,6 +1203,19 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       value ->
         value
+    end
+  end
+
+  # Returns a zero-arity room code generator that yields `codes` in order and
+  # then repeats the last one forever. Runs inside the RoomManager process.
+  defp sequence_generator(codes) do
+    index = :counters.new(1, [])
+    codes = List.to_tuple(codes)
+
+    fn ->
+      position = :counters.get(index, 1)
+      :counters.add(index, 1, 1)
+      elem(codes, min(position, tuple_size(codes) - 1))
     end
   end
 end

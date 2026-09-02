@@ -45,13 +45,12 @@ defmodule PidroServer.Games.RoomManager do
 
   alias Pidro.Game.Engine
   alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
-  alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, TurnTimer}
+  alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Stats
 
   @max_players 4
-  @room_code_length 4
 
   # Room struct representing a game room
   defmodule Room do
@@ -172,6 +171,7 @@ defmodule PidroServer.Games.RoomManager do
 
   - `{:ok, room}` - Successfully created room
   - `{:error, :already_in_room}` - Host is already in another room
+  - `{:error, :room_code_exhausted}` - No free code was found within the retry bound
 
   ## Examples
 
@@ -179,7 +179,8 @@ defmodule PidroServer.Games.RoomManager do
       room.code #=> "A1B2"
       room.status #=> :waiting
   """
-  @spec create_room(String.t(), map()) :: {:ok, Room.t()} | {:error, :already_in_room}
+  @spec create_room(String.t(), map()) ::
+          {:ok, Room.t()} | {:error, :already_in_room | :room_code_exhausted}
   def create_room(host_id, metadata \\ %{}) do
     GenServer.call(__MODULE__, {:create_room, host_id, metadata})
   end
@@ -739,11 +740,21 @@ defmodule PidroServer.Games.RoomManager do
   @impl true
   def handle_call({:create_room, host_id, metadata}, _from, %State{} = state) do
     # If the player is stuck in a room from a previous disconnected session
-    # (e.g. browser refresh followed by navigating away), clean it up first
+    # (e.g. browser refresh followed by navigating away), clean it up first.
+    # `state` is rebound here, so every error reply below carries the
+    # post-eviction state: the caller's stale room stays evicted even when
+    # creation fails, and no other room is touched.
     state = maybe_evict_disconnected_player(state, host_id)
 
-    with :ok <- ensure_not_in_other_room(state, host_id, nil) do
-      room_code = generate_room_code()
+    # The collision retry runs inside this callback so `state.rooms` is the
+    # authoritative set of live codes for the whole check-then-insert.
+    with :ok <- ensure_not_in_other_room(state, host_id, nil),
+         {:ok, room_code} <-
+           RoomCodes.generate_unique(
+             &Map.has_key?(state.rooms, &1),
+             RoomCodes.default_attempts(),
+             room_code_generator()
+           ) do
       now = DateTime.utc_now()
 
       room = %Room{
@@ -784,7 +795,18 @@ defmodule PidroServer.Games.RoomManager do
 
       {:reply, {:ok, room_with_host}, new_state}
     else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:error, :room_code_exhausted} = error ->
+        # Ten misses over a 36^4 space means rooms are leaking, not that the
+        # space is full; the count is the number an operator needs first.
+        Logger.error(
+          "Room code allocation exhausted after #{RoomCodes.default_attempts()} attempts; " <>
+            "live rooms: #{map_size(state.rooms)}"
+        )
+
+        {:reply, error, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -2483,15 +2505,15 @@ defmodule PidroServer.Games.RoomManager do
       active_spectator_count == 0
   end
 
-  @doc false
-  @spec generate_room_code() :: String.t()
-  defp generate_room_code do
-    # Generate a 4-character alphanumeric code
-    alphabet = Enum.concat([?A..?Z, ?0..?9])
-
-    1..@room_code_length
-    |> Enum.map(fn _ -> Enum.random(alphabet) end)
-    |> List.to_string()
+  # Test hook: an optional zero-arity generator under
+  # `config :pidro_server, PidroServer.Games.RoomCodes, generator: fun`
+  # replaces the CSPRNG draw. Read at call time so tests can set and restore
+  # it; the key is absent in every config file.
+  @spec room_code_generator() :: RoomCodes.generator()
+  defp room_code_generator do
+    :pidro_server
+    |> Application.get_env(RoomCodes, [])
+    |> Keyword.get(:generator, &RoomCodes.random/0)
   end
 
   @doc false
