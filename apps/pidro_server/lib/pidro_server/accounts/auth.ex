@@ -29,9 +29,10 @@ defmodule PidroServer.Accounts.Auth do
   ## Deletion
 
   `delete_user/1` is the single deletion recipe (KTD8) shared by
-  `DELETE /api/v1/auth/me`, the guest reaper and the admin panel: it vacates
-  the user's seat, revokes the invites they host, deletes their personal rows
-  and the user row in one transaction, then broadcasts the disconnect.
+  `DELETE /api/v1/auth/me`, the guest reaper and the admin panel: it revokes
+  the invites they host, deletes their personal rows and the user row in one
+  database transaction, then performs the in-memory room cleanup and
+  broadcasts the disconnect after commit.
   `game_stats` and `abandonment_events` keep the bare id (KD9).
 
   ## Last seen
@@ -63,6 +64,7 @@ defmodule PidroServer.Accounts.Auth do
   """
 
   import Ecto.Query
+  require Logger
 
   alias Ecto.Changeset
   alias PidroServer.Accounts.Token
@@ -577,35 +579,54 @@ defmodule PidroServer.Accounts.Auth do
   @doc """
   Deletes a user account with the single deletion recipe (R15, KTD8).
 
-  In order: the user leaves their room (a missing seat is fine), the invites
-  they host are revoked and stripped of their labels, the `invite_live_until`
-  of every live room those invites belonged to is recomputed, then one
-  transaction deletes the user's `player_profiles`, `player_achievements`,
-  `invite_redemptions` and `invite_events` rows and the `users` row. The
-  disconnect is broadcast once the transaction has committed. `game_stats`
-  and `abandonment_events` keep the bare player id (KD9).
+  One database transaction revokes and strips labels from hosted invites and
+  deletes the user's `player_profiles`, `player_achievements`,
+  `invite_redemptions`, `invite_events` and `users` rows. Only after commit
+  does the user leave their in-memory room, each affected room's
+  `invite_live_until` get recomputed, and the disconnect broadcast fire.
+  Post-commit cleanup is best-effort and logged. `game_stats` and
+  `abandonment_events` keep the bare player id (KD9).
 
   ## Returns
 
     - `{:ok, user}` - The deleted row
-    - `{:error, changeset}` - The user row could not be deleted; nothing in
-      the transaction was written
+    - `{:error, reason}` - Persistent deletion failed; no persistent mutation
+      in the transaction was written
   """
-  @spec delete_user(User.t()) :: {:ok, User.t()} | {:error, Changeset.t()}
-  def delete_user(%User{id: id} = user) do
-    vacate_seat(id)
-    hosted_rooms = hosted_invite_rooms(id)
-    {:ok, _revoked} = Invites.revoke_hosted(id)
-    Enum.each(hosted_rooms, &recompute_invite_live_until/1)
-
+  @spec delete_user(User.t()) :: {:ok, User.t()} | {:error, term()}
+  def delete_user(%User{} = user) do
     case delete_personal_rows(user) do
-      {:ok, deleted} ->
-        broadcast_disconnect(deleted)
+      {:ok, {deleted, hosted_rooms}} ->
+        after_delete(deleted, hosted_rooms)
         {:ok, deleted}
 
-      {:error, changeset} ->
-        {:error, changeset}
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp after_delete(%User{id: id} = user, hosted_rooms) do
+    safely_after_delete(id, "vacate room seat", fn -> vacate_seat(id) end)
+
+    Enum.each(hosted_rooms, fn room ->
+      safely_after_delete(id, "recompute invite window", fn ->
+        recompute_invite_live_until(room)
+      end)
+    end)
+
+    safely_after_delete(id, "broadcast disconnect", fn -> broadcast_disconnect(user) end)
+  end
+
+  defp safely_after_delete(user_id, action, fun) do
+    fun.()
+  rescue
+    exception ->
+      Logger.error(
+        "Post-delete #{action} failed for user #{user_id}: #{Exception.message(exception)}"
+      )
+  catch
+    kind, reason ->
+      Logger.error("Post-delete #{action} failed for user #{user_id}: #{inspect({kind, reason})}")
   end
 
   defp vacate_seat(user_id) do
@@ -646,13 +667,20 @@ defmodule PidroServer.Accounts.Auth do
 
   defp delete_personal_rows(%User{id: id} = user) do
     Repo.transaction(fn ->
+      hosted_rooms = hosted_invite_rooms(id)
+
+      case Invites.revoke_hosted(id) do
+        {:ok, _revoked} -> :ok
+        {:error, reason} -> Repo.rollback(reason)
+      end
+
       Repo.delete_all(from p in PlayerProfile, where: p.user_id == ^id)
       Repo.delete_all(from a in Achievement, where: a.user_id == ^id)
       Repo.delete_all(from r in Redemption, where: r.user_id == ^id)
       Repo.delete_all(from e in Event, where: e.user_id == ^id)
 
       case Repo.delete(user) do
-        {:ok, deleted} -> deleted
+        {:ok, deleted} -> {deleted, hosted_rooms}
         {:error, changeset} -> Repo.rollback(changeset)
       end
     end)

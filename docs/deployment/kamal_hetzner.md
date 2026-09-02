@@ -130,11 +130,13 @@ only the key it names, and defaults live in `config/config.exs`.
   `GUEST_REAPER_MAX_IDLE_DAYS` (default `30`) drive the idle-guest sweep. It
   deletes guest accounts whose `last_seen_at` (or `inserted_at` when nil) is
   older than the threshold, using the same irreversible recipe as
-  `DELETE /api/v1/auth/me`: leave the room, revoke hosted invites, then delete
-  `player_profiles`, `player_achievements`, `invite_redemptions`,
-  `invite_events` and the `users` row in one transaction. Registered accounts
-  are never touched. Set `GUEST_REAPER_ENABLED: "false"` and redeploy before
-  investigating anything guest-related; there is no undo.
+  `DELETE /api/v1/auth/me`: one database transaction revokes hosted invites
+  and deletes `player_profiles`, `player_achievements`, `invite_redemptions`,
+  `invite_events` and the `users` row; room-seat cleanup and disconnect happen
+  only after commit. Registered accounts are never touched. Both numeric
+  values must be positive integers or application boot fails. Set
+  `GUEST_REAPER_ENABLED: "false"` and redeploy before investigating anything
+  guest-related; there is no undo.
 - `LIFECYCLE_INVITED_WAITING_TTL_MS` (default `7200000`, two hours) is how long
   a `waiting` room with a live invite may sit idle with nobody connected before
   the sweep closes it; without a live invite that sweep uses its fixed 5-minute

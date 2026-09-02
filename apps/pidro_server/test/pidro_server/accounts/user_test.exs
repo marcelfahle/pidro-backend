@@ -70,9 +70,9 @@ defmodule PidroServer.Accounts.UserTest do
     end
 
     test "counts graphemes, not bytes or codepoints" do
-      # 20 fox emoji: 80 bytes, 20 codepoints, 20 graphemes.
-      foxes = String.duplicate("\u{1F98A}", 20)
-      changeset = User.changeset(%User{}, %{username: "foxes", display_name: foxes})
+      # 20 flags: 160 bytes, 40 codepoints, 20 graphemes.
+      flags = String.duplicate("\u{1F1EB}\u{1F1EE}", 20)
+      changeset = User.changeset(%User{}, %{username: "flags", display_name: flags})
 
       assert changeset.valid?, inspect(changeset.errors)
     end

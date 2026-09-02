@@ -33,7 +33,7 @@ defmodule PidroServer.Invites do
   `create_invite/2` draws a code, redraws once if the row exists, then inserts
   with the unique index as the last word. The redraw is keyed on an existence
   check rather than on the constraint error because a failed insert poisons
-  the enclosing Postgres transaction, and `regenerate/1` mints inside one.
+  the enclosing Postgres transaction, and `regenerate/2` mints inside one.
   """
 
   import Ecto.Query
@@ -48,6 +48,7 @@ defmodule PidroServer.Invites do
 
   @ttl_hours 24
   @code_attempts 2
+  @invite_limit 20
   @seats_total 4
   @default_link_base_url "https://pidro.online/j"
 
@@ -68,6 +69,36 @@ defmodule PidroServer.Invites do
   def create_invite(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
     generator = Keyword.get(opts, :generator, &Codes.generate/0)
     insert_with_fresh_code(attrs, generator, @code_attempts)
+  end
+
+  @doc """
+  Creates or updates the room's one active invite and optionally supersedes an
+  earlier invite in the same transaction.
+
+  Per-room transaction locks serialize the active-invite lookup, lifetime-cap
+  check, insert and supersession so concurrent mint requests cannot create two
+  active links or exceed the cap.
+  """
+  @spec mint_for_room(map(), Invite.t() | nil, keyword()) ::
+          {:ok, Invite.t(), :created | :ok} | {:error, term()}
+  def mint_for_room(attrs, superseded \\ nil, opts \\ [])
+      when is_map(attrs) and is_list(opts) do
+    room_id = Map.fetch!(attrs, :room_id)
+
+    Repo.transaction(fn ->
+      lock_rooms!([room_id, superseded && superseded.room_id])
+
+      with {:ok, invite, status} <- upsert_active_invite(attrs, opts),
+           :ok <- maybe_supersede(superseded, invite) do
+        {invite, status}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, {invite, status}} -> {:ok, invite, status}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
@@ -123,11 +154,17 @@ defmodule PidroServer.Invites do
   Revokes `old`, mints a successor with the same room, hint and label, and
   points `old` at it, in one transaction (R7, KD8). Answers the new invite.
   """
-  @spec regenerate(Invite.t()) :: {:ok, Invite.t()} | {:error, Ecto.Changeset.t() | term()}
-  def regenerate(%Invite{} = old) do
+  @spec regenerate(Invite.t(), keyword()) ::
+          {:ok, Invite.t()} | {:error, Ecto.Changeset.t() | term()}
+  def regenerate(%Invite{} = old, opts \\ []) when is_list(opts) do
     Repo.transaction(fn ->
-      with {:ok, old} <- revoke(old),
-           {:ok, new} <- create_invite(successor_attrs(old)),
+      lock_rooms!([old.room_id])
+      current = Repo.get!(Invite, old.id)
+
+      with :ok <- ensure_regenerable(current),
+           :ok <- ensure_capacity(current.room_id),
+           {:ok, old} <- revoke(current),
+           {:ok, new} <- create_invite(successor_attrs(old), opts),
            {:ok, _old} <- supersede(old, new) do
         new
       else
@@ -309,6 +346,49 @@ defmodule PidroServer.Invites do
     else
       attrs |> new_invite(code) |> Repo.insert()
     end
+  end
+
+  defp upsert_active_invite(attrs, opts) do
+    case active_for_room(Map.fetch!(attrs, :room_id)) do
+      %Invite{} = active ->
+        with {:ok, invite} <- update_hint(active, Map.take(attrs, [:seat_hint, :label])) do
+          {:ok, invite, :ok}
+        end
+
+      nil ->
+        with :ok <- ensure_capacity(Map.fetch!(attrs, :room_id)),
+             {:ok, invite} <- create_invite(attrs, opts) do
+          {:ok, invite, :created}
+        end
+    end
+  end
+
+  defp maybe_supersede(nil, _invite), do: :ok
+
+  defp maybe_supersede(%Invite{} = old, %Invite{} = new) do
+    with {:ok, _old} <- supersede(old, new), do: :ok
+  end
+
+  defp ensure_regenerable(%Invite{revoked_at: nil}), do: :ok
+  defp ensure_regenerable(%Invite{}), do: {:error, :invite_revoked}
+
+  defp ensure_capacity(room_id) do
+    if count_for_room(room_id) < @invite_limit,
+      do: :ok,
+      else: {:error, :invite_limit}
+  end
+
+  # The UUID is hashed into Postgres' bigint advisory-lock namespace. Hash
+  # collisions merely serialize unrelated rooms; they cannot weaken safety.
+  defp lock_rooms!(room_ids) do
+    room_ids
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.each(fn room_id ->
+      {:ok, _result} =
+        Repo.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [room_id])
+    end)
   end
 
   defp code_taken?(code), do: Repo.exists?(from(i in Invite, where: i.code == ^code))

@@ -234,6 +234,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "host_id" => "user123",
             "player_count" => 2,
             "status" => "waiting",
+            "locked" => false,
             "max_players" => 4,
             "seats" => %{
               "north" => %{
@@ -281,6 +282,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
               "host_id" => "user123",
               "player_count" => 2,
               "status" => "waiting",
+              "locked" => false,
               "max_players" => 4,
               "seats" => %{},
               "created_at" => "2024-11-02T10:30:00Z"
@@ -290,6 +292,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
               "host_id" => "user789",
               "player_count" => 1,
               "status" => "waiting",
+              "locked" => false,
               "max_players" => 4,
               "seats" => %{},
               "created_at" => "2024-11-02T10:35:00Z"
@@ -330,6 +333,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "host_id" => "user123",
             "player_count" => 1,
             "status" => "waiting",
+            "locked" => false,
             "max_players" => 4,
             "seats" => %{
               "north" => %{

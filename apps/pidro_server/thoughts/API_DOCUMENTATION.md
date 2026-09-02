@@ -1161,7 +1161,7 @@ All API errors follow a consistent JSON format for easy parsing and handling.
 | **404 Not Found** | Resource doesn't exist | Room not found, user not found, unknown invite code |
 | **409 Conflict** | The request is valid but the current state refuses it | Seat taken on redeem, table full, room no longer waiting, invite limit, caller is not a guest, email or username already in use |
 | **410 Gone** | The table or invite is permanently past accepting this request | Game started, table closed, invite expired, revoked or moved |
-| **422 Unprocessable Entity** | Validation failed | Username taken, invalid email, room full |
+| **422 Unprocessable Entity** | Validation failed | Missing or malformed fields, invalid email, room full on direct room join |
 | **423 Locked** | The host locked the table | `POST /rooms/:code/join` and invite redeem while `locked` |
 | **429 Too Many Requests** | Rate limit exceeded | Too many logins, registrations, password resets, room creations or lookups, room joins, invite mints, previews or redeems, guest creations or upgrades from one client; see [Rate Limiting](#rate-limiting) |
 | 503 | Service Unavailable | No free room code could be allocated (`ROOM_CODE_EXHAUSTED`); retry shortly |

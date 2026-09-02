@@ -1341,11 +1341,14 @@ interface Seat {
 room serialization: the REST room responses, the lobby channel's room lists and the invite redeem
 response.
 
-`username` and `display_name` are resolved per seat from the `users` table. Both are `"Bot"` for a
-bot seat and `null` for a vacant seat or for a user id that no longer resolves to an account (the
-account was deleted). `display_name` is additionally `null` for an account that never set one, so
-fall back to `username`. `display_name` is what a guest chose when they took the seat, so prefer
-it in the table UI.
+REST room seats resolve `username` and `display_name` from the `users` table. Both are `"Bot"` for
+a bot seat and `null` for a vacant seat or for a human id that no longer resolves to an account.
+`display_name` is also `null` for an account that never set one, so fall back to `username`.
+
+Lobby-channel seats carry these values under `seat.player`: a resolved account has its stored
+`username` and nullable `display_name`; an unresolved bot/dev/deleted id has username
+`"Bot/User <first-six-id-characters>"`, `display_name: null` and `is_bot: true`; a vacant seat has
+`player: null`. `display_name` is what a guest chose, so prefer it in the table UI when present.
 
 ### Game State Schema
 

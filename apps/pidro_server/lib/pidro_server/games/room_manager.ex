@@ -717,8 +717,9 @@ defmodule PidroServer.Games.RoomManager do
   belongs to a different room answers `:room_not_found`. A caller who is
   already seated at this table gets their current position back and nothing
   changes (a held seat is reclaimed through the game channel instead). A caller
-  whose seat in another room is disconnected is evicted from that room first; a
-  caller connected elsewhere gets `:already_in_room`.
+  whose seat in another room is disconnected is evicted only after the target
+  claim validates; a target failure preserves the held seat. A caller connected
+  elsewhere gets `:already_in_room`.
 
   ## Options
 
@@ -1111,7 +1112,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_owner(room, requesting_user_id),
          :ok <- ensure_waiting(room),
          {:ok, user_id} <- kickable_user(room, position) do
-      kicked_room = %Room{room | kicked_ids: room.kicked_ids ++ [user_id]}
+      kicked_room = %Room{room | kicked_ids: Enum.uniq(room.kicked_ids ++ [user_id])}
 
       case remove_player(state, kicked_room, user_id) do
         {:ok, updated_room, new_state} ->
@@ -2296,44 +2297,52 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  # The joinable checks passed: evict the caller from a room where their seat
-  # is disconnected, then seat them. As in :create_room the eviction sticks
-  # even when the claim fails afterwards.
+  # Validate the requested claim against the target room before evicting a
+  # disconnected seat elsewhere, then perform the two in-memory mutations in
+  # the same callback.
   defp claim_open_seat(%State{} = state, %Room{code: room_code} = room, user_id, claim) do
-    state = maybe_evict_from_other_room(state, user_id, room_code)
-
-    with :ok <- ensure_not_in_other_room(state, user_id, room_code),
+    with :ok <- ensure_can_leave_other_room(state, user_id, room_code),
          {:ok, hint} <- resolve_hint(room, Map.get(claim, :hint)),
          {:ok, updated_room, position, hint_honored} <-
            claim_position(room, user_id, Map.get(claim, :position), hint) do
-      {final_room, new_state} = seat_player(state, updated_room, user_id, position)
+      next_state = maybe_evict_from_other_room(state, user_id, room_code)
 
-      Phoenix.PubSub.broadcast(
-        PidroServer.PubSub,
-        "game:#{room_code}",
-        {:invite_redeemed,
-         %{position: position, user_id: user_id, display_name: Map.get(claim, :display_name)}}
-      )
+      with :ok <- ensure_not_in_other_room(next_state, user_id, room_code) do
+        {final_room, new_state} = seat_player(next_state, updated_room, user_id, position)
 
-      {:reply, {:ok, final_room, position, hint_honored}, maybe_start_game(final_room, new_state)}
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "game:#{room_code}",
+          {:invite_redeemed,
+           %{position: position, user_id: user_id, display_name: Map.get(claim, :display_name)}}
+        )
+
+        {:reply, {:ok, final_room, position, hint_honored},
+         maybe_start_game(final_room, new_state)}
+      else
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   @doc false
-  # Join by room code. As in `:create_room` and `claim_open_seat/4`, a caller
-  # whose seat elsewhere is disconnected is evicted from that room first and
-  # the eviction sticks even when the join fails afterwards.
+  # Validate the target join before evicting a disconnected seat elsewhere.
   defp join_open_seat(%State{} = state, %Room{code: room_code} = room, player_id, position) do
-    state = maybe_evict_from_other_room(state, player_id, room_code)
-
-    with :ok <- ensure_not_in_other_room(state, player_id, room_code),
-         :ok <- ensure_room_joinable(room, player_id),
+    with :ok <- ensure_room_joinable(room, player_id),
+         :ok <- ensure_can_leave_other_room(state, player_id, room_code),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
-      {final_room, new_state} = seat_player(state, updated_room, player_id, assigned_position)
+      next_state = maybe_evict_from_other_room(state, player_id, room_code)
 
-      {:reply, {:ok, final_room, assigned_position}, maybe_start_game(final_room, new_state)}
+      with :ok <- ensure_not_in_other_room(next_state, player_id, room_code) do
+        {final_room, new_state} =
+          seat_player(next_state, updated_room, player_id, assigned_position)
+
+        {:reply, {:ok, final_room, assigned_position}, maybe_start_game(final_room, new_state)}
+      else
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -2347,6 +2356,29 @@ defmodule PidroServer.Games.RoomManager do
       ^room_code -> state
       _other_room -> maybe_evict_disconnected_player(state, user_id)
     end
+  end
+
+  # Preserve the existing ALREADY_IN_ROOM precedence for connected seats while
+  # allowing a disconnected seat (or stale mapping) to move after target
+  # validation succeeds.
+  defp ensure_can_leave_other_room(%State{} = state, user_id, room_code) do
+    case Map.get(state.player_rooms, user_id) do
+      nil ->
+        :ok
+
+      ^room_code ->
+        :ok
+
+      other_room_code ->
+        case Map.get(state.rooms, other_room_code) do
+          nil -> :ok
+          %Room{} = other_room -> movable_disconnected_seat(other_room, user_id)
+        end
+    end
+  end
+
+  defp movable_disconnected_seat(room, user_id) do
+    if disconnected_seat(room, user_id), do: :ok, else: {:error, :already_in_room}
   end
 
   @doc false

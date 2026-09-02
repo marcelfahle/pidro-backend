@@ -212,7 +212,8 @@ defmodule PidroServerWeb.API.InviteController do
     description: """
     Revokes the invite and mints a new one for the same table with the same seat
     hint and label. The old code never forwards to the new one: regenerate exists
-    to kill a leaked link. Limited at policy `invite_mint` (per user).
+    to kill a leaked link. The room's 20-invite lifetime cap still applies.
+    Limited at policy `invite_mint` (per user).
     """,
     security: [%{"bearer_auth" => []}],
     parameters: @code_parameter,
@@ -222,6 +223,8 @@ defmodule PidroServerWeb.API.InviteController do
       forbidden:
         {"Not the host of this invite", "application/json", ErrorSchemas.error_response()},
       not_found: {"Unknown invite code", "application/json", ErrorSchemas.not_found_error()},
+      conflict: {"Room invite limit reached", "application/json", ErrorSchemas.conflict_error()},
+      gone: {"Invite already revoked", "application/json", ErrorSchemas.gone_error()},
       unprocessable_entity:
         {"The new invite could not be minted", "application/json",
          ErrorSchemas.validation_error()},

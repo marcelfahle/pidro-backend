@@ -2,8 +2,11 @@ defmodule PidroServer.Repo.Migrations.AddGuestReaperIndexToUsers do
   use Ecto.Migration
 
   def change do
-    # The guest reaper sweeps stale guests by last_seen_at; registered accounts
-    # never qualify, so the index covers guest rows only.
-    create index(:users, [:last_seen_at], where: "guest = true")
+    # Match the reaper's predicate and ordering, including guests that have
+    # never been seen. Registered accounts never qualify.
+    create index(:users, ["COALESCE(last_seen_at, inserted_at)", :id],
+             where: "guest = true",
+             name: :users_guest_reaper_index
+           )
   end
 end

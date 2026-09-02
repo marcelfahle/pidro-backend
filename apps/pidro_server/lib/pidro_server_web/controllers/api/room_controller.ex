@@ -50,9 +50,6 @@ defmodule PidroServerWeb.API.RoomController do
 
   tags(["Rooms"])
 
-  # Invites ever minted for one room, revoked ones included (R1).
-  @invite_limit 20
-
   # ==================== OpenAPI Operation Specs ====================
 
   @doc false
@@ -1361,8 +1358,7 @@ defmodule PidroServerWeb.API.RoomController do
          :ok <- ensure_host(room, user.id),
          :ok <- ensure_waiting(room),
          {:ok, superseded} <- fetch_superseded(params["supersedes"], user.id),
-         {:ok, invite, status} <- mint_or_update(room, user.id, params),
-         {:ok, _superseded} <- supersede(superseded, invite) do
+         {:ok, invite, status} <- mint_or_update(room, user.id, params, superseded) do
       InviteController.note_invites(room.code, room.id)
 
       conn
@@ -1436,39 +1432,31 @@ defmodule PidroServerWeb.API.RoomController do
     end
   end
 
-  defp supersede(nil, _invite), do: {:ok, nil}
-  defp supersede(%Invite{} = old, %Invite{} = new), do: Invites.supersede(old, new)
-
   # One link per table (KD1): an active invite is updated in place; otherwise a
-  # new one is minted under the per-room cap and its `created` event written.
-  defp mint_or_update(%Room{} = room, host_id, params) do
+  # new one is minted under the per-room cap. The context serializes this whole
+  # mutation with any supersession for the room.
+  defp mint_or_update(%Room{} = room, host_id, params, superseded) do
     attrs = hint_attrs(params)
 
-    case Invites.active_for_room(room.id) do
-      %Invite{} = active ->
-        with {:ok, invite} <- Invites.update_hint(active, attrs), do: {:ok, invite, :ok}
+    with {:ok, invite, status} <-
+           Invites.mint_for_room(
+             Map.merge(attrs, %{
+               room_id: room.id,
+               room_code: room.code,
+               host_user_id: host_id
+             }),
+             superseded
+           ) do
+      if status == :created do
+        InviteController.log_event(invite, %{
+          kind: "created",
+          user_id: host_id,
+          platform: params["platform"]
+        })
+      end
 
-      nil ->
-        with :ok <- ensure_invite_capacity(room),
-             {:ok, invite} <-
-               Invites.create_invite(
-                 Map.merge(attrs, %{room_id: room.id, room_code: room.code, host_user_id: host_id})
-               ) do
-          InviteController.log_event(invite, %{
-            kind: "created",
-            user_id: host_id,
-            platform: params["platform"]
-          })
-
-          {:ok, invite, :created}
-        end
+      {:ok, invite, status}
     end
-  end
-
-  defp ensure_invite_capacity(%Room{id: room_id}) do
-    if Invites.count_for_room(room_id) >= @invite_limit,
-      do: {:error, :invite_limit},
-      else: :ok
   end
 
   # Only the keys the body carries, so a second mint without `label` keeps it.

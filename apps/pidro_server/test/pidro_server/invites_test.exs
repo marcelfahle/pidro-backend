@@ -215,6 +215,43 @@ defmodule PidroServer.InvitesTest do
     end
   end
 
+  describe "mint_for_room/3" do
+    test "creates one active link, then updates that row in place" do
+      invite_attrs = attrs()
+
+      assert {:ok, created, :created} = Invites.mint_for_room(invite_attrs)
+
+      assert {:ok, updated, :ok} =
+               Invites.mint_for_room(%{invite_attrs | seat_hint: "north", label: "Bob"})
+
+      assert updated.id == created.id
+      assert updated.code == created.code
+      assert updated.seat_hint == "north"
+      assert updated.label == "Bob"
+      assert Invites.count_for_room(created.room_id) == 1
+    end
+
+    test "supersedes an earlier link in the same mutation" do
+      old = create!()
+      new_attrs = attrs(room_id: Ecto.UUID.generate(), room_code: "NEXT")
+
+      assert {:ok, new, :created} = Invites.mint_for_room(new_attrs, old)
+      assert reload(old).superseded_by == new.id
+    end
+
+    test "refuses a new link after the lifetime cap" do
+      room_id = Ecto.UUID.generate()
+
+      for _ <- 1..20 do
+        invite = create!(room_id: room_id)
+        assert {:ok, _revoked} = Invites.revoke(invite)
+      end
+
+      assert {:error, :invite_limit} = Invites.mint_for_room(attrs(room_id: room_id))
+      assert Invites.count_for_room(room_id) == 20
+    end
+  end
+
   describe "update_hint/2" do
     test "changes seat_hint and label without changing the code" do
       invite = create!()
@@ -283,6 +320,28 @@ defmodule PidroServer.InvitesTest do
 
       assert Invites.state(old, lookup(room(old))) == :revoked
       assert Invites.state(new, lookup(room(new))) == :open
+    end
+
+    test "enforces the lifetime cap without revoking the old link" do
+      room_id = Ecto.UUID.generate()
+      old = create!(room_id: room_id)
+
+      for _ <- 1..19 do
+        invite = create!(room_id: room_id)
+        assert {:ok, _revoked} = Invites.revoke(invite)
+      end
+
+      assert {:error, :invite_limit} = Invites.regenerate(old)
+      assert reload(old).revoked_at == nil
+      assert Invites.count_for_room(room_id) == 20
+    end
+
+    test "a repeated regeneration of the same stale struct is rejected" do
+      old = create!()
+
+      assert {:ok, _new} = Invites.regenerate(old)
+      assert {:error, :invite_revoked} = Invites.regenerate(old)
+      assert Invites.count_for_room(old.room_id) == 2
     end
   end
 

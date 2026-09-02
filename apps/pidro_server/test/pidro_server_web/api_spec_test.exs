@@ -4,6 +4,7 @@ defmodule PidroServerWeb.ApiSpecTest do
   import ExUnit.CaptureIO
 
   alias PidroServerWeb.ApiSpec
+  alias PidroServerWeb.Schemas.{ErrorSchemas, UserSchemas}
 
   @new_paths [
     {"/api/v1/invites/{code}", ["get", "delete"]},
@@ -49,5 +50,32 @@ defmodule PidroServerWeb.ApiSpecTest do
              guest_create_install room_join auth_upgrade) do
       assert description =~ "`#{policy}`"
     end
+  end
+
+  test "invite error schemas declare their conditional navigation fields" do
+    assert %OpenApiSpex.Schema{properties: %{errors: conflict_errors}} =
+             ErrorSchemas.conflict_error()
+
+    assert %OpenApiSpex.Schema{items: %OpenApiSpex.Schema{properties: conflict_properties}} =
+             conflict_errors
+
+    assert %OpenApiSpex.Schema{type: :array} = conflict_properties.next_open
+
+    assert %OpenApiSpex.Schema{properties: %{errors: gone_errors}} = ErrorSchemas.gone_error()
+
+    assert %OpenApiSpex.Schema{items: %OpenApiSpex.Schema{properties: gone_properties}} =
+             gone_errors
+
+    assert %OpenApiSpex.Schema{type: :string} = gone_properties.next_code
+  end
+
+  test "guest responses use a nullable-email user schema" do
+    assert %OpenApiSpex.Schema{properties: %{email: email}} = UserSchemas.GuestUser.schema()
+    assert email.nullable == true
+
+    assert %OpenApiSpex.Schema{properties: %{email: registered_email}} =
+             UserSchemas.User.schema()
+
+    refute registered_email.nullable
   end
 end

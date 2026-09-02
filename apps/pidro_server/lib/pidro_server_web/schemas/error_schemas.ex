@@ -474,7 +474,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
         errors: %Schema{
           type: :array,
           description: "Array containing the single conflict error object",
-          items: error_detail(),
+          items: conflict_error_detail(),
           minItems: 1
         }
       },
@@ -526,7 +526,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
         errors: %Schema{
           type: :array,
           description: "Array containing the single gone error object",
-          items: error_detail(),
+          items: gone_error_detail(),
           minItems: 1
         }
       },
@@ -534,12 +534,43 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       example: %{
         "errors" => [
           %{
-            "code" => "INVITE_REVOKED",
-            "title" => "Invite revoked",
-            "detail" => "The host revoked this invite"
+            "code" => "INVITE_MOVED",
+            "title" => "Invite moved",
+            "detail" => "The host is at a new table; use the next code",
+            "next_code" => "7KQ4M2XB"
           }
         ]
       }
+    }
+  end
+
+  defp conflict_error_detail do
+    extend_error_detail("ConflictErrorDetail", %{
+      next_open: %Schema{
+        type: :array,
+        items: %Schema{type: :string, enum: [:north, :east, :south, :west]},
+        description: "Open positions in N/E/S/W order; present for SEAT_TAKEN"
+      }
+    })
+  end
+
+  defp gone_error_detail do
+    extend_error_detail("GoneErrorDetail", %{
+      next_code: %Schema{
+        type: :string,
+        description: "Successor invite code; present for INVITE_MOVED",
+        example: "7KQ4M2XB"
+      }
+    })
+  end
+
+  defp extend_error_detail(title, extra_properties) do
+    detail = error_detail()
+
+    %Schema{
+      detail
+      | title: title,
+        properties: Map.merge(detail.properties, extra_properties)
     }
   end
 

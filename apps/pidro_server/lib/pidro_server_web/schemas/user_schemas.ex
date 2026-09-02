@@ -289,6 +289,71 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
     })
   end
 
+  defmodule GuestUser do
+    @moduledoc "User payload returned for a guest account, whose email is null until upgrade."
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Guest User",
+      description: "A guest account created from an invite",
+      properties: %{
+        id: %Schema{
+          type: :string,
+          description: "Unique user identifier (UUID)",
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        },
+        username: %Schema{
+          type: :string,
+          description: "Generated unique username",
+          minLength: 3,
+          example: "guest_7KQ4M2XB"
+        },
+        email: %Schema{
+          type: :string,
+          format: :email,
+          nullable: true,
+          description: "Null until the guest upgrades to a registered account",
+          example: nil
+        },
+        display_name: %Schema{
+          type: :string,
+          nullable: true,
+          minLength: 2,
+          maxLength: 20,
+          description: "Name shown at the table (2-20 graphemes)",
+          example: "Anna"
+        },
+        guest: %Schema{
+          type: :boolean,
+          description: "Always true for this response",
+          example: true
+        },
+        inserted_at: %Schema{
+          type: :string,
+          format: "date-time",
+          description: "ISO 8601 timestamp when the guest was created",
+          example: "2026-09-02T10:30:00Z"
+        },
+        updated_at: %Schema{
+          type: :string,
+          format: "date-time",
+          description: "ISO 8601 timestamp when the guest was last updated",
+          example: "2026-09-02T10:30:00Z"
+        }
+      },
+      required: [:id, :username, :email, :guest, :inserted_at, :updated_at],
+      example: %{
+        "id" => "550e8400-e29b-41d4-a716-446655440000",
+        "username" => "guest_7KQ4M2XB",
+        "email" => nil,
+        "display_name" => "Anna",
+        "guest" => true,
+        "inserted_at" => "2026-09-02T10:30:00Z",
+        "updated_at" => "2026-09-02T10:30:00Z"
+      }
+    })
+  end
+
   defmodule GuestResponse do
     @moduledoc """
     Response for a created guest: the user, a token and the invite's state.
@@ -306,10 +371,11 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           type: :object,
           description: "Response data envelope",
           properties: %{
-            user: User,
+            user: GuestUser,
             token: %Schema{
               type: :string,
-              description: "JWT authentication token for subsequent requests"
+              description:
+                "Signed Phoenix authentication token for subsequent Bearer-authenticated requests"
             },
             state: PidroServerWeb.Schemas.InviteSchemas.State
           },

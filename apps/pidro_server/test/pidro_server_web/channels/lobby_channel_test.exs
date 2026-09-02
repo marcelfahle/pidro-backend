@@ -236,6 +236,8 @@ defmodule PidroServerWeb.LobbyChannelTest do
           mode: "competitive"
         })
 
+      {:ok, _room} = RoomManager.set_locked(room.code, user.id, true)
+
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
 
       assert %{rooms: rooms} = reply
@@ -249,6 +251,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert serialized_room.player_count == 1
       assert serialized_room.max_players == 4
       assert serialized_room.status == :waiting
+      assert serialized_room.locked == true
       assert is_binary(serialized_room.created_at)
       assert serialized_room.metadata.name == "Test Room"
       assert serialized_room.metadata.mode == "competitive"

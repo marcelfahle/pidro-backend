@@ -766,6 +766,38 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, %{positions: %{east: "user2"}}} = RoomManager.get_room(room_a.code)
     end
 
+    test "a failed target join keeps the caller's held seat" do
+      {room_a, [_host_a, "user2"]} =
+        RoomFixtures.waiting_room_fixture(host_id: "host-a", seated: 2)
+
+      {room_b, [host_b, _user_b]} =
+        RoomFixtures.waiting_room_fixture(host_id: "host-b", prefix: "b", seated: 2)
+
+      :ok = RoomManager.handle_player_disconnect(room_a.code, "user2")
+      {:ok, _locked} = RoomManager.set_locked(room_b.code, host_b, true)
+
+      assert {:error, :table_locked} = RoomManager.join_room(room_b.code, "user2")
+
+      assert {:ok, room_a_after} = RoomManager.get_room(room_a.code)
+      assert room_a_after.positions[:east] == "user2"
+      assert room_a_after.seats[:east].status == :reconnecting
+    end
+
+    test "a failed explicit invite claim keeps the caller's held seat" do
+      {room_a, [_host_a, "user2"]} =
+        RoomFixtures.waiting_room_fixture(host_id: "host-a", seated: 2)
+
+      {room_b, [_host_b]} = RoomFixtures.waiting_room_fixture(host_id: "host-b", prefix: "b")
+      :ok = RoomManager.handle_player_disconnect(room_a.code, "user2")
+
+      assert {:error, {:seat_taken, _open}} =
+               RoomManager.claim_seat(room_b.code, room_b.id, "user2", position: :north)
+
+      assert {:ok, room_a_after} = RoomManager.get_room(room_a.code)
+      assert room_a_after.positions[:east] == "user2"
+      assert room_a_after.seats[:east].status == :reconnecting
+    end
+
     test "a :playing room keeps the cascade when the disconnected player creates another room" do
       room_code = create_playing_room()
       :ok = RoomManager.handle_player_disconnect(room_code, "user2")
@@ -1583,6 +1615,16 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       assert {:error, :kicked} = RoomManager.join_as_substitute(room.code, "user2")
       assert {:ok, _room, ^user5_position} = RoomManager.join_as_substitute(room.code, "user6")
+    end
+
+    test "records a user id only once if dev tooling seats and kicks it again" do
+      {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+
+      assert {:ok, _kicked} = RoomManager.kick_player(room.code, host, :east)
+      assert {:ok, _reseated} = RoomManager.dev_set_position(room.code, :east, "user2")
+      assert {:ok, kicked_again} = RoomManager.kick_player(room.code, host, :east)
+
+      assert kicked_again.kicked_ids == ["user2"]
     end
 
     test "the host's own seat and vacant seats are not kickable" do
