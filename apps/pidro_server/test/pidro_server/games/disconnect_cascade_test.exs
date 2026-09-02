@@ -13,7 +13,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
 
   use PidroServer.DataCase, async: false
 
-  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.{Lifecycle, RoomManager}
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -175,28 +175,35 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert Process.cancel_timer(timer_ref) == false
     end
 
-    test "disconnect only triggers cascade for :playing rooms" do
+    test "a :waiting room disconnect holds the seat without the cascade" do
       {:ok, room} = RoomManager.create_room("user1", %{name: "Waiting Room"})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
 
-      # Room is :waiting, not :playing
       {:ok, waiting_room} = RoomManager.get_room(room.code)
       assert waiting_room.status == :waiting
+      user2_position = position_for(waiting_room, "user2")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
       {:ok, updated_room} = RoomManager.get_room(room.code)
-      # Seats should NOT have cascade state for :waiting rooms
-      user2_position = position_for(waiting_room, "user2")
-
-      if user2_position do
-        seat = updated_room.seats[user2_position]
-        # Seat should remain :connected (no cascade for :waiting rooms)
-        assert seat.status == :connected
-      end
-
-      # No phase timers should exist
+      seat = updated_room.seats[user2_position]
+      assert seat.status == :reconnecting
+      assert seat.occupant_type == :human
+      assert %DateTime{} = seat.disconnected_at
       assert updated_room.phase_timers == %{}
+
+      assert_receive {:player_reconnecting, %{user_id: "user2", position: ^user2_position}}, 100
+
+      # The hiccup timeout passes without Phase 2: no bot, the seat stays held.
+      Process.sleep(Lifecycle.config(:hiccup_timeout_ms) + 50)
+
+      {:ok, later_room} = RoomManager.get_room(room.code)
+      later_seat = later_room.seats[user2_position]
+      assert later_seat.status == :reconnecting
+      assert later_seat.bot_pid == nil
+      assert later_room.phase_timers == %{}
+      refute_received {:bot_substitute_active, _}
     end
 
     test "multiple simultaneous disconnects are independent" do

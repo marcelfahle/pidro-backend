@@ -35,6 +35,7 @@ lifecycle_overrides =
     {:empty_room_ttl_ms, "LIFECYCLE_EMPTY_ROOM_TTL_MS"},
     {:finished_room_ttl_ms, "LIFECYCLE_FINISHED_ROOM_TTL_MS"},
     {:idle_waiting_ttl_ms, "LIFECYCLE_IDLE_WAITING_TTL_MS"},
+    {:invited_waiting_ttl_ms, "LIFECYCLE_INVITED_WAITING_TTL_MS"},
     {:reconnect_turn_extension_ms, "LIFECYCLE_RECONNECT_TURN_EXTENSION_MS"},
     {:health_check_interval_ms, "LIFECYCLE_HEALTH_CHECK_INTERVAL_MS"},
     {:presence_debounce_ms, "LIFECYCLE_PRESENCE_DEBOUNCE_MS"},
