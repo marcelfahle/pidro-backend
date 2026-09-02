@@ -97,6 +97,15 @@ if rate_limit_overrides != [] do
   config :pidro_server, PidroServerWeb.Plugs.RateLimit, merged
 end
 
+# Proxy header trust for PidroServerWeb.Plugs.TrustedProxy. Production runs
+# behind kamal-proxy, so the default is true there and false everywhere else.
+# TRUST_PROXY_HEADERS=false makes the rate limiter key on the TCP peer instead.
+trust_proxy_default = if config_env() == :prod, do: "true", else: "false"
+
+config :pidro_server,
+  trust_proxy_headers:
+    System.get_env("TRUST_PROXY_HEADERS", trust_proxy_default) in ~w(true TRUE 1 yes YES)
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

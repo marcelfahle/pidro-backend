@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Every route probed here (/up, /api/v1/lobby, /dev/games, /socket/websocket)
+# must stay outside PidroServerWeb.Plugs.RateLimit's policies: a 429 would fail
+# the deploy. Default limits are at least 10x this script's volume anyway. The
+# X-Forwarded-For contract cannot be verified from here because nothing echoes
+# the derived address; see docs/deployment/kamal_hetzner.md for the one-time
+# production check.
+
 base_url="${PIDRO_BASE_URL:-https://app.pidro.online}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT

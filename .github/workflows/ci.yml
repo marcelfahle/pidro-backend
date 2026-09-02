@@ -74,5 +74,11 @@ jobs:
           ruby-version: "4.0.5"
           bundler-cache: true
       - run: bundle exec kamal config > /dev/null
+      - name: Forbid forward_headers in config/deploy.yml
+        run: |
+          if grep -nE '^\s*forward_headers\s*:' config/deploy.yml; then
+            echo "config/deploy.yml must not set forward_headers; see docs/deployment/kamal_hetzner.md" >&2
+            exit 1
+          fi
       - run: bundle exec bundle-audit check --update
       - run: bash -n .kamal/hooks/* ops/backup-production ops/credo-diff ops/install-backup-timer ops/server/pidro-backup ops/smoke-production

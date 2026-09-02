@@ -55,6 +55,11 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   room_create: %{limit: 10, scale_ms: 60_000, key: :user},
   room_lookup: %{limit: 120, scale_ms: 60_000, key: :ip}
 
+# PidroServerWeb.Plugs.TrustedProxy honours X-Forwarded-For / X-Forwarded-Proto
+# only when this is true and the TCP peer is proxy-side. config/runtime.exs sets
+# it from TRUST_PROXY_HEADERS (default true in prod, false everywhere else).
+config :pidro_server, trust_proxy_headers: false
+
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
 # ordinal distribution.
