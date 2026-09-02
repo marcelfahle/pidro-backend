@@ -116,6 +116,23 @@ Use `just rollback <git-sha>` to restore a retained application image. Database
 migrations are not automatically reversed; restore the database only when a
 rollback is incompatible with the migrated schema.
 
+### Token payload rollback
+
+Auth tokens carry a versioned payload (`%{id, v}`) since the invite-prerequisites
+release. That change is roll-forward only: a release built before it cannot
+verify any token minted since the deploy and would reject every logged-in
+user, so `just rollback` must never cross that release.
+
+- Limiter problems are corrected by environment changes and a redeploy, never
+  by rolling back: raise `RATE_LIMIT_<POLICY>_LIMIT` (or `_SCALE_MS`), or set
+  `TRUST_PROXY_HEADERS: "false"` under `env.clear` while diagnosing.
+- If the versioned payload itself must be withdrawn, rotate `@signing_salt` in
+  `apps/pidro_server/lib/pidro_server/accounts/token.ex` and deploy forward;
+  every token dies and users log in again.
+- Legacy bare-id tokens are accepted until 30 days after the production deploy
+  of that release, not before 2026-10-02; whoever deploys writes the literal
+  date into the legacy clause in `token.ex`.
+
 ## Database backups
 
 Backups are stored on the server in `/var/backups/pidro` as PostgreSQL custom

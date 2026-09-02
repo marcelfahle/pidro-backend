@@ -191,6 +191,27 @@ curl http://localhost:4000/api/v1/auth/me \
 }
 ```
 
+### Token Lifetime and Revocation
+
+Tokens are signed with `Phoenix.Token` (`PidroServer.Accounts.Token`). The signed payload is
+`%{id: user_id, v: token_version}` and a token expires 30 days after it was minted. On every
+authenticated request and every WebSocket connect, `v` is compared with `users.token_version`
+(`PidroServer.Accounts.Auth.fetch_user_for_token/1`); a mismatch means the token was revoked and
+answers `401 Unauthorized` (REST) or refuses the socket connect.
+
+- **Password reset** bumps `token_version` in the same transaction as the password change, so
+  every token minted before the reset stops working. The response to
+  `POST /api/v1/auth/password-reset/confirm` carries a fresh token minted after the bump.
+- After the bump the server broadcasts `"disconnect"` on `user_socket:<user_id>`, which closes
+  the user's live WebSocket connections. A client still holding the old token fails every
+  reconnect until it logs in again, so clear the cached token on a 401 or a socket `:error`.
+- **Legacy tokens** minted before the versioned payload carry a bare user id. They keep
+  verifying as version 0 until 30 days after the production deploy of the versioned payload,
+  and not before 2026-10-02; after that they are rejected and the user logs in again.
+- The payload change is roll-forward only: a release older than the versioned payload cannot
+  verify these tokens. The emergency rollback is rotating the signing salt in
+  `PidroServer.Accounts.Token`, which invalidates every token at once.
+
 ---
 
 ## REST API
@@ -724,6 +745,7 @@ All API errors follow a consistent JSON format for easy parsing and handling.
 | **401 Unauthorized** | Authentication required/failed | Missing token, invalid credentials, expired token |
 | **404 Not Found** | Resource doesn't exist | Room not found, user not found |
 | **422 Unprocessable Entity** | Validation failed | Username taken, invalid email, room full |
+| **429 Too Many Requests** | Rate limit exceeded | Too many logins, registrations, password resets, room creations or room lookups from one client; see [Rate Limiting](#rate-limiting) |
 | **500 Internal Server Error** | Server error | Unexpected server issue |
 
 ### Common Error Codes
@@ -749,6 +771,28 @@ All API errors follow a consistent JSON format for easy parsing and handling.
       "code": "UNAUTHORIZED",
       "title": "Unauthorized",
       "detail": "Authentication required"
+    }
+  ]
+}
+```
+
+#### Rate Limit Errors
+
+`429 Too Many Requests` with a `Retry-After` header in whole seconds:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 42
+Content-Type: application/json; charset=utf-8
+```
+
+```json
+{
+  "errors": [
+    {
+      "code": "RATE_LIMITED",
+      "title": "Too Many Requests",
+      "detail": "Rate limit exceeded, retry after 42 seconds"
     }
   ]
 }
@@ -868,27 +912,70 @@ async function makeRequest(url, options) {
 
 ## Rate Limiting
 
-**Current Status**: No rate limiting is currently enforced on the API.
+`PidroServerWeb.Plugs.RateLimit` throttles the routes below, backed by a node-local Hammer ETS
+counter (`PidroServer.RateLimit`). Routes not listed are not limited.
+
+### Policies
+
+Production defaults from `config/config.exs`. `config/dev.exs` restates every limit at 10x for
+the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
+
+| Policy | Route | Limit (production) | Keyed by |
+|--------|-------|--------------------|----------|
+| `login` | `POST /api/v1/auth/login` | 10 per 60 s | client IP |
+| `register` | `POST /api/v1/auth/register` | 10 per 600 s | client IP |
+| `password_reset` | `POST /api/v1/auth/password-reset` | 3 per 900 s | client IP |
+| `password_reset_identifier` | `POST /api/v1/auth/password-reset` | 3 per 3600 s | SHA-256 of the trimmed, lower-cased `identifier` (or `email`) param |
+| `password_reset_confirm` | `POST /api/v1/auth/password-reset/confirm` | 5 per 900 s | client IP |
+| `room_create` | `POST /api/v1/rooms` | 10 per 60 s | authenticated user |
+| `room_lookup` | `GET /api/v1/rooms/:code` | 120 per 60 s | client IP |
+
+- A route may carry several policies (`/auth/password-reset` carries two); each counts in its own
+  bucket and the first one over its limit answers.
+- **Client IP** is the address kamal-proxy forwards in `X-Forwarded-For`
+  (`PidroServerWeb.Plugs.TrustedProxy`). An IPv4-mapped IPv6 peer collapses to IPv4 and a native
+  IPv6 peer keys on its /64 prefix, so one household shares a bucket.
+- A `:user` policy with no authenticated user falls back to the IP key.
+- A missing or empty `identifier`/`email` param skips only the identifier policy.
+
+### 429 Contract
+
+The first denied policy halts the request with `429 Too Many Requests`, a `Retry-After` header
+(whole seconds until the window resets, rounded up, at least 1) and the standard error body:
+
+```json
+{
+  "errors": [
+    {
+      "code": "RATE_LIMITED",
+      "title": "Too Many Requests",
+      "detail": "Rate limit exceeded, retry after 42 seconds"
+    }
+  ]
+}
+```
+
+Wait for `Retry-After` seconds before retrying; do not retry in a tight loop.
+
+### Semantics and Operation
+
+- Limits are **per node** and **per fixed window**: counters live in ETS on the node that served
+  the request and reset when it restarts, and up to twice the limit can pass across a window
+  boundary.
+- If the limiter backend itself fails, the request is allowed and an error is logged; the API
+  never goes down because of the limiter.
+- Every 429 is logged at `info` with its bucket key.
+- Operators tune limits at runtime with `RATE_LIMIT_<POLICY>_LIMIT` and
+  `RATE_LIMIT_<POLICY>_SCALE_MS` (for example `RATE_LIMIT_LOGIN_LIMIT=20`), where `<POLICY>` is
+  the upper-cased policy name. Limits are numeric only; there is no off switch. See
+  `thoughts/DEPLOYMENT.md` and `docs/deployment/kamal_hetzner.md`.
 
 ### Client-Side Best Practices
 
-While there's no server-side rate limiting, clients should implement reasonable request throttling:
-
 - **Avoid polling** - Use WebSocket channels for real-time updates instead
 - **Debounce user input** - Don't send requests on every keystroke
-- **Batch operations** when possible
 - **Cache responses** when appropriate
-- **Implement exponential backoff** for retries
-
-### Future Considerations
-
-Rate limiting may be added in future versions. Recommended limits:
-
-- **Authentication endpoints**: 5 requests per minute per IP
-- **Room operations**: 20 requests per minute per user
-- **Game actions**: 60 requests per minute per user
-
-Clients should be designed to handle `429 Too Many Requests` responses gracefully.
+- **Honour `Retry-After`** and use exponential backoff for other retries
 
 ---
 

@@ -411,6 +411,7 @@ create table(:users) do
   add :email, :string
   add :password_hash, :string
   add :guest, :boolean, default: false
+  add :token_version, :integer, null: false, default: 0  # revocation counter, see Token-Based Auth
 
   timestamps()
 end
@@ -460,28 +461,44 @@ create index(:game_stats, [:player_ids], using: "GIN")
 **Implementation**:
 
 ```elixir
-# Option 1: Phoenix.Token (simpler, built-in)
+# Phoenix.Token (built-in). The payload is versioned so tokens can be revoked.
 defmodule PidroServer.Accounts.Token do
-  @signing_salt "pidro_auth"
+  @signing_salt "pidro_auth_salt"
   @token_age_secs 86400 * 30  # 30 days
 
+  @type claims :: %{id: String.t(), v: integer()}
+
   def generate(user) do
-    Phoenix.Token.sign(PidroServerWeb.Endpoint, @signing_salt, user.id)
+    Phoenix.Token.sign(PidroServerWeb.Endpoint, @signing_salt, %{id: user.id, v: user.token_version})
   end
 
   def verify(token) do
-    Phoenix.Token.verify(
-      PidroServerWeb.Endpoint,
-      @signing_salt,
-      token,
-      max_age: @token_age_secs
-    )
+    case Phoenix.Token.verify(PidroServerWeb.Endpoint, @signing_salt, token, max_age: @token_age_secs) do
+      {:ok, %{id: id, v: v}} when is_binary(id) and is_integer(v) -> {:ok, %{id: id, v: v}}
+      # Legacy bare-id payload: accepted as version 0 until 30 days after the
+      # production deploy of the versioned payload, not before 2026-10-02.
+      {:ok, id} when is_binary(id) -> {:ok, %{id: id, v: 0}}
+      {:ok, _other} -> {:error, :invalid}
+      {:error, reason} -> {:error, reason}
+    end
   end
 end
-
-# Option 2: Guardian library (more features)
-# Use if you need token refresh, permissions, etc.
 ```
+
+**Token revocation**:
+
+- `users.token_version` (integer, default 0) is the revocation counter. `verify/1` only checks the
+  signature and age; `PidroServer.Accounts.Auth.fetch_user_for_token/1` is the single place that
+  compares the `v` claim with the database and returns `{:ok, user}`, `{:error, :not_found}` or
+  `{:error, :token_revoked}`. Both the `Authenticate` plug and `UserSocket.connect/3` call it.
+- `Auth.bump_token_version/1` increments the counter atomically (`Repo.update_all` with `inc`),
+  then broadcasts `"disconnect"` on `"user_socket:<id>"` strictly after commit, closing the user's
+  live sockets. `Auth.reset_user_password/2` runs the increment in the same transaction as the
+  password change, so a password reset revokes every earlier token and its response carries a
+  fresh token.
+- The versioned payload is a one-way door: roll forward only. A release without it cannot verify
+  these tokens. The emergency rollback is rotating `@signing_salt`, which invalidates every token
+  so users log in again.
 
 **Plugs**:
 
@@ -495,8 +512,8 @@ defmodule PidroServerWeb.Plugs.Authenticate do
 
   def call(conn, _opts) do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, user_id} <- Accounts.Token.verify(token),
-         user when not is_nil(user) <- Accounts.get_user(user_id) do
+         {:ok, claims} <- Accounts.Token.verify(token),
+         {:ok, user} <- Accounts.Auth.fetch_user_for_token(claims) do
       assign(conn, :current_user, user)
     else
       _ ->
@@ -536,14 +553,16 @@ defmodule PidroServerWeb.UserSocket do
 
   @impl true
   def connect(%{"token" => token}, socket, _connect_info) do
-    case PidroServer.Accounts.Token.verify(token) do
-      {:ok, user_id} ->
-        {:ok, assign(socket, :user_id, user_id)}
-      {:error, _} ->
-        :error
+    with {:ok, %{id: user_id} = claims} <- PidroServer.Accounts.Token.verify(token),
+         {:ok, _user} <- PidroServer.Accounts.Auth.fetch_user_for_token(claims) do
+      {:ok, assign(socket, :user_id, user_id)}
+    else
+      _ -> :error
     end
   end
 
+  # Auth.bump_token_version/1 broadcasts "disconnect" on this topic to close
+  # every live socket of the user after a token_version bump.
   @impl true
   def id(socket), do: "user_socket:#{socket.assigns.user_id}"
 end
@@ -865,7 +884,7 @@ defmodule PidroServerWeb.GameChannelTest do
     {:ok, _pid} = GameSupervisor.start_game(room_code)
 
     # Connect socket
-    token = PidroServer.Accounts.Token.generate(%{id: "user1"})
+    token = PidroServer.Accounts.Token.generate(%{id: "user1", token_version: 0})
     {:ok, socket} = connect(UserSocket, %{"token" => token})
 
     {:ok, socket: socket, room_code: room_code}
@@ -1240,7 +1259,7 @@ apps/pidro_server/
 
 **Decision**: JWT tokens instead of session cookies  
 **Rationale**: Stateless auth works with mobile apps, easy to scale  
-**Trade-offs**: Cannot revoke tokens (acceptable for MVP with short expiry)
+**Trade-offs**: Revocation is per user, not per device: bumping `users.token_version` invalidates all of a user's tokens at once (a password reset does this); per-device revocation needs a sessions table (deferred)
 
 ### ADR-005: No Game State Persistence
 

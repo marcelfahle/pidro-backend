@@ -62,6 +62,29 @@ ADMIN_PASSWORD="generate_secure_password"
 RELEASE_NODE="pidro_server@127.0.0.1"
 ```
 
+### Optional Environment Variables
+
+Every variable below has a default and can be left unset. All are read by `config/runtime.exs`
+in every environment.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `RATE_LIMIT_LOGIN_LIMIT` / `RATE_LIMIT_LOGIN_SCALE_MS` | `10` / `60000` | `POST /api/v1/auth/login`, per client IP |
+| `RATE_LIMIT_REGISTER_LIMIT` / `RATE_LIMIT_REGISTER_SCALE_MS` | `10` / `600000` | `POST /api/v1/auth/register`, per client IP |
+| `RATE_LIMIT_PASSWORD_RESET_LIMIT` / `RATE_LIMIT_PASSWORD_RESET_SCALE_MS` | `3` / `900000` | `POST /api/v1/auth/password-reset`, per client IP |
+| `RATE_LIMIT_PASSWORD_RESET_IDENTIFIER_LIMIT` / `RATE_LIMIT_PASSWORD_RESET_IDENTIFIER_SCALE_MS` | `3` / `3600000` | same route, per hashed `identifier`/`email` |
+| `RATE_LIMIT_PASSWORD_RESET_CONFIRM_LIMIT` / `RATE_LIMIT_PASSWORD_RESET_CONFIRM_SCALE_MS` | `5` / `900000` | `POST /api/v1/auth/password-reset/confirm`, per client IP |
+| `RATE_LIMIT_ROOM_CREATE_LIMIT` / `RATE_LIMIT_ROOM_CREATE_SCALE_MS` | `10` / `60000` | `POST /api/v1/rooms`, per authenticated user |
+| `RATE_LIMIT_ROOM_LOOKUP_LIMIT` / `RATE_LIMIT_ROOM_LOOKUP_SCALE_MS` | `120` / `60000` | `GET /api/v1/rooms/:code`, per client IP |
+| `TRUST_PROXY_HEADERS` | `true` in prod, `false` elsewhere | `PidroServerWeb.Plugs.TrustedProxy` honours `X-Forwarded-For` (rightmost value) and `X-Forwarded-Proto` when this is true and the TCP peer is a loopback, private, CGNAT, ULA or link-local address. `false` makes every client share the proxy's bucket; use only to diagnose the limiter |
+| `AASA_APP_IDS` | `config/config.exs` value | Comma-separated iOS app IDs (`TEAMID.bundle.id`) for `/.well-known/apple-app-site-association` |
+| `AASA_PATHS` | `/j/*,/app/*` | Comma-separated paths for the same file |
+| `ASSETLINKS` | `config/config.exs` value | `package:fp1\|fp2,package2:fp3`: SHA-256 signing-certificate fingerprints per Android package for `/.well-known/assetlinks.json`. A set value is validated at boot; a malformed one fails startup |
+
+Rate limits are numeric only; there is no off switch, raise a limit instead. The production
+defaults are in `config/config.exs`; `config/dev.exs` runs every limit at 10x. Limits are per
+node and per fixed window, so counters reset on restart and are not shared between nodes.
+
 ### Generating Secrets
 
 ```bash
@@ -691,7 +714,7 @@ plug CORSPlug, origin: ["*"]
 - [ ] Limit database access to app server IPs
 - [ ] Enable firewall (only ports 80, 443, 22 open)
 - [ ] Regular security updates (Elixir, Erlang, dependencies)
-- [ ] Enable rate limiting for API endpoints
+- [x] Enable rate limiting for API endpoints (on by default via `PidroServerWeb.Plugs.RateLimit`; tune with `RATE_LIMIT_*`, see [Optional Environment Variables](#optional-environment-variables))
 - [ ] Rotate secrets periodically
 - [ ] Use environment variables (never commit secrets)
 
