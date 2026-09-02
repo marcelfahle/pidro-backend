@@ -32,4 +32,18 @@ socket_status="$(curl --http1.1 --silent --show-error --output /dev/null --write
   "$base_url/socket/websocket?vsn=2.0.0")"
 test "$socket_status" = "403"
 
+aasa_status="$(curl --silent --show-error --dump-header "$tmp_dir/aasa.headers" --output "$tmp_dir/aasa.body" \
+  --write-out '%{http_code}' --max-time 15 \
+  "$base_url/.well-known/apple-app-site-association")"
+test "$aasa_status" = "200"
+grep -Eiq '^content-type: application/json' "$tmp_dir/aasa.headers"
+grep -Fq 'com.oneapps.pidro' "$tmp_dir/aasa.body"
+
+assetlinks_status="$(curl --silent --show-error --dump-header "$tmp_dir/assetlinks.headers" --output "$tmp_dir/assetlinks.body" \
+  --write-out '%{http_code}' --max-time 15 \
+  "$base_url/.well-known/assetlinks.json")"
+test "$assetlinks_status" = "200"
+grep -Eiq '^content-type: application/json' "$tmp_dir/assetlinks.headers"
+grep -Fq 'com.oneapps.pidro' "$tmp_dir/assetlinks.body"
+
 echo "Production smoke checks passed for ${base_url}."
