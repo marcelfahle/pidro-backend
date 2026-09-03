@@ -4,7 +4,7 @@ defmodule PidroServer.Accounts.GuestReaper do
 
   A guest whose `last_seen_at` (or `inserted_at` when the guest was never
   seen) is older than `max_idle_days` is removed with
-  `PidroServer.Accounts.Auth.delete_user/1`, the same recipe as
+  `PidroServer.Accounts.Auth.delete_guest/1`, the same recipe as
   `DELETE /api/v1/auth/me`, in batches of 100 ids per query.
 
   ## Configuration
