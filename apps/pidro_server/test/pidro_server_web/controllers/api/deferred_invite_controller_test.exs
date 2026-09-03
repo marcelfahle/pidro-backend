@@ -55,6 +55,37 @@ defmodule PidroServerWeb.API.DeferredInviteControllerTest do
     assert [%Event{kind: "deferred_matched", platform: "android"}] = events(invite)
   end
 
+  test "an Android referrer rejects revoked invites and follows a moved invite", %{conn: conn} do
+    revoked = open_invite!()
+    {:ok, _revoked} = Invites.revoke(revoked)
+    {old, successor} = moved_invites!()
+
+    assert %{"data" => %{"invite" => nil}} =
+             conn
+             |> from_ip({203, 0, 113, 69})
+             |> resolve(%{
+               "platform" => "android",
+               "install_id" => Ecto.UUID.generate(),
+               "referrer" => "invite=#{revoked.code}"
+             })
+             |> json_response(200)
+
+    assert %{"data" => %{"invite" => %{"code" => code}}} =
+             build_conn()
+             |> from_ip({203, 0, 113, 70})
+             |> resolve(%{
+               "platform" => "android",
+               "install_id" => Ecto.UUID.generate(),
+               "referrer" => "invite=#{old.code}"
+             })
+             |> json_response(200)
+
+    assert code == successor.code
+    assert events(revoked) == []
+    assert events(old) == []
+    assert [%Event{kind: "deferred_matched"}] = events(successor)
+  end
+
   test "duplicate, malformed, and unknown referrers use the same empty envelope", %{conn: conn} do
     invite = open_invite!()
 
@@ -107,6 +138,39 @@ defmodule PidroServerWeb.API.DeferredInviteControllerTest do
              |> from_ip({203, 0, 113, 63})
              |> resolve(%{params | "install_id" => Ecto.UUID.generate()})
              |> json_response(200)
+  end
+
+  test "a captured fallback rejects later revocation and follows later supersession", %{
+    conn: conn
+  } do
+    revoked = open_invite!()
+    revoked_signature = signature(@fingerprint, {203, 0, 113, 71})
+    assert :created = DeferredMatcher.capture(revoked.code, revoked_signature)
+    {:ok, _revoked} = Invites.revoke(revoked)
+
+    assert %{"data" => %{"invite" => nil}} =
+             conn
+             |> from_ip({203, 0, 113, 71})
+             |> resolve(Map.put(@fingerprint, "install_id", Ecto.UUID.generate()))
+             |> json_response(200)
+
+    host = AccountsFixtures.user_fixture()
+    old = open_invite_for!(host, "Before install")
+    moved_signature = signature(@fingerprint, {203, 0, 113, 72})
+    assert :created = DeferredMatcher.capture(old.code, moved_signature)
+    :ok = RoomManager.leave_room(host.id)
+    successor = open_invite_for!(host, "After install")
+    {:ok, _old} = Invites.supersede(old, successor)
+
+    assert %{"data" => %{"invite" => %{"code" => code}}} =
+             build_conn()
+             |> from_ip({203, 0, 113, 72})
+             |> resolve(Map.put(@fingerprint, "install_id", Ecto.UUID.generate()))
+             |> json_response(200)
+
+    assert code == successor.code
+    assert events(old) == []
+    assert [%Event{kind: "deferred_matched"}] = events(successor)
   end
 
   test "ambiguous fallback is empty and consumes every queried bucket", %{conn: conn} do
@@ -221,7 +285,20 @@ defmodule PidroServerWeb.API.DeferredInviteControllerTest do
 
   defp open_invite! do
     host = AccountsFixtures.user_fixture()
-    {:ok, room} = RoomManager.create_room(host.id, %{name: "Invited"})
+    open_invite_for!(host, "Invited")
+  end
+
+  defp moved_invites! do
+    host = AccountsFixtures.user_fixture()
+    old = open_invite_for!(host, "Old table")
+    :ok = RoomManager.leave_room(host.id)
+    successor = open_invite_for!(host, "New table")
+    {:ok, _old} = Invites.supersede(old, successor)
+    {old, successor}
+  end
+
+  defp open_invite_for!(host, name) do
+    {:ok, room} = RoomManager.create_room(host.id, %{name: name})
 
     {:ok, invite} =
       Invites.create_invite(%{

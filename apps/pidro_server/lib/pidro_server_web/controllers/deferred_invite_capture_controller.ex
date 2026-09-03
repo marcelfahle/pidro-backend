@@ -16,6 +16,7 @@ defmodule PidroServerWeb.DeferredInviteCaptureController do
   alias PidroServer.Invites.DeferredMatcher
   alias PidroServer.Invites.DeferredSignature
   alias PidroServer.Invites.Invite
+  alias PidroServerWeb.InvitePreview
 
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def create(conn, %{"code" => code} = params) do
@@ -45,8 +46,8 @@ defmodule PidroServerWeb.DeferredInviteCaptureController do
     do: config() |> Keyword.fetch!(:endpoint_origin) |> String.trim_trailing("/")
 
   defp capture(conn, code, params) do
-    with {:ok, preview} <- PidroServerWeb.InvitePreview.get(code),
-         %Invite{} = invite <- target_invite(preview),
+    with {:ok, preview} <- InvitePreview.get(code),
+         %Invite{} = invite <- InvitePreview.handoff_target(preview),
          {:ok, signature} <- DeferredSignature.build(conn.remote_ip, params),
          :created <- DeferredMatcher.capture(invite.code, signature) do
       log_event(invite, signature.platform)
@@ -54,12 +55,6 @@ defmodule PidroServerWeb.DeferredInviteCaptureController do
 
     send_resp(conn, :no_content, "")
   end
-
-  defp target_invite(%{state: :moved, invite: %Invite{successor: %Invite{} = successor}}),
-    do: successor
-
-  defp target_invite(%{state: :open, invite: %Invite{} = invite}), do: invite
-  defp target_invite(_preview), do: nil
 
   defp log_event(invite, platform) do
     case Invites.record_event(invite, %{

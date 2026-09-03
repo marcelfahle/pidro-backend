@@ -693,7 +693,7 @@ not a device identifier. Limited at `invite_deferred` (five attempts per IP per 
 {
   "position": "south",
   "platform": "ios",
-  "source": "imessage"
+  "source": "im"
 }
 ```
 

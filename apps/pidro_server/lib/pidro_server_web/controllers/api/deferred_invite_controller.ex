@@ -17,6 +17,7 @@ defmodule PidroServerWeb.API.DeferredInviteController do
   alias PidroServer.Invites.DeferredMatcher
   alias PidroServer.Invites.DeferredSignature
   alias PidroServer.Invites.Invite
+  alias PidroServerWeb.InvitePreview
   alias PidroServerWeb.Schemas.{ErrorSchemas, InviteSchemas}
 
   @install_id_regex ~r/^[A-Za-z0-9._-]{1,64}$/
@@ -91,7 +92,7 @@ defmodule PidroServerWeb.API.DeferredInviteController do
   defp referrer_invite(%{"platform" => "android", "referrer" => referrer})
        when is_binary(referrer) and byte_size(referrer) <= @max_referrer_length do
     with {:ok, code} <- referrer_code(referrer),
-         {:ok, %Invite{} = invite} <- Invites.get_by_code(code) do
+         %Invite{} = invite <- eligible_invite(code) do
       invite
     else
       _invalid_or_unknown -> nil
@@ -118,13 +119,18 @@ defmodule PidroServerWeb.API.DeferredInviteController do
   end
 
   defp fallback_invite({:ok, code}) do
-    case Invites.get_by_code(code) do
-      {:ok, %Invite{} = invite} -> invite
-      _stale -> nil
-    end
+    eligible_invite(code)
   end
 
   defp fallback_invite(_none_or_ambiguous), do: nil
+
+  defp eligible_invite(code) do
+    with {:ok, preview} <- InvitePreview.get(code) do
+      InvitePreview.handoff_target(preview)
+    else
+      _not_found -> nil
+    end
+  end
 
   defp invite_json(%Invite{code: code}), do: %{code: code}
   defp invite_json(nil), do: nil

@@ -120,9 +120,14 @@ config :pidro_server, :password_reset,
 # Invite links open the local landing page; INVITE_LINK_BASE_URL overrides.
 config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4000/j"
 
+deferred_invite_dev_origin =
+  System.get_env("DEFERRED_INVITE_DEV_ORIGIN", "http://localhost:4000")
+  |> String.trim_trailing("/")
+
 config :pidro_server, PidroServerWeb.DeferredInviteCaptureController,
-  endpoint_origin: "http://localhost:4000",
-  allowed_origins: ["http://localhost:4000", "http://localhost:5173"]
+  endpoint_origin: deferred_invite_dev_origin,
+  allowed_origins:
+    Enum.uniq([deferred_invite_dev_origin, "http://localhost:4000", "http://localhost:5173"])
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

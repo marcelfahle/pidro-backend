@@ -44,6 +44,14 @@ defmodule PidroServerWeb.InvitePreview do
   @spec state(Invite.t()) :: Invites.state()
   def state(%Invite{} = invite), do: Invites.state(invite, &RoomManager.get_room/1)
 
+  @doc "Returns the current invite eligible for an app handoff."
+  @spec handoff_target(t()) :: Invite.t() | nil
+  def handoff_target(%{state: :moved, invite: %Invite{successor: %Invite{} = successor}}),
+    do: successor
+
+  def handoff_target(%{state: :open, invite: %Invite{} = invite}), do: invite
+  def handoff_target(_preview), do: nil
+
   defp host_name(%Invite{host_user_id: host_user_id}) do
     case Auth.get_user(host_user_id) do
       nil -> nil

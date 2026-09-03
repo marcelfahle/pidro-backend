@@ -291,6 +291,7 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
           type: :string,
           minLength: 1,
           maxLength: 64,
+          pattern: "^[A-Za-z0-9._-]{1,64}$",
           description: "Random uninstall-scoped fairness key; not a device identifier"
         },
         referrer: %Schema{
