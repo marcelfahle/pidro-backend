@@ -24,7 +24,9 @@ defmodule PidroServerWeb.InvitePageController do
           Map.put(
             page,
             :deferred_capture_url,
-            DeferredInviteCaptureController.capture_url(page.code)
+            if(page.table_action in [:join, :successor],
+              do: DeferredInviteCaptureController.capture_url(page.code)
+            )
           )
 
         render(conn, :show, page: page, crawler?: crawler?)

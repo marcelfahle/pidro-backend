@@ -68,7 +68,10 @@
         </p>
 
         <p class="invite-store-label">Get Pidro free</p>
-        <p :if={@page.device in [:ios, :android]} class="invite-privacy-note">
+        <p
+          :if={@page.deferred_capture_url && @page.device in [:ios, :android]}
+          class="invite-privacy-note"
+        >
           To restore this invite after installation, Pidro may use coarse device and network
           details for up to 30 minutes.
           <a href="https://www.pidro.online/privacy-policy" data-invite-privacy>

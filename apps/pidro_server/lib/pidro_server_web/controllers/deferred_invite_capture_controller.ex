@@ -58,7 +58,8 @@ defmodule PidroServerWeb.DeferredInviteCaptureController do
   defp target_invite(%{state: :moved, invite: %Invite{successor: %Invite{} = successor}}),
     do: successor
 
-  defp target_invite(%{invite: %Invite{} = invite}), do: invite
+  defp target_invite(%{state: :open, invite: %Invite{} = invite}), do: invite
+  defp target_invite(_preview), do: nil
 
   defp log_event(invite, platform) do
     case Invites.record_event(invite, %{

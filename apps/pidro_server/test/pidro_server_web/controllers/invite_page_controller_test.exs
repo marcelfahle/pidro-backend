@@ -155,7 +155,11 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       {:ok, invite} = room |> mint!(host) |> Invites.revoke()
 
       document =
-        conn |> get(~p"/j/#{invite.code}") |> html_response(200) |> LazyHTML.from_document()
+        conn
+        |> put_req_header("user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)")
+        |> get(~p"/j/#{invite.code}")
+        |> html_response(200)
+        |> LazyHTML.from_document()
 
       assert LazyHTML.text(LazyHTML.query(document, "h1")) =~ "no longer active"
 
@@ -163,6 +167,8 @@ defmodule PidroServerWeb.InvitePageControllerTest do
              |> LazyHTML.to_tree() == []
 
       assert attribute(document, "[data-store=apple]", "href") =~ "apps.apple.com"
+      assert attribute(document, "[data-store=apple]", "data-deferred-capture") == nil
+      assert LazyHTML.query(document, "[data-invite-privacy]") |> LazyHTML.to_tree() == []
     end
 
     test "unknown code is a generic branded 404", %{conn: conn} do

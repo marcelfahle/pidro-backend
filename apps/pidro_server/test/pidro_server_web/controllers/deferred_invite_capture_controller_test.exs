@@ -97,6 +97,17 @@ defmodule PidroServerWeb.DeferredInviteCaptureControllerTest do
            |> response(204) == ""
   end
 
+  test "inactive invites do not create a hint or event", %{conn: conn} do
+    invite = open_invite!()
+    {:ok, invite} = Invites.revoke(invite)
+
+    assert conn |> capture(invite.code, {203, 0, 113, 49}, @valid_params) |> response(204) == ""
+
+    signature = Map.put(normalized_params(@valid_params), :ip, "203.0.113.49")
+    assert :none = DeferredMatcher.consume([signature])
+    assert Repo.aggregate(Event, :count, :id) == 0
+  end
+
   test "rejects other browser origins and missing-origin cross-site requests", %{conn: conn} do
     invite = open_invite!()
 
