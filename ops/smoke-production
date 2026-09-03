@@ -107,6 +107,11 @@ if test -n "${PIDRO_INVITE_CODE:-}"; then
   probe_invite crawler 'Slackbot-LinkExpanding 1.0' "$invite_url"
   grep -Fq "<link rel=\"canonical\" href=\"$invite_url\"" "$tmp_dir/invite-crawler.body"
   grep -Fq 'property="og:title"' "$tmp_dir/invite-crawler.body"
+  if grep -Eiq 'data-open-ios|data-open-android|pidro-mobile://|<script([[:space:]>])' \
+    "$tmp_dir/invite-crawler.body"; then
+    echo "Crawler response contains an actionable element" >&2
+    exit 1
+  fi
 
   probe_invite ios 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' "$invite_url"
   grep -Fq 'data-open-ios' "$tmp_dir/invite-ios.body"
