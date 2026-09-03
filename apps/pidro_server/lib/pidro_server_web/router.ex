@@ -10,6 +10,13 @@ defmodule PidroServerWeb.Router do
     plug :put_secure_browser_headers
   end
 
+  pipeline :invite_page do
+    plug :accepts, ["html"]
+    plug :put_root_layout, html: {PidroServerWeb.Layouts, :invite}
+    plug :put_secure_browser_headers
+    plug PidroServerWeb.Plugs.RateLimit
+  end
+
   pipeline :dev_access do
     plug PidroServerWeb.Plugs.DevAccess
   end
@@ -32,6 +39,12 @@ defmodule PidroServerWeb.Router do
 
     get "/", PageController, :home
     get "/up", HealthController, :up
+  end
+
+  scope "/", PidroServerWeb do
+    pipe_through :invite_page
+
+    get "/j/:code", InvitePageController, :show, private: %{rate_limit: [:invite_page]}
   end
 
   # OpenAPI documentation routes

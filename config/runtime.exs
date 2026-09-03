@@ -83,6 +83,8 @@ rate_limit_overrides =
     {:invite_mint, :scale_ms, "RATE_LIMIT_INVITE_MINT_SCALE_MS"},
     {:invite_preview, :limit, "RATE_LIMIT_INVITE_PREVIEW_LIMIT"},
     {:invite_preview, :scale_ms, "RATE_LIMIT_INVITE_PREVIEW_SCALE_MS"},
+    {:invite_page, :limit, "RATE_LIMIT_INVITE_PAGE_LIMIT"},
+    {:invite_page, :scale_ms, "RATE_LIMIT_INVITE_PAGE_SCALE_MS"},
     {:invite_redeem, :limit, "RATE_LIMIT_INVITE_REDEEM_LIMIT"},
     {:invite_redeem, :scale_ms, "RATE_LIMIT_INVITE_REDEEM_SCALE_MS"},
     {:guest_create, :limit, "RATE_LIMIT_GUEST_CREATE_LIMIT"},
@@ -294,7 +296,7 @@ end
 #
 # Applies in every environment. Defaults live in config/config.exs and the
 # per-environment files; INVITE_LINK_BASE_URL replaces `link_base_url` only
-# when set, e.g. "https://pidro.online/j". Gated like the well-known block
+# when set, e.g. "https://www.pidro.online/j". Gated like the well-known block
 # above: runtime.exs is shared by every umbrella app, and PidroServer.Invites
 # only exists on pidro_server's code path.
 # ---------------------------------------------------------------------------

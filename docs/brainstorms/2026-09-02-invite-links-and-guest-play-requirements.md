@@ -10,7 +10,7 @@ related: Linear PID-34 (open bot seat to strangers), PID-29 (seat state machine)
 
 ## The one-paragraph version
 
-A host taps **Invite** in the waiting room and gets a short link, `https://pidro.online/j/7KQ4M2XB`,
+A host taps **Invite** in the waiting room and gets a short link, `https://www.pidro.online/j/7KQ4M2XB`,
 plus a share sheet. Anyone who taps it lands at that table: if the app is installed the OS opens
 it straight into the table; if not, a server-rendered landing page sends them to the store and
 the app picks the invite back up on first launch (deterministically on Android, best-effort plus
@@ -69,9 +69,9 @@ controls in the waiting room.
 
 ## Link anatomy
 
-- Canonical: `https://pidro.online/j/7KQ4M2XB` (apex 308s to `www`; both hosts in the AASA and in `associatedDomains`).
+- Canonical: `https://www.pidro.online/j/7KQ4M2XB`. The existing apex-to-`www` 308 means the apex cannot be canonical for Universal Links; both hosts may remain in app entitlements during migration.
 - Optional query for attribution only, never for behavior: `?s=wa|im|sms|qr|copy`.
-- Share text (English v1, the codebase has no i18n): `Come play Pidro with me 🃏 https://pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB`. The code in plain text *is* the iOS fallback.
+- Share text (English v1, the codebase has no i18n): `Come play Pidro with me 🃏 https://www.pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB`. The code in plain text *is* the iOS fallback.
 - Scheme mirror: `pidro-mobile://j/7KQ4M2XB` (dev/preview: `pidro-mobile-dev://`, `pidro-mobile-preview://`). Used only by the landing page's fallback button when the OS did not honor the HTTPS link. Accepted risk: another app installed on the invitee's own device could register the scheme and receive the code. The code is a table-scoped, multi-use, 24-hour, host-revocable invite (not an account credential), the server still decides room, seat and identity, and the alternative (manual code entry for every in-app-browser user) would cut the funnel where it is weakest. Revisit if invites ever carry more than table access.
 - Store links: Play `https://play.google.com/store/apps/details?id=com.oneapps.pidro&referrer=invite%3D7KQ4M2XB`; App Store `https://apps.apple.com/app/id1137091987?pt=…&ct=invite` (campaign params for analytics only).
 
@@ -149,7 +149,7 @@ Lobby channel pushes `room_updated` already; add `invite_redeemed` (`{position, 
 - `api/invites.ts` (mint, preview, redeem, revoke), `api/auth.ts` (`createGuest`, `upgrade`, `deleteAccount`).
 - `stores/auth.ts`: persist `user.guest`, `displayName`; rehydration accepts guest-shaped sessions.
 - `stores/pendingInvite.ts` (persisted): `{code, source, receivedAt}`; written by link handlers, consumed once by `/join`.
-- `utils/inviteLink.ts`: parse `https://pidro.online/j/CODE`, `pidro-mobile://j/CODE`, bare codes with/without dash; normalize to upper Crockford; tests next to `gameRoute` tests.
+- `utils/inviteLink.ts`: parse `https://www.pidro.online/j/CODE` (and legacy apex links), `pidro-mobile://j/CODE`, bare codes with/without dash; normalize to upper Crockford; tests next to `gameRoute` tests.
 
 **Mobile (`packages/mobile`)**
 - `app.json`: `ios.associatedDomains: ["applinks:pidro.online", "applinks:www.pidro.online"]`, `android.intentFilters` (autoVerify, hosts above, `pathPrefix: "/j"`); per-variant in `app.config.js`; add the missing `preview` EAS profile.

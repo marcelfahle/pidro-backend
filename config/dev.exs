@@ -80,6 +80,7 @@ config :pidro_server, dev_routes: true
 #   room_lookup                120 per 60_000 ms         1_200 per 60_000 ms
 #   invite_mint                10 per 60_000 ms          100 per 60_000 ms
 #   invite_preview             60 per 60_000 ms          600 per 60_000 ms
+#   invite_page                300 per 60_000 ms         3_000 per 60_000 ms
 #   invite_redeem              10 per 60_000 ms          100 per 60_000 ms
 #   guest_create               10 per 3_600_000 ms       100 per 3_600_000 ms
 #   guest_create_daily         40 per 86_400_000 ms      400 per 86_400_000 ms
@@ -96,6 +97,7 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   room_lookup: %{limit: 1_200, scale_ms: 60_000, key: :ip},
   invite_mint: %{limit: 100, scale_ms: 60_000, key: :user},
   invite_preview: %{limit: 600, scale_ms: 60_000, key: :ip},
+  invite_page: %{limit: 3_000, scale_ms: 60_000, key: {:param, "code"}},
   invite_redeem: %{limit: 100, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 100, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 400, scale_ms: 86_400_000, key: :ip},

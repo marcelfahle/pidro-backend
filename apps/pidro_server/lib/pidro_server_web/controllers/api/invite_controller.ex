@@ -34,13 +34,13 @@ defmodule PidroServerWeb.API.InviteController do
   use OpenApiSpex.ControllerSpecs
   require Logger
 
-  alias PidroServer.Accounts.Auth
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
   alias PidroServer.Invites
   alias PidroServer.Invites.Invite
   alias PidroServerWeb.API.InviteJSON
+  alias PidroServerWeb.InvitePreview
   alias PidroServerWeb.Schemas.{ErrorSchemas, InviteSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
@@ -95,15 +95,10 @@ defmodule PidroServerWeb.API.InviteController do
   """
   @spec show(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def show(conn, %{"code" => code}) do
-    with {:ok, invite} <- Invites.get_by_code(code) do
+    with {:ok, preview} <- InvitePreview.get(code) do
       conn
       |> put_view(InviteJSON)
-      |> render(:preview, %{
-        invite: invite,
-        state: derive_state(invite),
-        host: host_name(invite),
-        seats_taken: seats_taken(invite)
-      })
+      |> render(:preview, preview)
     end
   end
 
@@ -259,7 +254,7 @@ defmodule PidroServerWeb.API.InviteController do
   @doc false
   # The invite's state (R3) read against the live RoomManager.
   @spec derive_state(Invite.t()) :: Invites.state()
-  def derive_state(%Invite{} = invite), do: Invites.state(invite, &RoomManager.get_room/1)
+  def derive_state(%Invite{} = invite), do: InvitePreview.state(invite)
 
   @doc false
   # The KTD5 error for a state that refuses a redeem. `:open` has no error.
@@ -366,20 +361,6 @@ defmodule PidroServerWeb.API.InviteController do
     case Map.fetch(@positions, position) do
       {:ok, atom} -> {:ok, atom}
       :error -> {:error, :invalid_position}
-    end
-  end
-
-  defp host_name(%Invite{host_user_id: host_user_id}) do
-    case Auth.get_user(host_user_id) do
-      nil -> nil
-      user -> user.display_name || user.username
-    end
-  end
-
-  defp seats_taken(%Invite{room_code: room_code, room_id: room_id}) do
-    case live_room(room_code, room_id) do
-      {:ok, room} -> Positions.count(room)
-      {:error, _reason} -> 0
     end
   end
 

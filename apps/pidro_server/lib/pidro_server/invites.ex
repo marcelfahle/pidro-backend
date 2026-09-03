@@ -50,7 +50,7 @@ defmodule PidroServer.Invites do
   @code_attempts 2
   @invite_limit 20
   @seats_total 4
-  @default_link_base_url "https://pidro.online/j"
+  @default_link_base_url "https://www.pidro.online/j"
 
   @typedoc "The derived invite state, in R3 priority order."
   @type state :: :revoked | :moved | :expired | :closed | :started | :locked | :full | :open

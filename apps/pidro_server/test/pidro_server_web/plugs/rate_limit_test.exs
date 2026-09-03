@@ -216,6 +216,27 @@ defmodule PidroServerWeb.Plugs.RateLimitTest do
 
       refute log =~ "[error]"
     end
+
+    test "an invite-code param policy canonicalizes aliases and isolates different values", %{
+      conn: conn
+    } do
+      with_limit(:invite_page, 1, @window_ms)
+      with_params = fn conn, value -> %{conn | params: %{"code" => value}} end
+
+      refute conn |> with_params.("7KQ4M2XB") |> run_plug([:invite_page]) |> Map.fetch!(:halted)
+
+      denied =
+        build_conn()
+        |> with_params.("  7kq4-m2xb  ")
+        |> run_plug([:invite_page])
+
+      assert denied.status == 429
+
+      refute build_conn()
+             |> with_params.("OTHER123")
+             |> run_plug([:invite_page])
+             |> Map.fetch!(:halted)
+    end
   end
 
   describe ":install_id key kind" do

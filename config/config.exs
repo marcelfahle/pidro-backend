@@ -44,7 +44,8 @@ config :pidro_server, PidroServer.Games.Lifecycle,
 # Rate-limit policies for PidroServerWeb.Plugs.RateLimit: `limit` requests per
 # `scale_ms` window, keyed by the client address (:ip), the authenticated user
 # (:user), the hashed identifier/email param (:identifier) or the hashed
-# install_id param (:install_id). Numeric only, no boolean off switch.
+# install_id param (:install_id), or a hashed named param ({:param, name}).
+# Numeric only, no boolean off switch.
 # config/dev.exs restates every policy at 10x for the frontend end-to-end
 # harness, config/test.exs sets 1_000_000, and config/runtime.exs merges
 # RATE_LIMIT_<POLICY>_LIMIT / _SCALE_MS overrides.
@@ -58,6 +59,10 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   room_lookup: %{limit: 120, scale_ms: 60_000, key: :ip},
   invite_mint: %{limit: 10, scale_ms: 60_000, key: :user},
   invite_preview: %{limit: 60, scale_ms: 60_000, key: :ip},
+  # `/j/:code` arrives through Vercel, so the origin cannot safely treat its
+  # edge address as one visitor. Bound work per invite and keep API previews in
+  # their independent per-client bucket.
+  invite_page: %{limit: 300, scale_ms: 60_000, key: {:param, "code"}},
   invite_redeem: %{limit: 10, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 10, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 40, scale_ms: 86_400_000, key: :ip},
@@ -142,7 +147,7 @@ config :esbuild,
   version: "0.28.1",
   pidro_server: [
     args:
-      ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
+      ~w(js/app.js js/invite.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../apps/pidro_server/assets", __DIR__),
     env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
   ]
@@ -199,7 +204,7 @@ config :pidro_server, PidroServerWeb.WellKnownController,
 # landing page proxied on pidro.online. config/dev.exs and config/test.exs point
 # at the local endpoint; config/runtime.exs replaces the value from
 # INVITE_LINK_BASE_URL when that variable is set.
-config :pidro_server, PidroServer.Invites, link_base_url: "https://pidro.online/j"
+config :pidro_server, PidroServer.Invites, link_base_url: "https://www.pidro.online/j"
 
 # Idle-guest reaper (PidroServer.Accounts.GuestReaper): every interval_ms it
 # deletes guest accounts idle for more than max_idle_days with the account

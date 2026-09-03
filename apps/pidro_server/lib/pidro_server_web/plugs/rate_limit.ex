@@ -26,6 +26,12 @@ defmodule PidroServerWeb.Plugs.RateLimit do
       hex-encoded, so neither the key nor the log ever holds the address. A
       missing, empty or non-binary param skips this policy only; the other
       policies on the route still apply.
+    * `{:param, name}` - `"<policy>:param:<hash>"`, the same truncated SHA-256
+      of a trimmed, lower-cased route or body parameter. A missing, empty or
+      non-binary parameter skips this policy. This is useful when an upstream
+      edge proxy prevents reliable per-client address limiting. The
+      `:invite_page` policy also canonicalizes accepted invite-code aliases so
+      dashed and undashed forms share one bucket.
     * `:install_id` - `"<policy>:install:<hash>"`, the same truncated SHA-256
       of the trimmed `install_id` param (case preserved: it is an opaque device
       id, not an address). A missing, blank, non-binary or over-64-character
@@ -56,6 +62,8 @@ defmodule PidroServerWeb.Plugs.RateLimit do
   import Phoenix.Controller, only: [json: 2]
 
   require Logger
+
+  alias PidroServer.Invites.Codes
 
   @default_limiter PidroServer.RateLimit
   @install_id_max_length 64
@@ -144,6 +152,13 @@ defmodule PidroServerWeb.Plugs.RateLimit do
     end
   end
 
+  defp bucket_key(conn, policy, {:param, name}) when is_binary(name) do
+    case generic_param(conn.params, policy, name) do
+      nil -> :skip
+      value -> "#{policy}:param:#{hash_param(value)}"
+    end
+  end
+
   defp identifier_param(%{"identifier" => value}), do: normalize_identifier(value)
   defp identifier_param(%{"email" => value}), do: normalize_identifier(value)
   defp identifier_param(_params), do: nil
@@ -156,6 +171,28 @@ defmodule PidroServerWeb.Plugs.RateLimit do
   end
 
   defp normalize_identifier(_value), do: nil
+
+  defp generic_param(params, policy, name) do
+    case Map.get(params, name) do
+      value when is_binary(value) ->
+        case value |> String.trim() |> String.downcase() do
+          "" -> nil
+          normalized -> canonical_param(policy, name, normalized)
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp canonical_param(:invite_page, "code", value) do
+    case Codes.normalize(value) do
+      {:ok, code} -> String.downcase(code)
+      :error -> value
+    end
+  end
+
+  defp canonical_param(_policy, _name, value), do: value
 
   # Matches the 64-character cap on the guest-creation param; a longer value is
   # skipped rather than truncated so it cannot collide with a legitimate id.

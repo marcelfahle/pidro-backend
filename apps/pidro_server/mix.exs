@@ -129,6 +129,7 @@ defmodule PidroServer.MixProject do
       {:excoveralls, "~> 0.18", only: :test},
       {:ex_doc, "~> 0.40.3", only: :dev, runtime: false},
       {:open_api_spex, "~> 3.22.3"},
+      {:eqrcode, "~> 0.2.1"},
       {:openskill, "~> 1.0"}
     ]
   end
