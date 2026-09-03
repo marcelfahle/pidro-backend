@@ -49,8 +49,8 @@ env:
     MAIL_FROM_ADDRESS: "noreply@pidro.online"
     MAIL_REPLY_TO: "support@pidro.net"
     ENABLE_DEV_ROUTES: "false"
-    # Enable only after the Phase 4 privacy disclosure is live and verified.
-    DEFERRED_INVITES_ENABLED: "false"
+    # Phase 4 privacy disclosure is live and verified on the canonical site.
+    DEFERRED_INVITES_ENABLED: "true"
     DB_HOST: postgres
     DB_PORT: "5432"
     DB_NAME: pidro_prod
