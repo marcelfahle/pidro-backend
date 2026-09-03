@@ -1,4 +1,69 @@
 const openButton = document.querySelector("[data-open-ios]");
+const storeCapture = document.querySelector("[data-deferred-capture]");
+
+let androidPlatformMajor = null;
+
+if (
+  storeCapture?.dataset.deferredPlatform === "android" &&
+  navigator.userAgentData?.getHighEntropyValues
+) {
+  navigator.userAgentData
+    .getHighEntropyValues(["platform", "platformVersion"])
+    .then(({ platform, platformVersion }) => {
+      if (platform === "Android") androidPlatformMajor = platformVersion.split(".")[0];
+    })
+    .catch(() => {});
+}
+
+const osMajor = (platform) => {
+  if (platform === "android") {
+    return androidPlatformMajor || navigator.userAgent.match(/Android\s+(\d+)/i)?.[1];
+  }
+
+  return navigator.userAgent.match(/(?:CPU (?:iPhone )?OS|iPhone OS)\s+(\d+)/i)?.[1];
+};
+
+const screenClass = () => {
+  const smallerDimension = Math.min(window.innerWidth, window.innerHeight);
+  if (smallerDimension < 600) return "compact";
+  if (smallerDimension < 900) return "medium";
+  return "large";
+};
+
+const captureDeferredInvite = (link) => {
+  const platform = link.dataset.deferredPlatform;
+  const major = osMajor(platform);
+  const locale = navigator.languages?.[0] || navigator.language;
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  if (!platform || !major || !locale || !timezone) return;
+
+  const body = new URLSearchParams({
+    platform,
+    os_major: major,
+    screen_class: screenClass(),
+    locale,
+    timezone,
+  }).toString();
+
+  const blob = new Blob([body], {
+    type: "application/x-www-form-urlencoded;charset=UTF-8",
+  });
+
+  if (navigator.sendBeacon?.(link.dataset.deferredCapture, blob)) return;
+
+  fetch(link.dataset.deferredCapture, {
+    method: "POST",
+    body,
+    credentials: "omit",
+    keepalive: true,
+    headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+  }).catch(() => {});
+};
+
+if (storeCapture) {
+  storeCapture.addEventListener("click", () => captureDeferredInvite(storeCapture));
+}
 
 if (openButton) {
   let fallbackTimer;

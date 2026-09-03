@@ -33,7 +33,7 @@
 
     <link rel="stylesheet" href={static_url(@conn, ~p"/assets/css/app.css")} />
     <script
-      :if={!@crawler? and @page.device == :ios and @page.table_action == :join}
+      :if={!@crawler? and Map.get(@page, :code)}
       defer
       src={static_url(@conn, ~p"/assets/js/invite.js")}
     >

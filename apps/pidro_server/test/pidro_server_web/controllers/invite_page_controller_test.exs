@@ -45,6 +45,7 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert String.downcase(vary) == "user-agent"
       assert [csp] = get_resp_header(conn, "content-security-policy")
       assert csp =~ "default-src 'self'"
+      assert csp =~ "connect-src http://localhost:4002"
       assert get_resp_header(conn, "set-cookie") == []
     end
 
@@ -81,6 +82,11 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert attribute(ios, "[data-ios-fallback] a", "href") =~ "apps.apple.com"
       assert attribute(ios, "script[src]", "src") =~ "/assets/js/invite.js"
 
+      assert attribute(ios, "[data-store=apple]", "data-deferred-capture") ==
+               "http://localhost:4002/j/#{invite.code}/deferred"
+
+      assert attribute(ios, "[data-store=google]", "data-deferred-capture") == nil
+
       android =
         build_conn()
         |> put_req_header("user-agent", "Mozilla/5.0 (Linux; Android 15)")
@@ -92,7 +98,16 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert intent =~ "/j/#{invite.code}#Intent"
       assert intent =~ "package=com.oneapps.pidro"
       assert intent =~ "browser_fallback_url="
-      assert LazyHTML.query(android, "script[src]") |> LazyHTML.to_tree() == []
+      assert attribute(android, "script[src]", "src") =~ "/assets/js/invite.js"
+
+      assert attribute(android, "[data-store=google]", "data-deferred-capture") ==
+               "http://localhost:4002/j/#{invite.code}/deferred"
+
+      assert attribute(android, "[data-store=apple]", "data-deferred-capture") == nil
+      assert LazyHTML.text(android) =~ "up to 30 minutes"
+
+      assert attribute(android, "[data-invite-privacy]", "href") ==
+               "https://www.pidro.online/privacy-policy"
     end
 
     test "desktop gets both stores and a QR for the canonical URL", %{conn: conn} do
@@ -127,6 +142,7 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       assert LazyHTML.text(LazyHTML.query(document, "h1")) =~ "new table"
       assert attribute(document, "[data-primary-action]", "href") == canonical(new.code)
       assert attribute(document, "[data-invite-qr]", "data-payload") == canonical(new.code)
+      assert attribute(document, "[data-store=apple]", "data-deferred-capture") == nil
       assert get_resp_header(conn, "location") == []
     end
 

@@ -63,6 +63,8 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   # edge address as one visitor. Bound work per invite and keep API previews in
   # their independent per-client bucket.
   invite_page: %{limit: 300, scale_ms: 60_000, key: {:param, "code"}},
+  invite_capture: %{limit: 20, scale_ms: 1_800_000, key: :ip},
+  invite_capture_code: %{limit: 200, scale_ms: 1_800_000, key: {:param, "code"}},
   invite_redeem: %{limit: 10, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 10, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 40, scale_ms: 86_400_000, key: :ip},
@@ -212,6 +214,10 @@ config :pidro_server, PidroServer.Invites.DeferredMatcher,
   enabled: false,
   retention_ms: 1_800_000,
   max_candidates: 10_000
+
+config :pidro_server, PidroServerWeb.DeferredInviteCaptureController,
+  endpoint_origin: "https://app.pidro.online",
+  allowed_origins: ["https://www.pidro.online", "https://app.pidro.online"]
 
 # Idle-guest reaper (PidroServer.Accounts.GuestReaper): every interval_ms it
 # deletes guest accounts idle for more than max_idle_days with the account

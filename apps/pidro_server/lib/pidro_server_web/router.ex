@@ -17,6 +17,14 @@ defmodule PidroServerWeb.Router do
     plug PidroServerWeb.Plugs.RateLimit
   end
 
+  # Credential-free URL-encoded beacon sent directly to Phoenix immediately
+  # before a matching mobile store navigation. Deliberately has no session or
+  # CSRF state; the controller applies exact browser-origin validation.
+  pipeline :deferred_capture do
+    plug :put_secure_browser_headers
+    plug PidroServerWeb.Plugs.RateLimit
+  end
+
   pipeline :dev_access do
     plug PidroServerWeb.Plugs.DevAccess
   end
@@ -45,6 +53,13 @@ defmodule PidroServerWeb.Router do
     pipe_through :invite_page
 
     get "/j/:code", InvitePageController, :show, private: %{rate_limit: [:invite_page]}
+  end
+
+  scope "/", PidroServerWeb do
+    pipe_through :deferred_capture
+
+    post "/j/:code/deferred", DeferredInviteCaptureController, :create,
+      private: %{rate_limit: [:invite_capture, :invite_capture_code]}
   end
 
   # OpenAPI documentation routes

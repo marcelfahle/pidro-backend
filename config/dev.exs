@@ -81,6 +81,8 @@ config :pidro_server, dev_routes: true
 #   invite_mint                10 per 60_000 ms          100 per 60_000 ms
 #   invite_preview             60 per 60_000 ms          600 per 60_000 ms
 #   invite_page                300 per 60_000 ms         3_000 per 60_000 ms
+#   invite_capture             20 per 1_800_000 ms       200 per 1_800_000 ms
+#   invite_capture_code        200 per 1_800_000 ms      2_000 per 1_800_000 ms
 #   invite_redeem              10 per 60_000 ms          100 per 60_000 ms
 #   guest_create               10 per 3_600_000 ms       100 per 3_600_000 ms
 #   guest_create_daily         40 per 86_400_000 ms      400 per 86_400_000 ms
@@ -98,6 +100,8 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   invite_mint: %{limit: 100, scale_ms: 60_000, key: :user},
   invite_preview: %{limit: 600, scale_ms: 60_000, key: :ip},
   invite_page: %{limit: 3_000, scale_ms: 60_000, key: {:param, "code"}},
+  invite_capture: %{limit: 200, scale_ms: 1_800_000, key: :ip},
+  invite_capture_code: %{limit: 2_000, scale_ms: 1_800_000, key: {:param, "code"}},
   invite_redeem: %{limit: 100, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 100, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 400, scale_ms: 86_400_000, key: :ip},
@@ -111,6 +115,10 @@ config :pidro_server, :password_reset,
 
 # Invite links open the local landing page; INVITE_LINK_BASE_URL overrides.
 config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4000/j"
+
+config :pidro_server, PidroServerWeb.DeferredInviteCaptureController,
+  endpoint_origin: "http://localhost:4000",
+  allowed_origins: ["http://localhost:4000", "http://localhost:5173"]
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
