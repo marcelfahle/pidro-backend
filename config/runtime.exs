@@ -85,6 +85,14 @@ rate_limit_overrides =
     {:invite_preview, :scale_ms, "RATE_LIMIT_INVITE_PREVIEW_SCALE_MS"},
     {:invite_page, :limit, "RATE_LIMIT_INVITE_PAGE_LIMIT"},
     {:invite_page, :scale_ms, "RATE_LIMIT_INVITE_PAGE_SCALE_MS"},
+    {:invite_capture, :limit, "RATE_LIMIT_INVITE_CAPTURE_LIMIT"},
+    {:invite_capture, :scale_ms, "RATE_LIMIT_INVITE_CAPTURE_SCALE_MS"},
+    {:invite_capture_code, :limit, "RATE_LIMIT_INVITE_CAPTURE_CODE_LIMIT"},
+    {:invite_capture_code, :scale_ms, "RATE_LIMIT_INVITE_CAPTURE_CODE_SCALE_MS"},
+    {:invite_deferred, :limit, "RATE_LIMIT_INVITE_DEFERRED_LIMIT"},
+    {:invite_deferred, :scale_ms, "RATE_LIMIT_INVITE_DEFERRED_SCALE_MS"},
+    {:invite_deferred_install, :limit, "RATE_LIMIT_INVITE_DEFERRED_INSTALL_LIMIT"},
+    {:invite_deferred_install, :scale_ms, "RATE_LIMIT_INVITE_DEFERRED_INSTALL_SCALE_MS"},
     {:invite_redeem, :limit, "RATE_LIMIT_INVITE_REDEEM_LIMIT"},
     {:invite_redeem, :scale_ms, "RATE_LIMIT_INVITE_REDEEM_SCALE_MS"},
     {:guest_create, :limit, "RATE_LIMIT_GUEST_CREATE_LIMIT"},
@@ -343,4 +351,24 @@ if guest_reaper_overrides != [] and Code.ensure_loaded?(PidroServer.Accounts.Gue
   config :pidro_server,
          PidroServer.Accounts.GuestReaper,
          Keyword.merge(guest_reaper_existing, guest_reaper_overrides)
+end
+
+# Deferred invite matching stays disabled until the public privacy disclosure
+# is deployed and verified. Matching data is always node-local and the fixed
+# application retention remains 30 minutes; only the feature gate is runtime
+# configurable.
+deferred_invites_enabled = System.get_env("DEFERRED_INVITES_ENABLED")
+
+if deferred_invites_enabled != nil and
+     Code.ensure_loaded?(PidroServer.Invites.DeferredMatcher) do
+  deferred_matcher_existing =
+    Application.get_env(:pidro_server, PidroServer.Invites.DeferredMatcher, [])
+
+  config :pidro_server,
+         PidroServer.Invites.DeferredMatcher,
+         Keyword.put(
+           deferred_matcher_existing,
+           :enabled,
+           deferred_invites_enabled in ~w(true TRUE 1 yes YES)
+         )
 end

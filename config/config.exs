@@ -63,6 +63,10 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   # edge address as one visitor. Bound work per invite and keep API previews in
   # their independent per-client bucket.
   invite_page: %{limit: 300, scale_ms: 60_000, key: {:param, "code"}},
+  invite_capture: %{limit: 20, scale_ms: 1_800_000, key: :ip},
+  invite_capture_code: %{limit: 200, scale_ms: 1_800_000, key: {:param, "code"}},
+  invite_deferred: %{limit: 5, scale_ms: 1_800_000, key: :ip},
+  invite_deferred_install: %{limit: 2, scale_ms: 1_800_000, key: :install_id},
   invite_redeem: %{limit: 10, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 10, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 40, scale_ms: 86_400_000, key: :ip},
@@ -171,9 +175,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# Parameters Phoenix.Logger redacts from request logs. install_id is a
-# per-device identifier sent with guest creation and must never be logged.
-config :phoenix, :filter_parameters, ["password", "install_id"]
+# Parameters Phoenix.Logger redacts from request logs. Deferred matching inputs
+# and the per-install fairness id must never appear in application logs.
+config :phoenix,
+       :filter_parameters,
+       ~w(password install_id referrer platform os_major screen_class locale timezone)
 
 # ---------------------------------------------------------------------------
 # Well-known association files (AASA / assetlinks.json), served by
@@ -205,6 +211,17 @@ config :pidro_server, PidroServerWeb.WellKnownController,
 # at the local endpoint; config/runtime.exs replaces the value from
 # INVITE_LINK_BASE_URL when that variable is set.
 config :pidro_server, PidroServer.Invites, link_base_url: "https://www.pidro.online/j"
+
+# Deferred invite hints are node-local and disabled until the matching privacy
+# disclosure is live. Runtime configuration may enable the 30-minute store.
+config :pidro_server, PidroServer.Invites.DeferredMatcher,
+  enabled: false,
+  retention_ms: 1_800_000,
+  max_candidates: 10_000
+
+config :pidro_server, PidroServerWeb.DeferredInviteCaptureController,
+  endpoint_origin: "https://app.pidro.online",
+  allowed_origins: ["https://www.pidro.online", "https://app.pidro.online"]
 
 # Idle-guest reaper (PidroServer.Accounts.GuestReaper): every interval_ms it
 # deletes guest accounts idle for more than max_idle_days with the account

@@ -7,6 +7,7 @@ defmodule PidroServerWeb.ApiSpecTest do
   alias PidroServerWeb.Schemas.{ErrorSchemas, UserSchemas}
 
   @new_paths [
+    {"/api/v1/invites/deferred", ["post"]},
     {"/api/v1/invites/{code}", ["get", "delete"]},
     {"/api/v1/invites/{code}/redeem", ["post"]},
     {"/api/v1/invites/{code}/regenerate", ["post"]},
@@ -46,7 +47,8 @@ defmodule PidroServerWeb.ApiSpecTest do
     end
 
     for policy <-
-          ~w(invite_mint invite_preview invite_redeem guest_create guest_create_daily
+          ~w(invite_mint invite_preview invite_capture invite_capture_code invite_deferred
+             invite_deferred_install invite_redeem guest_create guest_create_daily
              guest_create_install room_join auth_upgrade) do
       assert description =~ "`#{policy}`"
     end

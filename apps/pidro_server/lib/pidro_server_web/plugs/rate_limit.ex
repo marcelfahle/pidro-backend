@@ -185,7 +185,8 @@ defmodule PidroServerWeb.Plugs.RateLimit do
     end
   end
 
-  defp canonical_param(:invite_page, "code", value) do
+  defp canonical_param(policy, "code", value)
+       when policy in [:invite_page, :invite_capture_code] do
     case Codes.normalize(value) do
       {:ok, code} -> String.downcase(code)
       :error -> value

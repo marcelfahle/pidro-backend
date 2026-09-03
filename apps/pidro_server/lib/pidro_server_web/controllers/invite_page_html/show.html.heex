@@ -68,10 +68,22 @@
         </p>
 
         <p class="invite-store-label">Get Pidro free</p>
+        <p
+          :if={@page.deferred_capture_url && @page.device in [:ios, :android]}
+          class="invite-privacy-note"
+        >
+          To restore this invite after installation, Pidro may use coarse device and network
+          details for up to 30 minutes.
+          <a href="https://www.pidro.online/privacy-policy" data-invite-privacy>
+            Privacy details
+          </a>
+        </p>
         <div class="invite-store-links" aria-label="Download Pidro">
           <a
             href={@page.app_store_url}
             data-store="apple"
+            data-deferred-capture={if @page.device == :ios, do: @page.deferred_capture_url}
+            data-deferred-platform={if @page.device == :ios, do: "ios"}
             aria-label="Download Pidro on the App Store"
           >
             <img
@@ -81,7 +93,13 @@
               alt="Download on the App Store"
             />
           </a>
-          <a href={@page.play_store_url} data-store="google" aria-label="Get Pidro on Google Play">
+          <a
+            href={@page.play_store_url}
+            data-store="google"
+            data-deferred-capture={if @page.device == :android, do: @page.deferred_capture_url}
+            data-deferred-platform={if @page.device == :android, do: "android"}
+            aria-label="Get Pidro on Google Play"
+          >
             <img
               src={static_url(@conn, ~p"/images/invite/google-play.png")}
               width="168"
@@ -92,7 +110,13 @@
         </div>
 
         <p class="invite-fallback" data-ios-fallback hidden>
-          Didn't open? <a href={@page.app_store_url}>Get Pidro on the App Store</a>.
+          Didn't open? <a
+            href={@page.app_store_url}
+            data-deferred-capture={if @page.device == :ios, do: @page.deferred_capture_url}
+            data-deferred-platform={if @page.device == :ios, do: "ios"}
+          >
+            Get Pidro on the App Store
+          </a>.
         </p>
       </div>
 

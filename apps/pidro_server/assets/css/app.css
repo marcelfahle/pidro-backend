@@ -195,7 +195,8 @@
 
 .invite-primary:focus-visible,
 .invite-store-links a:focus-visible,
-.invite-fallback a:focus-visible {
+.invite-fallback a:focus-visible,
+.invite-privacy-note a:focus-visible {
   outline: 3px solid #f2c94c;
   outline-offset: 4px;
 }
@@ -239,6 +240,19 @@
   max-width: 10.5rem;
   height: 3.05rem;
   object-fit: contain;
+}
+
+.invite-privacy-note {
+  max-width: 30rem;
+  margin: 0.8rem auto 0;
+  color: #829bb7;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.invite-privacy-note a {
+  color: #b9cce3;
+  font-weight: 700;
 }
 
 .invite-fallback {

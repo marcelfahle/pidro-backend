@@ -44,11 +44,13 @@ env:
     PHX_HOST: "app.pidro.online"
     PORT: "4000"
     POOL_SIZE: "20"
-    CORS_ORIGINS: "https://play.pidro.online,https://app.pidro.online"
+    CORS_ORIGINS: "https://www.pidro.online,https://play.pidro.online,https://app.pidro.online"
     WEB_URL: "https://play.pidro.online"
     MAIL_FROM_ADDRESS: "noreply@pidro.online"
     MAIL_REPLY_TO: "support@pidro.net"
     ENABLE_DEV_ROUTES: "false"
+    # Enable only after the Phase 4 privacy disclosure is live and verified.
+    DEFERRED_INVITES_ENABLED: "false"
     DB_HOST: postgres
     DB_PORT: "5432"
     DB_NAME: pidro_prod

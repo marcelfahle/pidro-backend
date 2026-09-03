@@ -26,6 +26,9 @@ defmodule PidroServer.Application do
       PidroServer.Games.Bots.BotManager,
       # Node-local rate-limit counters; must be up before the endpoint serves
       {PidroServer.RateLimit, clean_period: :timer.minutes(1)},
+      # Privacy-bounded, node-local deferred invite hints. This must remain a
+      # single owner unless the deployment adopts a first-party shared store.
+      PidroServer.Invites.DeferredMatcher,
       # Start to serve requests, typically the last entry
       PidroServerWeb.Endpoint
     ]

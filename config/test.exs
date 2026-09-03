@@ -1,5 +1,11 @@
 import Config
 
+config :pidro_server, PidroServer.Invites.DeferredMatcher, enabled: true
+
+config :pidro_server, PidroServerWeb.DeferredInviteCaptureController,
+  endpoint_origin: "http://localhost:4002",
+  allowed_origins: ["http://localhost:4002"]
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
@@ -79,6 +85,18 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   invite_mint: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
   invite_preview: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
   invite_page: %{limit: 1_000_000, scale_ms: 60_000, key: {:param, "code"}},
+  invite_capture: %{limit: 1_000_000, scale_ms: 1_800_000, key: :ip},
+  invite_capture_code: %{
+    limit: 1_000_000,
+    scale_ms: 1_800_000,
+    key: {:param, "code"}
+  },
+  invite_deferred: %{limit: 1_000_000, scale_ms: 1_800_000, key: :ip},
+  invite_deferred_install: %{
+    limit: 1_000_000,
+    scale_ms: 1_800_000,
+    key: :install_id
+  },
   invite_redeem: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 1_000_000, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 1_000_000, scale_ms: 86_400_000, key: :ip},

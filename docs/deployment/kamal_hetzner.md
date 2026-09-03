@@ -73,13 +73,18 @@ client address, so the release must learn the real client behind kamal-proxy.
   `RATE_LIMIT_<POLICY>_SCALE_MS`, where `<POLICY>` is one of `LOGIN`,
   `REGISTER`, `PASSWORD_RESET`, `PASSWORD_RESET_IDENTIFIER`,
   `PASSWORD_RESET_CONFIRM`, `ROOM_CREATE`, `ROOM_LOOKUP`, `ROOM_JOIN`,
-  `INVITE_MINT`, `INVITE_PREVIEW`, `INVITE_REDEEM`, `GUEST_CREATE`,
+  `INVITE_MINT`, `INVITE_PREVIEW`, `INVITE_CAPTURE`,
+  `INVITE_CAPTURE_CODE`, `INVITE_DEFERRED`, `INVITE_DEFERRED_INSTALL`,
+  `INVITE_REDEEM`, `GUEST_CREATE`,
   `GUEST_CREATE_DAILY`, `GUEST_CREATE_INSTALL` or `AUTH_UPGRADE`, for example
   `RATE_LIMIT_LOGIN_LIMIT: "20"`. There is no off switch: raise a limit and
   redeploy. Never roll back a release to fix limiter behaviour.
 - Limits are per node and per fixed window; counters reset on restart.
 - The invite and guest policies (production defaults in `config/config.exs`):
   `INVITE_MINT` 10/min per user, `INVITE_PREVIEW` 60/min per IP,
+  `INVITE_CAPTURE` 20/30min per IP, `INVITE_CAPTURE_CODE` 200/30min per
+  hashed invite code, `INVITE_DEFERRED` 5/30min per IP,
+  `INVITE_DEFERRED_INSTALL` 2/30min per hashed `install_id`,
   `INVITE_REDEEM` 10/min per user, `ROOM_JOIN` 30/min per user,
   `GUEST_CREATE` 10/hour per IP, `GUEST_CREATE_DAILY` 40/day per IP,
   `GUEST_CREATE_INSTALL` 3/hour per hashed `install_id`, `AUTH_UPGRADE` 10 per
@@ -116,6 +121,18 @@ header contract once after the first deploy that carries the limiter:
 These variables also go under `env.clear` in
 [config/deploy.yml](../../config/deploy.yml). All are optional; each replaces
 only the key it names, and defaults live in `config/config.exs`.
+
+- `DEFERRED_INVITES_ENABLED` is `false` by default. Deploy and verify the
+  canonical privacy-policy disclosure before setting it to `true`. Deferred
+  invite hints live only in the named `PidroServer.Invites.DeferredMatcher`
+  process and are removed on consumption, restart, or after 30 minutes. Disable
+  the flag and redeploy to stop new capture and resolution immediately.
+- Deferred matching requires exactly one Phoenix application replica. The
+  checked-in `servers.web` list deliberately contains one host. Before adding a
+  second app replica, replace the node-local matcher with a Pidro-owned shared
+  ephemeral store or cluster-wide single owner that preserves the 30-minute
+  hard-deletion contract. A rolling deploy can evict hints early; manual invite
+  code entry is the recovery path.
 
 - `INVITE_LINK_BASE_URL` (default `https://www.pidro.online/j`) is the base of
   every
@@ -162,6 +179,12 @@ association signing data or caching, invite metadata drift, or a broken
 iOS/Android/desktop render branch. `GET /j/:code` uses its own per-invite-code
 limit because the origin sees a Vercel edge address; it does not share the
 mobile API preview bucket.
+
+Phase 4 has a separate privacy-first rollout: deploy the marketing privacy
+addendum while `DEFERRED_INVITES_ENABLED` remains `false`, deploy Phoenix, then
+enable the flag and verify direct browser-to-`app.pidro.online` capture before
+shipping the native build. Roll back the mobile bootstrap first, then disable
+the flag; remove the disclosure only after the data path is no longer shipped.
 
 Universal Link and App Link verification is cached by Apple and Android. After
 cutover, verify the public AASA response first, allow for Apple CDN propagation,

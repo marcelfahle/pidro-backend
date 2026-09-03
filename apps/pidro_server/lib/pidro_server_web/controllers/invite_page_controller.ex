@@ -6,6 +6,7 @@ defmodule PidroServerWeb.InvitePageController do
   alias PidroServerWeb.InvitePage
   alias PidroServerWeb.InvitePage.UserAgent
   alias PidroServerWeb.InvitePreview
+  alias PidroServerWeb.DeferredInviteCaptureController
 
   @doc "Renders a known invite in any state, or a generic branded 404."
   @spec show(Plug.Conn.t(), map()) :: Plug.Conn.t()
@@ -18,6 +19,16 @@ defmodule PidroServerWeb.InvitePageController do
     case InvitePreview.get(code) do
       {:ok, preview} ->
         page = InvitePage.present(preview, device)
+
+        page =
+          Map.put(
+            page,
+            :deferred_capture_url,
+            if(page.table_action in [:join, :successor],
+              do: DeferredInviteCaptureController.capture_url(page.code)
+            )
+          )
+
         render(conn, :show, page: page, crawler?: crawler?)
 
       {:error, :not_found} ->
@@ -39,7 +50,7 @@ defmodule PidroServerWeb.InvitePageController do
           "img-src 'self' data: #{static_origin}",
           "style-src 'self' #{static_origin}",
           "script-src 'self' #{static_origin}",
-          "connect-src 'none'",
+          "connect-src #{DeferredInviteCaptureController.endpoint_origin()}",
           "object-src 'none'",
           "base-uri 'none'",
           "form-action 'none'",
