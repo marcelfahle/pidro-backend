@@ -80,6 +80,10 @@ defmodule PidroServerWeb.InvitePageControllerTest do
 
       assert attribute(ios, "[data-open-ios]", "href") == "pidro-mobile://j/#{invite.code}"
       assert attribute(ios, "[data-ios-fallback] a", "href") =~ "apps.apple.com"
+
+      assert attribute(ios, "[data-ios-fallback] a", "data-deferred-capture") ==
+               "http://localhost:4002/j/#{invite.code}/deferred"
+
       assert attribute(ios, "script[src]", "src") =~ "/assets/js/invite.js"
 
       assert attribute(ios, "[data-store=apple]", "data-deferred-capture") ==

@@ -107,7 +107,13 @@
         </div>
 
         <p class="invite-fallback" data-ios-fallback hidden>
-          Didn't open? <a href={@page.app_store_url}>Get Pidro on the App Store</a>.
+          Didn't open? <a
+            href={@page.app_store_url}
+            data-deferred-capture={if @page.device == :ios, do: @page.deferred_capture_url}
+            data-deferred-platform={if @page.device == :ios, do: "ios"}
+          >
+            Get Pidro on the App Store
+          </a>.
         </p>
       </div>
 

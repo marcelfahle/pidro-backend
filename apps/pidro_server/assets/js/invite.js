@@ -1,12 +1,9 @@
 const openButton = document.querySelector("[data-open-ios]");
-const storeCapture = document.querySelector("[data-deferred-capture]");
+const androidStoreCapture = document.querySelector('[data-deferred-platform="android"]');
 
 let androidPlatformMajor = null;
 
-if (
-  storeCapture?.dataset.deferredPlatform === "android" &&
-  navigator.userAgentData?.getHighEntropyValues
-) {
+if (androidStoreCapture && navigator.userAgentData?.getHighEntropyValues) {
   navigator.userAgentData
     .getHighEntropyValues(["platform", "platformVersion"])
     .then(({ platform, platformVersion }) => {
@@ -61,9 +58,9 @@ const captureDeferredInvite = (link) => {
   }).catch(() => {});
 };
 
-if (storeCapture) {
-  storeCapture.addEventListener("click", () => captureDeferredInvite(storeCapture));
-}
+document.querySelectorAll("[data-deferred-capture]").forEach((link) => {
+  link.addEventListener("click", () => captureDeferredInvite(link));
+});
 
 if (openButton) {
   let fallbackTimer;
