@@ -41,6 +41,10 @@ defmodule PidroServer.Invites.DeferredMatcher do
     GenServer.call(server, {:consume, signatures})
   end
 
+  @doc "Whether deferred capture and resolution are currently enabled."
+  @spec enabled?(GenServer.server()) :: boolean()
+  def enabled?(server \\ __MODULE__), do: GenServer.call(server, :enabled?)
+
   @impl true
   def init(opts) do
     secret_key_base =
@@ -63,6 +67,8 @@ defmodule PidroServer.Invites.DeferredMatcher do
   end
 
   @impl true
+  def handle_call(:enabled?, _from, state), do: {:reply, state.enabled, state}
+
   def handle_call({:capture, _signature, _invite_code}, _from, %{enabled: false} = state) do
     {:reply, :disabled, state}
   end

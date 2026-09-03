@@ -644,6 +644,45 @@ no-store`, varies by `User-Agent`, creates no session cookie, and never contains
 code, user id, seat hint or label. Unknown codes receive a generic branded `404` without echoing
 the attempted code. This route shares the `invite_preview` IP limit with the JSON preview.
 
+On a known mobile invite page, the matching App Store or Play Store button can send one
+URL-encoded `POST /j/:code/deferred` beacon directly to Phoenix. The page supplies platform, OS
+major, coarse screen class, locale and timezone; Phoenix adds the trusted client address. The
+request is accepted only from configured invite-page origins, although that browser guard is not
+authentication and direct clients can forge headers. Phoenix stores only a keyed digest for at
+most 30 minutes. Rendering the page, crawlers, desktop store buttons and the opposite-platform
+button never create a hint. Capture is limited at `invite_capture` (per IP) and
+`invite_capture_code` (per hashed normalized code).
+
+#### Resolve a Deferred Invite
+
+**Endpoint**: `POST /api/v1/invites/deferred`
+**Authentication**: None
+
+Native clients call this once on first installation with `platform` and a random, uninstall-scoped
+`install_id`. Android may include the Google Play Install Referrer query string in `referrer`; a
+single known `invite=<code>` value is authoritative. Fresh iOS and Android installs can instead
+include all five coarse fields: `os_major`, `screen_class`, `locale`, and `timezone` alongside
+`platform`. Android checks both its actual OS major and Chromium's reduced-UA version 10 tuple.
+
+```json
+{
+  "platform": "android",
+  "install_id": "1418b4d4-5698-4f09-8cd1-a9ef4d90db57",
+  "referrer": "invite=7KQ4M2XB",
+  "os_major": "16",
+  "screen_class": "compact",
+  "locale": "en-US",
+  "timezone": "Europe/Madrid"
+}
+```
+
+A unique match answers `{"data":{"invite":{"code":"7KQ4M2XB"}}}`. Missing, expired,
+malformed, unknown and ambiguous inputs all answer `{"data":{"invite":null}}`; the API never
+guesses or returns room/private invite data. A resolution attempt consumes every queried matcher
+bucket even when a valid Android referrer wins. The `install_id` is only a rotatable fairness key,
+not a device identifier. Limited at `invite_deferred` (five attempts per IP per 30 minutes) and
+`invite_deferred_install` (two per hashed install id per 30 minutes).
+
 #### Redeem an Invite
 
 **Endpoint**: `POST /api/v1/invites/:code/redeem`
@@ -663,7 +702,8 @@ the attempted code. This route shares the `invite_preview` IP limit with the JSO
   hint).
 - With `position` the seat is taken exactly or the request fails.
 - `platform` and `source` are recorded on the redemption row for the funnel; they never affect
-  seating.
+  seating. Public sources are `wa`, `im`, `sms`, `qr`, and `copy`; native internal arrivals also
+  accept `deferred` and `typed`. A first successful `typed` claim records `code_typed` once.
 
 **Response** (200 OK):
 ```json
@@ -1453,6 +1493,10 @@ the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
 | `room_join` | `POST /api/v1/rooms/:code/join` | 30 per 60 s | authenticated user |
 | `invite_mint` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate` | 10 per 60 s | authenticated user |
 | `invite_preview` | `GET /api/v1/invites/:code` | 60 per 60 s | client IP |
+| `invite_capture` | `POST /j/:code/deferred` | 20 per 1800 s | client IP |
+| `invite_capture_code` | `POST /j/:code/deferred` | 200 per 1800 s | SHA-256 of normalized invite code |
+| `invite_deferred` | `POST /api/v1/invites/deferred` | 5 per 1800 s | client IP |
+| `invite_deferred_install` | `POST /api/v1/invites/deferred` | 2 per 1800 s | SHA-256 of `install_id` |
 | `invite_redeem` | `POST /api/v1/invites/:code/redeem` | 10 per 60 s | authenticated user |
 | `guest_create` | `POST /api/v1/auth/guest` | 10 per 3600 s | client IP |
 | `guest_create_daily` | `POST /api/v1/auth/guest` | 40 per 86400 s | client IP |

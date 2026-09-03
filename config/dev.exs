@@ -83,6 +83,8 @@ config :pidro_server, dev_routes: true
 #   invite_page                300 per 60_000 ms         3_000 per 60_000 ms
 #   invite_capture             20 per 1_800_000 ms       200 per 1_800_000 ms
 #   invite_capture_code        200 per 1_800_000 ms      2_000 per 1_800_000 ms
+#   invite_deferred            5 per 1_800_000 ms        50 per 1_800_000 ms
+#   invite_deferred_install    2 per 1_800_000 ms        20 per 1_800_000 ms
 #   invite_redeem              10 per 60_000 ms          100 per 60_000 ms
 #   guest_create               10 per 3_600_000 ms       100 per 3_600_000 ms
 #   guest_create_daily         40 per 86_400_000 ms      400 per 86_400_000 ms
@@ -102,6 +104,8 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   invite_page: %{limit: 3_000, scale_ms: 60_000, key: {:param, "code"}},
   invite_capture: %{limit: 200, scale_ms: 1_800_000, key: :ip},
   invite_capture_code: %{limit: 2_000, scale_ms: 1_800_000, key: {:param, "code"}},
+  invite_deferred: %{limit: 50, scale_ms: 1_800_000, key: :ip},
+  invite_deferred_install: %{limit: 20, scale_ms: 1_800_000, key: :install_id},
   invite_redeem: %{limit: 100, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 100, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 400, scale_ms: 86_400_000, key: :ip},

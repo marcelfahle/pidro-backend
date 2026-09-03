@@ -59,6 +59,10 @@ defmodule PidroServerWeb.ApiSpec do
         | `room_join` | `POST /api/v1/rooms/:code/join` | 30 per minute | authenticated user |
         | `invite_mint` | `POST /api/v1/rooms/:code/invites`, `POST /api/v1/invites/:code/regenerate` | 10 per minute | authenticated user |
         | `invite_preview` | `GET /api/v1/invites/:code` | 60 per minute | client IP |
+        | `invite_capture` | `POST /j/:code/deferred` | 20 per 30 minutes | client IP |
+        | `invite_capture_code` | `POST /j/:code/deferred` | 200 per 30 minutes | hashed invite code |
+        | `invite_deferred` | `POST /api/v1/invites/deferred` | 5 per 30 minutes | client IP |
+        | `invite_deferred_install` | `POST /api/v1/invites/deferred` | 2 per 30 minutes | hashed `install_id` |
         | `invite_redeem` | `POST /api/v1/invites/:code/redeem` | 10 per minute | authenticated user |
         | `guest_create` | `POST /api/v1/auth/guest` | 10 per hour | client IP |
         | `guest_create_daily` | `POST /api/v1/auth/guest` | 40 per day | client IP |

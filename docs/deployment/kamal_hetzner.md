@@ -73,13 +73,18 @@ client address, so the release must learn the real client behind kamal-proxy.
   `RATE_LIMIT_<POLICY>_SCALE_MS`, where `<POLICY>` is one of `LOGIN`,
   `REGISTER`, `PASSWORD_RESET`, `PASSWORD_RESET_IDENTIFIER`,
   `PASSWORD_RESET_CONFIRM`, `ROOM_CREATE`, `ROOM_LOOKUP`, `ROOM_JOIN`,
-  `INVITE_MINT`, `INVITE_PREVIEW`, `INVITE_REDEEM`, `GUEST_CREATE`,
+  `INVITE_MINT`, `INVITE_PREVIEW`, `INVITE_CAPTURE`,
+  `INVITE_CAPTURE_CODE`, `INVITE_DEFERRED`, `INVITE_DEFERRED_INSTALL`,
+  `INVITE_REDEEM`, `GUEST_CREATE`,
   `GUEST_CREATE_DAILY`, `GUEST_CREATE_INSTALL` or `AUTH_UPGRADE`, for example
   `RATE_LIMIT_LOGIN_LIMIT: "20"`. There is no off switch: raise a limit and
   redeploy. Never roll back a release to fix limiter behaviour.
 - Limits are per node and per fixed window; counters reset on restart.
 - The invite and guest policies (production defaults in `config/config.exs`):
   `INVITE_MINT` 10/min per user, `INVITE_PREVIEW` 60/min per IP,
+  `INVITE_CAPTURE` 20/30min per IP, `INVITE_CAPTURE_CODE` 200/30min per
+  hashed invite code, `INVITE_DEFERRED` 5/30min per IP,
+  `INVITE_DEFERRED_INSTALL` 2/30min per hashed `install_id`,
   `INVITE_REDEEM` 10/min per user, `ROOM_JOIN` 30/min per user,
   `GUEST_CREATE` 10/hour per IP, `GUEST_CREATE_DAILY` 40/day per IP,
   `GUEST_CREATE_INSTALL` 3/hour per hashed `install_id`, `AUTH_UPGRADE` 10 per

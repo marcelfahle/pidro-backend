@@ -21,7 +21,7 @@ defmodule PidroServer.Invites.Redemption do
   @type t :: %__MODULE__{}
 
   @platforms ~w(ios android web)
-  @sources ~w(wa im sms qr copy)
+  @sources ~w(wa im sms qr copy deferred typed)
   @positions ~w(north east south west)
   @unknown "unknown"
   @castable [:position, :platform, :source]
@@ -43,7 +43,7 @@ defmodule PidroServer.Invites.Redemption do
   @spec platforms() :: [String.t()]
   def platforms, do: @platforms
 
-  @doc "The share channels a redeem may report."
+  @doc "The public share channels and internal arrival sources a redeem may report."
   @spec sources() :: [String.t()]
   def sources, do: @sources
 

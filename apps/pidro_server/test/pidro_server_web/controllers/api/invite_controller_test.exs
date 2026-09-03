@@ -514,6 +514,42 @@ defmodule PidroServerWeb.API.InviteControllerTest do
       assert Repo.get!(Invite, invite.id).redeem_count == 1
     end
 
+    test "typed and deferred sources are stored, with code_typed emitted once on a typed claim",
+         %{
+           conn: conn
+         } do
+      {host, room} = host_and_room()
+      typed_invite = mint!(room, host)
+      anna = AccountsFixtures.guest_fixture(%{display_name: "Anna"})
+
+      assert %{"position" => _position} =
+               conn
+               |> redeem(anna, typed_invite.code, %{"platform" => "ios", "source" => "typed"})
+               |> data(200)
+
+      assert [%Redemption{source: "typed"}] = redemptions(typed_invite)
+      assert [_event] = events(typed_invite, "code_typed")
+
+      assert build_conn()
+             |> redeem(anna, typed_invite.code, %{"platform" => "ios", "source" => "typed"})
+             |> json_response(200)
+
+      assert [_event] = events(typed_invite, "code_typed")
+
+      deferred_invite = mint!(room, host)
+      ben = AccountsFixtures.guest_fixture(%{display_name: "Ben"})
+
+      assert build_conn()
+             |> redeem(ben, deferred_invite.code, %{
+               "platform" => "android",
+               "source" => "deferred"
+             })
+             |> json_response(200)
+
+      assert [%Redemption{source: "deferred"}] = redemptions(deferred_invite)
+      assert events(deferred_invite, "code_typed") == []
+    end
+
     test "invite_redeem at limit 1: the same user's second redeem is 429", %{conn: conn} do
       with_limit(:invite_redeem, 1, 60_000)
       {host, room} = host_and_room()

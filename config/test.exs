@@ -91,6 +91,12 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
     scale_ms: 1_800_000,
     key: {:param, "code"}
   },
+  invite_deferred: %{limit: 1_000_000, scale_ms: 1_800_000, key: :ip},
+  invite_deferred_install: %{
+    limit: 1_000_000,
+    scale_ms: 1_800_000,
+    key: :install_id
+  },
   invite_redeem: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
   guest_create: %{limit: 1_000_000, scale_ms: 3_600_000, key: :ip},
   guest_create_daily: %{limit: 1_000_000, scale_ms: 86_400_000, key: :ip},

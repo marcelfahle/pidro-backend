@@ -95,6 +95,9 @@ defmodule PidroServerWeb.Router do
     get "/rooms/:code", RoomController, :show, private: %{rate_limit: [:room_lookup]}
 
     # Invite preview for landing pages; never exposes the room code (KD2)
+    post "/invites/deferred", DeferredInviteController, :create,
+      private: %{rate_limit: [:invite_deferred, :invite_deferred_install]}
+
     get "/invites/:code", InviteController, :show, private: %{rate_limit: [:invite_preview]}
   end
 

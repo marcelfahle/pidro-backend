@@ -241,8 +241,8 @@ defmodule PidroServer.Invites do
             platform: redemption.platform
           }
 
-          case insert_event(invite_id, event_attrs) do
-            {:ok, _event} -> {redemption, :created}
+          case insert_claim_events(invite_id, redemption, event_attrs) do
+            :ok -> {redemption, :created}
             {:error, changeset} -> Repo.rollback(changeset)
           end
 
@@ -263,6 +263,29 @@ defmodule PidroServer.Invites do
   @spec record_event(Invite.t(), map()) :: {:ok, Event.t()} | {:error, Ecto.Changeset.t()}
   def record_event(%Invite{id: invite_id}, attrs) when is_map(attrs) do
     insert_event(invite_id, attrs)
+  end
+
+  defp insert_claim_events(invite_id, redemption, seat_claimed_attrs) do
+    attrs =
+      if redemption.source == "typed" do
+        [
+          seat_claimed_attrs,
+          %{
+            kind: "code_typed",
+            user_id: redemption.user_id,
+            platform: redemption.platform
+          }
+        ]
+      else
+        [seat_claimed_attrs]
+      end
+
+    Enum.reduce_while(attrs, :ok, fn event_attrs, :ok ->
+      case insert_event(invite_id, event_attrs) do
+        {:ok, _event} -> {:cont, :ok}
+        {:error, changeset} -> {:halt, {:error, changeset}}
+      end
+    end)
   end
 
   @doc """

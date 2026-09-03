@@ -269,11 +269,75 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         platform: %Schema{type: :string, enum: [:ios, :android, :web]},
         source: %Schema{
           type: :string,
-          enum: [:wa, :im, :sms, :qr, :copy],
-          description: "How the link travelled"
+          enum: [:wa, :im, :sms, :qr, :copy, :deferred, :typed],
+          description: "Public share channel or internal native arrival source"
         }
       },
       example: %{"platform" => "ios", "source" => "wa"}
+    })
+  end
+
+  defmodule DeferredInviteRequest do
+    @moduledoc "First-install deferred invite request."
+
+    OpenApiSpex.schema(%{
+      title: "DeferredInviteRequest",
+      description:
+        "One-shot native request. Fingerprint fields are all-or-none; referrer is Android-only.",
+      type: :object,
+      properties: %{
+        platform: %Schema{type: :string, enum: [:ios, :android]},
+        install_id: %Schema{
+          type: :string,
+          minLength: 1,
+          maxLength: 64,
+          description: "Random uninstall-scoped fairness key; not a device identifier"
+        },
+        referrer: %Schema{
+          type: :string,
+          maxLength: 1024,
+          description: "Android Play Install Referrer query string"
+        },
+        os_major: %Schema{type: :string, pattern: "^[0-9]{1,3}$"},
+        screen_class: %Schema{type: :string, enum: [:compact, :medium, :large]},
+        locale: %Schema{type: :string, maxLength: 35, example: "en-US"},
+        timezone: %Schema{type: :string, maxLength: 64, example: "Europe/Madrid"}
+      },
+      required: [:platform, :install_id],
+      example: %{
+        "platform" => "android",
+        "install_id" => "1418b4d4-5698-4f09-8cd1-a9ef4d90db57",
+        "referrer" => "invite=7KQ4M2XB",
+        "os_major" => "16",
+        "screen_class" => "compact",
+        "locale" => "en-US",
+        "timezone" => "Europe/Madrid"
+      }
+    })
+  end
+
+  defmodule DeferredInviteResponse do
+    @moduledoc "Matched invite code or the uniform empty result."
+
+    OpenApiSpex.schema(%{
+      title: "DeferredInviteResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{
+          type: :object,
+          properties: %{
+            invite: %Schema{
+              type: :object,
+              nullable: true,
+              properties: %{code: %Schema{type: :string, minLength: 8, maxLength: 8}},
+              required: [:code]
+            }
+          },
+          required: [:invite]
+        }
+      },
+      required: [:data],
+      example: %{"data" => %{"invite" => %{"code" => "7KQ4M2XB"}}}
     })
   end
 
