@@ -117,6 +117,18 @@ These variables also go under `env.clear` in
 [config/deploy.yml](../../config/deploy.yml). All are optional; each replaces
 only the key it names, and defaults live in `config/config.exs`.
 
+- `DEFERRED_INVITES_ENABLED` is `false` by default. Deploy and verify the
+  canonical privacy-policy disclosure before setting it to `true`. Deferred
+  invite hints live only in the named `PidroServer.Invites.DeferredMatcher`
+  process and are removed on consumption, restart, or after 30 minutes. Disable
+  the flag and redeploy to stop new capture and resolution immediately.
+- Deferred matching requires exactly one Phoenix application replica. The
+  checked-in `servers.web` list deliberately contains one host. Before adding a
+  second app replica, replace the node-local matcher with a Pidro-owned shared
+  ephemeral store or cluster-wide single owner that preserves the 30-minute
+  hard-deletion contract. A rolling deploy can evict hints early; manual invite
+  code entry is the recovery path.
+
 - `INVITE_LINK_BASE_URL` (default `https://www.pidro.online/j`) is the base of
   every
   invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>` and
@@ -162,6 +174,12 @@ association signing data or caching, invite metadata drift, or a broken
 iOS/Android/desktop render branch. `GET /j/:code` uses its own per-invite-code
 limit because the origin sees a Vercel edge address; it does not share the
 mobile API preview bucket.
+
+Phase 4 has a separate privacy-first rollout: deploy the marketing privacy
+addendum while `DEFERRED_INVITES_ENABLED` remains `false`, deploy Phoenix, then
+enable the flag and verify direct browser-to-`app.pidro.online` capture before
+shipping the native build. Roll back the mobile bootstrap first, then disable
+the flag; remove the disclosure only after the data path is no longer shipped.
 
 Universal Link and App Link verification is cached by Apple and Android. After
 cutover, verify the public AASA response first, allow for Apple CDN propagation,

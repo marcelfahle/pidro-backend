@@ -206,6 +206,13 @@ config :pidro_server, PidroServerWeb.WellKnownController,
 # INVITE_LINK_BASE_URL when that variable is set.
 config :pidro_server, PidroServer.Invites, link_base_url: "https://www.pidro.online/j"
 
+# Deferred invite hints are node-local and disabled until the matching privacy
+# disclosure is live. Runtime configuration may enable the 30-minute store.
+config :pidro_server, PidroServer.Invites.DeferredMatcher,
+  enabled: false,
+  retention_ms: 1_800_000,
+  max_candidates: 10_000
+
 # Idle-guest reaper (PidroServer.Accounts.GuestReaper): every interval_ms it
 # deletes guest accounts idle for more than max_idle_days with the account
 # deletion recipe. config/test.exs disables it (the SQL sandbox has no owner

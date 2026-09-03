@@ -344,3 +344,23 @@ if guest_reaper_overrides != [] and Code.ensure_loaded?(PidroServer.Accounts.Gue
          PidroServer.Accounts.GuestReaper,
          Keyword.merge(guest_reaper_existing, guest_reaper_overrides)
 end
+
+# Deferred invite matching stays disabled until the public privacy disclosure
+# is deployed and verified. Matching data is always node-local and the fixed
+# application retention remains 30 minutes; only the feature gate is runtime
+# configurable.
+deferred_invites_enabled = System.get_env("DEFERRED_INVITES_ENABLED")
+
+if deferred_invites_enabled != nil and
+     Code.ensure_loaded?(PidroServer.Invites.DeferredMatcher) do
+  deferred_matcher_existing =
+    Application.get_env(:pidro_server, PidroServer.Invites.DeferredMatcher, [])
+
+  config :pidro_server,
+         PidroServer.Invites.DeferredMatcher,
+         Keyword.put(
+           deferred_matcher_existing,
+           :enabled,
+           deferred_invites_enabled in ~w(true TRUE 1 yes YES)
+         )
+end
