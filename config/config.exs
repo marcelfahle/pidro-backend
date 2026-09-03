@@ -28,6 +28,7 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   empty_room_ttl_ms: 30_000,
   finished_room_ttl_ms: 300_000,
   idle_waiting_ttl_ms: 600_000,
+  invited_waiting_ttl_ms: 7_200_000,
   reconnect_turn_extension_ms: 10_000,
   health_check_interval_ms: 60_000,
   presence_debounce_ms: 3_000,
@@ -42,10 +43,11 @@ config :pidro_server, PidroServer.Games.Lifecycle,
 
 # Rate-limit policies for PidroServerWeb.Plugs.RateLimit: `limit` requests per
 # `scale_ms` window, keyed by the client address (:ip), the authenticated user
-# (:user) or the hashed identifier/email param (:identifier). Numeric only, no
-# boolean off switch. config/dev.exs restates every policy at 10x for the
-# frontend end-to-end harness, config/test.exs sets 1_000_000, and
-# config/runtime.exs merges RATE_LIMIT_<POLICY>_LIMIT / _SCALE_MS overrides.
+# (:user), the hashed identifier/email param (:identifier) or the hashed
+# install_id param (:install_id). Numeric only, no boolean off switch.
+# config/dev.exs restates every policy at 10x for the frontend end-to-end
+# harness, config/test.exs sets 1_000_000, and config/runtime.exs merges
+# RATE_LIMIT_<POLICY>_LIMIT / _SCALE_MS overrides.
 config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   login: %{limit: 10, scale_ms: 60_000, key: :ip},
   register: %{limit: 10, scale_ms: 600_000, key: :ip},
@@ -53,7 +55,15 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   password_reset_identifier: %{limit: 3, scale_ms: 3_600_000, key: :identifier},
   password_reset_confirm: %{limit: 5, scale_ms: 900_000, key: :ip},
   room_create: %{limit: 10, scale_ms: 60_000, key: :user},
-  room_lookup: %{limit: 120, scale_ms: 60_000, key: :ip}
+  room_lookup: %{limit: 120, scale_ms: 60_000, key: :ip},
+  invite_mint: %{limit: 10, scale_ms: 60_000, key: :user},
+  invite_preview: %{limit: 60, scale_ms: 60_000, key: :ip},
+  invite_redeem: %{limit: 10, scale_ms: 60_000, key: :user},
+  guest_create: %{limit: 10, scale_ms: 3_600_000, key: :ip},
+  guest_create_daily: %{limit: 40, scale_ms: 86_400_000, key: :ip},
+  guest_create_install: %{limit: 3, scale_ms: 3_600_000, key: :install_id},
+  room_join: %{limit: 30, scale_ms: 60_000, key: :user},
+  auth_upgrade: %{limit: 10, scale_ms: 600_000, key: :ip}
 
 # PidroServerWeb.Plugs.TrustedProxy honours X-Forwarded-For / X-Forwarded-Proto
 # only when this is true and the TCP peer is proxy-side. config/runtime.exs sets
@@ -156,6 +166,10 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Parameters Phoenix.Logger redacts from request logs. install_id is a
+# per-device identifier sent with guest creation and must never be logged.
+config :phoenix, :filter_parameters, ["password", "install_id"]
+
 # ---------------------------------------------------------------------------
 # Well-known association files (AASA / assetlinks.json), served by
 # PidroServerWeb.WellKnownController. Production-correct defaults for every
@@ -180,6 +194,22 @@ config :pidro_server, PidroServerWeb.WellKnownController,
       ]
     }
   ]
+
+# Invite links (PidroServer.Invites.url/1) are `<link_base_url>/<code>`, the
+# landing page proxied on pidro.online. config/dev.exs and config/test.exs point
+# at the local endpoint; config/runtime.exs replaces the value from
+# INVITE_LINK_BASE_URL when that variable is set.
+config :pidro_server, PidroServer.Invites, link_base_url: "https://pidro.online/j"
+
+# Idle-guest reaper (PidroServer.Accounts.GuestReaper): every interval_ms it
+# deletes guest accounts idle for more than max_idle_days with the account
+# deletion recipe. config/test.exs disables it (the SQL sandbox has no owner
+# for a timer-driven sweep); config/runtime.exs merges GUEST_REAPER_ENABLED,
+# GUEST_REAPER_INTERVAL_MS and GUEST_REAPER_MAX_IDLE_DAYS when set.
+config :pidro_server, PidroServer.Accounts.GuestReaper,
+  enabled: true,
+  interval_ms: 3_600_000,
+  max_idle_days: 30
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

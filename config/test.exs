@@ -27,6 +27,12 @@ config :pidro_server, :password_reset,
   debug_tokens: true,
   reset_url_base: "http://localhost:5173"
 
+config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4002/j"
+
+# The reaper never schedules under the SQL sandbox; tests call
+# PidroServer.Accounts.GuestReaper.run_once/0 from their own process.
+config :pidro_server, PidroServer.Accounts.GuestReaper, enabled: false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 
@@ -46,6 +52,7 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   empty_room_ttl_ms: 100,
   finished_room_ttl_ms: 500,
   idle_waiting_ttl_ms: 500,
+  invited_waiting_ttl_ms: 500,
   reconnect_turn_extension_ms: 50,
   health_check_interval_ms: 500,
   presence_debounce_ms: 50,
@@ -68,7 +75,15 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   password_reset_identifier: %{limit: 1_000_000, scale_ms: 3_600_000, key: :identifier},
   password_reset_confirm: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
   room_create: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
-  room_lookup: %{limit: 1_000_000, scale_ms: 60_000, key: :ip}
+  room_lookup: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
+  invite_mint: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  invite_preview: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
+  invite_redeem: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  guest_create: %{limit: 1_000_000, scale_ms: 3_600_000, key: :ip},
+  guest_create_daily: %{limit: 1_000_000, scale_ms: 86_400_000, key: :ip},
+  guest_create_install: %{limit: 1_000_000, scale_ms: 3_600_000, key: :install_id},
+  room_join: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  auth_upgrade: %{limit: 1_000_000, scale_ms: 600_000, key: :ip}
 
 # Compile dev-only LiveView routes in test to satisfy verified route checks
 config :pidro_server, dev_routes: true

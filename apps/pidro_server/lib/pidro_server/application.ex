@@ -10,6 +10,9 @@ defmodule PidroServer.Application do
     children = [
       PidroServerWeb.Telemetry,
       PidroServer.Repo,
+      # Idle-guest sweep; needs the Repo and the RoomManager (started below by
+      # Games.Supervisor) only when a run fires, never at start
+      PidroServer.Accounts.GuestReaper,
       {DNSCluster, query: Application.get_env(:pidro_server, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: PidroServer.PubSub},
       # Presence tracking for connected users

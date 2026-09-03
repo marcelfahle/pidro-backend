@@ -149,11 +149,10 @@ defmodule PidroServerWeb.API.RoomControllerTest do
              |> json_response(429)
     end
 
-    test "GET /rooms and POST /rooms/:code/join are never limited, even at limit 0", %{conn: conn} do
+    test "GET /rooms is never limited, even at limit 0", %{conn: conn} do
       with_all_limits(0)
       host = AccountsFixtures.user_fixture()
-      joiner = AccountsFixtures.user_fixture()
-      {:ok, room} = RoomManager.create_room(host.id, %{name: "Open"})
+      {:ok, _room} = RoomManager.create_room(host.id, %{name: "Open"})
 
       assert conn |> from_ip({10, 2, 0, 5}) |> get(~p"/api/v1/rooms") |> json_response(200)
 
@@ -161,15 +160,264 @@ defmodule PidroServerWeb.API.RoomControllerTest do
              |> from_ip({10, 2, 0, 5})
              |> get(~p"/api/v1/rooms")
              |> json_response(200)
+    end
 
-      joined =
+    test "room_join at limit 1: the same user's second POST /rooms/:code/join is 429 (R28)", %{
+      conn: conn
+    } do
+      with_limit(:room_join, 1, 60_000)
+      host = AccountsFixtures.user_fixture()
+      joiner = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Open"})
+
+      assert conn
+             |> from_ip({10, 2, 0, 6})
+             |> as_user(joiner)
+             |> post(~p"/api/v1/rooms/#{room.code}/join", %{})
+             |> json_response(200)
+
+      # A different address does not help: the bucket is the user id.
+      denied =
         build_conn()
-        |> from_ip({10, 2, 0, 5})
-        |> put_req_header("authorization", "Bearer #{Token.generate(joiner)}")
+        |> from_ip({10, 2, 0, 7})
+        |> as_user(joiner)
         |> post(~p"/api/v1/rooms/#{room.code}/join", %{})
 
-      assert joined.status in 200..299
+      assert %{"errors" => [%{"code" => "RATE_LIMITED"}]} = json_response(denied, 429)
     end
+  end
+
+  describe "index/2 with invites" do
+    test "R24: a room with a live invite stays in the public list", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Invited"})
+      {:ok, invite} = create_invite(room, host)
+      :ok = RoomManager.note_invite(room.code, invite.expires_at)
+
+      rooms =
+        conn
+        |> get(~p"/api/v1/rooms")
+        |> json_response(200)
+        |> get_in(["data", "rooms"])
+
+      assert listed = Enum.find(rooms, &(&1["code"] == room.code))
+      assert listed["locked"] == false
+    end
+  end
+
+  describe "seat/2" do
+    test "the host moves a player to a vacant seat and the room carries locked and display names",
+         %{conn: conn} do
+      host = AccountsFixtures.user_fixture(%{display_name: "Marcel"})
+      guest = AccountsFixtures.guest_fixture(%{display_name: "Ben"})
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Seats"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, guest.id)
+
+      response =
+        conn
+        |> as_user(host)
+        |> post(~p"/api/v1/rooms/#{room.code}/seat", %{
+          "position" => "west",
+          "user_id" => guest.id
+        })
+        |> json_response(200)
+
+      assert %{"room" => room_json} = response["data"]
+      assert room_json["locked"] == false
+      assert room_json["positions"]["west"] == guest.id
+      assert room_json["positions"]["east"] == nil
+      assert room_json["seats"]["west"]["display_name"] == "Ben"
+      assert room_json["seats"]["west"]["username"] == guest.username
+      assert room_json["seats"]["north"]["display_name"] == "Marcel"
+    end
+
+    test "a seated non-host may move only themselves", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      mover = AccountsFixtures.user_fixture()
+      other = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Seats"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, mover.id)
+      {:ok, _room, :south} = RoomManager.join_room(room.code, other.id)
+
+      assert %{"errors" => [%{"code" => "NOT_OWNER"}]} =
+               conn
+               |> as_user(mover)
+               |> post(~p"/api/v1/rooms/#{room.code}/seat", %{
+                 "position" => "west",
+                 "user_id" => other.id
+               })
+               |> json_response(403)
+
+      assert %{"room" => %{"positions" => %{"west" => west}}} =
+               build_conn()
+               |> as_user(mover)
+               |> post(~p"/api/v1/rooms/#{room.code}/seat", %{"position" => "west"})
+               |> data(200)
+
+      assert west == mover.id
+    end
+
+    test "a taken target seat is 422 SEAT_TAKEN and a bad position is 422 INVALID_POSITION", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      guest = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Seats"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, guest.id)
+
+      assert %{"errors" => [%{"code" => "SEAT_TAKEN"}]} =
+               conn
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/seat", %{
+                 "position" => "east",
+                 "user_id" => host.id
+               })
+               |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "INVALID_POSITION"}]} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/seat", %{"position" => "up"})
+               |> json_response(422)
+    end
+  end
+
+  describe "lock/2" do
+    test "AE12: a locked table refuses joins with 423 until the host unlocks it", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      chris = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Locked"})
+
+      assert %{"room" => %{"locked" => true}} =
+               conn
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/lock", %{"locked" => true})
+               |> data(200)
+
+      assert %{"errors" => [%{"code" => "TABLE_LOCKED"}]} =
+               build_conn()
+               |> as_user(chris)
+               |> post(~p"/api/v1/rooms/#{room.code}/join", %{})
+               |> json_response(423)
+
+      assert %{"room" => %{"locked" => false}} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/lock", %{"locked" => false})
+               |> data(200)
+
+      assert build_conn()
+             |> as_user(chris)
+             |> post(~p"/api/v1/rooms/#{room.code}/join", %{})
+             |> json_response(200)
+    end
+
+    test "a non-host gets 403, a playing room 409 ROOM_NOT_WAITING and a non-boolean 422", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      other = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Locked"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, other.id)
+
+      assert %{"errors" => [%{"code" => "NOT_OWNER"}]} =
+               conn
+               |> as_user(other)
+               |> post(~p"/api/v1/rooms/#{room.code}/lock", %{"locked" => true})
+               |> json_response(403)
+
+      assert build_conn()
+             |> as_user(host)
+             |> post(~p"/api/v1/rooms/#{room.code}/lock", %{"locked" => "yes"})
+             |> json_response(422)
+
+      :ok = RoomManager.update_room_status(room.code, :playing)
+
+      assert %{"errors" => [%{"code" => "ROOM_NOT_WAITING"}]} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/lock", %{"locked" => true})
+               |> json_response(409)
+    end
+  end
+
+  describe "kick/2" do
+    test "AE11: the host kicks a seat, it is vacant, and the kicked user cannot join again", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      ben = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Kick"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, ben.id)
+
+      assert %{"room" => %{"positions" => %{"east" => nil}}} =
+               conn
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/kick", %{"position" => "east"})
+               |> data(200)
+
+      assert %{"errors" => [%{"code" => "KICKED"}]} =
+               build_conn()
+               |> as_user(ben)
+               |> post(~p"/api/v1/rooms/#{room.code}/join", %{})
+               |> json_response(403)
+    end
+
+    test "a non-host gets 403, the host's own seat 422 SEAT_NOT_KICKABLE and a playing room 409",
+         %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      other = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Kick"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, other.id)
+
+      assert %{"errors" => [%{"code" => "NOT_OWNER"}]} =
+               conn
+               |> as_user(other)
+               |> post(~p"/api/v1/rooms/#{room.code}/kick", %{"position" => "north"})
+               |> json_response(403)
+
+      assert %{"errors" => [%{"code" => "SEAT_NOT_KICKABLE"}]} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/kick", %{"position" => "north"})
+               |> json_response(422)
+
+      :ok = RoomManager.update_room_status(room.code, :playing)
+
+      assert %{"errors" => [%{"code" => "ROOM_NOT_WAITING"}]} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/kick", %{"position" => "east"})
+               |> json_response(409)
+    end
+  end
+
+  describe "join/2 contract" do
+    test "a taken explicit seat still answers 422 SEAT_TAKEN", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      joiner = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Join"})
+
+      assert %{"errors" => [%{"code" => "SEAT_TAKEN"}]} =
+               conn
+               |> as_user(joiner)
+               |> post(~p"/api/v1/rooms/#{room.code}/join", %{"position" => "north"})
+               |> json_response(422)
+    end
+  end
+
+  defp as_user(conn, user) do
+    put_req_header(conn, "authorization", "Bearer #{Token.generate(user)}")
+  end
+
+  defp data(conn, status), do: json_response(conn, status)["data"]
+
+  defp create_invite(room, host) do
+    PidroServer.Invites.create_invite(%{
+      room_id: room.id,
+      room_code: room.code,
+      host_user_id: host.id
+    })
   end
 
   defp create_room_as(conn, user, ip) do

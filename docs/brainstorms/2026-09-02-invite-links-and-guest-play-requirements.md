@@ -14,7 +14,8 @@ A host taps **Invite** in the waiting room and gets a short link, `https://pidro
 plus a share sheet. Anyone who taps it lands at that table: if the app is installed the OS opens
 it straight into the table; if not, a server-rendered landing page sends them to the store and
 the app picks the invite back up on first launch (deterministically on Android, best-effort plus
-a "type the code" fallback on iOS); on a desktop they play in the browser. Nobody registers to
+a "type the code" fallback on iOS); on desktop the page hands off to a phone by QR until web join
+ships in phase 6. Nobody registers to
 play. An invitee types a display name, becomes a **guest user row** with a real id, claims a
 seat, plays the whole game, and is asked to "save your result" only after the first game ends.
 Saving is an in-place upgrade of the same row, so the game they just won stays theirs. One link
@@ -26,14 +27,14 @@ controls in the waiting room.
 | # | You proposed | Recommendation | Why |
 |---|---|---|---|
 | D1 | Invite to a seat *or* to the table, let the host pick | **One link per table.** The invite carries an optional *seat hint* (partner seat, or a team). The server tries the hint and falls back to any open seat. Host gets "Invite partner" and "Invite anyone" from the same mechanism. | Every successful card platform (Board Game Arena, Trickster, CardzMania, Tabletopia) uses a table link with seat picking; only Bridge Base Online binds seats, and it is the clunkiest. Per-seat links create "which link did I send whom" and dead seats when a friend cannot come. A group chat gets *one* link. |
-| D2 | A short code "or whatever" | **Invite code ≠ room code.** 8 chars Crockford Base32 (`0-9A-Z` minus `I L O U`), shown `7KQ4-M2XB`, case-insensitive, generated with `:crypto.strong_rand_bytes`, stored as an `invites` row. The 4-char room code stays internal. | Room codes today are 1.7 M possibilities, `Enum.random`, no collision check, and `GET /api/v1/rooms/:code` is public and unthrottled: the whole space is enumerable in minutes. Never put it in a link. |
+| D2 | A short code "or whatever" | **Invite code ≠ room code.** 8 chars Crockford Base32 (`0-9A-Z` minus `I L O U`), shown `7KQ4-M2XB`, case-insensitive, generated with `:crypto.strong_rand_bytes`, stored as an `invites` row. The 4-char room code stays internal. | Phase 0 secured room-code generation and lookup, but room codes remain short, ephemeral lobby identifiers rather than revocable, countable, durable invite identities. Never put one in a share link. |
 | D3 | Link expires "after some time, maybe" | **Multi-use, bound to the table's life** (dies when the table closes or starts and fills), hard ceiling 24 h, host can revoke/regenerate, and a code is **never reissued**. | Chat apps fetch links before anyone taps (WhatsApp fetches while you type), so single-use links break. Expired Discord codes were re-registered by attackers in 2025 to deliver malware; tombstone, never recycle. |
 | D4 | Register after the first game | **Yes, and the guest must be a real `users` row from the first tap.** Upgrade = `UPDATE` the same row (email, password, `guest=false`). Prompt once at game over, skippable, never blocks. | Chess.com and Lichess keep guest games out of accounts, so their guests register *before* playing, which defeats the point. Our stats tables reference users by bare UUID with no foreign keys, so an in-place upgrade carries every game, the rating, XP and achievements with zero migration. Apple 5.1.1(v) also requires in-app deletion for guests. |
 | D5 | "Maybe even the web later" | **The web landing page ships in v1 and is the reliable path.** Phoenix renders `GET /j/:code` (HTML + Open Graph). `pidro.online` proxies `/j/*` and `/.well-known/*` to Phoenix. "Play in browser" can wait, but is cheap because the web client exists. | Universal Links fail in Instagram/Messenger/TikTok/Telegram in-app browsers, when pasted into the address bar, and for anyone who once chose "Open in Safari". Every one of those lands on the web page. Previews need server-rendered OG tags; a Vite SPA cannot produce them. |
-| D6 | "If not installed, go to the store and drop you in with the same link" | **Android: yes, deterministic** (Play Install Referrer). **iOS: no first-party way exists.** Use Detour (Software Mansion, MIT, expo-router native) for probabilistic matching, and always include the code in the share text with a "Have a code?" screen on first launch. Expect roughly 70–80 % automatic on iOS, the rest type or paste 8 characters. | Apple offers nothing; SKAdNetwork gives no destination; App Clips are a separate binary with poor Expo support. Branch/AppsFlyer solve ad attribution we do not need yet, at ~$500+/month once we grow. |
+| D6 | "If not installed, go to the store and drop you in with the same link" | **Android: yes, deterministic** (Play Install Referrer). **iOS: no first-party way exists.** Use a Phoenix-owned, 30-minute probabilistic matcher with hard deletion, and always include the code in the share text with a "Have a code?" screen on first launch. Measure the automatic match rate; do not assume a vendor claim. | Apple offers nothing; SKAdNetwork gives no destination; App Clips are a separate binary with poor Expo support. A self-hosted matcher avoids sending visitor device data to a third party, while Branch/AppsFlyer solve ad attribution we do not need yet at substantial cost. |
 | D7 | "It should open the app right away" | **Universal Links + App Links on `pidro.online`**, custom scheme `pidro-mobile://` only as the landing page's fallback button. | Schemes can be squatted by any app; domain-bound links cannot. `pidro.online` is already associated with `LSFK7YF82G.com.oneapps.pidro` (the AASA is live and cached by Apple's CDN for the legacy app), so we add a path, not a domain. |
 | D8 | (not asked) Can guests invite? | **Yes.** Guests can play, rejoin, create tables and invite. Registration unlocks: showing up in leaderboards/profile history, a second device, friends (future), ranked (future). | The loop is invite → play → invite. Apple lets us require accounts for inviting, but we would be cutting our own k-factor. |
-| D9 | (not asked) Prerequisites | Rate limiting (Hammer), CSPRNG room codes with collision check, `guest` no longer mass-assignable, `.well-known` served by Phoenix. | The backend has none of these today; guest creation without them is an open account faucet. |
+| D9 | (not asked) Prerequisites | Rate limiting (Hammer), CSPRNG room codes with collision check, `guest` no longer mass-assignable, `.well-known` served by Phoenix. | Completed in phase 0 / PR #19 because guest creation without these controls would be an open account faucet. |
 
 ## User flows
 
@@ -49,7 +50,7 @@ controls in the waiting room.
 2. Resolution (details in the platform matrix):
    - App installed and the OS honors the link → app opens on `/join/7KQ4M2XB`.
    - Otherwise → landing page: "Marcel invited you to a Pidro table · 2 of 4 seats taken". Buttons: **Open app** (scheme / `intent://`), **Get the app** (store). (**Play in browser** is deferred with web join, see answered question 2; desktop shows the store buttons and a QR code.)
-   - Not installed → store → first launch → app resolves the pending invite (Install Referrer / Detour / "Have a code?") → `/join/7KQ4M2XB`.
+   - Not installed → store → first launch → app resolves the pending invite (Install Referrer / the Phoenix deferred matcher / "Have a code?") → `/join/7KQ4M2XB`.
 3. `/join/:code` in the app: waits for auth hydration and socket, shows the table preview, then:
    - No session → one field: "What should we call you?" (prefilled from the invite label if any) → `POST /auth/guest` → token stored.
    - Existing session (guest or registered) → skip.
@@ -130,7 +131,7 @@ users (additions)
 | `POST /api/v1/auth/guest` `{display_name, invite_code, install_id, platform}` | public, **requires a valid invite**, rate-limited per IP and install_id | creates `guest: true` row, returns token + user |
 | `POST /api/v1/auth/upgrade` `{email, password, username?}` | guest token | same id, `guest=false`, bump `token_version`, new token; 409 `EMAIL_TAKEN` / `USERNAME_TAKEN` |
 | `DELETE /api/v1/auth/me` | any | account + data deletion (Apple 5.1.1(v)) per the retention rules in "Abuse, privacy, compliance": the `users` row, `player_profiles` and `player_achievements` are deleted; `game_stats` keeps the bare UUID, which then resolves to nobody |
-| `POST /api/v1/invites/deferred` `{platform, install_referrer?, fingerprint}` | any | server-side deferred resolution (Detour replaces this if we adopt its backend) |
+| `POST /api/v1/invites/deferred` `{platform, install_referrer?, fingerprint}` | any | server-side deferred resolution in Phoenix (phase 4) |
 | `POST /api/v1/rooms/:code/seat` `{position}` · `POST …/lock` · `POST …/kick` | seated / host | move seat in the waiting room, lock table, remove a player |
 | `GET /j/:code` · `GET /.well-known/*` | public | landing page and association files |
 
@@ -152,14 +153,14 @@ Lobby channel pushes `room_updated` already; add `invite_redeemed` (`{position, 
 
 **Mobile (`packages/mobile`)**
 - `app.json`: `ios.associatedDomains: ["applinks:pidro.online", "applinks:www.pidro.online"]`, `android.intentFilters` (autoVerify, hosts above, `pathPrefix: "/j"`); per-variant in `app.config.js`; add the missing `preview` EAS profile.
-- `app/+native-intent.tsx`: map `/j/:code` (https and scheme) → `/join/:code`; Detour's `createDetourNativeIntentHandler` with `linkProcessingMode: 'deferred-only'`.
+- `app/+native-intent.tsx`: map `/j/:code` (https and scheme) → `/join/:code`; phase 4 feeds the Phoenix deferred-match result through the same pending-invite path on first launch.
 - `app/join/[code].tsx`: preview → name entry → redeem → `router.replace(gameRoute(code))`. Handles every landing state and `ALREADY_IN_ROOM`.
 - `app/index.tsx` gate: `pendingInvite` wins over the login redirect; unauthenticated + no invite → login as today, plus "Have an invite code?" entry.
 - `app/game/[code].tsx`: add the missing auth gate (today a cold deep link stalls).
 - Waiting room (`components/game/WaitingTable.tsx`): Invite button, share sheet (`expo-sharing`, `expo-clipboard`), QR, seat move/lock/kick for the host, "joining…" placeholders.
 - Post-game: "Save this result" card after `progression_summary`; upgrade form; re-prompt policy.
 - Settings: Delete account.
-- Packages: `expo-sharing`, `expo-clipboard`, `@swmansion/react-native-detour` + its peers (`@react-native-async-storage/async-storage`, `expo-application`, `expo-device`, `expo-localization`, `react-native-device-info`), `react-native-qrcode-svg` (or draw with Skia).
+- Phase-3 packages: `expo-sharing`, `expo-clipboard`, `i18n-js`, `expo-localization`, `react-native-qrcode-svg` (or draw with Skia). Phase 4 chooses the minimum device-data and Play Install Referrer packages needed by the self-hosted matcher.
 
 **Web (`packages/web`)**
 - Public route `/join/:code` (register it explicitly; the catch-all at `App.tsx:77` swallows unknown paths). Same name → guest → redeem flow. `LobbyPage` join gets the seat parameter it already ignores.
@@ -173,7 +174,7 @@ Lobby channel pushes `room_updated` already; add `invite_redeemed` (`{position, 
 | Installed, tapped in Messages / WhatsApp / Mail / Safari | Universal Link opens app (after AASA CDN pickup, ~24 h). Fails silently if the user once chose "Open in Safari" → they land on the page → Open-app button | App Link opens app if `assetlinks.json` verified against the Play App Signing key; on Android 12+ a failed verification silently opens the browser | Landing page with store buttons + QR (Play in browser deferred) |
 | Installed, tapped inside Instagram / Messenger / TikTok / Telegram in-app browser | Landing page; Open-app = scheme (works from most WebViews on a real tap) | Landing page; `intent://` opens the app from Chrome-based WebViews | n/a |
 | URL pasted into the address bar | Never opens the app; landing page + button | Same | Same |
-| Not installed | Landing → App Store. First launch: Detour match (probabilistic, IP+UA+screen+locale+time window, optional clipboard with the iOS 16 paste prompt) or "Have a code?" screen. Expect 70–80 % automatic | Landing → Play with `referrer` → first launch reads Install Referrer → deterministic | Landing page with store buttons + QR (Play in browser deferred) |
+| Not installed | Landing → App Store. First launch: Phoenix match (probabilistic, IP+UA+screen+locale+time window) or "Have a code?" screen. Measure the automatic match rate rather than assuming a vendor claim | Landing → Play with `referrer` → first launch reads Install Referrer → deterministic | Landing page with store buttons + QR (Play in browser deferred) |
 | Chat app fetches the link for a preview | OG card only, no side effects (WhatsApp fetches while typing) | same | same |
 | Dev / preview builds | Need their own AASA entries and "Associated Domains Development" toggle; never works in Expo Go | Need their own assetlinks entries; check with `adb shell pm get-app-links com.oneapps.pidro` | – |
 | Link arrives before auth hydration / socket | `pendingInvite` store, act in `/join` once `hydrated && socket` | same | same |
@@ -202,11 +203,11 @@ Sizes: S ≈ a day, M ≈ 2–3 days, L ≈ a week, for one engineer working wit
 
 0. **Prerequisites (M)** — Hammer rate limits on auth, rooms, invites; CSPRNG room codes with collision retry; drop `:guest` from the public `changeset/2` cast; `.well-known` served by Phoenix with `application/json`; `token_version` on users and in `Phoenix.Token`; `display_name`, `install_id`, `last_seen_at` columns.
 1. **Invites + guests on the backend (L)** — `invites`, `invite_redemptions`, `invite_events` tables and context; mint / preview / redeem / revoke / regenerate; `POST /auth/guest`, `POST /auth/upgrade`, `DELETE /auth/me`; `RoomManager` seat claim with hint, lock, move, kick; `invite_redeemed` push; guest reaper; tests in `auth_controller_test`, `room_controller_test`, `room_manager_test`, a `room_fixture`.
-2. **Landing page + association files (M)** — `GET /j/:code` HTML with OG and crawler branch, Open-app / store / browser buttons, states; AASA + assetlinks for prod/dev/preview; Vercel rewrites + middleware exclusion in `pidro-site2`; Smart App Banner; OG image.
-3. **App deep links + join flow (L)** — `associatedDomains`, `intentFilters`, `+native-intent.tsx`, `pendingInvite` store, `/join/[code]`, name entry, guest session in the auth store, auth gate on `/game/[code]`, waiting-room Invite/share/copy/QR, host seat controls, "joining…" placeholder; add `/join` to the UI-grammar screenshot list; e2e: invite → guest → full game in `ci-game-e2e.mjs`.
-4. **Deferred install (M)** — Detour (hosted free tier first, self-host later) with Install Referrer on Android; "Have a code?" screen; store links with referrer / campaign params; measure match rate.
+2. **Landing page + association files (M)** — `GET /j/:code` HTML with OG and crawler branch, Open-app / store buttons, desktop QR and states; AASA + assetlinks for prod/dev/preview; Vercel rewrites + middleware exclusion in `pidro-site2`; Smart App Banner; OG image.
+3. **App deep links + join flow (L)** — `associatedDomains`, `intentFilters`, the missing EAS `preview` profile, `+native-intent.tsx`, `pendingInvite` store, `/join/[code]`, name entry, guest session in the auth store, auth gate on `/game/[code]`, waiting-room Invite/share/copy/QR, host seat controls, "joining…" placeholder, and the thin English-first i18n layer; add `/join` to the UI-grammar screenshot list; e2e: invite → guest → full game in `ci-game-e2e.mjs`.
+4. **Deferred install (M)** — Phoenix-owned 30-minute fingerprint matching with hard deletion, deterministic Play Install Referrer on Android, "Have a code?" fallback, store links with referrer / campaign params, privacy notice and measured match rate.
 5. **Post-game registration (M)** — "Save this result" card, upgrade form, collision handling (email exists → sign in there, guest row abandoned; no merge in v1), re-prompt policy, Delete account in settings.
-6. **Web join + measurement + hardening (M)** — `/join/:code` on `play.pidro.online`, web tests in CI, funnel dashboard, App Attest / Play Integrity prototype, Turnstile, EAS `preview` profile, AASA/assetlinks check in CI.
+6. **Web join + measurement + hardening (M)** — `/join/:code` on `play.pidro.online`, web tests in CI, funnel dashboard, App Attest / Play Integrity prototype, Turnstile, AASA/assetlinks check in CI.
 
 Later, not now: host-bound permanent links ("join Marcel wherever he is"), invite via push to friends, spectate from the landing page, Sign in with Apple/Google on the upgrade form (triggers Guideline 4.8 parity), guest merge tool, Classic-account claim on the upgrade screen (blocked on the shelved migration).
 

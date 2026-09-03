@@ -9,6 +9,11 @@ defmodule PidroServer.Games.Lifecycle do
         hiccup_timeout_ms: 20_000
 
   Or via environment variables in runtime.exs for production tuning.
+
+  `invited_waiting_ttl_ms` is the idle time after which the abandoned-room
+  sweep closes a `:waiting` room with no connected human while one of its
+  invites is still live (`LIFECYCLE_INVITED_WAITING_TTL_MS`); without a live
+  invite the sweep keeps its five-minute grace period.
   """
 
   @type timeout_key ::
@@ -17,6 +22,7 @@ defmodule PidroServer.Games.Lifecycle do
           | :empty_room_ttl_ms
           | :finished_room_ttl_ms
           | :idle_waiting_ttl_ms
+          | :invited_waiting_ttl_ms
           | :reconnect_turn_extension_ms
           | :health_check_interval_ms
           | :presence_debounce_ms
@@ -36,6 +42,7 @@ defmodule PidroServer.Games.Lifecycle do
     empty_room_ttl_ms: 30_000,
     finished_room_ttl_ms: 300_000,
     idle_waiting_ttl_ms: 600_000,
+    invited_waiting_ttl_ms: 7_200_000,
     reconnect_turn_extension_ms: 10_000,
     health_check_interval_ms: 60_000,
     presence_debounce_ms: 3_000,

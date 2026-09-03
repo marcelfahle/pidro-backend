@@ -103,6 +103,99 @@ defmodule PidroServer.Games.Room.PositionsTest do
     end
   end
 
+  describe "assign_with_fallback/3" do
+    test "honours a free hinted seat" do
+      room = room_with_positions(Positions.empty())
+
+      assert {:ok, updated, :south, true} = Positions.assign_with_fallback(room, "p1", :south)
+      assert updated.positions[:south] == "p1"
+    end
+
+    test "honours a free hinted team" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:ok, updated, :south, true} =
+               Positions.assign_with_fallback(room, "p2", :north_south)
+
+      assert updated.positions[:south] == "p2"
+    end
+
+    test "falls back to the first open seat when the hinted seat is taken" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:ok, updated, :east, false} = Positions.assign_with_fallback(room, "p2", :north)
+      assert updated.positions[:east] == "p2"
+      assert updated.positions[:north] == "p1"
+    end
+
+    test "falls back when the hinted team is full" do
+      room = room_with_positions(%{north: "p1", east: nil, south: "p2", west: nil})
+
+      assert {:ok, updated, :east, false} =
+               Positions.assign_with_fallback(room, "p3", :north_south)
+
+      assert updated.positions[:east] == "p3"
+    end
+
+    test "reports the hint as honoured when it is absent" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:ok, _updated, :east, true} = Positions.assign_with_fallback(room, "p2", nil)
+      assert {:ok, _updated, :east, true} = Positions.assign_with_fallback(room, "p2", :auto)
+    end
+
+    test "returns :room_full when no seat is open" do
+      room = room_with_positions(%{north: "p1", east: "p2", south: "p3", west: "p4"})
+
+      assert {:error, :room_full} = Positions.assign_with_fallback(room, "p5", :north)
+    end
+
+    test "returns :already_seated for a player already in the room" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:error, :already_seated} = Positions.assign_with_fallback(room, "p1", :east)
+    end
+
+    test "rejects an unresolved :partner hint as :invalid_position" do
+      room = room_with_positions(Positions.empty())
+
+      assert {:error, :invalid_position} = Positions.assign_with_fallback(room, "p1", :partner)
+    end
+  end
+
+  describe "move/3" do
+    test "moves a seated player to a vacant position and returns the origin" do
+      room = room_with_positions(%{north: "p1", east: "p2", south: nil, west: nil})
+
+      assert {:ok, updated, :north} = Positions.move(room, "p1", :west)
+      assert updated.positions == %{north: nil, east: "p2", south: nil, west: "p1"}
+    end
+
+    test "returns :seat_taken when the target position is occupied" do
+      room = room_with_positions(%{north: "p1", east: "p2", south: nil, west: nil})
+
+      assert {:error, :seat_taken} = Positions.move(room, "p1", :east)
+    end
+
+    test "returns :seat_taken when the target is the player's own position" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:error, :seat_taken} = Positions.move(room, "p1", :north)
+    end
+
+    test "returns :player_not_in_room for an unseated player" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:error, :player_not_in_room} = Positions.move(room, "p9", :east)
+    end
+
+    test "returns :invalid_position for an unknown position" do
+      room = room_with_positions(%{north: "p1", east: nil, south: nil, west: nil})
+
+      assert {:error, :invalid_position} = Positions.move(room, "p1", :middle)
+    end
+  end
+
   describe "player_ids/1" do
     test "derives player list in canonical order (N, E, S, W)" do
       room = room_with_positions(%{north: "p1", east: "p2", south: "p3", west: "p4"})

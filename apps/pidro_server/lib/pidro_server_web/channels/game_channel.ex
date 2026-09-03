@@ -29,6 +29,13 @@ defmodule PidroServerWeb.GameChannel do
   * `"game_over"` - Game ended: `%{winner: :north_south, scores: %{...}}`
   * `"progression_summary"` - Per-player post-game "what changed" deltas (XP/level,
     achievements, and a rated tier move); only this socket's own slice (PID-52)
+  * `"invite_redeemed"` - A guest claimed a seat through an invite:
+    `%{position: :south, user_id: id, display_name: "Anna"}`
+  * `"seat_moved"` - The host moved a seat: `%{user_id: id, from: :east, to: :west}`;
+    the moved player's own channel follows the seat
+  * `"player_kicked"` - The host kicked a seat: `%{position: :east, user_id: id}`
+  * `"kicked"` - Pushed to the kicked player only, then the channel closes with
+    reason `{:shutdown, :kicked}`
   * `"presence_state"` - Presence information (who's online)
   * `"presence_diff"` - Presence changes
 
@@ -556,6 +563,47 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  # Invite and host-control events broadcast by the RoomManager on the game topic.
+  def handle_info(
+        {:invite_redeemed, %{position: position, user_id: user_id, display_name: display_name}},
+        socket
+      ) do
+    push(socket, "invite_redeemed", %{
+      position: position,
+      user_id: user_id,
+      display_name: display_name
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:kicked, %{position: position, user_id: user_id}}, socket) do
+    push(socket, "player_kicked", %{position: position, user_id: user_id})
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_moved, %{user_id: user_id, from: from, to: to}}, socket) do
+    socket =
+      if user_id == socket.assigns.user_id do
+        socket = assign(socket, :position, to)
+        retrack_presence(socket)
+        socket
+      else
+        socket
+      end
+
+    push(socket, "seat_moved", %{user_id: user_id, from: from, to: to})
+    {:noreply, socket}
+  end
+
+  # The host kicked this player: tell the client, then stop. `room_code` is
+  # cleared first so `terminate/2` does not report a disconnect that would hold
+  # the (already vacated) seat.
+  def handle_info({:force_disconnect, :kicked}, socket) do
+    push(socket, "kicked", %{reason: "kicked"})
+    {:stop, {:shutdown, :kicked}, assign(socket, :room_code, nil)}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,
@@ -569,26 +617,37 @@ defmodule PidroServerWeb.GameChannel do
     user_id = socket.assigns.user_id
     role = socket.assigns.role
 
-    presence_data = %{
-      online_at: DateTime.utc_now() |> DateTime.to_unix(),
-      role: role
-    }
-
-    # Add position only for players
-    presence_data =
-      if socket.assigns.position do
-        Map.put(presence_data, :position, socket.assigns.position)
-      else
-        presence_data
-      end
-
-    {:ok, _} = Presence.track(socket, user_id, presence_data)
+    {:ok, _} = Presence.track(socket, user_id, presence_meta(socket))
 
     activity = if role == :spectator, do: :spectating, else: :playing
     PresenceAggregator.track(user_id, activity)
 
     push(socket, "presence_state", Presence.list(socket))
     {:noreply, socket}
+  end
+
+  @spec presence_meta(Phoenix.Socket.t()) :: map()
+  defp presence_meta(socket) do
+    meta = %{
+      online_at: DateTime.utc_now() |> DateTime.to_unix(),
+      role: socket.assigns.role
+    }
+
+    # Add position only for players
+    if socket.assigns.position do
+      Map.put(meta, :position, socket.assigns.position)
+    else
+      meta
+    end
+  end
+
+  # Re-tracks this socket's presence after its position changed (seat move).
+  @spec retrack_presence(Phoenix.Socket.t()) :: :ok
+  defp retrack_presence(socket) do
+    user_id = socket.assigns.user_id
+    :ok = Presence.untrack(socket, user_id)
+    {:ok, _} = Presence.track(socket, user_id, presence_meta(socket))
+    :ok
   end
 
   @doc """
@@ -857,6 +916,7 @@ defmodule PidroServerWeb.GameChannel do
   defp format_reason(:normal), do: "left"
   defp format_reason({:shutdown, :left}), do: "left"
   defp format_reason({:shutdown, :timeout_threshold}), do: "timeout"
+  defp format_reason({:shutdown, :kicked}), do: "kicked"
   defp format_reason(:shutdown), do: "connection_lost"
   defp format_reason({:shutdown, _}), do: "connection_lost"
   defp format_reason(_), do: "error"

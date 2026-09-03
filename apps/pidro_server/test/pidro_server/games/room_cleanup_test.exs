@@ -10,7 +10,7 @@ defmodule PidroServer.Games.RoomCleanupTest do
 
   use PidroServer.DataCase, async: false
 
-  alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.{Lifecycle, RoomManager}
 
   @user1 "00000000-0000-0000-0000-000000000001"
   @user2 "00000000-0000-0000-0000-000000000002"
@@ -222,6 +222,105 @@ defmodule PidroServer.Games.RoomCleanupTest do
       # Fresh waiting room should still exist
       assert {:ok, _} = RoomManager.get_room(room.code)
     end
+  end
+
+  # The abandoned sweep (R21) closes a :waiting room with no connected human
+  # and no spectators once it has been idle longer than five minutes, or
+  # longer than `invited_waiting_ttl_ms` (500 ms in test) while an invite is
+  # live. A held seat (a waiting-room disconnect) is not a connected human.
+  describe "abandoned sweep with held seats" do
+    setup do
+      {:ok, room} = RoomManager.create_room(@user1, %{name: "Held Host"})
+      :ok = RoomManager.handle_player_disconnect(room.code, @user1)
+      {:ok, %{seats: %{north: %{status: :reconnecting}}}} = RoomManager.get_room(room.code)
+
+      %{room: room}
+    end
+
+    test "keeps an idle invited room past five minutes until invited_waiting_ttl_ms elapses",
+         %{room: room} do
+      with_invited_waiting_ttl(:timer.hours(2))
+
+      :ok = RoomManager.note_invite(room.code, DateTime.add(DateTime.utc_now(), 3600, :second))
+      idle_for(room.code, 301_000)
+
+      run_sweep()
+      assert {:ok, _} = RoomManager.get_room(room.code)
+
+      idle_for(room.code, :timer.hours(2) + 1_000)
+
+      run_sweep()
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
+
+    test "closes an idle invited room after invited_waiting_ttl_ms (test config)", %{room: room} do
+      :ok = RoomManager.note_invite(room.code, DateTime.add(DateTime.utc_now(), 3600, :second))
+      idle_for(room.code, 1_000)
+
+      run_sweep()
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
+
+    test "falls back to five minutes without a live invite", %{room: room} do
+      idle_for(room.code, 1_000)
+      run_sweep()
+      assert {:ok, _} = RoomManager.get_room(room.code)
+
+      # An expired invite counts as no invite.
+      :ok = RoomManager.note_invite(room.code, DateTime.add(DateTime.utc_now(), -1, :second))
+      idle_for(room.code, 1_000)
+      run_sweep()
+      assert {:ok, _} = RoomManager.get_room(room.code)
+
+      idle_for(room.code, 301_000)
+      run_sweep()
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
+
+    test "never closes a room with a connected human", %{room: room} do
+      {:ok, _, _} = RoomManager.join_room(room.code, @user2)
+
+      idle_for(room.code, 301_000)
+      run_sweep()
+      assert {:ok, _} = RoomManager.get_room(room.code)
+
+      :ok = RoomManager.note_invite(room.code, DateTime.add(DateTime.utc_now(), 3600, :second))
+      idle_for(room.code, 301_000)
+      run_sweep()
+      assert {:ok, %{seats: %{north: %{status: :reconnecting}}}} = RoomManager.get_room(room.code)
+    end
+
+    test "a reclaimed seat keeps the room alive", %{room: room} do
+      {:ok, _} = RoomManager.handle_player_reconnect(room.code, @user1)
+
+      idle_for(room.code, 301_000)
+      run_sweep()
+      assert {:ok, _} = RoomManager.get_room(room.code)
+    end
+  end
+
+  defp idle_for(room_code, idle_ms) do
+    past = DateTime.add(DateTime.utc_now(), -idle_ms, :millisecond)
+    :ok = RoomManager.set_last_activity_for_test(room_code, past)
+  end
+
+  # Sends the sweep message and synchronizes with the RoomManager afterwards.
+  defp run_sweep do
+    send(GenServer.whereis(RoomManager), :cleanup_abandoned_rooms)
+    _ = RoomManager.list_rooms()
+    :ok
+  end
+
+  defp with_invited_waiting_ttl(ttl_ms) do
+    original = Application.get_env(:pidro_server, Lifecycle, [])
+
+    Application.put_env(
+      :pidro_server,
+      Lifecycle,
+      Keyword.put(original, :invited_waiting_ttl_ms, ttl_ms)
+    )
+
+    on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
   end
 
   describe "health check" do

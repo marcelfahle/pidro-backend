@@ -35,6 +35,7 @@ lifecycle_overrides =
     {:empty_room_ttl_ms, "LIFECYCLE_EMPTY_ROOM_TTL_MS"},
     {:finished_room_ttl_ms, "LIFECYCLE_FINISHED_ROOM_TTL_MS"},
     {:idle_waiting_ttl_ms, "LIFECYCLE_IDLE_WAITING_TTL_MS"},
+    {:invited_waiting_ttl_ms, "LIFECYCLE_INVITED_WAITING_TTL_MS"},
     {:reconnect_turn_extension_ms, "LIFECYCLE_RECONNECT_TURN_EXTENSION_MS"},
     {:health_check_interval_ms, "LIFECYCLE_HEALTH_CHECK_INTERVAL_MS"},
     {:presence_debounce_ms, "LIFECYCLE_PRESENCE_DEBOUNCE_MS"},
@@ -77,7 +78,23 @@ rate_limit_overrides =
     {:room_create, :limit, "RATE_LIMIT_ROOM_CREATE_LIMIT"},
     {:room_create, :scale_ms, "RATE_LIMIT_ROOM_CREATE_SCALE_MS"},
     {:room_lookup, :limit, "RATE_LIMIT_ROOM_LOOKUP_LIMIT"},
-    {:room_lookup, :scale_ms, "RATE_LIMIT_ROOM_LOOKUP_SCALE_MS"}
+    {:room_lookup, :scale_ms, "RATE_LIMIT_ROOM_LOOKUP_SCALE_MS"},
+    {:invite_mint, :limit, "RATE_LIMIT_INVITE_MINT_LIMIT"},
+    {:invite_mint, :scale_ms, "RATE_LIMIT_INVITE_MINT_SCALE_MS"},
+    {:invite_preview, :limit, "RATE_LIMIT_INVITE_PREVIEW_LIMIT"},
+    {:invite_preview, :scale_ms, "RATE_LIMIT_INVITE_PREVIEW_SCALE_MS"},
+    {:invite_redeem, :limit, "RATE_LIMIT_INVITE_REDEEM_LIMIT"},
+    {:invite_redeem, :scale_ms, "RATE_LIMIT_INVITE_REDEEM_SCALE_MS"},
+    {:guest_create, :limit, "RATE_LIMIT_GUEST_CREATE_LIMIT"},
+    {:guest_create, :scale_ms, "RATE_LIMIT_GUEST_CREATE_SCALE_MS"},
+    {:guest_create_daily, :limit, "RATE_LIMIT_GUEST_CREATE_DAILY_LIMIT"},
+    {:guest_create_daily, :scale_ms, "RATE_LIMIT_GUEST_CREATE_DAILY_SCALE_MS"},
+    {:guest_create_install, :limit, "RATE_LIMIT_GUEST_CREATE_INSTALL_LIMIT"},
+    {:guest_create_install, :scale_ms, "RATE_LIMIT_GUEST_CREATE_INSTALL_SCALE_MS"},
+    {:room_join, :limit, "RATE_LIMIT_ROOM_JOIN_LIMIT"},
+    {:room_join, :scale_ms, "RATE_LIMIT_ROOM_JOIN_SCALE_MS"},
+    {:auth_upgrade, :limit, "RATE_LIMIT_AUTH_UPGRADE_LIMIT"},
+    {:auth_upgrade, :scale_ms, "RATE_LIMIT_AUTH_UPGRADE_SCALE_MS"}
   ]
   |> Enum.reduce([], fn {policy, field, env_var}, acc ->
     case System.get_env(env_var) do
@@ -270,4 +287,58 @@ if well_known_env != %{} and Code.ensure_loaded?(PidroServerWeb.WellKnownControl
   config :pidro_server,
          PidroServerWeb.WellKnownController,
          Keyword.merge(well_known_existing, well_known_overrides)
+end
+
+# ---------------------------------------------------------------------------
+# Invite link base (PidroServer.Invites.url/1) env override.
+#
+# Applies in every environment. Defaults live in config/config.exs and the
+# per-environment files; INVITE_LINK_BASE_URL replaces `link_base_url` only
+# when set, e.g. "https://pidro.online/j". Gated like the well-known block
+# above: runtime.exs is shared by every umbrella app, and PidroServer.Invites
+# only exists on pidro_server's code path.
+# ---------------------------------------------------------------------------
+invite_link_base_url = System.get_env("INVITE_LINK_BASE_URL")
+
+if invite_link_base_url not in [nil, ""] and Code.ensure_loaded?(PidroServer.Invites) do
+  invites_existing = Application.get_env(:pidro_server, PidroServer.Invites, [])
+
+  config :pidro_server,
+         PidroServer.Invites,
+         Keyword.put(invites_existing, :link_base_url, invite_link_base_url)
+end
+
+# ---------------------------------------------------------------------------
+# Idle-guest reaper (PidroServer.Accounts.GuestReaper) env overrides.
+#
+# Applies in every environment. Defaults live in config/config.exs and
+# config/test.exs; each variable replaces its key only when set:
+#
+#   GUEST_REAPER_ENABLED        true/false (the boolean idiom used above)
+#   GUEST_REAPER_INTERVAL_MS    milliseconds between sweeps
+#   GUEST_REAPER_MAX_IDLE_DAYS  days since last_seen_at (or inserted_at)
+#
+# Gated like the blocks above: runtime.exs is shared by every umbrella app,
+# and the reaper only exists on pidro_server's code path.
+# ---------------------------------------------------------------------------
+guest_reaper_overrides =
+  [
+    {:enabled, "GUEST_REAPER_ENABLED", &(&1 in ~w(true TRUE 1 yes YES))},
+    {:interval_ms, "GUEST_REAPER_INTERVAL_MS", &String.to_integer/1},
+    {:max_idle_days, "GUEST_REAPER_MAX_IDLE_DAYS", &String.to_integer/1}
+  ]
+  |> Enum.reduce([], fn {key, env_var, parse}, acc ->
+    case System.get_env(env_var) do
+      nil -> acc
+      val -> [{key, parse.(val)} | acc]
+    end
+  end)
+
+if guest_reaper_overrides != [] and Code.ensure_loaded?(PidroServer.Accounts.GuestReaper) do
+  guest_reaper_existing =
+    Application.get_env(:pidro_server, PidroServer.Accounts.GuestReaper, [])
+
+  config :pidro_server,
+         PidroServer.Accounts.GuestReaper,
+         Keyword.merge(guest_reaper_existing, guest_reaper_overrides)
 end

@@ -41,4 +41,31 @@ defmodule PidroServer.AccountsFixtures do
       user
     end
   end
+
+  @doc """
+  Creates a guest through `Auth.create_guest_user/2` with an empty taken-name
+  list, so the row carries a generated `guest_` username, `guest: true` and no
+  credentials.
+
+  `display_name` defaults to a unique short name. `last_seen_at` and
+  `inserted_at` are not creation attributes; when given they are stamped on
+  the row afterwards, which is how the reaper tests age a guest.
+  """
+  def guest_fixture(attrs \\ %{}) do
+    {stamps, attrs} =
+      attrs
+      |> Map.new()
+      |> Map.split([:last_seen_at, :inserted_at])
+
+    attrs = Map.put_new(attrs, :display_name, "G#{System.unique_integer([:positive])}")
+    {:ok, guest} = Auth.create_guest_user(attrs, [])
+
+    if stamps == %{} do
+      guest
+    else
+      guest
+      |> Ecto.Changeset.change(stamps)
+      |> Repo.update!()
+    end
+  end
 end

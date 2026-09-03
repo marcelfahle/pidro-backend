@@ -51,13 +51,16 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         display_name: %Schema{
           type: :string,
           nullable: true,
-          maxLength: 40,
-          description: "Optional display name shown at the table; null when unset",
+          minLength: 2,
+          maxLength: 20,
+          description:
+            "Optional display name shown at the table (2-20 graphemes); null when unset",
           example: "Anna"
         },
         guest: %Schema{
           type: :boolean,
-          description: "Whether this is a guest account (temporary, unauthenticated)",
+          description:
+            "Whether this is a guest account (created from an invite, upgradable in place with email and password)",
           example: false
         },
         inserted_at: %Schema{
@@ -217,8 +220,9 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             display_name: %Schema{
               type: :string,
               nullable: true,
-              maxLength: 40,
-              description: "Optional display name (trimmed, at most 40 characters)",
+              minLength: 2,
+              maxLength: 20,
+              description: "Optional display name (trimmed, 2-20 graphemes)",
               example: "Anna"
             }
           },
@@ -236,12 +240,216 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
     })
   end
 
+  defmodule GuestRequest do
+    @moduledoc """
+    Request body schema for guest creation (R10).
+
+    A guest needs a display name and a valid invite code; the install id and
+    platform are optional. The install id keys a rate-limit bucket and is never
+    logged.
+    """
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Guest Request",
+      description: "Request body for creating a guest account from an invite",
+      properties: %{
+        display_name: %Schema{
+          type: :string,
+          minLength: 2,
+          maxLength: 20,
+          description:
+            "Name shown at the table (2-20 graphemes); must not look like a connected player's name",
+          example: "Anna"
+        },
+        invite_code: %Schema{
+          type: :string,
+          description: "Invite code; dashes and lower case are accepted",
+          example: "7KQ4-M2XB"
+        },
+        install_id: %Schema{
+          type: :string,
+          maxLength: 64,
+          description: "Opaque per-install id used for rate limiting; never logged",
+          example: "b5f6c0d2-3a1e-4f2b-9c8d-1e2f3a4b5c6d"
+        },
+        platform: %Schema{
+          type: :string,
+          enum: [:ios, :android, :web],
+          description: "Client platform, recorded on the funnel event"
+        }
+      },
+      required: [:display_name, :invite_code],
+      example: %{
+        "display_name" => "Anna",
+        "invite_code" => "7KQ4-M2XB",
+        "install_id" => "b5f6c0d2-3a1e-4f2b-9c8d-1e2f3a4b5c6d",
+        "platform" => "ios"
+      }
+    })
+  end
+
+  defmodule GuestUser do
+    @moduledoc "User payload returned for a guest account, whose email is null until upgrade."
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Guest User",
+      description: "A guest account created from an invite",
+      properties: %{
+        id: %Schema{
+          type: :string,
+          description: "Unique user identifier (UUID)",
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        },
+        username: %Schema{
+          type: :string,
+          description: "Generated unique username",
+          minLength: 3,
+          example: "guest_7KQ4M2XB"
+        },
+        email: %Schema{
+          type: :string,
+          format: :email,
+          nullable: true,
+          description: "Null until the guest upgrades to a registered account",
+          example: nil
+        },
+        display_name: %Schema{
+          type: :string,
+          nullable: true,
+          minLength: 2,
+          maxLength: 20,
+          description: "Name shown at the table (2-20 graphemes)",
+          example: "Anna"
+        },
+        guest: %Schema{
+          type: :boolean,
+          description: "Always true for this response",
+          example: true
+        },
+        inserted_at: %Schema{
+          type: :string,
+          format: "date-time",
+          description: "ISO 8601 timestamp when the guest was created",
+          example: "2026-09-02T10:30:00Z"
+        },
+        updated_at: %Schema{
+          type: :string,
+          format: "date-time",
+          description: "ISO 8601 timestamp when the guest was last updated",
+          example: "2026-09-02T10:30:00Z"
+        }
+      },
+      required: [:id, :username, :email, :guest, :inserted_at, :updated_at],
+      example: %{
+        "id" => "550e8400-e29b-41d4-a716-446655440000",
+        "username" => "guest_7KQ4M2XB",
+        "email" => nil,
+        "display_name" => "Anna",
+        "guest" => true,
+        "inserted_at" => "2026-09-02T10:30:00Z",
+        "updated_at" => "2026-09-02T10:30:00Z"
+      }
+    })
+  end
+
+  defmodule GuestResponse do
+    @moduledoc """
+    Response for a created guest: the user, a token and the invite's state.
+
+    The state tells the client whether to redeem right away (`open`) or show
+    the table's situation first (`full`, `locked`, `started`, `closed`, `moved`).
+    """
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Guest Response",
+      description: "Response containing the guest user, a token and the invite state",
+      properties: %{
+        data: %Schema{
+          type: :object,
+          description: "Response data envelope",
+          properties: %{
+            user: GuestUser,
+            token: %Schema{
+              type: :string,
+              description:
+                "Signed Phoenix authentication token for subsequent Bearer-authenticated requests"
+            },
+            state: PidroServerWeb.Schemas.InviteSchemas.State
+          },
+          required: [:user, :token, :state]
+        }
+      },
+      required: [:data],
+      example: %{
+        "data" => %{
+          "user" => %{
+            "id" => "550e8400-e29b-41d4-a716-446655440000",
+            "username" => "guest_7KQ4M2XB",
+            "email" => nil,
+            "display_name" => "Anna",
+            "guest" => true,
+            "inserted_at" => "2026-09-02T10:30:00Z",
+            "updated_at" => "2026-09-02T10:30:00Z"
+          },
+          "token" => "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.signature",
+          "state" => "open"
+        }
+      }
+    })
+  end
+
+  defmodule UpgradeRequest do
+    @moduledoc """
+    Request body schema for upgrading a guest into a registered account (R13).
+
+    Email and password are required; a username is optional and replaces the
+    generated guest username. Fields may also be nested under `user`.
+    """
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Upgrade Request",
+      description: "Request body for upgrading the calling guest in place",
+      properties: %{
+        email: %Schema{
+          type: :string,
+          format: :email,
+          description: "Email address for the account (unique, case-insensitive)",
+          example: "anna@example.com"
+        },
+        password: %Schema{
+          type: :string,
+          description: "Account password (minimum 8 characters)",
+          minLength: 8,
+          maxLength: 255,
+          example: "secure_password_123"
+        },
+        username: %Schema{
+          type: :string,
+          description: "Optional username replacing the generated guest username",
+          minLength: 3,
+          maxLength: 255,
+          example: "anna"
+        }
+      },
+      required: [:email, :password],
+      example: %{
+        "email" => "anna@example.com",
+        "password" => "secure_password_123"
+      }
+    })
+  end
+
   defmodule LoginRequest do
     @moduledoc """
     Request body schema for user login.
 
-    Clients should provide username and password credentials. Both fields are required.
-    On successful authentication, the server returns the user data and a JWT token.
+    Clients should provide an identifier (username or email address) in the
+    `username` field and a password. Both fields are required. On successful
+    authentication, the server returns the user data and a JWT token.
     """
 
     OpenApiSpex.schema(%{
@@ -251,7 +459,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       properties: %{
         username: %Schema{
           type: :string,
-          description: "Username of the account to authenticate",
+          description:
+            "Username or email address of the account; an identifier containing `@` is matched against the email",
           minLength: 3,
           example: "john_doe"
         },
@@ -322,7 +531,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
               type: :integer,
               description: "Total time spent playing in seconds",
               minimum: 0,
-              example: 12600
+              example: 12_600
             },
             average_bid: %Schema{
               type: :number,

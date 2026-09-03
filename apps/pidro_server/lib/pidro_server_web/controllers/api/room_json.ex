@@ -110,6 +110,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   - player_count: Number of seated players
   - spectator_ids: List of spectator user IDs
   - status: Current room status (:waiting, :ready, :playing, :finished, or :closed)
+  - locked: Whether the host has locked the table (R25)
   - max_players: Maximum number of players allowed
   - max_spectators: Maximum number of spectators allowed
   - created_at: Room creation timestamp in ISO8601 format
@@ -132,6 +133,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       player_ids: Positions.player_ids(room),
       spectator_ids: room.spectator_ids || [],
       status: room.status,
+      locked: Map.get(room, :locked, false),
       max_players: room.max_players,
       max_spectators: room.max_spectators || 10,
       created_at: DateTime.to_iso8601(room.created_at),
@@ -153,22 +155,37 @@ defmodule PidroServerWeb.API.RoomJSON do
 
   defp serialize_room_seats(seats, users) do
     Map.new(seats, fn {position, seat} ->
-      {position, seat |> Seat.serialize() |> Map.put(:username, seat_username(seat, users))}
+      user = seat_user(seat, users)
+
+      serialized =
+        seat
+        |> Seat.serialize()
+        |> Map.put(:username, seat_username(seat, user))
+        |> Map.put(:display_name, seat_display_name(seat, user))
+
+      {position, serialized}
     end)
   end
 
-  defp seat_username(%Seat{occupant_type: :bot}, _users), do: "Bot"
+  # The user row behind a human seat; nil for bots, vacant seats and ids that
+  # resolve to nobody (a deleted account, R25).
+  defp seat_user(%Seat{occupant_type: :bot}, _users), do: nil
+  defp seat_user(%Seat{user_id: "bot_" <> _}, _users), do: nil
 
-  defp seat_username(%Seat{user_id: "bot_" <> _}, _users), do: "Bot"
+  defp seat_user(%Seat{user_id: user_id}, users) when is_binary(user_id),
+    do: Map.get(users, user_id)
 
-  defp seat_username(%Seat{user_id: user_id}, users) when is_binary(user_id) do
-    case Map.get(users, user_id) do
-      nil -> nil
-      user -> user.username
-    end
-  end
+  defp seat_user(_seat, _users), do: nil
 
-  defp seat_username(_seat, _users), do: nil
+  defp seat_username(seat, nil), do: if(bot_seat?(seat), do: "Bot", else: nil)
+  defp seat_username(_seat, user), do: user.username
+
+  defp seat_display_name(seat, nil), do: if(bot_seat?(seat), do: "Bot", else: nil)
+  defp seat_display_name(_seat, user), do: user.display_name
+
+  defp bot_seat?(%Seat{occupant_type: :bot}), do: true
+  defp bot_seat?(%Seat{user_id: "bot_" <> _}), do: true
+  defp bot_seat?(_seat), do: false
 
   @doc false
   defp serialize_positions(positions) do

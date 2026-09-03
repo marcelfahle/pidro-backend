@@ -18,9 +18,11 @@ defmodule PidroServer.Games.RoomManager do
 
   ## PubSub Events
 
-  The RoomManager broadcasts events on two topics:
+  The RoomManager broadcasts events on three topics:
   - `lobby:updates` - Notifies all clients about room list changes
   - `room:<room_code>` - Notifies players in a specific room about room changes
+  - `game:<room_code>` - Seat events for game channels: the disconnect cascade,
+    substitutes, `invite_redeemed`, `seat_moved` and `kicked`
 
   ## Examples
 
@@ -59,8 +61,12 @@ defmodule PidroServer.Games.RoomManager do
 
     ## Fields
 
+    - `:id` - Stable UUID assigned at creation; invites bind to it so a reused code cannot seat a stranger
     - `:code` - Unique 4-character alphanumeric room code
     - `:host_id` - User ID of the room host (creator)
+    - `:locked` - When true the host has closed the table to joins and invite claims (reclaims still work)
+    - `:kicked_ids` - User IDs the host kicked; they cannot join, claim or substitute into this room again
+    - `:invite_live_until` - Latest `expires_at` of the room's active invites, or nil; drives only the sweep
     - `:positions` - Map of positions to player IDs (%{north: "user1", east: nil, ...}) - SINGLE SOURCE OF TRUTH
     - `:spectator_ids` - List of user IDs currently spectating the room
     - `:status` - Current room status (`:waiting`, `:ready`, `:playing`, `:finished`, or `:closed`)
@@ -79,8 +85,12 @@ defmodule PidroServer.Games.RoomManager do
     @type positions_map :: %{position() => String.t() | nil}
     @type status :: :waiting | :ready | :playing | :finished | :closed
     @type t :: %__MODULE__{
+            id: Ecto.UUID.t() | nil,
             code: String.t(),
             host_id: String.t(),
+            locked: boolean(),
+            kicked_ids: [String.t()],
+            invite_live_until: DateTime.t() | nil,
             positions: positions_map(),
             spectator_ids: [String.t()],
             status: status(),
@@ -98,6 +108,7 @@ defmodule PidroServer.Games.RoomManager do
           }
 
     defstruct [
+      :id,
       :code,
       :host_id,
       :status,
@@ -105,6 +116,9 @@ defmodule PidroServer.Games.RoomManager do
       :created_at,
       :metadata,
       :last_activity,
+      locked: false,
+      kicked_ids: [],
+      invite_live_until: nil,
       positions: %{north: nil, east: nil, south: nil, west: nil},
       spectator_ids: [],
       max_spectators: 10,
@@ -206,6 +220,9 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :seat_taken}` - Requested specific seat is already occupied
   - `{:error, :team_full}` - Requested team is fully occupied
   - `{:error, :invalid_position}` - Invalid position parameter
+  - `{:error, :room_not_available}` - Room is not `:waiting` or `:ready`
+  - `{:error, :table_locked}` - The host locked the table (see `set_locked/3`)
+  - `{:error, :kicked}` - The host kicked this player from the room (see `kick_player/3`)
 
   ## Examples
 
@@ -221,7 +238,10 @@ defmodule PidroServer.Games.RoomManager do
              | :already_in_room
              | :seat_taken
              | :team_full
-             | :invalid_position}
+             | :invalid_position
+             | :room_not_available
+             | :table_locked
+             | :kicked}
   def join_room(room_code, player_id, position \\ nil) do
     GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id, position})
   end
@@ -515,6 +535,12 @@ defmodule PidroServer.Games.RoomManager do
   cascade is started (hiccup -> grace -> permanent bot). The player can
   reconnect during the hiccup or grace phases to reclaim their seat.
 
+  In a `:waiting` or `:ready` room the seat is held instead: it becomes
+  `:reconnecting` with no timer and no bot, the room cannot start until the
+  player reclaims it through `handle_player_reconnect/2`, and the seat is
+  vacated only when the player sits down elsewhere (the host's held seat
+  closes the room) or the host kicks it.
+
   ## Parameters
 
   - `room_code` - The unique room code
@@ -543,6 +569,10 @@ defmodule PidroServer.Games.RoomManager do
   - Phase 1 (Hiccup): Seat is `:reconnecting` — cancels timer, reclaims seat
   - Phase 2 (Grace): Seat is `:bot_substitute` with `reserved_for` — terminates bot, reclaims seat
   - Phase 3 (Gone): Seat is `:bot_substitute` without `reserved_for` — rejects with `:seat_permanently_filled`
+
+  A held seat in a `:waiting` room (see `handle_player_disconnect/2`) is
+  reclaimed the same way; when the table is full and no other seat is held,
+  the game starts and the returned room is already `:playing`.
 
   ## Parameters
 
@@ -681,6 +711,174 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Claims a seat in a room on behalf of an invite redemption.
+
+  The invite carries the room's stable `id` next to its code; a code that now
+  belongs to a different room answers `:room_not_found`. A caller who is
+  already seated at this table gets their current position back and nothing
+  changes (a held seat is reclaimed through the game channel instead). A caller
+  whose seat in another room is disconnected is evicted only after the target
+  claim validates; a target failure preserves the held seat. A caller connected
+  elsewhere gets `:already_in_room`.
+
+  ## Options
+
+  - `:hint` - seat preference from the invite: a position, a team, `:partner`
+    (the seat opposite the host) or `nil`; when the hinted seat or team is taken
+    the first open seat is used and `hint_honored` is `false`
+  - `:position` - an explicit position chosen by the caller; it overrides the
+    hint and answers `{:error, {:seat_taken, next_open}}` when taken
+  - `:display_name` - carried on the `invite_redeemed` broadcast
+
+  ## Returns
+
+  - `{:ok, room, position, hint_honored}` - seated, or already seated here
+  - `{:error, :room_not_found}` - unknown code, stale `room_id`, or a `:partner`
+    hint while the host has no seat
+  - `{:error, :room_not_available}` - room is not `:waiting` or `:ready`
+  - `{:error, :table_locked}` - the host locked the table
+  - `{:error, :kicked}` - the caller was kicked from this room
+  - `{:error, :already_in_room}` - the caller is connected in another room
+  - `{:error, {:seat_taken, next_open}}` - the explicit position is taken;
+    `next_open` lists the open positions in N/E/S/W order
+  - `{:error, :room_full}` / `{:error, :invalid_position}` - from `Positions.assign/3`
+
+  Every successful claim broadcasts
+  `{:invite_redeemed, %{position, user_id, display_name}}` on `game:<room_code>`.
+
+  ## Examples
+
+      {:ok, room, :south, true} =
+        RoomManager.claim_seat("A1B2", room.id, "user456", hint: :south, display_name: "Ada")
+  """
+  @spec claim_seat(String.t(), Ecto.UUID.t(), String.t(), keyword() | map()) ::
+          {:ok, Room.t(), Positions.position(), boolean()}
+          | {:error,
+             :room_not_found
+             | :room_not_available
+             | :table_locked
+             | :kicked
+             | :already_in_room
+             | :room_full
+             | :invalid_position
+             | {:seat_taken, [Positions.position()]}}
+  def claim_seat(room_code, room_id, user_id, opts \\ []) do
+    claim = opts |> Map.new() |> Map.take([:hint, :position, :display_name])
+
+    GenServer.call(
+      __MODULE__,
+      {:claim_seat, String.upcase(room_code), room_id, user_id, claim}
+    )
+  end
+
+  @doc """
+  Records how long the room's invites stay live.
+
+  `invite_live_until` is the latest `expires_at` of the room's active invites,
+  or `nil` when none remain. It drives only the abandoned-room sweep; lobby
+  visibility is unchanged. Counts as room activity.
+
+  ## Returns
+
+  - `:ok`
+  - `{:error, :room_not_found}` - Room doesn't exist
+  """
+  @spec note_invite(String.t(), DateTime.t() | nil) :: :ok | {:error, :room_not_found}
+  def note_invite(room_code, invite_live_until) do
+    GenServer.call(__MODULE__, {:note_invite, String.upcase(room_code), invite_live_until})
+  end
+
+  @doc """
+  Moves a seated player to a vacant position in a `:waiting` or `:ready` room.
+
+  The host may move anyone; any other seated player may move only themselves.
+  The moved seat keeps its owner flag and connection status. Broadcasts
+  `{:seat_moved, %{user_id, from, to}}` on `game:<room_code>` plus the usual
+  room and lobby updates.
+
+  ## Parameters
+
+  - `room_code` - The unique room code
+  - `requesting_user_id` - User ID of the requester
+  - `target_user_id` - User ID of the player to move
+  - `position` - The vacant position to move to
+
+  ## Returns
+
+  - `{:ok, room}` - Seat moved
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :not_owner}` - A non-host tried to move somebody else
+  - `{:error, :room_not_waiting}` - Room is not `:waiting` or `:ready`
+  - `{:error, :player_not_in_room}` - The target user is not seated here
+  - `{:error, :seat_taken}` - The position holds a player (a held seat counts)
+  - `{:error, :invalid_position}` - Invalid position atom
+  """
+  @spec move_seat(String.t(), String.t(), String.t(), Positions.position()) ::
+          {:ok, Room.t()}
+          | {:error,
+             :room_not_found
+             | :not_owner
+             | :room_not_waiting
+             | :player_not_in_room
+             | :seat_taken
+             | :invalid_position}
+  def move_seat(room_code, requesting_user_id, target_user_id, position) do
+    GenServer.call(
+      __MODULE__,
+      {:move_seat, String.upcase(room_code), requesting_user_id, target_user_id, position}
+    )
+  end
+
+  @doc """
+  Locks or unlocks a `:waiting` or `:ready` table. Only the host may do this.
+
+  A locked table refuses `join_room/3` and `claim_seat/4` with
+  `{:error, :table_locked}`; reclaiming a disconnected seat is unaffected.
+
+  ## Returns
+
+  - `{:ok, room}` - Lock state updated
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :not_owner}` - Requester is not the host
+  - `{:error, :room_not_waiting}` - Room is not `:waiting` or `:ready`
+  """
+  @spec set_locked(String.t(), String.t(), boolean()) ::
+          {:ok, Room.t()} | {:error, :room_not_found | :not_owner | :room_not_waiting}
+  def set_locked(room_code, requesting_user_id, locked) when is_boolean(locked) do
+    GenServer.call(
+      __MODULE__,
+      {:set_locked, String.upcase(room_code), requesting_user_id, locked}
+    )
+  end
+
+  @doc """
+  Kicks the non-host human seated at `position` from a `:waiting` or `:ready`
+  room. Only the host may kick.
+
+  The seat is vacated, the user is added to the room's kick list (so they can
+  neither join, claim nor substitute into this room again), every game channel
+  registered for the user receives `{:force_disconnect, :kicked}`, and
+  `{:kicked, %{position, user_id}}` is broadcast on `game:<room_code>`.
+
+  ## Returns
+
+  - `{:ok, room}` - Player kicked
+  - `{:error, :room_not_found}` - Room doesn't exist
+  - `{:error, :not_owner}` - Requester is not the host
+  - `{:error, :room_not_waiting}` - Room is not `:waiting` or `:ready`
+  - `{:error, :seat_not_kickable}` - The position is vacant, a bot, or the host's seat
+  """
+  @spec kick_player(String.t(), String.t(), Positions.position()) ::
+          {:ok, Room.t()}
+          | {:error, :room_not_found | :not_owner | :room_not_waiting | :seat_not_kickable}
+  def kick_player(room_code, requesting_user_id, position) do
+    GenServer.call(
+      __MODULE__,
+      {:kick_player, String.upcase(room_code), requesting_user_id, position}
+    )
+  end
+
+  @doc """
   Resets the RoomManager state for testing purposes.
 
   This function is only intended for use in tests to clear all rooms and
@@ -758,6 +956,7 @@ defmodule PidroServer.Games.RoomManager do
       now = DateTime.utc_now()
 
       room = %Room{
+        id: Ecto.UUID.generate(),
         code: room_code,
         host_id: host_id,
         positions: Positions.empty(),
@@ -812,46 +1011,131 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_call({:join_room, room_code, player_id, position}, _from, %State{} = state) do
-    with {:ok, room} <- fetch_room(state, room_code),
-         :ok <- ensure_not_in_other_room(state, player_id, room_code),
-         :ok <- ensure_room_joinable(room),
-         {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
-      # Update seat for the joining player
-      {:ok, filled_seat} = Seat.fill_seat(updated_room.seats[assigned_position], player_id)
+    case fetch_room(state, room_code) do
+      {:ok, %Room{} = room} -> join_open_seat(state, room, player_id, position)
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
-      updated_room = %{
-        updated_room
-        | seats: Map.put(updated_room.seats, assigned_position, filled_seat)
-      }
+  @impl true
+  def handle_call({:claim_seat, room_code, room_id, user_id, claim}, _from, %State{} = state) do
+    with {:ok, %Room{} = room} <- fetch_room(state, room_code),
+         :ok <- ensure_room_id(room, room_id),
+         :ok <- ensure_not_seated_here(room, user_id),
+         :ok <- ensure_room_joinable(room, user_id) do
+      claim_open_seat(state, room, user_id, claim)
+    else
+      {:already_seated, room, position} -> {:reply, {:ok, room, position, true}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
-      # Update room status and last activity
-      final_room =
-        updated_room
-        |> maybe_set_ready()
+  @impl true
+  def handle_call({:note_invite, room_code, invite_live_until}, _from, %State{} = state) do
+    case fetch_room(state, room_code) do
+      {:ok, %Room{} = room} ->
+        updated_room =
+          %Room{room | invite_live_until: invite_live_until}
+          |> touch_last_activity()
+
+        {:reply, :ok, put_room(state, updated_room)}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:set_locked, room_code, requesting_user_id, locked}, _from, %State{} = state) do
+    with {:ok, %Room{} = room} <- fetch_room(state, room_code),
+         :ok <- ensure_owner(room, requesting_user_id),
+         :ok <- ensure_waiting(room) do
+      updated_room =
+        %Room{room | locked: locked}
         |> touch_last_activity()
 
-      # Update state
-      new_state = put_room_and_player(state, final_room, player_id)
-
-      # Log and broadcast
-      player_count = Positions.count(final_room)
-
       Logger.info(
-        "Player #{player_id} joined room #{room_code} at position #{assigned_position} (#{player_count}/#{@max_players})"
+        "Room #{room_code} #{if locked, do: "locked", else: "unlocked"} by host #{requesting_user_id}"
       )
 
-      broadcast_room(room_code, final_room)
-      broadcast_lobby_event({:room_updated, final_room})
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
 
-      # Auto-start game if room is now ready
-      final_state =
-        if final_room.status == :ready do
-          start_game_for_room(final_room, new_state)
-        else
-          new_state
-        end
+      {:reply, {:ok, updated_room}, put_room(state, updated_room)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
-      {:reply, {:ok, final_room, assigned_position}, final_state}
+  @impl true
+  def handle_call(
+        {:move_seat, room_code, requesting_user_id, target_user_id, position},
+        _from,
+        %State{} = state
+      ) do
+    with {:ok, %Room{} = room} <- fetch_room(state, room_code),
+         :ok <- ensure_can_move(room, requesting_user_id, target_user_id),
+         :ok <- ensure_waiting(room),
+         {:ok, moved_room, from} <- Positions.move(room, target_user_id, position) do
+      updated_room =
+        moved_room
+        |> move_seat_struct(from, position)
+        |> touch_last_activity()
+
+      Logger.info(
+        "Player #{target_user_id} moved from #{from} to #{position} in room #{room_code} " <>
+          "by #{requesting_user_id}"
+      )
+
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:seat_moved, %{user_id: target_user_id, from: from, to: position}}
+      )
+
+      {:reply, {:ok, updated_room}, put_room(state, updated_room)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call(
+        {:kick_player, room_code, requesting_user_id, position},
+        _from,
+        %State{} = state
+      ) do
+    with {:ok, %Room{} = room} <- fetch_room(state, room_code),
+         :ok <- ensure_owner(room, requesting_user_id),
+         :ok <- ensure_waiting(room),
+         {:ok, user_id} <- kickable_user(room, position) do
+      kicked_room = %Room{room | kicked_ids: Enum.uniq(room.kicked_ids ++ [user_id])}
+
+      case remove_player(state, kicked_room, user_id) do
+        {:ok, updated_room, new_state} ->
+          Logger.info(
+            "Player #{user_id} kicked from #{position} in room #{room_code} " <>
+              "by host #{requesting_user_id}"
+          )
+
+          notify_user_channels(new_state, room_code, user_id, {:force_disconnect, :kicked})
+
+          Phoenix.PubSub.broadcast(
+            PidroServer.PubSub,
+            "game:#{room_code}",
+            {:kicked, %{position: position, user_id: user_id}}
+          )
+
+          {:reply, {:ok, updated_room}, new_state}
+
+        {:closed, new_state} ->
+          # Only reachable when the host holds no seat (dev tooling): the
+          # kicked player was the last one and the room closed with them.
+          {:reply, {:error, :room_not_found}, new_state}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -934,42 +1218,13 @@ defmodule PidroServer.Games.RoomManager do
             {:reply, :ok, new_state}
 
           true ->
-            # Find player's position and remove them
-            player_position = Positions.get_position(room, player_id)
-            updated_room = Positions.remove(room, player_id)
-            updated_room = vacate_seat(updated_room, player_position)
+            case remove_player(state, room, player_id) do
+              {:ok, _final_room, new_state} ->
+                Logger.info("Player #{player_id} left room #{room_code}")
+                {:reply, :ok, new_state}
 
-            # If room becomes empty, delete it
-            if Positions.count(updated_room) == 0 do
-              Logger.info("Room #{room_code} is now empty, deleting")
-              new_state = remove_room(state, room_code)
-              {:reply, :ok, new_state}
-            else
-              # Update room status back to waiting and touch activity
-              final_room =
-                updated_room
-                |> Map.put(:status, :waiting)
-                |> touch_last_activity()
-
-              %State{} =
-                new_state = %State{
-                  state
-                  | rooms: Map.put(state.rooms, room_code, final_room),
-                    player_rooms: Map.delete(state.player_rooms, player_id)
-                }
-
-              Logger.info("Player #{player_id} left room #{room_code}")
-
-              broadcast_room(room_code, final_room)
-              broadcast_lobby_event({:room_updated, final_room})
-
-              # If this was a :playing room and no connected humans remain,
-              # schedule auto-close (bots may still be playing)
-              if room.status == :playing do
-                maybe_schedule_empty_room_close(final_room, room_code)
-              end
-
-              {:reply, :ok, new_state}
+              {:closed, new_state} ->
+                {:reply, :ok, new_state}
             end
         end
     end
@@ -1416,6 +1671,7 @@ defmodule PidroServer.Games.RoomManager do
     with {:ok, room} <- fetch_room(state, room_code),
          :ok <- ensure_not_in_other_room(state, player_id, room_code),
          :ok <- ensure_playing(room),
+         :ok <- ensure_not_kicked(room, player_id),
          {:ok, position} <- find_vacant_seat_position(room) do
       # Fill the vacant seat with the new human player
       {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
@@ -1484,11 +1740,12 @@ defmodule PidroServer.Games.RoomManager do
     grace_period_minutes = 5
 
     # Check based on internal state only (no Presence dependency)
-    # Abandoned = :waiting status + inactive for 5 mins + NO active players/spectators
+    # Abandoned = :waiting status + NO connected human or spectator + idle for
+    # 5 mins, or for invited_waiting_ttl_ms while an invite is live (R21)
     updated_state =
       state.rooms
       |> Enum.filter(fn {_code, room} ->
-        is_abandoned?(room, now, grace_period_minutes)
+        abandoned?(room, now, grace_period_minutes)
       end)
       |> Enum.reduce(state, fn {code, _room}, acc_state ->
         Logger.info("Removing abandoned room #{code}")
@@ -1920,37 +2177,235 @@ defmodule PidroServer.Games.RoomManager do
             %State{state | player_rooms: Map.delete(state.player_rooms, player_id)}
 
           %Room{} = room ->
-            position = Positions.get_position(room, player_id)
-
-            if position do
-              seat = Map.get(room.seats, position)
-
-              if seat && seat.status in [:reconnecting, :bot_substitute] do
-                Logger.info(
-                  "Auto-evicting disconnected player #{player_id} from room #{room_code} (seat: #{seat.status})"
-                )
-
-                if single_player_room?(room) do
-                  remove_room(state, room_code)
-                else
-                  # For multiplayer: just clear the player_rooms mapping.
-                  # The seat is already in a disconnected state and the cascade
-                  # will handle bot replacement / cleanup independently.
-                  %State{state | player_rooms: Map.delete(state.player_rooms, player_id)}
-                end
-              else
-                state
-              end
-            else
-              state
-            end
+            evict_when_disconnected(state, room, player_id, disconnected_seat(room, player_id))
         end
     end
   end
 
   @doc false
-  defp ensure_room_joinable(%Room{status: status}) when status in [:waiting, :ready], do: :ok
-  defp ensure_room_joinable(_), do: {:error, :room_not_available}
+  # The player's seat when it is in a disconnected state, else nil.
+  defp disconnected_seat(%Room{} = room, player_id) do
+    case Positions.get_position(room, player_id) do
+      nil ->
+        nil
+
+      position ->
+        case Map.get(room.seats, position) do
+          %Seat{status: status} = seat when status in [:reconnecting, :bot_substitute] -> seat
+          _ -> nil
+        end
+    end
+  end
+
+  defp evict_when_disconnected(%State{} = state, %Room{}, _player_id, nil), do: state
+
+  defp evict_when_disconnected(%State{} = state, %Room{code: room_code} = room, player_id, seat) do
+    Logger.info(
+      "Auto-evicting disconnected player #{player_id} from room #{room_code} (seat: #{seat.status})"
+    )
+
+    evict_disconnected_player(state, room, player_id)
+  end
+
+  @doc false
+  # A single-player room closes with its human. In a `:waiting`/`:ready` room
+  # the seat is held (R22): the host's departure closes the table with the
+  # host-leave rule, any other held seat is vacated. Elsewhere (`:playing`,
+  # `:finished`) only the player mapping is dropped: the seat is already in
+  # the cascade, which handles bot replacement and cleanup on its own.
+  defp evict_disconnected_player(%State{} = state, %Room{code: room_code} = room, player_id) do
+    cond do
+      single_player_room?(room) ->
+        remove_room(state, room_code)
+
+      room.status not in [:waiting, :ready] ->
+        %State{state | player_rooms: Map.delete(state.player_rooms, player_id)}
+
+      room.host_id == player_id ->
+        Logger.info(
+          "Held host #{player_id} left room #{room_code} for another table, closing room"
+        )
+
+        remove_room(state, room_code)
+
+      true ->
+        case remove_player(state, room, player_id) do
+          {:ok, _final_room, new_state} -> new_state
+          {:closed, new_state} -> new_state
+        end
+    end
+  end
+
+  @doc false
+  # Status, lock and kick list, in that order: a locked table answers the same
+  # way for everybody, matching the invite state a redeem derives first.
+  defp ensure_room_joinable(%Room{} = room, user_id) do
+    with :ok <- ensure_room_open(room),
+         :ok <- ensure_not_locked(room) do
+      ensure_not_kicked(room, user_id)
+    end
+  end
+
+  defp ensure_room_open(%Room{status: status}) when status in [:waiting, :ready], do: :ok
+  defp ensure_room_open(_), do: {:error, :room_not_available}
+
+  defp ensure_not_locked(%Room{locked: true}), do: {:error, :table_locked}
+  defp ensure_not_locked(%Room{}), do: :ok
+
+  @doc false
+  defp ensure_not_kicked(%Room{kicked_ids: kicked_ids}, user_id) do
+    if user_id in kicked_ids, do: {:error, :kicked}, else: :ok
+  end
+
+  @doc false
+  defp ensure_waiting(%Room{status: status}) when status in [:waiting, :ready], do: :ok
+  defp ensure_waiting(_), do: {:error, :room_not_waiting}
+
+  @doc false
+  # An invite binds to the room id; the same code may belong to a later room.
+  defp ensure_room_id(%Room{id: id}, room_id) when id == room_id, do: :ok
+  defp ensure_room_id(_, _), do: {:error, :room_not_found}
+
+  @doc false
+  # Not an error: the claim callback answers the current seat unchanged.
+  defp ensure_not_seated_here(%Room{} = room, user_id) do
+    case Positions.get_position(room, user_id) do
+      nil -> :ok
+      position -> {:already_seated, room, position}
+    end
+  end
+
+  @doc false
+  # The host may move anyone; a seated player may move only themselves.
+  defp ensure_can_move(%Room{}, requesting_user_id, requesting_user_id), do: :ok
+
+  defp ensure_can_move(%Room{} = room, requesting_user_id, _target_user_id),
+    do: ensure_owner(room, requesting_user_id)
+
+  @doc false
+  # A kickable seat holds a human who is not the host.
+  defp kickable_user(%Room{} = room, position) do
+    user_id = Map.get(room.positions, position)
+    seat = Map.get(room.seats, position)
+
+    if user_id != nil and user_id != room.host_id and
+         match?(%Seat{occupant_type: :human}, seat) do
+      {:ok, user_id}
+    else
+      {:error, :seat_not_kickable}
+    end
+  end
+
+  @doc false
+  # Validate the requested claim against the target room before evicting a
+  # disconnected seat elsewhere, then perform the two in-memory mutations in
+  # the same callback.
+  defp claim_open_seat(%State{} = state, %Room{code: room_code} = room, user_id, claim) do
+    with :ok <- ensure_can_leave_other_room(state, user_id, room_code),
+         {:ok, hint} <- resolve_hint(room, Map.get(claim, :hint)),
+         {:ok, updated_room, position, hint_honored} <-
+           claim_position(room, user_id, Map.get(claim, :position), hint) do
+      next_state = maybe_evict_from_other_room(state, user_id, room_code)
+
+      with :ok <- ensure_not_in_other_room(next_state, user_id, room_code) do
+        {final_room, new_state} = seat_player(next_state, updated_room, user_id, position)
+
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "game:#{room_code}",
+          {:invite_redeemed,
+           %{position: position, user_id: user_id, display_name: Map.get(claim, :display_name)}}
+        )
+
+        {:reply, {:ok, final_room, position, hint_honored},
+         maybe_start_game(final_room, new_state)}
+      else
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @doc false
+  # Validate the target join before evicting a disconnected seat elsewhere.
+  defp join_open_seat(%State{} = state, %Room{code: room_code} = room, player_id, position) do
+    with :ok <- ensure_room_joinable(room, player_id),
+         :ok <- ensure_can_leave_other_room(state, player_id, room_code),
+         {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
+      next_state = maybe_evict_from_other_room(state, player_id, room_code)
+
+      with :ok <- ensure_not_in_other_room(next_state, player_id, room_code) do
+        {final_room, new_state} =
+          seat_player(next_state, updated_room, player_id, assigned_position)
+
+        {:reply, {:ok, final_room, assigned_position}, maybe_start_game(final_room, new_state)}
+      else
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @doc false
+  # Runs the disconnected-seat eviction only for a caller tracked in another room.
+  defp maybe_evict_from_other_room(%State{} = state, user_id, room_code) do
+    case Map.get(state.player_rooms, user_id) do
+      nil -> state
+      ^room_code -> state
+      _other_room -> maybe_evict_disconnected_player(state, user_id)
+    end
+  end
+
+  # Preserve the existing ALREADY_IN_ROOM precedence for connected seats while
+  # allowing a disconnected seat (or stale mapping) to move after target
+  # validation succeeds.
+  defp ensure_can_leave_other_room(%State{} = state, user_id, room_code) do
+    case Map.get(state.player_rooms, user_id) do
+      nil ->
+        :ok
+
+      ^room_code ->
+        :ok
+
+      other_room_code ->
+        case Map.get(state.rooms, other_room_code) do
+          nil -> :ok
+          %Room{} = other_room -> movable_disconnected_seat(other_room, user_id)
+        end
+    end
+  end
+
+  defp movable_disconnected_seat(room, user_id) do
+    if disconnected_seat(room, user_id), do: :ok, else: {:error, :already_in_room}
+  end
+
+  @doc false
+  # `:partner` means the seat opposite the host's current seat.
+  defp resolve_hint(%Room{} = room, :partner) do
+    case Positions.get_position(room, room.host_id) do
+      nil -> {:error, :room_not_found}
+      host_position -> {:ok, partner_position(host_position)}
+    end
+  end
+
+  defp resolve_hint(%Room{}, hint), do: {:ok, hint}
+
+  @doc false
+  # An explicit position wins over the hint and reports the open seats when
+  # taken; otherwise the hint is tried with fallback to the first open seat.
+  defp claim_position(%Room{} = room, user_id, nil, hint) do
+    Positions.assign_with_fallback(room, user_id, hint)
+  end
+
+  defp claim_position(%Room{} = room, user_id, position, _hint) do
+    case Positions.assign(room, user_id, position) do
+      {:ok, updated_room, assigned} -> {:ok, updated_room, assigned, true}
+      {:error, :seat_taken} -> {:error, {:seat_taken, Positions.available(room)}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc false
   defp ensure_owner(%Room{host_id: host_id}, user_id) when host_id == user_id, do: :ok
@@ -1986,25 +2441,29 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc false
   defp maybe_set_ready(%Room{} = room) do
-    if Positions.count(room) == @max_players do
-      %{room | status: :ready}
-    else
-      room
-    end
+    if ready_to_start?(room), do: %{room | status: :ready}, else: room
   end
 
   @doc false
   # Dev version that only sets to :ready if currently :waiting
   # This preserves :playing, :finished, etc. for dev testing
-  defp dev_maybe_set_ready(%Room{status: :waiting} = room) do
-    if Positions.count(room) == @max_players do
-      %{room | status: :ready}
-    else
-      room
-    end
+  defp dev_maybe_set_ready(%Room{status: :waiting} = room), do: maybe_set_ready(room)
+  defp dev_maybe_set_ready(%Room{} = room), do: room
+
+  @doc false
+  # Four positions taken and no held seat (R19). Bots count as before.
+  defp ready_to_start?(%Room{} = room) do
+    Positions.count(room) == @max_players and not held_seat?(room)
   end
 
-  defp dev_maybe_set_ready(%Room{} = room), do: room
+  @doc false
+  # A human seat whose status is anything but `:connected` is held for its
+  # player; a table with a held seat waits for the reclaim.
+  defp held_seat?(%Room{seats: seats}) do
+    Enum.any?(seats, fn {_position, seat} ->
+      match?(%Seat{occupant_type: :human, status: status} when status != :connected, seat)
+    end)
+  end
 
   @doc false
   defp touch_last_activity(%Room{} = room) do
@@ -2028,12 +2487,7 @@ defmodule PidroServer.Games.RoomManager do
         timer_ref =
           Process.send_after(self(), {:phase2_start, room_code, position}, hiccup_ms)
 
-        # Broadcast player_reconnecting on game PubSub topic
-        Phoenix.PubSub.broadcast(
-          PidroServer.PubSub,
-          "game:#{room_code}",
-          {:player_reconnecting, %{user_id: user_id, position: position}}
-        )
+        broadcast_player_reconnecting(room_code, user_id, position)
 
         %{
           room
@@ -2081,6 +2535,20 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
+  # A reclaim in a `:waiting` room re-runs the ready check (R19, R20): the
+  # table may have filled while the seat was held, and it starts through the
+  # same path as the fourth join. Returns `{room, state}` with the started
+  # room when the check passes.
+  defp maybe_start_after_reclaim(%Room{status: :waiting, code: code} = room, %State{} = state) do
+    ready_room = maybe_set_ready(room)
+    new_state = maybe_start_game(ready_room, put_room(state, ready_room))
+
+    {Map.get(new_state.rooms, code, ready_room), new_state}
+  end
+
+  defp maybe_start_after_reclaim(%Room{} = room, %State{} = state), do: {room, state}
+
+  @doc false
   # Handles reconnection based on the seat's current cascade phase.
   # Phase 1 (:reconnecting) — cancel timer, reclaim seat
   # Phase 2 (:bot_substitute with reserved_for) — terminate bot, cancel timer, reclaim seat
@@ -2125,7 +2593,9 @@ defmodule PidroServer.Games.RoomManager do
             broadcast_room(room_code, updated_room)
             broadcast_lobby_event({:room_updated, updated_room})
 
-            {:reply, {:ok, updated_room}, updated_state}
+            {final_room, final_state} = maybe_start_after_reclaim(updated_room, updated_state)
+
+            {:reply, {:ok, final_room}, final_state}
 
           {:error, reason} ->
             {:reply, {:error, reason}, state}
@@ -2357,12 +2827,111 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
+  defp put_room(%State{} = state, %Room{code: code} = room) do
+    %State{state | rooms: Map.put(state.rooms, code, room)}
+  end
+
+  @doc false
   defp put_room_and_player(%State{} = state, %Room{code: code} = room, player_id) do
     %State{
       state
       | rooms: Map.put(state.rooms, code, room),
         player_rooms: Map.put(state.player_rooms, player_id, code)
     }
+  end
+
+  @doc false
+  # Fills the seat a player was just assigned in `Positions`, runs the ready
+  # check, stores the room and player mapping and broadcasts the room and lobby
+  # updates. Returns `{room, state}`; the caller starts the game when the room
+  # became `:ready` (see `maybe_start_game/2`).
+  defp seat_player(%State{} = state, %Room{code: room_code} = room, player_id, position) do
+    {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
+
+    final_room =
+      %{room | seats: Map.put(room.seats, position, filled_seat)}
+      |> maybe_set_ready()
+      |> touch_last_activity()
+
+    new_state = put_room_and_player(state, final_room, player_id)
+
+    Logger.info(
+      "Player #{player_id} joined room #{room_code} at position #{position} " <>
+        "(#{Positions.count(final_room)}/#{@max_players})"
+    )
+
+    broadcast_room(room_code, final_room)
+    broadcast_lobby_event({:room_updated, final_room})
+
+    {final_room, new_state}
+  end
+
+  @doc false
+  defp maybe_start_game(%Room{status: :ready} = room, %State{} = state),
+    do: start_game_for_room(room, state)
+
+  defp maybe_start_game(%Room{}, %State{} = state), do: state
+
+  @doc false
+  # Removes a non-host player: clears their position, vacates the seat and
+  # drops the player mapping. Closes the room when it becomes empty
+  # (`{:closed, state}`); otherwise drops the room back to `:waiting`, touches
+  # activity, broadcasts the room and lobby updates and returns
+  # `{:ok, room, state}`.
+  defp remove_player(%State{} = state, %Room{code: room_code} = room, player_id) do
+    player_position = Positions.get_position(room, player_id)
+
+    updated_room =
+      room
+      |> Positions.remove(player_id)
+      |> vacate_seat(player_position)
+
+    if Positions.count(updated_room) == 0 do
+      Logger.info("Room #{room_code} is now empty, deleting")
+      {:closed, remove_room(state, room_code)}
+    else
+      final_room =
+        updated_room
+        |> Map.put(:status, :waiting)
+        |> touch_last_activity()
+
+      %State{} =
+        new_state = %State{
+          state
+          | rooms: Map.put(state.rooms, room_code, final_room),
+            player_rooms: Map.delete(state.player_rooms, player_id)
+        }
+
+      broadcast_room(room_code, final_room)
+      broadcast_lobby_event({:room_updated, final_room})
+
+      # If this was a :playing room and no connected humans remain,
+      # schedule auto-close (bots may still be playing)
+      if room.status == :playing do
+        maybe_schedule_empty_room_close(final_room, room_code)
+      end
+
+      {:ok, final_room, new_state}
+    end
+  end
+
+  @doc false
+  # Carries the seat struct (owner flag, status, join time) to its new position
+  # and leaves a vacant seat behind.
+  defp move_seat_struct(%Room{seats: seats} = room, from, to) do
+    %Seat{} = seat = Map.fetch!(seats, from)
+    moved_seat = %Seat{seat | position: to}
+
+    %{room | seats: seats |> Map.put(to, moved_seat) |> Map.put(from, Seat.new_vacant(from))}
+  end
+
+  @doc false
+  # Delivers a message to every game channel registered for the user in the
+  # room (the same delivery as `maybe_force_disconnect/4`).
+  defp notify_user_channels(%State{} = state, room_code, user_id, message) do
+    state.channel_pids
+    |> Map.get({room_code, user_id}, MapSet.new())
+    |> Enum.each(&send(&1, message))
   end
 
   @doc false
@@ -2492,18 +3061,32 @@ defmodule PidroServer.Games.RoomManager do
 
   defp check_missing_game_process(room, _room_code), do: room
 
-  defp is_abandoned?(room, now, grace_period_minutes) do
-    grace_period_seconds = grace_period_minutes * 60
-    is_idle = DateTime.diff(now, room.last_activity, :second) > grace_period_seconds
+  defp abandoned?(room, now, grace_period_minutes) do
+    idle_threshold_ms = idle_threshold_ms(room, now, grace_period_minutes)
+    idle? = DateTime.diff(now, room.last_activity, :millisecond) > idle_threshold_ms
 
     active_spectator_count = length(room.spectator_ids)
 
-    # A waiting room is abandoned if idle AND has no connected humans.
-    # Previously this checked Positions.count == 0, which missed rooms where
-    # seat status was never cleared on disconnect (seats stayed :connected).
-    room.status == :waiting && is_idle && !has_connected_human?(room) &&
+    # A waiting room is abandoned if idle AND has no connected humans (a held
+    # seat is not one). Previously this checked Positions.count == 0, which
+    # missed rooms where seat status was never cleared on disconnect.
+    room.status == :waiting && idle? && !has_connected_human?(room) &&
       active_spectator_count == 0
   end
+
+  @doc false
+  # While an invite is live (`invite_live_until` in the future) the room waits
+  # for `invited_waiting_ttl_ms` before it counts as abandoned (R21); otherwise
+  # the sweep's grace period applies.
+  defp idle_threshold_ms(%Room{invite_live_until: %DateTime{} = live_until}, now, grace_minutes) do
+    if DateTime.compare(live_until, now) == :gt do
+      Lifecycle.config(:invited_waiting_ttl_ms)
+    else
+      :timer.minutes(grace_minutes)
+    end
+  end
+
+  defp idle_threshold_ms(%Room{}, _now, grace_minutes), do: :timer.minutes(grace_minutes)
 
   # Test hook: an optional zero-arity generator under
   # `config :pidro_server, PidroServer.Games.RoomCodes, generator: fun`
@@ -2697,23 +3280,57 @@ defmodule PidroServer.Games.RoomManager do
 
   defp disconnect_player(%State{} = state, %Room{} = room, room_code, user_id) do
     if Positions.has_player?(room, user_id) do
-      now = DateTime.utc_now()
-
       updated_room =
-        %Room{room | last_activity: now}
-        |> then(fn current_room ->
-          if current_room.status == :playing do
-            start_hiccup_cascade(current_room, room_code, user_id)
-          else
-            current_room
-          end
-        end)
+        %Room{room | last_activity: DateTime.utc_now()}
+        |> mark_disconnected(room_code, user_id)
 
       updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
       {:ok, updated_room, updated_state}
     else
       {:error, :player_not_in_room, state}
     end
+  end
+
+  @doc false
+  # The `:playing` cascade or the waiting-room hold, by room status; a
+  # `:finished` room only records the activity.
+  defp mark_disconnected(%Room{status: :playing} = room, room_code, user_id),
+    do: start_hiccup_cascade(room, room_code, user_id)
+
+  defp mark_disconnected(%Room{status: status} = room, room_code, user_id)
+       when status in [:waiting, :ready],
+       do: hold_seat(room, room_code, user_id)
+
+  defp mark_disconnected(%Room{} = room, _room_code, _user_id), do: room
+
+  @doc false
+  # Holds the seat of a player whose last game channel closed in a waiting
+  # room (R18): the seat becomes `:reconnecting` with no phase timer, so no
+  # bot ever takes it and the table cannot start until the reclaim
+  # (`handle_seat_reconnection/6`). A seat that is not `:connected` is left as
+  # it is.
+  defp hold_seat(%Room{} = room, room_code, user_id) do
+    position = Positions.get_position(room, user_id)
+    seat = Map.get(room.seats, position)
+
+    case seat && Seat.disconnect(seat) do
+      {:ok, held_seat} ->
+        broadcast_player_reconnecting(room_code, user_id, position)
+        %{room | seats: Map.put(room.seats, position, held_seat)}
+
+      _ ->
+        room
+    end
+  end
+
+  @doc false
+  @spec broadcast_player_reconnecting(String.t(), String.t(), Positions.position()) :: :ok
+  defp broadcast_player_reconnecting(room_code, user_id, position) do
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "game:#{room_code}",
+      {:player_reconnecting, %{user_id: user_id, position: position}}
+    )
   end
 
   defp register_channel_pid(%State{} = state, room_code, user_id, pid) do

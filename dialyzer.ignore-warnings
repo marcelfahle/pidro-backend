@@ -29,10 +29,10 @@ lib/pidro_server/profiles/profiles.ex:598:30:
 lib/pidro_server/stats/stats.ex:239:62:
 lib/pidro_server/stats/stats.ex:443:68:
 lib/pidro_server/stats/stats.ex:504:8:
-lib/pidro_server_web/channels/game_channel.ex:761:
-lib/pidro_server_web/channels/game_channel.ex:778:
-lib/pidro_server_web/channels/game_channel.ex:783:
-lib/pidro_server_web/channels/game_channel.ex:238:7:
+lib/pidro_server_web/channels/game_channel.ex:820:
+lib/pidro_server_web/channels/game_channel.ex:837:
+lib/pidro_server_web/channels/game_channel.ex:842:
+lib/pidro_server_web/channels/game_channel.ex:245:7:
 lib/pidro_server_web/components/card_helpers.ex:113:8:
 lib/pidro_server_web/live/dev/game_list_live.ex:234:18:
 lib/pidro_server_web/live/dev/user_detail_live.ex:616:8:

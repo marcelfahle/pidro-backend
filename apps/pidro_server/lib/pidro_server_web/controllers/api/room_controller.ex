@@ -13,6 +13,8 @@ defmodule PidroServerWeb.API.RoomController do
   - `create/2` - Creating a room requires the current user
   - `join/2` - Joining a room requires the current user
   - `leave/2` - Leaving a room requires the current user
+  - `create_invite/2` - Minting an invite link; host only (R1, KD5)
+  - `seat/2`, `lock/2`, `kick/2` - Host controls for waiting rooms (R23)
 
   Unauthenticated endpoints:
   - `index/2` - Listing rooms is publicly available
@@ -26,6 +28,9 @@ defmodule PidroServerWeb.API.RoomController do
   - `{:error, :room_full}` - Room already has 4 players (422)
   - `{:error, :already_in_room}` - Player is already in another room (422)
   - `{:error, :not_in_room}` - Player is not in any room (404)
+  - `{:error, :table_locked}` - The host locked the table (423)
+  - `{:error, :kicked}` - The caller was kicked from this room (403)
+  - `{:error, :room_not_waiting}` - A host control outside `:waiting`/`:ready` (409)
   """
 
   use PidroServerWeb, :controller
@@ -35,8 +40,11 @@ defmodule PidroServerWeb.API.RoomController do
   alias OpenApiSpex.Operation
   alias PidroServer.Games.Bots.BotManager
   alias PidroServer.Games.RoomManager
-  alias PidroServerWeb.API.RoomJSON
-  alias PidroServerWeb.Schemas.{RoomSchemas, ErrorSchemas}
+  alias PidroServer.Games.RoomManager.Room
+  alias PidroServer.Invites
+  alias PidroServer.Invites.Invite
+  alias PidroServerWeb.API.{InviteController, InviteJSON, RoomJSON}
+  alias PidroServerWeb.Schemas.{ErrorSchemas, InviteSchemas, RoomSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
 
@@ -213,28 +221,18 @@ defmodule PidroServerWeb.API.RoomController do
       summary: "Join a room",
       description: """
       Adds the authenticated player to a room. The player can only be in one room
-      at a time. When the 4th player joins, the room status automatically changes to
-      "ready" and the game starts.
+      at a time. When the 4th player joins and no seat is held, the room status
+      automatically changes to "ready" and the game starts.
+
+      A locked table answers 423 `TABLE_LOCKED`; a user the host kicked answers
+      403 `KICKED`. Limited at policy `room_join` (per user).
 
       Requires authentication via Bearer token.
       """,
       operationId: "RoomController.join",
       tags: ["Rooms"],
       security: [%{"bearer_auth" => []}],
-      parameters: [
-        Operation.parameter(
-          :code,
-          :path,
-          %OpenApiSpex.Schema{
-            type: :string,
-            minLength: 4,
-            maxLength: 4,
-            description: "Unique 4-character room code"
-          },
-          "The unique room code",
-          required: true
-        )
-      ],
+      parameters: [room_code_parameter()],
       responses: %{
         200 =>
           Operation.response(
@@ -248,14 +246,254 @@ defmodule PidroServerWeb.API.RoomController do
             "application/json",
             ErrorSchemas.unauthorized_error()
           ),
+        403 =>
+          Operation.response(
+            "Kicked from this room",
+            "application/json",
+            ErrorSchemas.error_response()
+          ),
         404 =>
           Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),
         422 =>
           Operation.response(
-            "Room full or already in room",
+            "Room full, seat taken or already in room",
+            "application/json",
+            ErrorSchemas.validation_error()
+          ),
+        423 =>
+          Operation.response("Table locked", "application/json", ErrorSchemas.locked_error()),
+        429 =>
+          Operation.response(
+            "Rate limit exceeded; see Retry-After",
+            "application/json",
+            ErrorSchemas.too_many_requests_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:create_invite) do
+    %Operation{
+      summary: "Mint the room's invite link",
+      description: """
+      Mints an invite for a room the caller hosts while it is waiting. One link per
+      table: a second mint updates the active invite's `seat_hint` and `label` in
+      place and answers 200 with the same code. `supersedes` names an earlier
+      invite the caller hosted (play again); it forwards here with state `moved`
+      while this table waits.
+
+      A room that is not `waiting`/`ready` answers 409 `ROOM_NOT_WAITING`; more
+      than 20 invites for one room answer 409 `INVITE_LIMIT`; a non-host answers
+      403. Limited at policy `invite_mint` (per user).
+      """,
+      operationId: "RoomController.create_invite",
+      tags: ["Invites"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      requestBody:
+        Operation.request_body(
+          "Seat hint, label and supersedes",
+          "application/json",
+          InviteSchemas.MintRequest,
+          required: false
+        ),
+      responses: %{
+        201 =>
+          Operation.response("Invite minted", "application/json", InviteSchemas.InviteResponse),
+        200 =>
+          Operation.response(
+            "Active invite updated in place",
+            "application/json",
+            InviteSchemas.InviteResponse
+          ),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        403 =>
+          Operation.response("Not the host", "application/json", ErrorSchemas.error_response()),
+        404 =>
+          Operation.response(
+            "Room or superseded invite not found",
+            "application/json",
+            ErrorSchemas.not_found_error()
+          ),
+        409 =>
+          Operation.response(
+            "Room not waiting or invite limit reached",
+            "application/json",
+            ErrorSchemas.conflict_error()
+          ),
+        422 =>
+          Operation.response(
+            "Invalid seat hint or label",
+            "application/json",
+            ErrorSchemas.validation_error()
+          ),
+        429 =>
+          Operation.response(
+            "Rate limit exceeded; see Retry-After",
+            "application/json",
+            ErrorSchemas.too_many_requests_error()
+          )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:seat) do
+    %Operation{
+      summary: "Move a player to a vacant seat",
+      description: """
+      In a waiting room the host may move any seated player; a seated non-host may
+      move only themselves (omit `user_id`). The target position must be vacant.
+
+      Outside `waiting`/`ready` answers 409 `ROOM_NOT_WAITING`; a non-host moving
+      somebody else answers 403; a taken target answers 422 `SEAT_TAKEN`.
+      """,
+      operationId: "RoomController.seat",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      requestBody:
+        Operation.request_body(
+          "Target position and optional user",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:position],
+            properties: %{
+              position: position_schema(),
+              user_id: %OpenApiSpex.Schema{
+                type: :string,
+                description: "Player to move; defaults to the caller"
+              }
+            }
+          }
+        ),
+      responses: host_control_responses()
+    }
+  end
+
+  @doc false
+  def open_api_operation(:lock) do
+    %Operation{
+      summary: "Lock or unlock the table",
+      description: """
+      A locked table refuses room joins and invite redemptions with 423
+      `TABLE_LOCKED`; reclaiming a held seat still works. Host only, waiting rooms
+      only (409 `ROOM_NOT_WAITING` otherwise).
+      """,
+      operationId: "RoomController.lock",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      requestBody:
+        Operation.request_body(
+          "Lock state",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:locked],
+            properties: %{locked: %OpenApiSpex.Schema{type: :boolean}}
+          }
+        ),
+      responses: host_control_responses()
+    }
+  end
+
+  @doc false
+  def open_api_operation(:kick) do
+    %Operation{
+      summary: "Kick a seated player",
+      description: """
+      Vacates the seat at `position`, adds the player to the room's kick list so
+      they cannot join, redeem or substitute into this room again, and closes their
+      game channel with a `kicked` event. Host only, waiting rooms only.
+
+      The host's own seat, a bot and a vacant seat answer 422 `SEAT_NOT_KICKABLE`.
+      """,
+      operationId: "RoomController.kick",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      requestBody:
+        Operation.request_body(
+          "Seat position",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:position],
+            properties: %{position: position_schema()}
+          }
+        ),
+      responses: host_control_responses()
+    }
+  end
+
+  @doc false
+  def open_api_operation(:watch) do
+    %Operation{
+      summary: "Watch a room as a spectator",
+      description: """
+      Adds the authenticated user as a spectator of a playing or finished room.
+      Spectators see the public game state but cannot act.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.watch",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      responses: %{
+        200 => Operation.response("Success", "application/json", RoomSchemas.RoomResponse),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        404 =>
+          Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),
+        422 =>
+          Operation.response(
+            "Room not spectatable, spectators full or already spectating",
             "application/json",
             ErrorSchemas.validation_error()
           )
+      }
+    }
+  end
+
+  @doc false
+  def open_api_operation(:unwatch) do
+    %Operation{
+      summary: "Stop watching a room",
+      description: """
+      Removes the authenticated user from the room's spectators.
+
+      Requires authentication via Bearer token.
+      """,
+      operationId: "RoomController.unwatch",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      responses: %{
+        204 =>
+          Operation.response("Stopped spectating", "application/json", %OpenApiSpex.Schema{
+            type: :object
+          }),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        404 =>
+          Operation.response("Not spectating", "application/json", ErrorSchemas.not_found_error())
       }
     }
   end
@@ -1104,7 +1342,174 @@ defmodule PidroServerWeb.API.RoomController do
     end
   end
 
+  # ==================== Invites and host controls ====================
+
+  @doc """
+  Mints the room's invite link (R1). See `open_api_operation(:create_invite)`.
+
+  Returns HTTP 201 for a new invite and HTTP 200 when the active invite was
+  updated in place.
+  """
+  @spec create_invite(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def create_invite(conn, %{"code" => code} = params) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, room} <- RoomManager.get_room(code),
+         :ok <- ensure_host(room, user.id),
+         :ok <- ensure_waiting(room),
+         {:ok, superseded} <- fetch_superseded(params["supersedes"], user.id),
+         {:ok, invite, status} <- mint_or_update(room, user.id, params, superseded) do
+      InviteController.note_invites(room.code, room.id)
+
+      conn
+      |> put_status(status)
+      |> put_view(InviteJSON)
+      |> render(:invite, %{invite: invite, state: InviteController.derive_state(invite)})
+    end
+  end
+
+  @doc """
+  Moves a seated player to a vacant position (R23). See `open_api_operation(:seat)`.
+  """
+  @spec seat(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def seat(conn, %{"code" => code} = params) do
+    user = conn.assigns[:current_user]
+    target = params["user_id"] || user.id
+
+    with {:ok, position} <- parse_position_strict(params["position"]),
+         {:ok, room} <- RoomManager.move_seat(code, user.id, target, position) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
+  @doc """
+  Locks or unlocks the table (R23). See `open_api_operation(:lock)`.
+  """
+  @spec lock(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def lock(conn, %{"code" => code} = params) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, locked} <- parse_locked(params["locked"]),
+         {:ok, room} <- RoomManager.set_locked(code, user.id, locked) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
+  @doc """
+  Kicks the player seated at a position (R23). See `open_api_operation(:kick)`.
+  """
+  @spec kick(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def kick(conn, %{"code" => code} = params) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, position} <- parse_position_strict(params["position"]),
+         {:ok, room} <- RoomManager.kick_player(code, user.id, position) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
   ## Private Helper Functions
+
+  defp ensure_host(%Room{host_id: host_id}, host_id), do: :ok
+  defp ensure_host(%Room{}, _user_id), do: {:error, :not_owner}
+
+  defp ensure_waiting(%Room{status: status}) when status in [:waiting, :ready], do: :ok
+  defp ensure_waiting(%Room{}), do: {:error, :room_not_waiting}
+
+  defp fetch_superseded(nil, _host_id), do: {:ok, nil}
+
+  defp fetch_superseded(code, host_id) do
+    case Invites.get_by_code(code) do
+      {:ok, %Invite{host_user_id: ^host_id} = invite} -> {:ok, invite}
+      {:ok, %Invite{}} -> {:error, :not_owner}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # One link per table (KD1): an active invite is updated in place; otherwise a
+  # new one is minted under the per-room cap. The context serializes this whole
+  # mutation with any supersession for the room.
+  defp mint_or_update(%Room{} = room, host_id, params, superseded) do
+    attrs = hint_attrs(params)
+
+    with {:ok, invite, status} <-
+           Invites.mint_for_room(
+             Map.merge(attrs, %{
+               room_id: room.id,
+               room_code: room.code,
+               host_user_id: host_id
+             }),
+             superseded
+           ) do
+      if status == :created do
+        InviteController.log_event(invite, %{
+          kind: "created",
+          user_id: host_id,
+          platform: params["platform"]
+        })
+      end
+
+      {:ok, invite, status}
+    end
+  end
+
+  # Only the keys the body carries, so a second mint without `label` keeps it.
+  defp hint_attrs(params) do
+    %{}
+    |> maybe_take(params, "seat_hint", :seat_hint)
+    |> maybe_take(params, "label", :label)
+  end
+
+  defp maybe_take(attrs, params, key, atom_key) do
+    case Map.fetch(params, key) do
+      {:ok, value} -> Map.put(attrs, atom_key, value)
+      :error -> attrs
+    end
+  end
+
+  defp parse_locked(locked) when is_boolean(locked), do: {:ok, locked}
+  defp parse_locked(_locked), do: {:error, :invalid_locked}
+
+  defp room_code_parameter do
+    Operation.parameter(
+      :code,
+      :path,
+      %OpenApiSpex.Schema{
+        type: :string,
+        minLength: 4,
+        maxLength: 4,
+        description: "Unique 4-character room code"
+      },
+      "The unique room code",
+      required: true
+    )
+  end
+
+  defp position_schema do
+    %OpenApiSpex.Schema{type: :string, enum: ["north", "east", "south", "west"]}
+  end
+
+  defp host_control_responses do
+    %{
+      200 => Operation.response("Success", "application/json", RoomSchemas.RoomResponse),
+      401 =>
+        Operation.response("Unauthorized", "application/json", ErrorSchemas.unauthorized_error()),
+      403 =>
+        Operation.response("Not the host", "application/json", ErrorSchemas.error_response()),
+      404 =>
+        Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),
+      409 =>
+        Operation.response("Room not waiting", "application/json", ErrorSchemas.conflict_error()),
+      422 =>
+        Operation.response("Invalid request", "application/json", ErrorSchemas.validation_error())
+    }
+  end
 
   @doc false
   # Parses the filter parameter from request params

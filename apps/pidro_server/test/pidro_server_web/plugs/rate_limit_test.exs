@@ -7,8 +7,8 @@ defmodule PidroServerWeb.Plugs.RateLimitTest do
 
   import ExUnit.CaptureLog
 
-  alias PidroServer.AccountsFixtures
   alias PidroServer.Accounts.Token
+  alias PidroServer.AccountsFixtures
   alias PidroServerWeb.Plugs.RateLimit
   alias PidroServerWeb.Schemas.ErrorSchemas
 
@@ -38,6 +38,21 @@ defmodule PidroServerWeb.Plugs.RateLimitTest do
     conn
     |> put_private(:rate_limit, policies)
     |> RateLimit.call([])
+  end
+
+  defp with_install_id(conn, ip, install_id) do
+    %{conn | params: %{"install_id" => install_id}} |> from_ip(ip)
+  end
+
+  # The umbrella config directory: this file sits five levels below the repo root.
+  @config_dir Path.expand("../../../../../config", __DIR__)
+
+  # The policy table config.exs declares for `env`, after importing `<env>.exs`.
+  defp policy_table(env) do
+    @config_dir
+    |> Path.join("config.exs")
+    |> Config.Reader.read!(env: env)
+    |> get_in([:pidro_server, RateLimit])
   end
 
   describe "429 contract (AE1)" do
@@ -200,6 +215,155 @@ defmodule PidroServerWeb.Plugs.RateLimitTest do
         end)
 
       refute log =~ "[error]"
+    end
+  end
+
+  describe ":install_id key kind" do
+    @install_id "9f1c2a4e-7b3d-4c58-a0e1-2f6d8b9c0a11"
+    @policies [:guest_create_install]
+
+    test "one install_id from different addresses shares a bucket and is denied at the limit", %{
+      conn: conn
+    } do
+      with_limit(:guest_create_install, 2, @window_ms)
+
+      refute conn
+             |> with_install_id({10, 0, 5, 1}, @install_id)
+             |> run_plug(@policies)
+             |> Map.fetch!(:halted)
+
+      refute build_conn()
+             |> with_install_id({10, 0, 5, 2}, @install_id)
+             |> run_plug(@policies)
+             |> Map.fetch!(:halted)
+
+      log =
+        capture_info_log(fn ->
+          denied =
+            build_conn() |> with_install_id({10, 0, 5, 3}, @install_id) |> run_plug(@policies)
+
+          assert denied.status == 429
+          assert denied.halted
+        end)
+
+      expected_hash =
+        :sha256
+        |> :crypto.hash(@install_id)
+        |> binary_part(0, 16)
+        |> Base.encode16(case: :lower)
+
+      assert log =~ "guest_create_install:install:#{expected_hash}"
+      refute log =~ @install_id
+
+      # A different install from the already-denied address is its own bucket.
+      refute build_conn()
+             |> with_install_id({10, 0, 5, 3}, "other-install")
+             |> run_plug(@policies)
+             |> Map.fetch!(:halted)
+    end
+
+    test "the policy is skipped when install_id is missing, blank, not a binary or over 64 characters",
+         %{conn: conn} do
+      with_limit(:guest_create_install, 1, @window_ms)
+
+      log =
+        capture_log(fn ->
+          for params <- [
+                %{},
+                %{"install_id" => ""},
+                %{"install_id" => "   "},
+                %{"install_id" => ["a"]},
+                %{"install_id" => String.duplicate("a", 65)}
+              ] do
+            conn = from_ip(%{conn | params: params}, {10, 0, 5, 4})
+            refute conn |> run_plug(@policies) |> Map.fetch!(:halted)
+            refute conn |> run_plug(@policies) |> Map.fetch!(:halted)
+          end
+        end)
+
+      refute log =~ "[error]"
+    end
+
+    test "a 64-character install_id is counted after trimming and a longer one is not truncated",
+         %{
+           conn: conn
+         } do
+      with_limit(:guest_create_install, 1, @window_ms)
+      max_id = String.duplicate("a", 64)
+
+      refute conn
+             |> with_install_id({10, 0, 5, 5}, max_id)
+             |> run_plug(@policies)
+             |> Map.fetch!(:halted)
+
+      padded =
+        build_conn() |> with_install_id({10, 0, 5, 6}, "  #{max_id}  ") |> run_plug(@policies)
+
+      assert padded.status == 429
+
+      # Sharing the first 64 characters must not put the longer id in the same bucket.
+      refute build_conn()
+             |> with_install_id({10, 0, 5, 5}, max_id <> "a")
+             |> run_plug(@policies)
+             |> Map.fetch!(:halted)
+    end
+  end
+
+  describe "policy tables" do
+    test "config.exs, dev.exs and test.exs declare the same policies with the same key kinds" do
+      prod = policy_table(:prod)
+      dev = policy_table(:dev)
+      test = policy_table(:test)
+
+      assert Keyword.keys(dev) == Keyword.keys(prod)
+      assert Keyword.keys(test) == Keyword.keys(prod)
+
+      for {policy, %{limit: limit, scale_ms: scale_ms, key: kind}} <- prod do
+        assert dev[policy] == %{limit: limit * 10, scale_ms: scale_ms, key: kind},
+               "dev.exs #{policy}"
+
+        assert test[policy] == %{limit: 1_000_000, scale_ms: scale_ms, key: kind},
+               "test.exs #{policy}"
+      end
+    end
+
+    test "every policy in config.exs has _LIMIT and _SCALE_MS overrides in the runtime.exs table" do
+      overrides =
+        for {{policy, _spec}, index} <- Enum.with_index(policy_table(:prod)),
+            {field, offset} <- [limit: 1, scale_ms: 2] do
+          env_var = "RATE_LIMIT_#{String.upcase("#{policy}")}_#{String.upcase("#{field}")}"
+          {policy, field, env_var, 900_000 + index * 10 + offset}
+        end
+
+      for {_policy, _field, env_var, value} <- overrides,
+          do: System.put_env(env_var, Integer.to_string(value))
+
+      on_exit(fn ->
+        for {_policy, _field, env_var, _value} <- overrides, do: System.delete_env(env_var)
+      end)
+
+      merged =
+        @config_dir
+        |> Path.join("runtime.exs")
+        |> Config.Reader.read!(env: :test)
+        |> get_in([:pidro_server, RateLimit])
+
+      for {policy, field, env_var, value} <- overrides do
+        assert get_in(merged, [policy, field]) == value,
+               "#{env_var} did not override #{policy}.#{field}; add it to the runtime.exs table"
+      end
+    end
+
+    test "install_id is filtered from request logs alongside password" do
+      assert Phoenix.Logger.filter_values(%{
+               "install_id" => "abc",
+               "password" => "pw",
+               "display_name" => "Anna"
+             }) == %{
+               "install_id" => "[FILTERED]",
+               "password" => "[FILTERED]",
+               "display_name" => "Anna"
+             }
     end
   end
 

@@ -44,27 +44,103 @@ defmodule PidroServer.Accounts.UserTest do
       assert get_field(changeset, :display_name) == nil
     end
 
-    test "accepts a display_name of exactly 40 characters" do
+    test "accepts a display_name of exactly 20 graphemes" do
       changeset =
-        User.changeset(%User{}, %{username: "forty", display_name: String.duplicate("a", 40)})
+        User.changeset(%User{}, %{username: "twenty", display_name: String.duplicate("a", 20)})
 
       assert changeset.valid?
     end
 
-    test "rejects a display_name longer than 40 characters" do
+    test "rejects a display_name longer than 20 graphemes" do
       changeset =
-        User.changeset(%User{}, %{username: "forty_one", display_name: String.duplicate("a", 41)})
+        User.changeset(%User{}, %{
+          username: "twenty_one",
+          display_name: String.duplicate("a", 21)
+        })
 
       refute changeset.valid?
-      assert %{display_name: ["should be at most 40 character(s)"]} = errors_on(changeset)
+      assert %{display_name: ["should be at most 20 character(s)"]} = errors_on(changeset)
+    end
+
+    test "rejects a single-grapheme display_name" do
+      changeset = User.changeset(%User{}, %{username: "one_char", display_name: "A"})
+
+      refute changeset.valid?
+      assert %{display_name: ["should be at least 2 character(s)"]} = errors_on(changeset)
+    end
+
+    test "counts graphemes, not bytes or codepoints" do
+      # 20 flags: 160 bytes, 40 codepoints, 20 graphemes.
+      flags = String.duplicate("\u{1F1EB}\u{1F1EE}", 20)
+      changeset = User.changeset(%User{}, %{username: "flags", display_name: flags})
+
+      assert changeset.valid?, inspect(changeset.errors)
     end
 
     test "measures the display_name length after trimming" do
-      padded = "  " <> String.duplicate("a", 40) <> "  "
+      padded = "  " <> String.duplicate("a", 20) <> "  "
       changeset = User.changeset(%User{}, %{username: "padded", display_name: padded})
 
       assert changeset.valid?
-      assert get_change(changeset, :display_name) == String.duplicate("a", 40)
+      assert get_change(changeset, :display_name) == String.duplicate("a", 20)
+    end
+
+    test "folds compatibility characters with NFKC" do
+      # Full-width "A" (U+FF21) and the "fi" ligature (U+FB01) fold to ASCII.
+      changeset =
+        User.changeset(%User{}, %{username: "fullwidth", display_name: "\u{FF21}nna \u{FB01}n"})
+
+      assert changeset.valid?
+      assert get_change(changeset, :display_name) == "Anna fin"
+    end
+
+    test "rejects a zero-width joiner" do
+      changeset = User.changeset(%User{}, %{username: "zwj", display_name: "An\u{200D}na"})
+
+      refute changeset.valid?
+
+      assert %{display_name: ["must not contain control or format characters"]} =
+               errors_on(changeset)
+    end
+
+    test "rejects a control character" do
+      changeset = User.changeset(%User{}, %{username: "control", display_name: "An\u{0001}na"})
+
+      refute changeset.valid?
+
+      assert %{display_name: ["must not contain control or format characters"]} =
+               errors_on(changeset)
+    end
+
+    test "accepts an emoji-only display_name" do
+      changeset =
+        User.changeset(%User{}, %{username: "emoji", display_name: "\u{1F98A}\u{1F43C}"})
+
+      assert changeset.valid?, inspect(changeset.errors)
+    end
+  end
+
+  describe "name_key/1" do
+    test "maps accent, case and spacing variants to one key" do
+      assert User.name_key("Marcél") == "marcel"
+      assert User.name_key("MARCEL") == "marcel"
+      assert User.name_key("m a r c e l") == "marcel"
+      assert User.name_key("Marcel") == "marcel"
+      assert User.name_key("M.a-r_c/e l!") == "marcel"
+    end
+
+    test "folds compatibility forms before keying" do
+      assert User.name_key("\u{FF2D}arcel") == "marcel"
+    end
+
+    test "falls back to the casefolded name when nothing alphanumeric remains" do
+      assert User.name_key("\u{1F98A}") == "\u{1F98A}"
+      assert User.name_key("\u{1F98A}") != User.name_key("\u{1F43C}")
+      assert User.name_key(" \u{1F98A} ") == "\u{1F98A}"
+    end
+
+    test "answers nil for nil" do
+      assert User.name_key(nil) == nil
     end
   end
 
@@ -132,11 +208,114 @@ defmodule PidroServer.Accounts.UserTest do
       too_long =
         User.guest_changeset(%User{}, %{
           username: "guest_four",
-          display_name: String.duplicate("b", 41)
+          display_name: String.duplicate("b", 21)
         })
 
       refute too_long.valid?
-      assert %{display_name: ["should be at most 40 character(s)"]} = errors_on(too_long)
+      assert %{display_name: ["should be at most 20 character(s)"]} = errors_on(too_long)
+    end
+
+    test "casts install_id up to 64 characters" do
+      ok =
+        User.guest_changeset(%User{}, %{
+          username: "guest_five",
+          install_id: String.duplicate("i", 64)
+        })
+
+      assert ok.valid?
+      assert get_change(ok, :install_id) == String.duplicate("i", 64)
+
+      too_long =
+        User.guest_changeset(%User{}, %{
+          username: "guest_six",
+          install_id: String.duplicate("i", 65)
+        })
+
+      refute too_long.valid?
+      assert %{install_id: ["should be at most 64 character(s)"]} = errors_on(too_long)
+    end
+  end
+
+  describe "upgrade_changeset/2" do
+    setup do
+      {:ok, guest} =
+        %User{}
+        |> User.guest_changeset(%{username: "guest_upgrade", display_name: "Anna"})
+        |> Repo.insert()
+
+      %{guest: guest}
+    end
+
+    test "sets email, password hash and guest false, keeping the username", %{guest: guest} do
+      changeset =
+        User.upgrade_changeset(guest, %{email: "anna@example.com", password: "password123"})
+
+      assert changeset.valid?, inspect(changeset.errors)
+      assert get_change(changeset, :email) == "anna@example.com"
+      assert get_change(changeset, :guest) == false
+      assert Bcrypt.verify_pass("password123", get_change(changeset, :password_hash))
+      refute Map.has_key?(changeset.changes, :password)
+      assert get_field(changeset, :username) == "guest_upgrade"
+      assert get_field(changeset, :display_name) == "Anna"
+    end
+
+    test "applies an optional username", %{guest: guest} do
+      changeset =
+        User.upgrade_changeset(guest, %{
+          email: "anna@example.com",
+          password: "password123",
+          username: "anna"
+        })
+
+      assert changeset.valid?
+      assert get_change(changeset, :username) == "anna"
+    end
+
+    test "requires email and password", %{guest: guest} do
+      changeset = User.upgrade_changeset(guest, %{})
+
+      refute changeset.valid?
+      assert %{email: ["can't be blank"], password: ["can't be blank"]} = errors_on(changeset)
+    end
+
+    test "validates the email format, the password minimum and the username minimum", %{
+      guest: guest
+    } do
+      changeset =
+        User.upgrade_changeset(guest, %{email: "not-an-email", password: "short", username: "ab"})
+
+      refute changeset.valid?
+
+      assert %{
+               email: ["must be a valid email address"],
+               password: ["should be at least 8 character(s)"],
+               username: ["should be at least 3 character(s)"]
+             } = errors_on(changeset)
+    end
+
+    test "returns the unique-constraint errors for a taken email or username", %{guest: guest} do
+      AccountsFixtures.user_fixture(%{username: "taken_up", email: "taken_up@example.com"})
+
+      assert {:error, email_taken} =
+               Repo.update(
+                 User.upgrade_changeset(guest, %{
+                   email: "taken_up@example.com",
+                   password: "password123"
+                 })
+               )
+
+      assert %{email: ["has already been taken"]} = errors_on(email_taken)
+
+      assert {:error, username_taken} =
+               Repo.update(
+                 User.upgrade_changeset(guest, %{
+                   email: "fresh@example.com",
+                   password: "password123",
+                   username: "taken_up"
+                 })
+               )
+
+      assert %{username: ["has already been taken"]} = errors_on(username_taken)
     end
   end
 
@@ -164,7 +343,7 @@ defmodule PidroServer.Accounts.UserTest do
       changeset =
         User.admin_changeset(user, %{
           username: "ab",
-          display_name: String.duplicate("c", 41),
+          display_name: String.duplicate("c", 21),
           guest: true
         })
 
@@ -172,7 +351,7 @@ defmodule PidroServer.Accounts.UserTest do
 
       assert %{
                username: ["should be at least 3 character(s)"],
-               display_name: ["should be at most 40 character(s)"]
+               display_name: ["should be at most 20 character(s)"]
              } = errors_on(changeset)
     end
 

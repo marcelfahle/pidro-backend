@@ -30,6 +30,18 @@ defmodule PidroServerWeb.API.UserJSON do
   end
 
   @doc """
+  Renders a freshly created guest with its token and the invite's state (R10).
+
+  ## Examples
+
+      iex> guest(%{user: user, token: "token123", state: :open})
+      %{data: %{user: user_data, token: "token123", state: :open}}
+  """
+  def guest(%{user: user, token: token, state: state}) do
+    %{data: %{user: user(user), token: token, state: state}}
+  end
+
+  @doc """
   Renders user data in a data wrapper.
 
   Takes a map with a :user key and returns the serialized user data

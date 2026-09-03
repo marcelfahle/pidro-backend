@@ -28,6 +28,9 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - **UnauthorizedError**: 401 Unauthorized response for authentication failures
   - **NotFoundError**: 404 Not Found response for missing resources
   - **TooManyRequestsError**: 429 Too Many Requests response from the rate limiter
+  - **ConflictError**: 409 Conflict for a table, invite or account in a state that refuses the action
+  - **GoneError**: 410 Gone for an invite or table that no longer accepts players
+  - **LockedError**: 423 Locked for a table the host has locked
   """
 
   alias OpenApiSpex.Schema
@@ -431,6 +434,187 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
             "code" => "ROOM_CODE_EXHAUSTED",
             "title" => "Room codes exhausted",
             "detail" => "No free room code could be allocated, please try again shortly"
+          }
+        ]
+      }
+    }
+  end
+
+  @doc """
+  Conflict error response schema (409 Conflict).
+
+  Returned by `PidroServerWeb.API.FallbackController` when the target is in a
+  state that refuses the action right now: `SEAT_TAKEN` (with `next_open`, the
+  open positions in N/E/S/W order), `TABLE_FULL`, `ROOM_NOT_WAITING`,
+  `INVITE_LIMIT`, `NOT_A_GUEST`, `EMAIL_TAKEN` and `USERNAME_TAKEN`.
+
+  ## HTTP Status Code
+  409 Conflict
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "SEAT_TAKEN",
+            "title": "Seat taken",
+            "detail": "The requested seat is already occupied",
+            "next_open": ["east", "west"]
+          }
+        ]
+      }
+  """
+  def conflict_error do
+    %Schema{
+      type: :object,
+      title: "ConflictError",
+      description:
+        "The target refuses the action in its current state (409 Conflict); SEAT_TAKEN carries next_open",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single conflict error object",
+          items: conflict_error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "SEAT_TAKEN",
+            "title" => "Seat taken",
+            "detail" => "The requested seat is already occupied",
+            "next_open" => ["east", "west"]
+          }
+        ]
+      }
+    }
+  end
+
+  @doc """
+  Gone error response schema (410 Gone).
+
+  Returned by `PidroServerWeb.API.FallbackController` when an invite or its
+  table no longer accepts players: `TABLE_STARTED`, `TABLE_CLOSED`,
+  `INVITE_EXPIRED`, `INVITE_REVOKED` and `INVITE_MOVED` (with `next_code`, the
+  invite of the host's new table).
+
+  ## HTTP Status Code
+  410 Gone
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "INVITE_MOVED",
+            "title": "Invite moved",
+            "detail": "The host is at a new table; use the next code",
+            "next_code": "7KQ4M2XB"
+          }
+        ]
+      }
+  """
+  def gone_error do
+    %Schema{
+      type: :object,
+      title: "GoneError",
+      description:
+        "The invite or its table no longer accepts players (410 Gone); INVITE_MOVED carries next_code",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single gone error object",
+          items: gone_error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "INVITE_MOVED",
+            "title" => "Invite moved",
+            "detail" => "The host is at a new table; use the next code",
+            "next_code" => "7KQ4M2XB"
+          }
+        ]
+      }
+    }
+  end
+
+  defp conflict_error_detail do
+    extend_error_detail("ConflictErrorDetail", %{
+      next_open: %Schema{
+        type: :array,
+        items: %Schema{type: :string, enum: [:north, :east, :south, :west]},
+        description: "Open positions in N/E/S/W order; present for SEAT_TAKEN"
+      }
+    })
+  end
+
+  defp gone_error_detail do
+    extend_error_detail("GoneErrorDetail", %{
+      next_code: %Schema{
+        type: :string,
+        description: "Successor invite code; present for INVITE_MOVED",
+        example: "7KQ4M2XB"
+      }
+    })
+  end
+
+  defp extend_error_detail(title, extra_properties) do
+    detail = error_detail()
+
+    %Schema{
+      detail
+      | title: title,
+        properties: Map.merge(detail.properties, extra_properties)
+    }
+  end
+
+  @doc """
+  Locked error response schema (423 Locked).
+
+  Returned by `PidroServerWeb.API.FallbackController` as `TABLE_LOCKED` when
+  the host has locked the table against joins and invite redemptions.
+
+  ## HTTP Status Code
+  423 Locked
+
+  ## Example Response
+
+      {
+        "errors": [
+          {
+            "code": "TABLE_LOCKED",
+            "title": "Table locked",
+            "detail": "The host has locked this table"
+          }
+        ]
+      }
+  """
+  def locked_error do
+    %Schema{
+      type: :object,
+      title: "LockedError",
+      description: "The host has locked the table (423 Locked)",
+      properties: %{
+        errors: %Schema{
+          type: :array,
+          description: "Array containing the single TABLE_LOCKED error object",
+          items: error_detail(),
+          minItems: 1
+        }
+      },
+      required: [:errors],
+      example: %{
+        "errors" => [
+          %{
+            "code" => "TABLE_LOCKED",
+            "title" => "Table locked",
+            "detail" => "The host has locked this table"
           }
         ]
       }

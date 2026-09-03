@@ -81,6 +81,67 @@ defmodule PidroServer.Games.Room.Positions do
     end
   end
 
+  @doc """
+  Assigns a player using `hint` as a preference, falling back to the first open
+  seat when the hinted seat is taken or the hinted team is full.
+
+  `hint` accepts the same choices as `assign/3`; a `:partner` hint must be
+  resolved to a concrete position by the caller first.
+
+  Returns `{:ok, room, position, hint_honored}` where `hint_honored` is `false`
+  only when the fallback was used, or `{:error, reason}` from `assign/3` when no
+  seat can be given at all.
+  """
+  @spec assign_with_fallback(Room.t(), String.t(), choice()) ::
+          {:ok, Room.t(), position(), boolean()}
+          | {:error, :room_full | :already_seated | :invalid_position}
+  def assign_with_fallback(%Room{} = room, player_id, hint) do
+    case assign(room, player_id, hint) do
+      {:ok, updated_room, position} ->
+        {:ok, updated_room, position, true}
+
+      {:error, reason} when reason in [:seat_taken, :team_full] ->
+        assign_fallback(room, player_id)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp assign_fallback(%Room{} = room, player_id) do
+    case assign(room, player_id, :auto) do
+      {:ok, updated_room, position} -> {:ok, updated_room, position, false}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Moves a seated player to a vacant position.
+
+  Returns `{:ok, room, previous_position}`, or `{:error, reason}` with
+  `:invalid_position`, `:player_not_in_room` or `:seat_taken` (the target holds
+  a player, which includes a held seat).
+  """
+  @spec move(Room.t(), String.t(), position()) ::
+          {:ok, Room.t(), position()}
+          | {:error, :invalid_position | :player_not_in_room | :seat_taken}
+  def move(%Room{positions: positions} = room, player_id, to) do
+    cond do
+      to not in @positions ->
+        {:error, :invalid_position}
+
+      not has_player?(room, player_id) ->
+        {:error, :player_not_in_room}
+
+      Map.get(positions, to) != nil ->
+        {:error, :seat_taken}
+
+      true ->
+        from = get_position(room, player_id)
+        {:ok, room |> remove(player_id) |> place(player_id, to), from}
+    end
+  end
+
   @doc "Removes a player from their position"
   def remove(%Room{positions: positions} = room, player_id) do
     new_positions =

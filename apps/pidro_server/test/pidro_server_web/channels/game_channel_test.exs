@@ -1022,6 +1022,157 @@ defmodule PidroServerWeb.GameChannelTest do
     end
   end
 
+  describe "invites and host controls" do
+    alias PidroServer.AccountsFixtures
+    alias PidroServer.Games.Lifecycle
+    alias PidroServer.Games.Room.Seat
+    alias PidroServerWeb.Presence
+
+    setup do
+      host = AccountsFixtures.user_fixture(%{display_name: "Marcel"})
+      ben = AccountsFixtures.user_fixture(%{display_name: "Ben"})
+      carl = AccountsFixtures.user_fixture(%{display_name: "Carl"})
+
+      {:ok, table} = RoomManager.create_room(host.id, %{name: "Invite table"})
+      {:ok, table, :east} = RoomManager.join_room(table.code, ben.id)
+
+      %{host: host, ben: ben, carl: carl, table: table}
+    end
+
+    test "pushes invite_redeemed with the guest's display name after a claim (AE2)", %{
+      host: host,
+      table: table
+    } do
+      _host_joined = join_table(host, table.code)
+      anna = AccountsFixtures.guest_fixture(%{display_name: "Anna"})
+      anna_id = anna.id
+
+      assert {:ok, _room, :south, true} =
+               RoomManager.claim_seat(table.code, table.id, anna.id,
+                 hint: :south,
+                 display_name: anna.display_name
+               )
+
+      assert_push "invite_redeemed",
+                  %{position: :south, user_id: ^anna_id, display_name: "Anna"},
+                  1000
+    end
+
+    test "a kicked player's channel pushes kicked and stops while the seat stays vacant (AE11)",
+         %{host: host, ben: ben, carl: carl, table: table} do
+      {:ok, _table, :south} = RoomManager.join_room(table.code, carl.id)
+      host_joined = join_table(host, table.code)
+      ben_joined = join_table(ben, table.code)
+      carl_joined = join_table(carl, table.code)
+      ben_id = ben.id
+
+      assert {:ok, _room} = RoomManager.kick_player(table.code, host.id, :east)
+
+      assert_push "kicked", %{reason: "kicked"}, 1000
+      assert_receive {:EXIT, pid, {:shutdown, :kicked}}, 1000
+      assert pid == ben_joined.channel_pid
+
+      # The host and Carl each push player_kicked; neither channel stops.
+      assert_push "player_kicked", %{position: :east, user_id: ^ben_id}, 1000
+      assert_push "player_kicked", %{position: :east, user_id: ^ben_id}, 1000
+      refute_receive {:EXIT, _pid, _reason}, 100
+      assert Process.alive?(host_joined.channel_pid)
+      assert Process.alive?(carl_joined.channel_pid)
+
+      # terminate/2 must not treat the kick as a disconnect that holds the seat.
+      refute_broadcast "player_disconnected", %{user_id: ^ben_id}, 100
+      {:ok, room} = RoomManager.get_room(table.code)
+      assert room.positions[:east] == nil
+      assert Seat.vacant?(room.seats[:east])
+      assert room.status == :waiting
+    end
+
+    test "a moved player's channel follows the seat and acts at the new position once the table starts",
+         %{host: host, ben: ben, carl: carl, table: table} do
+      slow_turn_timers()
+      _host_joined = join_table(host, table.code)
+      ben_joined = join_table(ben, table.code)
+      ben_id = ben.id
+      topic = "game:#{table.code}"
+
+      assert {:ok, _room} = RoomManager.move_seat(table.code, host.id, ben.id, :west)
+
+      assert_push "seat_moved", %{user_id: ^ben_id, from: :east, to: :west}, 1000
+
+      assert_eventually(fn ->
+        :sys.get_state(ben_joined.channel_pid).assigns.position == :west
+      end)
+
+      assert_eventually(fn ->
+        match?(%{metas: [%{position: :west, role: :player}]}, Presence.list(topic)[ben_id])
+      end)
+
+      # Two more players fill the table; the game starts and Ben acts as :west.
+      dave = AccountsFixtures.user_fixture(%{display_name: "Dave"})
+      {:ok, _room, _position} = RoomManager.join_room(table.code, carl.id)
+      {:ok, _room, _position} = RoomManager.join_room(table.code, dave.id)
+
+      assert_eventually(fn ->
+        match?({:ok, %{status: :playing}}, RoomManager.get_room(table.code))
+      end)
+
+      advance_game_to_bidding(table.code)
+
+      assert_eventually(fn ->
+        match?({:ok, %{phase: :bidding}}, GameAdapter.get_state(table.code))
+      end)
+
+      drive_bidding_to(table.code, :west)
+
+      ref = push(ben_joined, "bid", %{"amount" => 6})
+      assert_reply ref, :ok, %{}, 1000
+    end
+
+    defp join_table(user, room_code) do
+      {:ok, socket} = create_socket(user)
+
+      {:ok, _reply, joined} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      joined
+    end
+
+    # Test lifecycle timers auto-play within ~100 ms; hold them off so the test
+    # drives bidding itself. Restored on exit.
+    defp slow_turn_timers do
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.merge(original, turn_timer_bid_ms: 60_000, turn_timer_play_ms: 60_000)
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
+    end
+
+    # Passes for every other seat until `position` is on turn. Bidding cannot
+    # complete early: a dealer who is last to act must bid, so the turn always
+    # arrives within three passes.
+    defp drive_bidding_to(room_code, position, attempts \\ 3)
+
+    defp drive_bidding_to(room_code, position, attempts) do
+      {:ok, state} = GameAdapter.get_state(room_code)
+
+      cond do
+        state.current_turn == position ->
+          :ok
+
+        attempts == 0 ->
+          flunk("bidding never reached #{position}")
+
+        true ->
+          {:ok, _state} = GameAdapter.apply_action(room_code, state.current_turn, :pass)
+          drive_bidding_to(room_code, position, attempts - 1)
+      end
+    end
+  end
+
   defp wait_for_turn_timer(room_code, attempts \\ 40)
 
   defp wait_for_turn_timer(_room_code, 0) do
