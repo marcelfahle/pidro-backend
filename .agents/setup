@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+step() {
+  local label="$1"
+  shift
+  printf '\n==> %s\n' "$label"
+  time "$@"
+}
+
+printf 'Preparing Pidro Backend orb at %s\n' "$repo_root"
+
+required_packages=(
+  autoconf
+  build-essential
+  ca-certificates
+  curl
+  libdb-dev
+  libffi-dev
+  libgdbm-dev
+  inotify-tools
+  libncurses-dev
+  libreadline-dev
+  libssl-dev
+  libyaml-dev
+  m4
+  postgresql
+  postgresql-client
+  unzip
+  uuid-dev
+  zlib1g-dev
+)
+missing_packages=()
+
+for package in "${required_packages[@]}"; do
+  if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fqx 'install ok installed'; then
+    missing_packages+=("$package")
+  fi
+done
+
+if ((${#missing_packages[@]})); then
+  step "Updating apt metadata" sudo apt-get update
+  step "Installing system packages: ${missing_packages[*]}" \
+    sudo env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends "${missing_packages[@]}"
+else
+  printf '\n==> System packages already installed\n'
+fi
+
+mise_bin="$HOME/.local/bin/mise"
+if [[ ! -x "$mise_bin" ]]; then
+  printf '\n==> Installing mise\n'
+  curl -fsSL https://mise.run | MISE_INSTALL_PATH="$mise_bin" sh
+fi
+
+profile_marker="# pidro-backend orb toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+  cat >>"$HOME/.bash_profile" <<EOF
+
+$profile_marker
+if [[ "\${PWD}" == "$repo_root" || "\${PWD}" == "$repo_root/"* ]]; then
+  eval "\$("$mise_bin" activate bash)"
+fi
+EOF
+fi
+
+eval "$("$mise_bin" activate bash)"
+step "Installing pinned Erlang, Elixir, and Ruby" mise install
+
+step "Installing Hex" mix local.hex --force
+step "Installing Rebar" mix local.rebar --force
+step "Fetching Mix dependencies" mix deps.get
+step "Compiling development dependencies and applications" env MIX_ENV=dev mix compile
+step "Installing frontend build tools" \
+  env MIX_ENV=dev mix do --app pidro_server assets.setup
+step "Building development assets" \
+  env MIX_ENV=dev mix do --app pidro_server assets.build
+step "Compiling test dependencies and applications" env MIX_ENV=test mix compile
+
+required_bundler_version="$(awk '/^BUNDLED WITH$/{getline; gsub(/^[[:space:]]+/, ""); print; exit}' Gemfile.lock)"
+if ! gem list --installed --exact bundler --version "$required_bundler_version"; then
+  step "Installing Bundler ${required_bundler_version}" \
+    gem install bundler --version "$required_bundler_version" --no-document
+fi
+step "Installing locked Ruby dependencies" bundle install
+
+postgres_conf="/etc/postgresql/15/main/conf.d/amp-orb.conf"
+printf '%s\n' \
+  "fsync = off" \
+  "synchronous_commit = off" \
+  "full_page_writes = off" \
+  | sudo tee "$postgres_conf" >/dev/null
+
+postgres_started=0
+stop_setup_postgres() {
+  if ((postgres_started)); then
+    sudo pg_ctlcluster 15 main stop
+  fi
+}
+trap stop_setup_postgres EXIT
+
+if ! pg_isready --host 127.0.0.1 --port 5432 --quiet; then
+  step "Starting PostgreSQL for database preparation" sudo pg_ctlcluster 15 main start
+  postgres_started=1
+fi
+
+step "Configuring the local PostgreSQL role" \
+  sudo --user=postgres psql --set=ON_ERROR_STOP=1 \
+  --command="ALTER ROLE postgres PASSWORD 'postgres'"
+step "Creating the development database" env MIX_ENV=dev mix ecto.create --quiet
+step "Migrating the development database" env MIX_ENV=dev mix ecto.migrate --quiet
+step "Preparing the test database" env MIX_ENV=test mix ecto.create --quiet
+step "Migrating the test database" env MIX_ENV=test mix ecto.migrate --quiet
+
+stop_setup_postgres
+postgres_started=0
+trap - EXIT
+
+printf '\nPidro Backend orb setup complete.\n'

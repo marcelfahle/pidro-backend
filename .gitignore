@@ -35,3 +35,6 @@ erl_crash.dump
 
 # Local Playwright MCP logs/artifacts
 .playwright-mcp/
+
+# Amp-generated portal state
+.amp/portals/
