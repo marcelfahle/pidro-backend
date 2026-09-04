@@ -110,6 +110,7 @@ defmodule PidroServerWeb.Dev.UserListLive do
       active="players"
       title="Players"
       subtitle="Search game accounts, inspect history, edit profile fields, and remove accounts while preserving completed match records."
+      flash={@flash}
     >
       <:actions>
         <span class="rounded-sm border border-stone-300 bg-white px-3 py-2 font-mono text-xs font-bold uppercase tracking-[0.14em] text-stone-600">
@@ -274,7 +275,7 @@ defmodule PidroServerWeb.Dev.UserListLive do
                       </div>
                       <div>
                         <.link
-                          navigate={~p"/dev/users/#{user.id}"}
+                          navigate={~p"/admin/users/#{user.id}"}
                           class="font-bold text-stone-950 hover:text-orange-700"
                         >
                           {user.username}
@@ -330,7 +331,7 @@ defmodule PidroServerWeb.Dev.UserListLive do
                   <td class="px-4 py-3 text-right text-sm font-semibold">
                     <div class="flex justify-end gap-3">
                       <.link
-                        navigate={~p"/dev/users/#{user.id}"}
+                        navigate={~p"/admin/users/#{user.id}"}
                         class="inline-flex items-center gap-1 text-orange-700 hover:text-orange-900"
                       >
                         <.icon name="hero-eye" class="size-4" /> View

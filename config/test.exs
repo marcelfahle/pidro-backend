@@ -104,5 +104,5 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   room_join: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
   auth_upgrade: %{limit: 1_000_000, scale_ms: 600_000, key: :ip}
 
-# Compile dev-only LiveView routes in test to satisfy verified route checks
-config :pidro_server, dev_routes: true
+# Ops routes require a real admin session in tests. Only local development bypasses auth.
+config :pidro_server, dev_routes: false

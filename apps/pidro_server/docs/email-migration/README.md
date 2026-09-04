@@ -4,8 +4,8 @@ This playbook covers the remaining work for Linear PID-11 through PID-23.
 
 The Pidro app now owns:
 
-- `/dev/emails` email studio for creating and editing transactional emails and campaign drafts.
-- `/dev/emails/export.csv` Keila contact CSV export for local users with email addresses.
+- `/admin/emails` email studio for creating and editing transactional emails and campaign drafts.
+- `/admin/emails/export.csv` Keila contact CSV export for local users with email addresses.
 - Database-backed email draft records, generated email HTML, preview, variable insertion, save, download, and copy actions.
 - Stable transactional email keys plus `PidroServer.Emails.deliver_transactional/3` for app-triggered sends.
 - A small delivery setup readout using real runtime config.
@@ -105,12 +105,11 @@ In Keila:
 
 Linear: PID-18, PID-19
 
-Export local app contacts:
+Sign in to Pidro Ops with an individual admin account, then download
+`/admin/emails/export.csv` from the Email Studio. For example:
 
 ```sh
-curl -u "$DEV_BASIC_AUTH_USERNAME:$DEV_BASIC_AUTH_PASSWORD" \
-  https://<pidro-admin-host>/dev/emails/export.csv \
-  -o pidro-keila-contacts.csv
+open https://<pidro-admin-host>/admin/emails
 ```
 
 Export Loops subscribers and unsubscribed contacts from Loops:
@@ -130,7 +129,7 @@ In Keila:
 2. Import contacts.
 3. Map fields: `email`, `username`, `first_name`, `last_name`, `subscribed`, `guest`, `created_at`, `source`.
 4. Import unsubscribed/suppressed contacts as unsubscribed.
-5. Verify final counts against Loops and `/dev/emails`.
+5. Verify final counts against Loops and `/admin/emails`.
 
 ## 5. Pidro Transactional Mail
 
@@ -253,7 +252,7 @@ Cutover criteria:
 - Keila admin and sender identity are live.
 - SES production access is approved.
 - DNS passes DKIM/SPF/DMARC.
-- `/dev/emails/export.csv` contact count is reconciled with Loops.
+- `/admin/emails/export.csv` contact count is reconciled with Loops.
 - Loops unsubscribes are imported into Keila.
 - Swoosh transactional smoke test passes.
 - Keila campaign test passes.

@@ -258,7 +258,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         {:noreply,
          socket
          |> put_flash(:info, "Empty room '#{name}' created (#{room.code})")
-         |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+         |> push_navigate(to: ~p"/admin/games/#{room.code}")}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
@@ -279,13 +279,13 @@ defmodule PidroServerWeb.Dev.GameListLive do
             {:noreply,
              socket
              |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
-             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
 
           _ ->
             {:noreply,
              socket
              |> put_flash(:info, "Room '#{name}' created with 1 host + 3 bots (#{room.code})")
-             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
         end
 
       {:error, reason} ->
@@ -306,7 +306,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
             {:noreply,
              socket
              |> put_flash(:info, "Room '#{name}' created — 2H + 2B, south open (#{room.code})")
-             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
 
           {:error, reason} ->
             BotManager.stop_all_bots(room.code)
@@ -314,7 +314,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
             {:noreply,
              socket
              |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
-             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
         end
 
       {:error, reason} ->
@@ -339,13 +339,13 @@ defmodule PidroServerWeb.Dev.GameListLive do
             {:noreply,
              socket
              |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
-             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
 
           _ ->
             {:noreply,
              socket
              |> put_flash(:info, "Room '#{name}' created with 4 bots (#{room.code})")
-             |> push_navigate(to: ~p"/dev/games/#{room.code}")}
+             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
         end
 
       {:error, reason} ->
@@ -402,6 +402,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
       active="games"
       title="Development Games"
       subtitle="Create rooms, tune pacing, inspect live state, and clean up finished tables from one operational console."
+      flash={@flash}
     >
       <:actions>
         <span class="rounded-sm border border-stone-300 bg-white px-3 py-2 font-mono text-xs font-bold uppercase tracking-[0.14em] text-stone-600">
@@ -820,7 +821,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                   <tr>
                     <td class="px-6 py-4 whitespace-nowrap">
                       <.link
-                        navigate={~p"/dev/games/#{room.code}"}
+                        navigate={~p"/admin/games/#{room.code}"}
                         class="text-sm font-medium text-indigo-600 hover:text-indigo-900"
                       >
                         {room.code}
@@ -863,7 +864,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       <div class="flex justify-end space-x-3">
                         <%= if room.status == :playing do %>
                           <.link
-                            navigate={~p"/dev/games/#{room.code}"}
+                            navigate={~p"/admin/games/#{room.code}"}
                             class="text-indigo-600 hover:text-indigo-900"
                           >
                             Watch

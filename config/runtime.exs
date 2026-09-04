@@ -20,10 +20,7 @@ if System.get_env("PHX_SERVER") do
   config :pidro_server, PidroServerWeb.Endpoint, server: true
 end
 
-config :pidro_server, :dev_access,
-  enabled: System.get_env("ENABLE_DEV_ROUTES") in ~w(true TRUE 1 yes YES),
-  username: System.get_env("DEV_BASIC_AUTH_USERNAME"),
-  password: System.get_env("DEV_BASIC_AUTH_PASSWORD")
+config :pidro_server, :admin_seed_email, System.get_env("ADMIN_EMAIL")
 
 # Lifecycle timeout overrides via environment variables.
 # These apply in all environments but are primarily useful in production

@@ -8,13 +8,15 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
   alias PidroServer.Profiles
   alias PidroServer.Stats
 
+  setup :register_and_log_in_admin
+
   test "lists players with search filters and summary stats", %{conn: conn} do
     alpha = AccountsFixtures.user_fixture(%{username: "admin_alpha"})
     beta = AccountsFixtures.user_fixture(%{username: "admin_beta", guest: true})
 
     save_game(alpha, "ALFA1", "win")
 
-    {:ok, view, html} = live(conn, ~p"/dev/users")
+    {:ok, view, html} = live(conn, ~p"/admin/users")
 
     assert html =~ "Pidro Ops"
     assert html =~ "Players"
@@ -49,7 +51,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
     user = AccountsFixtures.user_fixture(%{username: "detail_player"})
     save_game(user, "DETL1", "win")
 
-    {:ok, view, html} = live(conn, ~p"/dev/users/#{user.id}")
+    {:ok, view, html} = live(conn, ~p"/admin/users/#{user.id}")
 
     assert html =~ "detail_player"
     assert html =~ "Completed games"
@@ -75,13 +77,13 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
   test "deletes a player from the detail screen", %{conn: conn} do
     user = AccountsFixtures.user_fixture(%{username: "delete_detail_player"})
 
-    {:ok, view, _html} = live(conn, ~p"/dev/users/#{user.id}")
+    {:ok, view, _html} = live(conn, ~p"/admin/users/#{user.id}")
 
     render_click(view, "request_delete")
     assert render(view) =~ "Delete delete_detail_player?"
 
     render_click(view, "confirm_delete")
-    assert_redirect(view, ~p"/dev/users")
+    assert_redirect(view, ~p"/admin/users")
     refute Auth.get_user(user.id)
   end
 
@@ -100,7 +102,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
     # Earn at least one achievement through the real award path.
     :awarded = Profiles.award_achievement(user.id, :player)
 
-    {:ok, _view, html} = live(conn, ~p"/dev/users/#{user.id}")
+    {:ok, _view, html} = live(conn, ~p"/admin/users/#{user.id}")
 
     assert html =~ "Progression"
     # Veteran level + title (level_for_xp(5000) is well above level 1).
@@ -119,7 +121,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
   test "detail page renders cleanly for a never-played user", %{conn: conn} do
     user = AccountsFixtures.user_fixture(%{username: "rookie_player"})
 
-    {:ok, _view, html} = live(conn, ~p"/dev/users/#{user.id}")
+    {:ok, _view, html} = live(conn, ~p"/admin/users/#{user.id}")
 
     assert html =~ "Progression"
     assert html =~ "Provisional"
@@ -132,7 +134,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
 
     {:ok, _profile} = Profiles.import_legacy_progression(user.id, %{xp: 5000})
 
-    {:ok, _view, html} = live(conn, ~p"/dev/users")
+    {:ok, _view, html} = live(conn, ~p"/admin/users")
 
     assert html =~ "Level"
     assert html =~ "Skill tier"

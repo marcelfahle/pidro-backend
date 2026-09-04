@@ -1,6 +1,8 @@
 defmodule PidroServerWeb.Router do
   use PidroServerWeb, :router
 
+  import PidroServerWeb.AdminAuth
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -25,8 +27,24 @@ defmodule PidroServerWeb.Router do
     plug PidroServerWeb.Plugs.RateLimit
   end
 
-  pipeline :dev_access do
-    plug PidroServerWeb.Plugs.DevAccess
+  pipeline :dev_layout do
+    plug :put_root_layout, html: {PidroServerWeb.Layouts, :dev_root}
+  end
+
+  pipeline :fetch_admin do
+    plug :fetch_current_admin
+  end
+
+  pipeline :require_admin do
+    plug :require_authenticated_admin
+  end
+
+  pipeline :require_changed_admin_password do
+    plug :require_changed_password
+  end
+
+  pipeline :redirect_authenticated_admin do
+    plug :redirect_if_admin_is_authenticated
   end
 
   pipeline :api do
@@ -150,12 +168,40 @@ defmodule PidroServerWeb.Router do
     delete "/rooms/:code/unwatch", RoomController, :unwatch
   end
 
-  scope "/dev", PidroServerWeb.Dev do
-    pipe_through [:browser, :dev_access]
+  scope "/admin", PidroServerWeb do
+    pipe_through [:browser, :dev_layout, :fetch_admin, :redirect_authenticated_admin]
+
+    get "/", AdminSessionController, :new
+    get "/login", AdminSessionController, :new
+    post "/login", AdminSessionController, :create
+  end
+
+  scope "/admin", PidroServerWeb do
+    pipe_through [:browser, :dev_layout, :fetch_admin, :require_admin]
+
+    delete "/logout", AdminSessionController, :delete
+
+    live_session :admin_settings,
+      root_layout: {PidroServerWeb.Layouts, :dev_root},
+      on_mount: [{PidroServerWeb.AdminAuth, :ensure_authenticated}] do
+      live "/admins", Dev.AdminSettingsLive
+    end
+  end
+
+  scope "/admin", PidroServerWeb.Dev do
+    pipe_through [
+      :browser,
+      :dev_layout,
+      :fetch_admin,
+      :require_admin,
+      :require_changed_admin_password
+    ]
 
     get "/emails/export.csv", EmailExportController, :index
 
-    live_session :dev, root_layout: {PidroServerWeb.Layouts, :dev_root} do
+    live_session :ops,
+      root_layout: {PidroServerWeb.Layouts, :dev_root},
+      on_mount: [{PidroServerWeb.AdminAuth, :ensure_authenticated_and_password_changed}] do
       live "/games", GameListLive
       live "/games/:code", GameDetailLive
       live "/users", UserListLive

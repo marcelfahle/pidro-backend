@@ -1,12 +1,12 @@
 # Transactional Email Usage
 
-Transactional emails are authored in `/dev/emails` and sent by Pidro server code through `PidroServer.Emails`.
+Transactional emails are authored in `/admin/emails` and sent by Pidro server code through `PidroServer.Emails`.
 
-Campaigns are different: use `/dev/emails/export.csv` to export contacts, then run campaign sends in Keila. Do not call campaign templates from game-server code.
+Campaigns are different: use `/admin/emails/export.csv` to export contacts, then run campaign sends in Keila. Do not call campaign templates from game-server code.
 
 ## Admin Workflow
 
-1. Open `/dev/emails`.
+1. Open `/admin/emails`.
 2. Choose `Transactional`.
 3. Create or select an email.
 4. Set a stable `Code key`, for example `welcome_email` or `password_reset`.
@@ -108,7 +108,7 @@ In tests, use `Swoosh.Adapters.Test` and assert on the delivered email.
 
 Transactional sending is usable when:
 
-- The template exists in `/dev/emails`.
+- The template exists in `/admin/emails`.
 - The template has the expected `Code key`.
 - All variables used by the template are supplied by code.
 - SES SMTP env vars are configured.

@@ -1,14 +1,17 @@
 defmodule PidroServerWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :pidro_server
 
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
+  # Admin browser sessions are encrypted, HTTP-only, and expire after 14 days.
+  # Player authentication uses independent bearer tokens and never touches this cookie.
   @session_options [
     store: :cookie,
-    key: "_pidro_server_key",
+    key: "_pidro_admin_key",
     signing_salt: "OHF91k4t",
-    same_site: "Lax"
+    encryption_salt: "5GC9r2Bq",
+    same_site: "Lax",
+    http_only: true,
+    secure: Application.compile_env(:pidro_server, :admin_cookie_secure, false),
+    max_age: 14 * 24 * 60 * 60
   ]
 
   socket "/live", Phoenix.LiveView.Socket,

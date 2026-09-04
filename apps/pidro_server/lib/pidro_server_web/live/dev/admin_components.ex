@@ -6,6 +6,7 @@ defmodule PidroServerWeb.Dev.AdminComponents do
   attr :active, :string, required: true
   attr :title, :string, required: true
   attr :subtitle, :string, default: nil
+  attr :flash, :map, required: true
   slot :actions
   slot :inner_block, required: true
 
@@ -13,12 +14,13 @@ defmodule PidroServerWeb.Dev.AdminComponents do
     ~H"""
     <div class="dev-admin-shell min-h-screen bg-stone-50 text-stone-950">
       <div class="mx-auto max-w-[96rem] px-4 py-4 sm:px-6 lg:px-8">
+        <Layouts.flash_group flash={@flash} />
         <.admin_nav active={@active} />
         <header class="mb-4 flex flex-col gap-3 border-b border-stone-200 pb-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div class="flex flex-wrap items-center gap-2 text-xs text-stone-500">
               <span class="rounded-md border border-stone-200 bg-white px-2 py-1 font-medium">
-                /dev/{@active}
+                /admin/{@active}
               </span>
               <span class="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 font-medium text-emerald-700">
                 Live ops
@@ -66,21 +68,31 @@ defmodule PidroServerWeb.Dev.AdminComponents do
           class="flex min-w-0 flex-1 flex-wrap items-center gap-1 p-1.5 text-sm font-medium"
           aria-label="Development admin"
         >
-          <.link navigate={~p"/dev/games"} class={nav_item_class(@active == "games")}>
+          <.link navigate={~p"/admin/games"} class={nav_item_class(@active == "games")}>
             <.icon name="hero-rectangle-stack" class="size-4" /> Games
           </.link>
-          <.link navigate={~p"/dev/users"} class={nav_item_class(@active == "players")}>
+          <.link navigate={~p"/admin/users"} class={nav_item_class(@active == "players")}>
             <.icon name="hero-user-group" class="size-4" /> Players
           </.link>
-          <.link navigate={~p"/dev/emails"} class={nav_item_class(@active == "emails")}>
+          <.link navigate={~p"/admin/emails"} class={nav_item_class(@active == "emails")}>
             <.icon name="hero-envelope" class="size-4" /> Email
           </.link>
-          <.link navigate={~p"/dev/analytics"} class={nav_item_class(@active == "analytics")}>
+          <.link navigate={~p"/admin/analytics"} class={nav_item_class(@active == "analytics")}>
             <.icon name="hero-chart-bar-square" class="size-4" /> Analytics
           </.link>
+          <.link navigate={~p"/admin/admins"} class={nav_item_class(@active == "admins")}>
+            <.icon name="hero-lock-closed" class="size-4" /> Admins
+          </.link>
         </nav>
-        <div class="hidden items-center border-l border-stone-200 px-3 text-xs text-stone-500 lg:flex">
-          Basic auth ready
+        <div class="flex items-center gap-3 border-t border-stone-200 px-3 py-2 text-xs text-stone-500 lg:border-l lg:border-t-0 lg:py-0">
+          <span>Individual admin access</span>
+          <.link
+            href={~p"/admin/logout"}
+            method="delete"
+            class="font-semibold text-stone-700 underline"
+          >
+            Sign out
+          </.link>
         </div>
       </div>
     </div>

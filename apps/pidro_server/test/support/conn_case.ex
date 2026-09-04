@@ -35,4 +35,17 @@ defmodule PidroServerWeb.ConnCase do
     PidroServer.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
+
+  def register_and_log_in_admin(%{conn: conn}) do
+    admin = PidroServer.AdminsFixtures.admin_fixture()
+    %{conn: log_in_admin(conn, admin), admin: admin}
+  end
+
+  def log_in_admin(conn, admin) do
+    token = PidroServer.Admins.generate_admin_session_token(admin)
+
+    conn
+    |> Phoenix.ConnTest.init_test_session(%{})
+    |> Plug.Conn.put_session(:admin_token, token)
+  end
 end

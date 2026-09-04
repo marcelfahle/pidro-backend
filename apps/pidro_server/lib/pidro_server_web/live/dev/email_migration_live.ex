@@ -145,6 +145,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
       active="emails"
       title="Email Studio"
       subtitle="Draft transactional emails and campaigns. Transactional templates expose stable keys for server-side sends."
+      flash={@flash}
     >
       <:actions>
         <button
@@ -164,7 +165,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
           <.icon name="hero-megaphone" class="size-4" /> New campaign
         </button>
         <.link
-          href={~p"/dev/emails/export.csv"}
+          href={~p"/admin/emails/export.csv"}
           class={secondary_button_class()}
         >
           <.icon name="hero-arrow-down-tray" class="size-4" /> Export contacts
