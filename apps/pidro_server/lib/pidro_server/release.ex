@@ -138,6 +138,41 @@ defmodule PidroServer.Release do
     :ok
   end
 
+  @doc """
+  Creates the first ops-panel admin from `ADMIN_EMAIL`, if no admin exists.
+
+  Run after migrations in a production release:
+
+      ./bin/pidro_server eval "PidroServer.Release.seed_admin()"
+  """
+  @spec seed_admin() :: :ok
+  def seed_admin do
+    load_app()
+
+    {:ok, result, _started_apps} =
+      Ecto.Migrator.with_repo(PidroServer.Repo, fn _repo ->
+        PidroServer.Admins.seed_first_admin()
+      end)
+
+    case result do
+      {:ok, :already_seeded} ->
+        IO.puts("An admin already exists; no changes made.")
+
+      {:ok, admin} ->
+        IO.puts(
+          "Created #{admin.email} with temporary password changeme123. Change it at first login."
+        )
+
+      {:error, :admin_seed_email_missing} ->
+        raise "Set ADMIN_EMAIL before running PidroServer.Release.seed_admin/0."
+
+      {:error, changeset} ->
+        raise "Could not create the first admin: #{inspect(changeset.errors)}"
+    end
+
+    :ok
+  end
+
   # Private functions
 
   @spec repos() :: [module()]

@@ -6,11 +6,13 @@ defmodule PidroServerWeb.Dev.EmailMigrationLiveTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Emails
 
+  setup :register_and_log_in_admin
+
   test "renders the email studio editor", %{conn: conn} do
     AccountsFixtures.user_fixture(%{username: "mail_ui_player", email: "mail-ui@example.com"})
     {:ok, template} = Emails.create_template(:transactional)
 
-    {:ok, view, html} = live(conn, ~p"/dev/emails")
+    {:ok, view, html} = live(conn, ~p"/admin/emails")
 
     assert html =~ "Email Studio"
     assert html =~ "Export contacts"
@@ -53,7 +55,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLiveTest do
   test "deletes an email draft", %{conn: conn} do
     {:ok, template} = Emails.create_template(:transactional)
 
-    {:ok, view, html} = live(conn, ~p"/dev/emails")
+    {:ok, view, html} = live(conn, ~p"/admin/emails")
 
     assert html =~ template.name
 
@@ -74,7 +76,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLiveTest do
       email: "mail-export@example.com"
     })
 
-    conn = get(conn, ~p"/dev/emails/export.csv")
+    conn = get(conn, ~p"/admin/emails/export.csv")
 
     assert response(conn, 200) =~ "mail-export@example.com"
     assert response(conn, 200) =~ "email,username,first_name,last_name,subscribed"

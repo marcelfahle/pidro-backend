@@ -6,6 +6,8 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.RoomManager
 
+  setup :register_and_log_in_admin
+
   setup do
     case GenServer.whereis(RoomManager) do
       nil -> start_supervised!(RoomManager)
@@ -23,7 +25,7 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
     recent_user = AccountsFixtures.user_fixture(%{username: "debug_recent"})
     {:ok, room} = RoomManager.create_room(host.id, %{name: "Debug Table"})
 
-    {:ok, _view, html} = live(conn, ~p"/dev/games/#{room.code}")
+    {:ok, _view, html} = live(conn, ~p"/admin/games/#{room.code}")
 
     assert html =~ "Take a Seat"
     assert html =~ recent_user.username

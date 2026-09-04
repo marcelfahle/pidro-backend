@@ -26,7 +26,7 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
         {:ok,
          socket
          |> put_flash(:error, "Player account not found.")
-         |> push_navigate(to: ~p"/dev/users")}
+         |> push_navigate(to: ~p"/admin/users")}
 
       user ->
         {:ok,
@@ -100,7 +100,7 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
            :info,
            "Deleted #{user.username}. Completed game stats still keep the player id."
          )
-         |> push_navigate(to: ~p"/dev/users")}
+         |> push_navigate(to: ~p"/admin/users")}
 
       {:error, _changeset} ->
         {:noreply,
@@ -117,10 +117,11 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
       active="players"
       title={@user.username}
       subtitle={"Player profile, live table presence, completed game history, and account controls for #{short_id(@user.id)}."}
+      flash={@flash}
     >
       <:actions>
         <.link
-          navigate={~p"/dev/users"}
+          navigate={~p"/admin/users"}
           class="inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700 shadow-sm hover:border-orange-300 hover:text-stone-950"
         >
           <.icon name="hero-arrow-left" class="size-4" /> Back to players
@@ -373,7 +374,7 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
                         </td>
                         <td class="px-4 py-3 text-right text-sm font-semibold">
                           <.link
-                            navigate={~p"/dev/games/#{room.code}"}
+                            navigate={~p"/admin/games/#{room.code}"}
                             class="inline-flex items-center gap-1 text-orange-700 hover:text-orange-900"
                           >
                             View <.icon name="hero-arrow-up-right" class="size-4" />

@@ -50,8 +50,12 @@ test "$health_body" = "ok"
 lobby_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$backend_url/api/v1/lobby")"
 test "$lobby_status" = "401"
 
-dev_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$backend_url/dev/games")"
-test "$dev_status" = "404"
+ops_status="$(curl --silent --show-error --dump-header "$tmp_dir/ops.headers" --output /dev/null --write-out '%{http_code}' --max-time 15 "$backend_url/admin/games")"
+test "$ops_status" = "302"
+grep -Eiq '^location: /admin/login\r?$' "$tmp_dir/ops.headers"
+
+former_ops_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$backend_url/dev/games")"
+test "$former_ops_status" = "404"
 
 curl --silent --show-error --dump-header "$tmp_dir/cors.headers" --output /dev/null \
   --max-time 15 \

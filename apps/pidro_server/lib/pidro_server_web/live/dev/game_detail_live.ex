@@ -90,7 +90,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         {:ok,
          socket
          |> put_flash(:error, "Room not found")
-         |> redirect(to: ~p"/dev/games")}
+         |> redirect(to: ~p"/admin/games")}
     end
   end
 
@@ -946,10 +946,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       active="games"
       title={"Table #{@room_code}"}
       subtitle="Inspect live game state, seat assignments, bot behavior, action controls, and raw event history."
+      flash={@flash}
     >
       <:actions>
         <.link
-          navigate={~p"/dev/games"}
+          navigate={~p"/admin/games"}
           class="inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700 shadow-sm hover:border-orange-300 hover:text-stone-950"
         >
           <.icon name="hero-arrow-left" class="size-4" /> Tables
@@ -1039,7 +1040,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     <div class="rounded-md border border-stone-300 bg-white px-3 py-2 shadow-sm">
       <nav class="flex flex-wrap gap-2" aria-label="Tabs">
         <.link
-          patch={~p"/dev/games/#{@room_code}?tab=board"}
+          patch={~p"/admin/games/#{@room_code}?tab=board"}
           class={[
             "whitespace-nowrap rounded-sm px-3 py-2 text-sm font-bold",
             if(@active_tab == :board,
@@ -1051,7 +1052,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           Board
         </.link>
         <.link
-          patch={~p"/dev/games/#{@room_code}?tab=seats_bots"}
+          patch={~p"/admin/games/#{@room_code}?tab=seats_bots"}
           class={[
             "whitespace-nowrap rounded-sm px-3 py-2 text-sm font-bold",
             if(@active_tab == :seats_bots,
@@ -1546,7 +1547,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
                 <div class="flex gap-3">
                   <.link
-                    navigate={~p"/dev/games"}
+                    navigate={~p"/admin/games"}
                     class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 px-4 rounded-lg text-center transition-colors"
                   >
                     Back to Lobby

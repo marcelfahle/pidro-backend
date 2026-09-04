@@ -48,13 +48,13 @@ env:
     WEB_URL: "https://play.pidro.online"
     MAIL_FROM_ADDRESS: "noreply@pidro.online"
     MAIL_REPLY_TO: "support@pidro.net"
-    ENABLE_DEV_ROUTES: "false"
     # Phase 4 privacy disclosure is live and verified on the canonical site.
     DEFERRED_INVITES_ENABLED: "true"
     DB_HOST: postgres
     DB_PORT: "5432"
     DB_NAME: pidro_prod
     DB_USER: pidro
+    ADMIN_EMAIL: "m.fahle@gmail.com"
   secret:
     - SECRET_KEY_BASE
     - POSTGRES_PASSWORD

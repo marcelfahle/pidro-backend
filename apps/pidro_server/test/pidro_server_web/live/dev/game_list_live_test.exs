@@ -5,6 +5,8 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
 
   alias PidroServer.Games.{Lifecycle, RoomManager}
 
+  setup :register_and_log_in_admin
+
   setup do
     original = Application.get_env(:pidro_server, Lifecycle, [])
 
@@ -24,7 +26,7 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   end
 
   test "renders pacing controls and saves runtime values", %{conn: conn} do
-    {:ok, view, html} = live(conn, ~p"/dev/games")
+    {:ok, view, html} = live(conn, ~p"/admin/games")
 
     assert html =~ "Game Pacing"
     assert html =~ "Save Pacing"
@@ -51,7 +53,7 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   end
 
   test "reset restores lifecycle defaults from the dev panel", %{conn: conn} do
-    {:ok, view, _html} = live(conn, ~p"/dev/games")
+    {:ok, view, _html} = live(conn, ~p"/admin/games")
 
     _ =
       render_submit(view, "save_pacing", %{
@@ -73,7 +75,7 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   end
 
   test "ignores online count updates from lobby pubsub", %{conn: conn} do
-    {:ok, view, html} = live(conn, ~p"/dev/games")
+    {:ok, view, html} = live(conn, ~p"/admin/games")
 
     assert html =~ "Game Pacing"
 

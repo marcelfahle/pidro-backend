@@ -52,10 +52,11 @@ defmodule PidroServerWeb.Dev.AnalyticsLive do
       active="analytics"
       title="Development Analytics"
       subtitle="Monitor server health, room status, process count, memory, and live game volume while testing."
+      flash={@flash}
     >
       <:actions>
         <.link
-          navigate={~p"/dev/games"}
+          navigate={~p"/admin/games"}
           class="inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700 shadow-sm hover:border-orange-300 hover:text-stone-950"
         >
           <.icon name="hero-arrow-left" class="size-4" /> Games

@@ -44,8 +44,8 @@ Use a low TTL like `300` for the first cutover.
   versioned data directory in the `postgres18-data` volume, and is available
   only on the internal Docker network and host loopback interface.
 - Builds are configured to run on the Hetzner host as a remote `amd64` builder, which avoids local Apple Silicon emulation issues.
-- Production developer routes are disabled. Do not add the developer Basic Auth
-  password to the production secret contract.
+- Production ops routes require an individual admin session. The deployment config
+  sets `ADMIN_EMAIL` to `m.fahle@gmail.com`; seed that first admin after migrations.
 
 ## Proxy headers and rate limiting
 

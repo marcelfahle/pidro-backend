@@ -15,7 +15,7 @@ while IFS= read -r file; do
   args+=(--files-included "$file")
 done < <(
   {
-    git diff --name-only "$merge_base" -- '*.ex' '*.exs'
+    git diff --name-only --diff-filter=ACMR "$merge_base" -- '*.ex' '*.exs'
     git ls-files --others --exclude-standard -- '*.ex' '*.exs'
   } | sort -u
 )

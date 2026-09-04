@@ -69,3 +69,28 @@ defmodule PidroServer.AccountsFixtures do
     end
   end
 end
+
+defmodule PidroServer.AdminsFixtures do
+  @moduledoc false
+
+  alias PidroServer.Admins.Admin
+  alias PidroServer.Repo
+
+  def unique_admin_email, do: "admin#{System.unique_integer([:positive])}@example.com"
+  def valid_admin_password, do: "valid admin password"
+
+  def admin_fixture(attrs \\ %{}) do
+    {force_password_change, attrs} =
+      attrs
+      |> Enum.into(%{
+        email: unique_admin_email(),
+        password: valid_admin_password(),
+        force_password_change: false
+      })
+      |> Map.pop(:force_password_change)
+
+    %Admin{}
+    |> Admin.registration_changeset(attrs, force_password_change: force_password_change)
+    |> Repo.insert!()
+  end
+end

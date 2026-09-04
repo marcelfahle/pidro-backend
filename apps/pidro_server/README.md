@@ -39,15 +39,37 @@ mix phx.server
 
 ## Routes
 
-### Dev Routes (Development Only)
+### Ops Panel
 
-These routes are only available when `config :pidro_server, dev_routes: true` (set in `config/dev.exs`):
+The `/admin/*` control room is frictionless in local development. Test and production
+require a separate admin account and never accept player credentials. In production,
+the deployment config sets `ADMIN_EMAIL` to `m.fahle@gmail.com`. Run migrations, then
+create the first account once:
+
+```bash
+bin/pidro_server eval "PidroServer.Release.seed_admin()"
+```
+
+For a local Mix environment, use `ADMIN_EMAIL=operator@example.com mix pidro.seed_admin`.
+The task is idempotent: if any admin exists, it makes no changes. A newly seeded admin
+signs in at `/admin/login` with `changeme123` and must change that password before any
+ops view loads.
+
+After signing in, use `/admin/admins` to add or remove admins. Adding an admin displays
+a generated temporary password once; hand it over out of band. Removing an admin
+invalidates all of their sessions. If both operators are locked out, restore access
+by removing the unusable admin rows in a database console, setting `ADMIN_EMAIL`, and
+re-running the same seed command.
 
 | Route | Description |
 |-------|-------------|
-| `/dev/games` | Dev UI - create test games, manage bots |
-| `/dev/games/:code` | Dev UI - play/debug a specific game |
-| `/dev/analytics` | Dev UI - analytics dashboard |
+| `/admin` | Ops UI - sign in |
+| `/admin/games` | Ops UI - create test games, manage bots |
+| `/admin/games/:code` | Ops UI - play/debug a specific game |
+| `/admin/users` | Ops UI - manage player accounts |
+| `/admin/emails` | Ops UI - manage email templates and exports |
+| `/admin/analytics` | Ops UI - analytics dashboard |
+| `/admin/admins` | Ops UI - manage admin access |
 | `/dev/dashboard` | Phoenix LiveDashboard (metrics, processes) |
 | `/dev/mailbox` | Swoosh email preview |
 
@@ -132,7 +154,7 @@ See: [MASTERPLAN-DEVUI.md](MASTERPLAN-DEVUI.md) for detailed roadmap
 # 1. Start server
 iex -S mix phx.server
 
-# 2. Visit http://localhost:4000/dev/games
+# 2. Visit http://localhost:4000/admin/games
 # 3. Click "New Game (1P + 3 Bots)"
 # 4. Switch to North position
 # 5. Play through bidding/trump/playing phases
@@ -225,10 +247,10 @@ config/
 └── test.exs      # Test settings
 ```
 
-### Dev Panel Access
+### Ops Panel Access
 
-Dev panel routes are only compiled/enabled when `dev_routes` is set to `true`
-(default in `config/dev.exs`).
+Local development bypasses admin authentication through `dev_routes: true` in
+`config/dev.exs`. Test and production always require an admin session.
 
 ### Environment Variables
 ```bash
@@ -265,7 +287,7 @@ mix phx.routes      # List all routes
 
 ## Testing the Dev UI
 
-1. **Create a game**: Visit `/dev/games`, click "New Game (1P + 3 Bots)"
+1. **Create a game**: Visit `/admin/games`, click "New Game (1P + 3 Bots)"
 2. **Switch positions**: Click North/South/East/West buttons
 3. **Make moves**: Use action buttons (Bid 6, Pass, etc.)
 4. **View events**: Scroll event log, filter by type/player
