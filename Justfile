@@ -18,6 +18,9 @@ deploy:
 migrate:
     bundle exec kamal app exec --primary "bin/pidro_server eval \"PidroServer.Release.migrate()\""
 
+seed-admin:
+    bundle exec kamal app exec --primary "bin/pidro_server eval \"PidroServer.Release.seed_admin()\""
+
 backup:
     ops/backup-production
 

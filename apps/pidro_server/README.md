@@ -47,13 +47,13 @@ the deployment config sets `ADMIN_EMAIL` to `m.fahle@gmail.com`. Run migrations,
 create the first account once:
 
 ```bash
-bin/pidro_server eval "PidroServer.Release.seed_admin()"
+just seed-admin
 ```
 
 For a local Mix environment, use `ADMIN_EMAIL=operator@example.com mix pidro.seed_admin`.
 The task is idempotent: if any admin exists, it makes no changes. A newly seeded admin
-signs in at `/admin/login` with `changeme123` and must change that password before any
-ops view loads.
+receives a unique temporary password, shown once in the invoking terminal. Sign in at
+`/admin/login` and change it before any ops view loads.
 
 After signing in, use `/admin/admins` to add or remove admins. Adding an admin displays
 a generated temporary password once; hand it over out of band. Removing an admin

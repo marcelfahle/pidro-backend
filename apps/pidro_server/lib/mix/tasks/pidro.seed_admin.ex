@@ -1,10 +1,11 @@
 defmodule Mix.Tasks.Pidro.SeedAdmin do
   @moduledoc """
-  Creates the first admin using `ADMIN_EMAIL` and password `changeme123`.
+  Creates the first admin using `ADMIN_EMAIL` and a generated temporary password.
 
       ADMIN_EMAIL=operator@example.com mix pidro.seed_admin
 
-  The task is idempotent: once any admin exists, it makes no changes.
+  The password is displayed once in the invoking terminal. The task is
+  idempotent: once any admin exists, it makes no changes.
   """
 
   use Mix.Task
@@ -19,10 +20,10 @@ defmodule Mix.Tasks.Pidro.SeedAdmin do
       {:ok, :already_seeded} ->
         Mix.shell().info("An admin already exists; no changes made.")
 
-      {:ok, admin} ->
-        Mix.shell().info(
-          "Created #{admin.email} with temporary password changeme123. Change it at first login."
-        )
+      {:ok, admin, temporary_password} ->
+        Mix.shell().info("Created #{admin.email}.")
+        Mix.shell().info("Temporary password (shown once): #{temporary_password}")
+        Mix.shell().info("Change it immediately at first login.")
 
       {:error, :admin_seed_email_missing} ->
         Mix.raise("Set ADMIN_EMAIL before running mix pidro.seed_admin.")

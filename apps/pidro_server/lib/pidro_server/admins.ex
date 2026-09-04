@@ -10,8 +10,6 @@ defmodule PidroServer.Admins do
   alias PidroServer.Admins.{Admin, AdminToken}
   alias PidroServer.Repo
 
-  @seed_password "changeme123"
-
   def list_admins do
     Repo.all(from admin in Admin, order_by: [asc: admin.email])
   end
@@ -138,19 +136,36 @@ defmodule PidroServer.Admins do
   end
 
   defp seed_first_admin(email) do
-    Repo.transaction(fn ->
-      admins = Repo.all(from admin in Admin, lock: "FOR UPDATE")
+    result =
+      Repo.transaction(fn ->
+        {:ok, _result} =
+          Repo.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+            "pidro-admin-bootstrap"
+          ])
 
-      case admins do
-        [] ->
-          %Admin{}
-          |> Admin.registration_changeset(%{"email" => email, "password" => @seed_password})
-          |> Repo.insert!()
+        case Repo.all(Admin) do
+          [] ->
+            temporary_password = generate_temporary_password()
 
-        _admins ->
-          :already_seeded
-      end
-    end)
+            admin =
+              %Admin{}
+              |> Admin.registration_changeset(%{
+                "email" => email,
+                "password" => temporary_password
+              })
+              |> Repo.insert!()
+
+            {admin, temporary_password}
+
+          _admins ->
+            :already_seeded
+        end
+      end)
+
+    case result do
+      {:ok, {admin, temporary_password}} -> {:ok, admin, temporary_password}
+      other -> other
+    end
   rescue
     error in Ecto.InvalidChangesetError -> {:error, error.changeset}
   end

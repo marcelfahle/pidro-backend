@@ -121,8 +121,7 @@ defmodule PidroServerWeb.AdminAuth do
                                                                                 socket ->
             case verify_live_admin(socket, require_changed_password?) do
               {:cont, socket} ->
-                log_mutation(socket.assigns.current_admin, event)
-                {:cont, socket}
+                authorize_live_admin_event(socket, event)
 
               {:halt, socket} ->
                 {:halt, socket}
@@ -160,6 +159,24 @@ defmodule PidroServerWeb.AdminAuth do
           {:cont, socket}
       end
     end
+  end
+
+  defp authorize_live_admin_event(
+         %{assigns: %{current_admin: %{force_password_change: true}}} = socket,
+         event
+       )
+       when event != "change_password" do
+    {:halt,
+     LiveView.put_flash(
+       socket,
+       :error,
+       "Change your temporary password before managing admins."
+     )}
+  end
+
+  defp authorize_live_admin_event(socket, event) do
+    log_mutation(socket.assigns.current_admin, event)
+    {:cont, socket}
   end
 
   defp log_mutation(nil, event) do

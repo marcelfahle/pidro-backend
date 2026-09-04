@@ -27,7 +27,7 @@ defmodule PidroServer.Admins.AdminToken do
 
     {token,
      %__MODULE__{
-       token: token,
+       token: hash_token(token),
        context: "session",
        admin_id: admin.id,
        last_used_at: DateTime.utc_now()
@@ -45,6 +45,9 @@ defmodule PidroServer.Admins.AdminToken do
   end
 
   def by_token_and_context_query(token, context) do
-    from __MODULE__, where: [token: ^token, context: ^context]
+    hashed_token = hash_token(token)
+    from __MODULE__, where: [token: ^hashed_token, context: ^context]
   end
+
+  defp hash_token(token), do: :crypto.hash(:sha256, token)
 end

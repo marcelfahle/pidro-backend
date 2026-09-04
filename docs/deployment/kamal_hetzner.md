@@ -45,7 +45,8 @@ Use a low TTL like `300` for the first cutover.
   only on the internal Docker network and host loopback interface.
 - Builds are configured to run on the Hetzner host as a remote `amd64` builder, which avoids local Apple Silicon emulation issues.
 - Production ops routes require an individual admin session. The deployment config
-  sets `ADMIN_EMAIL` to `m.fahle@gmail.com`; seed that first admin after migrations.
+  sets `ADMIN_EMAIL` to `m.fahle@gmail.com`; run `just seed-admin` after migrations
+  and securely retain the generated temporary password shown by the command.
 
 ## Proxy headers and rate limiting
 

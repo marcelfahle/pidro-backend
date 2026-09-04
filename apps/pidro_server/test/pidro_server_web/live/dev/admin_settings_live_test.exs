@@ -51,4 +51,22 @@ defmodule PidroServerWeb.Dev.AdminSettingsLiveTest do
     assert html =~ "The last admin cannot remove themselves."
     assert Admins.get_admin(admin.id)
   end
+
+  test "a forced-password admin cannot send a direct admin-management event", %{conn: conn} do
+    admin =
+      AdminsFixtures.admin_fixture(%{
+        password: "temporary password",
+        force_password_change: true
+      })
+
+    {:ok, view, _html} = live(log_in_admin(conn, admin), ~p"/admin/admins")
+
+    html =
+      render_hook(view, "add_admin", %{
+        "admin" => %{"email" => "blocked.admin@example.com"}
+      })
+
+    assert html =~ "Change your temporary password before managing admins."
+    refute Admins.get_admin_by_email("blocked.admin@example.com")
+  end
 end

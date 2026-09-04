@@ -23,10 +23,13 @@ defmodule PidroServer.AdminsTest do
   test "seed_first_admin creates the initial forced-password account idempotently" do
     Application.put_env(:pidro_server, :admin_seed_email, "First.Admin@example.com")
 
-    assert {:ok, admin} = Admins.seed_first_admin()
+    assert {:ok, admin, temporary_password} = Admins.seed_first_admin()
     assert admin.email == "first.admin@example.com"
     assert admin.force_password_change
-    assert Admins.get_admin_by_email_and_password(admin.email, "changeme123").id == admin.id
+    assert byte_size(temporary_password) == 24
+
+    assert Admins.get_admin_by_email_and_password(admin.email, temporary_password).id ==
+             admin.id
 
     assert {:ok, :already_seeded} = Admins.seed_first_admin()
     assert Admins.list_admins() == [admin]
@@ -75,6 +78,14 @@ defmodule PidroServer.AdminsTest do
     )
 
     assert is_nil(Admins.get_admin_by_session_token(token))
+  end
+
+  test "admin session tokens are stored as digests" do
+    admin = AdminsFixtures.admin_fixture()
+    token = Admins.generate_admin_session_token(admin)
+
+    refute Repo.get(AdminToken, token)
+    assert Repo.get(AdminToken, :crypto.hash(:sha256, token))
   end
 
   test "deleting an admin revokes sessions and the final admin cannot delete themselves" do

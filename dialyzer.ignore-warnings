@@ -8,9 +8,9 @@ lib/mix/tasks/pidro.rerate.ex:26:14:
 lib/mix/tasks/pidro.rerate.ex:42:13:
 lib/mix/tasks/pidro.rerate.ex:51:9:
 lib/mix/tasks/pidro.seed_admin.ex:1:
-lib/mix/tasks/pidro.seed_admin.ex:16:14:
-lib/mix/tasks/pidro.seed_admin.ex:23:13:
-lib/mix/tasks/pidro.seed_admin.ex:31:13:
+lib/mix/tasks/pidro.seed_admin.ex:17:14:
+lib/mix/tasks/pidro.seed_admin.ex:26:13:
+lib/mix/tasks/pidro.seed_admin.ex:32:13:
 lib/pidro/core/binary.ex:302:8:
 lib/pidro/game/engine.ex:289:8:
 lib/pidro/game/engine.ex:297:8:
