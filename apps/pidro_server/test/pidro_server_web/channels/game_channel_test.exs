@@ -76,6 +76,112 @@ defmodule PidroServerWeb.GameChannelTest do
     }
   end
 
+  describe "explicit departure retires game authority" do
+    test "the remaining channel receives bot takeover and advancing game states", context do
+      alias PidroServer.Games.Lifecycle
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.merge(original,
+          bot_delay_ms: 5,
+          bot_delay_variance_ms: 0,
+          bot_min_delay_ms: 1,
+          turn_timer_bid_ms: 60_000,
+          turn_timer_play_ms: 60_000
+        )
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
+
+      advance_game_to_bidding(context.room_code)
+      {:ok, before_departures} = GameAdapter.get_state(context.room_code)
+      {:ok, room} = RoomManager.get_room(context.room_code)
+
+      {human_position, human_id} =
+        Enum.find(room.positions, fn {pos, user_id} ->
+          pos != before_departures.current_turn and user_id != room.host_id
+        end)
+
+      {:ok, _, socket} =
+        subscribe_and_join(context.sockets[human_id], GameChannel, "game:#{room.code}")
+
+      for {position, user_id} <- room.positions, user_id != human_id do
+        assert :ok = RoomManager.leave_room(user_id)
+        assert_push "bot_substitute_active", %{position: ^position, user_id: ^user_id}
+        assert_push "seat_permanently_botted", %{position: ^position}
+      end
+
+      assert_push "owner_changed", %{new_owner_id: ^human_id, new_owner_position: ^human_position}
+      assert_push "game_state", %{state: %{current_turn: ^human_position} = delivered}, 2_000
+      assert {:ok, advanced} = GameAdapter.get_state(room.code)
+      assert length(advanced.events) > length(before_departures.events)
+      assert delivered == GameStateSerializer.serialize(advanced)
+      assert is_binary(Jason.encode!(delivered))
+      assert Process.alive?(socket.channel_pid)
+    end
+
+    test "a stale channel cannot bid for the replacement bot", context do
+      alias PidroServer.Games.Lifecycle
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+      Application.put_env(:pidro_server, Lifecycle, Keyword.put(original, :bot_delay_ms, 60_000))
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
+
+      advance_game_to_bidding(context.room_code)
+      {:ok, game} = GameAdapter.get_state(context.room_code)
+      {:ok, room} = RoomManager.get_room(context.room_code)
+      user_id = room.positions[game.current_turn]
+
+      stale_socket =
+        Phoenix.Socket.assign(context.sockets[user_id], %{
+          room_code: room.code,
+          position: game.current_turn,
+          role: :player
+        })
+
+      assert :ok = RoomManager.leave_room(user_id)
+
+      assert {:reply, {:error, %{reason: "seat_not_controlled"}}, _} =
+               GameChannel.handle_in("bid", %{"amount" => 6}, stale_socket)
+
+      assert {:ok, unchanged} = GameAdapter.get_state(room.code)
+      assert unchanged.events == game.events
+    end
+
+    test "all leaver channels close without starting another disconnect cascade", context do
+      user = context.user2
+
+      {:ok, _, first} =
+        subscribe_and_join(context.sockets[user.id], GameChannel, "game:#{context.room_code}")
+
+      {:ok, another_socket} = create_socket(user)
+
+      {:ok, _, second} =
+        subscribe_and_join(another_socket, GameChannel, "game:#{context.room_code}")
+
+      monitors = Enum.map([first, second], &Process.monitor(&1.channel_pid))
+
+      assert :ok = RoomManager.leave_room(user.id)
+
+      for monitor <- monitors do
+        assert_receive {:DOWN, ^monitor, :process, _, {:shutdown, :left}}
+      end
+
+      {:ok, room} = RoomManager.get_room(context.room_code)
+      assert room.seats.east.status == :bot_substitute
+      assert room.seats.east.reserved_for == nil
+      refute Map.has_key?(room.phase_timers, :east)
+
+      assert {:error, _} =
+               subscribe_and_join(
+                 context.sockets[user.id],
+                 GameChannel,
+                 "game:#{context.room_code}"
+               )
+    end
+  end
+
   # Helper function to advance the game to the bidding phase
   defp advance_game_to_bidding(room_code) do
     {:ok, state} = GameAdapter.get_state(room_code)

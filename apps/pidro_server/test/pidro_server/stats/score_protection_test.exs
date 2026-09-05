@@ -222,6 +222,29 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
   end
 
   describe "completed game persistence" do
+    test "explicit leave during grace records abandonment once and keeps the earned result" do
+      [host, leaver, south, west] = Enum.map(1..4, fn _ -> Ecto.UUID.generate() end)
+      {:ok, room} = RoomManager.create_room(host, %{})
+      for user_id <- [leaver, south, west], do: RoomManager.join_room(room.code, user_id)
+      :ok = RoomManager.handle_player_disconnect(room.code, leaver)
+      send(RoomManager, {:phase2_start, room.code, :east})
+      {:ok, before_leave} = RoomManager.get_room(room.code)
+      bot_pid = before_leave.seats.east.bot_pid
+
+      assert :ok = RoomManager.leave_room(leaver)
+      assert {:error, :not_in_room} = RoomManager.leave_room(leaver)
+      send(RoomManager, {:phase3_gone, room.code, :east})
+      {:ok, after_leave} = RoomManager.get_room(room.code)
+      assert after_leave.seats.east.bot_pid == bot_pid
+      assert [%{user_id: ^leaver, position: "east"}] = Stats.list_abandonments_for_room(room.code)
+
+      send(RoomManager, {:game_over, room.code, :east_west, %{north_south: 40, east_west: 62}})
+      saved = wait_until(fn -> Repo.get_by(GameStats, room_code: room.code) end)
+      assert saved.player_results[leaver]["participation"] == "abandoned"
+      assert saved.player_results[leaver]["result"] == "win"
+      assert Enum.sort(saved.player_ids) == Enum.sort([host, leaver, south, west])
+    end
+
     test "persists original players and substitutes exactly once on game_over" do
       user1 = Ecto.UUID.generate()
       user2 = Ecto.UUID.generate()

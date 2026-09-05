@@ -554,6 +554,26 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   describe "delete_me" do
     setup :start_room_manager
 
+    test "deleting an account during play leaves a permanent bot", %{conn: conn} do
+      {_host, room} = host_and_room()
+      leaver = AccountsFixtures.guest_fixture()
+      others = Enum.map(1..2, fn _ -> AccountsFixtures.guest_fixture() end)
+      for user <- [leaver | others], do: RoomManager.join_room(room.code, user.id)
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(leaver)}")
+        |> delete(~p"/api/v1/auth/me")
+
+      assert response(conn, 204)
+      assert Repo.get(User, leaver.id) == nil
+      assert {:ok, updated} = RoomManager.get_room(room.code)
+      assert updated.status == :playing
+      assert updated.seats.east.occupant_type == :bot
+      assert Process.alive?(updated.seats.east.bot_pid)
+      assert updated.seats.east.reserved_for == nil
+    end
+
     test "AE10: 204, the token is dead afterwards and the seat is vacant", %{conn: conn} do
       {_host, room} = host_and_room()
       ben = AccountsFixtures.guest_fixture(%{display_name: "Ben"})
