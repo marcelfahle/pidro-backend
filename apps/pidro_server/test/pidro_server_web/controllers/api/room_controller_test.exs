@@ -21,7 +21,10 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     test "returns 204 and transfers the running seat to a bot", %{conn: conn} do
       [host, leaver, south, west] = Enum.map(1..4, fn _ -> AccountsFixtures.guest_fixture() end)
       {:ok, room} = RoomManager.create_room(host.id, %{})
-      for user <- [leaver, south, west], do: RoomManager.join_room(room.code, user.id)
+      assert {:ok, _, position} = RoomManager.join_room(room.code, leaver.id)
+
+      for user <- [south, west],
+          do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
 
       conn =
         conn
@@ -31,8 +34,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert response(conn, 204)
       assert {:ok, updated} = RoomManager.get_room(room.code)
       assert updated.status == :playing
-      assert updated.seats.east.status == :bot_substitute
-      assert Process.alive?(updated.seats.east.bot_pid)
+      assert updated.seats[position].status == :bot_substitute
+      assert Process.alive?(updated.seats[position].bot_pid)
     end
   end
 

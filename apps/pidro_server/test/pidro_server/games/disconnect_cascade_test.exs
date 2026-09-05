@@ -128,6 +128,13 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert Enum.all?(updated.seats, fn {_, seat} ->
                seat.occupant_type == :bot and Process.alive?(seat.bot_pid)
              end)
+
+      assert is_binary(updated.host_id)
+
+      for user <- ["user1", "user2", "user3", "user4"] do
+        assert {:error, :not_owner} = RoomManager.open_seat(room.code, :north, user)
+        assert {:error, :not_owner} = RoomManager.close_seat(room.code, :north, user)
+      end
     end
 
     test "a failed bot start preserves membership and its existing timer" do
@@ -135,8 +142,13 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
       {:ok, before_leave} = RoomManager.get_room(room.code)
       supervisor = PidroServer.Games.Bots.BotSupervisor
-      original_limit = :sys.get_state(supervisor).max_children
-      :sys.replace_state(supervisor, &%{&1 | max_children: 0})
+      original_pid = Process.whereis(supervisor)
+
+      limited_pid =
+        start_supervised!({DynamicSupervisor, strategy: :one_for_one, max_children: 0})
+
+      Process.unregister(supervisor)
+      Process.register(limited_pid, supervisor)
 
       try do
         assert {:error, :bot_start_failed} = RoomManager.leave_room("user2")
@@ -146,7 +158,8 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
         assert after_leave.phase_timers == before_leave.phase_timers
         assert Process.alive?(Process.whereis(RoomManager))
       after
-        :sys.replace_state(supervisor, &%{&1 | max_children: original_limit})
+        Process.unregister(supervisor)
+        Process.register(original_pid, supervisor)
       end
     end
 
@@ -223,6 +236,41 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       end
     end
 
+    test "a suspended engine releases the manager before the action caller times out" do
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.put(original, :turn_timer_bid_ms, 60_000)
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
+
+      {room, positions} = create_playing_room()
+      bidding = start_bidding(room.code)
+      {:ok, game_pid} = PidroServer.Games.GameSupervisor.get_game(room.code)
+      :sys.suspend(game_pid)
+
+      try do
+        action =
+          Task.async(fn ->
+            RoomManager.apply_player_action(
+              room.code,
+              positions[bidding.current_turn],
+              bidding.current_turn,
+              {:bid, 6}
+            )
+          end)
+
+        assert {:error, :game_unavailable} = Task.await(action, 1_500)
+        assert {:ok, _room} = RoomManager.create_room("unaffected-user")
+        assert Process.alive?(game_pid)
+      after
+        :sys.resume(game_pid)
+      end
+    end
+
     test "cleaning the old room preserves a departed user's new membership and channels" do
       {old_room, _} = create_playing_room()
       assert :ok = RoomManager.leave_room("user2")
@@ -284,7 +332,10 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
         departing =
           room.positions
           |> Enum.reject(fn {pos, _} -> pos == human_position end)
-          |> Enum.sort_by(fn {_, user} -> user == room.host_id != unquote(host_first?) end)
+          |> Enum.sort_by(fn {_, user} ->
+            host? = user == room.host_id
+            host? != unquote(host_first?)
+          end)
 
         for {position, user_id} <- departing do
           if unquote(mode) == :leave or

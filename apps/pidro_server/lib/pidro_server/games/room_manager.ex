@@ -53,6 +53,8 @@ defmodule PidroServer.Games.RoomManager do
   alias PidroServer.Stats
 
   @max_players 4
+  # Two engine calls must finish well before the public caller's 5-second timeout.
+  @player_action_call_timeout_ms 250
 
   # Room struct representing a game room
   defmodule Room do
@@ -1252,7 +1254,7 @@ defmodule PidroServer.Games.RoomManager do
            %Seat{occupant_type: :human, status: :connected, user_id: ^user_id} <-
              Map.get(room.seats, position) do
         try do
-          GameAdapter.apply_action(room_code, position, action)
+          GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
         catch
           :exit, reason ->
             Logger.error("Player action failed in room #{room_code}: #{inspect(reason)}")
@@ -2389,7 +2391,16 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  defp ensure_owner(%Room{host_id: host_id}, user_id) when host_id == user_id, do: :ok
+  defp ensure_owner(%Room{host_id: user_id, seats: seats}, user_id) do
+    if Enum.any?(seats, fn {_, seat} ->
+         Seat.owner?(seat) and Seat.connected_human?(seat) and seat.user_id == user_id
+       end) do
+      :ok
+    else
+      {:error, :not_owner}
+    end
+  end
+
   defp ensure_owner(_, _), do: {:error, :not_owner}
 
   @doc false

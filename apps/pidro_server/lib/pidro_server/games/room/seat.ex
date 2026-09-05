@@ -17,6 +17,7 @@ defmodule PidroServer.Games.Room.Seat do
       bot_substitute -> connected      (reclaim/2, when reserved_for matches)
       bot_substitute -> vacant         (open_for_substitute/1)
       vacant -> connected              (fill_seat/2)
+      human/bot occupied -> bot_substitute (surrender/2, permanent, no reclaim)
   """
 
   @type position :: :north | :east | :south | :west

@@ -558,7 +558,8 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       {_host, room} = host_and_room()
       leaver = AccountsFixtures.guest_fixture()
       others = Enum.map(1..2, fn _ -> AccountsFixtures.guest_fixture() end)
-      for user <- [leaver | others], do: RoomManager.join_room(room.code, user.id)
+      assert {:ok, _, position} = RoomManager.join_room(room.code, leaver.id)
+      for user <- others, do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
 
       conn =
         conn
@@ -569,9 +570,9 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert Repo.get(User, leaver.id) == nil
       assert {:ok, updated} = RoomManager.get_room(room.code)
       assert updated.status == :playing
-      assert updated.seats.east.occupant_type == :bot
-      assert Process.alive?(updated.seats.east.bot_pid)
-      assert updated.seats.east.reserved_for == nil
+      assert updated.seats[position].occupant_type == :bot
+      assert Process.alive?(updated.seats[position].bot_pid)
+      assert updated.seats[position].reserved_for == nil
     end
 
     test "AE10: 204, the token is dead afterwards and the seat is vacant", %{conn: conn} do
