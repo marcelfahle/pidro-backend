@@ -918,6 +918,16 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, {:reset_consecutive_timeouts, String.upcase(room_code), user_id})
   end
 
+  @doc "Applies a human action only while the user still controls the seat."
+  @spec apply_player_action(String.t(), String.t(), Positions.position(), term()) ::
+          {:ok, map()} | {:error, term()}
+  def apply_player_action(room_code, user_id, position, action) do
+    GenServer.call(
+      __MODULE__,
+      {:apply_player_action, String.upcase(room_code), user_id, position, action}
+    )
+  end
+
   if Mix.env() == :test do
     def set_last_activity_for_test(room_code, datetime) do
       GenServer.call(__MODULE__, {:set_last_activity_for_test, room_code, datetime})
@@ -1156,60 +1166,8 @@ defmodule PidroServer.Games.RoomManager do
             new_state = remove_room(state, room_code)
             {:reply, :ok, new_state}
 
-          # Owner leaving a :playing room — promote ownership, then handle leave
-          room.host_id == player_id && room.status == :playing ->
-            {room_after_promote, promoted?} =
-              case promote_owner(room) do
-                {:ok, promoted_room} -> {promoted_room, true}
-                {:no_humans, same_room} -> {same_room, false}
-              end
-
-            if promoted? do
-              # Broadcast owner change
-              new_owner_seat =
-                Enum.find_value(room_after_promote.seats, fn {pos, s} ->
-                  if Seat.owner?(s), do: {pos, s}
-                end)
-
-              if new_owner_seat do
-                {new_pos, new_seat} = new_owner_seat
-
-                Phoenix.PubSub.broadcast(
-                  PidroServer.PubSub,
-                  "game:#{room_code}",
-                  {:owner_changed, %{new_owner_id: new_seat.user_id, new_owner_position: new_pos}}
-                )
-              end
-
-              # Remove leaving player from position and vacate seat
-              player_position = Positions.get_position(room_after_promote, player_id)
-              updated_room = Positions.remove(room_after_promote, player_id)
-              updated_room = vacate_seat(updated_room, player_position)
-              updated_room = touch_last_activity(updated_room)
-
-              new_state = %State{
-                state
-                | rooms: Map.put(state.rooms, room_code, updated_room),
-                  player_rooms: Map.delete(state.player_rooms, player_id)
-              }
-
-              Logger.info(
-                "Owner #{player_id} left :playing room #{room_code}, ownership promoted to #{room_after_promote.host_id}"
-              )
-
-              broadcast_room(room_code, updated_room)
-              broadcast_lobby_event({:room_updated, updated_room})
-
-              {:reply, :ok, new_state}
-            else
-              # No humans left, close the room
-              Logger.info(
-                "Owner #{player_id} left room #{room_code}, no humans remaining, closing room"
-              )
-
-              new_state = remove_room(state, room_code)
-              {:reply, :ok, new_state}
-            end
+          room.status == :playing ->
+            leave_live_room(state, room, player_id)
 
           # Host leaves non-playing room — close the room entirely
           room.host_id == player_id ->
@@ -1283,6 +1241,29 @@ defmodule PidroServer.Games.RoomManager do
   def handle_call({:unregister_game_channel, room_code, user_id, pid}, _from, %State{} = state) do
     {result, new_state} = unregister_channel_pid(state, room_code, user_id, pid)
     {:reply, result, new_state}
+  end
+
+  @impl true
+  def handle_call({:apply_player_action, room_code, user_id, position, action}, _from, state) do
+    # Serialize authority checks and actions with leave/reclaim. A check in the
+    # channel alone would race a takeover between authorization and engine apply.
+    result =
+      with {:ok, room} <- fetch_room(state, room_code),
+           %Seat{occupant_type: :human, status: :connected, user_id: ^user_id} <-
+             Map.get(room.seats, position) do
+        try do
+          GameAdapter.apply_action(room_code, position, action)
+        catch
+          :exit, reason ->
+            Logger.error("Player action failed in room #{room_code}: #{inspect(reason)}")
+            {:error, :game_unavailable}
+        end
+      else
+        {:error, reason} -> {:error, reason}
+        _ -> {:error, :seat_not_controlled}
+      end
+
+    {:reply, result, state}
   end
 
   @impl true
@@ -2660,6 +2641,109 @@ defmodule PidroServer.Games.RoomManager do
 
       _ ->
         {:reply, {:error, :player_not_disconnected}, state}
+    end
+  end
+
+  # Explicit departure surrenders a live seat immediately, without a reclaim window.
+  # Start the replacement before releasing membership so startup failure is retryable.
+  defp leave_live_room(%State{} = state, %Room{} = room, player_id) do
+    position = Positions.get_position(room, player_id)
+    seat = Map.get(room.seats, position)
+
+    with {:ok, bot_pid} <- departure_bot(room.code, seat) do
+      if position do
+        PidroServer.Stats.record_abandonment(player_id, room.code, position)
+      end
+
+      updated_room =
+        room
+        |> surrender_seat(position, bot_pid)
+        |> cancel_phase_timer(position)
+        |> Positions.remove(player_id)
+        |> touch_last_activity()
+        |> promote_departed_owner(player_id)
+
+      new_state = %{state | player_rooms: Map.delete(state.player_rooms, player_id)}
+
+      {updated_room, new_state} =
+        reconcile_turn_timer_for_current_state(updated_room, room.code, new_state)
+
+      new_state = %{new_state | rooms: Map.put(new_state.rooms, room.code, updated_room)}
+
+      notify_user_channels(new_state, room.code, player_id, {:force_disconnect, :left})
+      broadcast_departure_takeover(room.code, seat, bot_pid, player_id)
+      broadcast_room(room.code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+      if bot_pid, do: maybe_notify_owner_decision(updated_room, room.code, position)
+
+      {:reply, :ok, new_state}
+    else
+      {:error, reason} ->
+        Logger.error("Bot takeover failed in room #{room.code}: #{inspect(reason)}")
+        {:reply, {:error, :bot_start_failed}, state}
+    end
+  end
+
+  # An owner-opened vacancy (or a replaced former membership) stays open.
+  defp departure_bot(_room_code, nil), do: {:ok, nil}
+  defp departure_bot(_room_code, %Seat{occupant_type: :vacant}), do: {:ok, nil}
+
+  defp departure_bot(room_code, %Seat{} = seat) do
+    if is_pid(seat.bot_pid) and Process.alive?(seat.bot_pid) do
+      {:ok, seat.bot_pid}
+    else
+      SubstituteBot.start(room_code, seat.position)
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp surrender_seat(room, _position, nil), do: room
+
+  defp surrender_seat(room, position, bot_pid) do
+    {:ok, seat} = Seat.surrender(room.seats[position], bot_pid)
+    %{room | seats: Map.put(room.seats, position, seat)}
+  end
+
+  defp promote_departed_owner(%Room{host_id: player_id} = room, player_id) do
+    case promote_owner(room) do
+      {:ok, promoted_room} ->
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "game:#{room.code}",
+          {:owner_changed,
+           %{
+             new_owner_id: promoted_room.host_id,
+             new_owner_position: Positions.get_position(promoted_room, promoted_room.host_id)
+           }}
+        )
+
+        promoted_room
+
+      {:no_humans, room} ->
+        room
+    end
+  end
+
+  defp promote_departed_owner(room, _player_id), do: room
+
+  defp broadcast_departure_takeover(_room_code, _seat, nil, _player_id), do: :ok
+
+  defp broadcast_departure_takeover(room_code, seat, bot_pid, player_id) do
+    if seat.bot_pid != bot_pid do
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:bot_substitute_active, %{position: seat.position, user_id: player_id}}
+      )
+    end
+
+    unless seat.status == :bot_substitute and is_nil(seat.reserved_for) do
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:seat_permanently_botted, %{position: seat.position}}
+      )
     end
   end
 

@@ -222,17 +222,15 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:error, :not_in_room} = RoomManager.leave_room("nonexistent")
     end
 
-    test "changes status back to waiting when player leaves from ready room" do
-      {:ok, room} = RoomManager.create_room("user1", %{})
-      {:ok, _, _} = RoomManager.join_room(room.code, "user2")
-      {:ok, _, _} = RoomManager.join_room(room.code, "user3")
-      {:ok, _, _} = RoomManager.join_room(room.code, "user4")
+    test "keeps a pre-start room waiting when a player leaves" do
+      {room, _players} = RoomFixtures.waiting_room_fixture(seated: 3)
 
-      :ok = RoomManager.leave_room("user4")
+      :ok = RoomManager.leave_room("user3")
 
       {:ok, updated_room} = RoomManager.get_room(room.code)
       assert updated_room.status == :waiting
-      assert Positions.count(updated_room) == 3
+      assert Positions.count(updated_room) == 2
+      assert updated_room.seats.south.occupant_type == :vacant
     end
 
     test "closes a single-player table when the human leaves mid-game" do

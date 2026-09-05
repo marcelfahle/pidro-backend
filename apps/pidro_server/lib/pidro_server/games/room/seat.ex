@@ -151,6 +151,25 @@ defmodule PidroServer.Games.Room.Seat do
 
   def make_permanent_bot(%__MODULE__{}), do: {:error, :invalid_transition}
 
+  @doc "Surrenders an occupied seat to a permanent bot after explicit departure."
+  @spec surrender(t(), pid()) :: {:ok, t()} | {:error, :invalid_transition}
+  def surrender(%__MODULE__{occupant_type: type} = seat, bot_pid)
+      when type in [:human, :bot] and is_pid(bot_pid) do
+    {:ok,
+     %{
+       seat
+       | occupant_type: :bot,
+         status: :bot_substitute,
+         bot_pid: bot_pid,
+         user_id: nil,
+         reserved_for: nil,
+         disconnected_at: nil,
+         grace_expires_at: nil
+     }}
+  end
+
+  def surrender(%__MODULE__{}, _), do: {:error, :invalid_transition}
+
   @doc """
   Reclaims a seat for the original human. Restores the seat to `:connected`
   with occupant_type `:human`. Only succeeds if `user_id` matches the
