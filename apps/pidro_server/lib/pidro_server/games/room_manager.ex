@@ -46,7 +46,6 @@ defmodule PidroServer.Games.RoomManager do
   require Logger
 
   alias Pidro.Game.Engine
-  alias PidroServer.Accounts.Auth
   alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
   alias PidroServer.Games.Room.Positions
