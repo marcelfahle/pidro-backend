@@ -86,4 +86,20 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
 
     assert render(view) =~ "Game Pacing"
   end
+
+  test "renders an ownerless room", %{conn: conn} do
+    {:ok, room} = RoomManager.create_room("departed-host", %{name: "Ownerless Table"})
+    set_room_owner(room.code, nil)
+
+    {:ok, _view, html} = live(conn, ~p"/admin/games")
+
+    assert html =~ "Ownerless Table"
+    assert html =~ "No owner"
+  end
+
+  defp set_room_owner(room_code, host_id) do
+    :sys.replace_state(RoomManager, fn state ->
+      update_in(state.rooms[room_code], &%{&1 | host_id: host_id})
+    end)
+  end
 end

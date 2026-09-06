@@ -32,24 +32,6 @@ defmodule PidroServer.Games.TurnTimerTest do
     end
   end
 
-  describe "pause_timer/1" do
-    test "returns paused timer metadata and cancels expiry" do
-      key = {:seat, :south, :playing, 12}
-      timer = TurnTimer.start_timer(self(), "ROOM", key, :seat, :south, :playing, 80, 0)
-
-      Process.sleep(20)
-      paused = TurnTimer.pause_timer(timer)
-
-      assert paused.key == key
-      assert paused.actor_position == :south
-      assert paused.phase == :playing
-      assert paused.remaining_ms > 0
-      assert paused.remaining_ms <= 80
-
-      refute_receive {:turn_timer_expired, "ROOM", _, ^key}, 100
-    end
-  end
-
   describe "remaining_ms/1 and event_seq/1" do
     test "exposes remaining time and event sequence for seat timers" do
       key = {:seat, :west, :playing, 19}
