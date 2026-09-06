@@ -76,11 +76,13 @@ defmodule PidroServer.Games.GameIntegrationTest do
       [first_action | _] = actions
       assert {:ok, new_state} = GameAdapter.apply_action(room_code, :north, first_action)
 
-      # Should receive a state update via PubSub
-      assert_receive {:state_update, ^room_code, %{state: updated_state, transition_delay_ms: 0}},
+      # Select-dealer can carry an animation delay before the next state. Match
+      # this action's state, not a later zero-delay auto-advance broadcast.
+      assert_receive {:state_update, ^room_code,
+                      %{state: ^new_state, transition_delay_ms: delay}},
                      1000
 
-      assert updated_state == new_state
+      assert is_integer(delay) and delay >= 0
 
       # Cleanup
       GameAdapter.unsubscribe(room_code)
