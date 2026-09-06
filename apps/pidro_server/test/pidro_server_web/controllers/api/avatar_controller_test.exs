@@ -154,10 +154,13 @@ defmodule PidroServerWeb.API.AvatarControllerTest do
     assert {:ok, _url} = Avatars.put(user.id, upload(transparent))
     File.write!(normalized, Repo.get!(UserAvatar, user.id).image)
 
-    assert {pixel, 0} =
-             System.cmd("convert", ["JPEG:#{normalized}", "-format", "%[pixel:p{0,0}]", "info:"])
-
-    assert pixel =~ "255"
+    assert {"1 1 1", 0} =
+             System.cmd("convert", [
+               "JPEG:#{normalized}",
+               "-format",
+               "%[fx:p{0,0}.r>0.99] %[fx:p{0,0}.g>0.99] %[fx:p{0,0}.b>0.99]",
+               "info:"
+             ])
   end
 
   test "deleting a user cascades its avatar", %{dir: dir} do
