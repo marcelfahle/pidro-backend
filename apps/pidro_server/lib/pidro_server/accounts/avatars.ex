@@ -126,6 +126,8 @@ defmodule PidroServer.Accounts.Avatars do
           "256x256^",
           "-gravity",
           "center",
+          "-background",
+          "white",
           "-extent",
           "256x256",
           "-colorspace",
