@@ -16,10 +16,12 @@ defmodule PidroServerWeb.GameChannel do
   * `"play_card"` - Player plays a card: `%{"card" => %{"rank" => 14, "suit" => "spades"}}`
   * `"select_hand"` - Dealer selects cards to keep: `%{"cards" => [%{"rank" => 14, "suit" => "hearts"}, ...]}`
   * `"select_dealer"` - Triggers the automatic dealer-selection cut ceremony
-  * `"ready"` - Player signals ready to start (optional)
+  * `"ready"` - Confirm current roster: `%{"room_id" => id, "ready_epoch" => epoch}`.
+    Required for every human; success and stale errors include `readiness`.
 
   ## Outgoing Events (to clients)
 
+  * `"readiness_updated"` - Full versioned roster and readiness snapshot, also included in join replies
   * `"game_state"` - Full game state update: `%{state: game_state, transition_delay_ms: integer()}`
   * `"player_joined"` - New player joined: `%{player_id: id, position: :north}`
   * `"player_left"` - Player left: `%{player_id: id}`
@@ -62,6 +64,7 @@ defmodule PidroServerWeb.GameChannel do
 
   alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
   alias PidroServer.Games.Room.Seat
+  alias PidroServerWeb.API.RoomJSON
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
 
@@ -229,7 +232,7 @@ defmodule PidroServerWeb.GameChannel do
         reconnected: join_type == :reconnect,
         legal_actions: legal_actions,
         turn_timer: turn_timer,
-        readiness: readiness
+        readiness: RoomJSON.readiness(readiness)
       }
 
       # Add state only if game has started
@@ -386,26 +389,20 @@ defmodule PidroServerWeb.GameChannel do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot signal ready"}}, socket}
     else
-      case RoomManager.readiness(socket.assigns.room_code) do
-        {:ok, %{room_id: ^room_id}} ->
-          case RoomManager.confirm_ready(
-                 socket.assigns.room_code,
-                 socket.assigns.user_id,
-                 self(),
-                 epoch
-               ) do
-            {:ok, readiness} ->
-              {:reply, {:ok, %{readiness: readiness}}, socket}
-
-            {:error, reason, readiness} ->
-              {:reply, {:error, %{reason: Atom.to_string(reason), readiness: readiness}}, socket}
-          end
-
+      case RoomManager.confirm_ready(
+             socket.assigns.room_code,
+             room_id,
+             socket.assigns.user_id,
+             self(),
+             epoch
+           ) do
         {:ok, readiness} ->
-          {:reply, {:error, %{reason: "stale_readiness", readiness: readiness}}, socket}
+          {:reply, {:ok, %{readiness: RoomJSON.readiness(readiness)}}, socket}
 
-        _ ->
-          {:reply, {:error, %{reason: "room_not_found"}}, socket}
+        {:error, reason, readiness} ->
+          {:reply,
+           {:error, %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)}},
+           socket}
       end
     end
   end
@@ -539,7 +536,7 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   def handle_info({:readiness_updated, snapshot}, socket) do
-    push(socket, "readiness_updated", snapshot)
+    push(socket, "readiness_updated", RoomJSON.readiness(snapshot))
     {:noreply, socket}
   end
 

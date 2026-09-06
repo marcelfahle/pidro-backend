@@ -121,6 +121,19 @@ defmodule PidroServerWeb.API.RoomJSON do
     room(room, users_for_rooms([room]))
   end
 
+  @doc "Adds the same public player names as HTTP rooms to an authoritative readiness snapshot."
+  def readiness(snapshot) do
+    users = snapshot.positions |> Map.values() |> Enum.reject(&is_nil/1) |> Auth.get_users_map()
+
+    %{
+      snapshot
+      | seats:
+          Map.new(snapshot.seats, fn {position, seat} ->
+            {position, with_player_names(seat, users)}
+          end)
+    }
+  end
+
   defp room(room, users) do
     %{
       code: room.code,
@@ -155,24 +168,24 @@ defmodule PidroServerWeb.API.RoomJSON do
 
   defp serialize_room_seats(seats, users) do
     Map.new(seats, fn {position, seat} ->
-      user = seat_user(seat, users)
-
-      serialized =
-        seat
-        |> Seat.serialize()
-        |> Map.put(:username, seat_username(seat, user))
-        |> Map.put(:display_name, seat_display_name(seat, user))
-
-      {position, serialized}
+      {position, seat |> Seat.serialize() |> with_player_names(users)}
     end)
+  end
+
+  defp with_player_names(seat, users) do
+    user = seat_user(seat, users)
+
+    seat
+    |> Map.put(:username, seat_username(seat, user))
+    |> Map.put(:display_name, seat_display_name(seat, user))
   end
 
   # The user row behind a human seat; nil for bots, vacant seats and ids that
   # resolve to nobody (a deleted account, R25).
-  defp seat_user(%Seat{occupant_type: :bot}, _users), do: nil
-  defp seat_user(%Seat{user_id: "bot_" <> _}, _users), do: nil
+  defp seat_user(%{occupant_type: :bot}, _users), do: nil
+  defp seat_user(%{user_id: "bot_" <> _}, _users), do: nil
 
-  defp seat_user(%Seat{user_id: user_id}, users) when is_binary(user_id),
+  defp seat_user(%{user_id: user_id}, users) when is_binary(user_id),
     do: Map.get(users, user_id)
 
   defp seat_user(_seat, _users), do: nil
@@ -183,8 +196,8 @@ defmodule PidroServerWeb.API.RoomJSON do
   defp seat_display_name(seat, nil), do: if(bot_seat?(seat), do: "Bot", else: nil)
   defp seat_display_name(_seat, user), do: user.display_name
 
-  defp bot_seat?(%Seat{occupant_type: :bot}), do: true
-  defp bot_seat?(%Seat{user_id: "bot_" <> _}), do: true
+  defp bot_seat?(%{occupant_type: :bot}), do: true
+  defp bot_seat?(%{user_id: "bot_" <> _}), do: true
   defp bot_seat?(_seat), do: false
 
   @doc false
