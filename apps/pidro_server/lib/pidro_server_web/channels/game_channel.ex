@@ -244,10 +244,6 @@ defmodule PidroServerWeb.GameChannel do
 
       false ->
         {:error, %{reason: "Not authorized for this room"}}
-
-      error ->
-        Logger.error("Error joining game channel: #{inspect(error)}")
-        {:error, %{reason: "Failed to join game"}}
     end
   end
 
@@ -837,7 +833,7 @@ defmodule PidroServerWeb.GameChannel do
     # Check seat-based disconnect cascade:
     # Phase 1 (:reconnecting) — user_id still on seat
     # Phase 2/3 (:bot_substitute with reserved_for) — user_id cleared from seat but reserved_for still set
-    Enum.any?(room.seats || %{}, fn {_pos, seat} ->
+    Enum.any?(room.seats, fn {_pos, seat} ->
       seat.reserved_for == user_id ||
         (seat.status == :reconnecting && seat.user_id == user_id)
     end)
@@ -854,12 +850,12 @@ defmodule PidroServerWeb.GameChannel do
         :player
 
       # Player whose seat was taken by a bot still has reserved_for set
-      Seat.reserved_for_user?(room.seats || %{}, user_id_str) ->
+      Seat.reserved_for_user?(room.seats, user_id_str) ->
         :player
 
       # In a :playing room, vacant seats can only exist via Seat.open_for_substitute/1,
       # which requires the owner to explicitly open them. Safe to grant :substitute role.
-      room.status == :playing && Seat.any_vacant?(room.seats || %{}) ->
+      room.status == :playing && Seat.any_vacant?(room.seats) ->
         :substitute
 
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
