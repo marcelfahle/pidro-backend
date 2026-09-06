@@ -35,7 +35,9 @@ defmodule PidroServer.Games.Room.Seat do
           reserved_for: String.t() | nil,
           is_owner: boolean(),
           joined_at: DateTime.t() | nil,
-          substitute: boolean()
+          substitute: boolean(),
+          decision_id: String.t() | nil,
+          decision_player_id: String.t() | nil
         }
 
   defstruct [
@@ -47,6 +49,8 @@ defmodule PidroServer.Games.Room.Seat do
     :disconnected_at,
     :grace_expires_at,
     :reserved_for,
+    :decision_id,
+    :decision_player_id,
     is_owner: false,
     joined_at: nil,
     substitute: false
@@ -146,8 +150,15 @@ defmodule PidroServer.Games.Room.Seat do
   Valid from: `:bot_substitute`
   """
   @spec make_permanent_bot(t()) :: {:ok, t()} | {:error, atom()}
-  def make_permanent_bot(%__MODULE__{status: :bot_substitute} = seat) do
-    {:ok, %{seat | reserved_for: nil}}
+  def make_permanent_bot(%__MODULE__{status: :bot_substitute, reserved_for: player_id} = seat)
+      when not is_nil(player_id) do
+    {:ok,
+     %{
+       seat
+       | reserved_for: nil,
+         decision_id: Ecto.UUID.generate(),
+         decision_player_id: player_id
+     }}
   end
 
   def make_permanent_bot(%__MODULE__{}), do: {:error, :invalid_transition}
@@ -156,6 +167,9 @@ defmodule PidroServer.Games.Room.Seat do
   @spec surrender(t(), pid()) :: {:ok, t()} | {:error, :invalid_transition}
   def surrender(%__MODULE__{occupant_type: type} = seat, bot_pid)
       when type in [:human, :bot] and is_pid(bot_pid) do
+    player_id = seat.user_id || seat.reserved_for || seat.decision_player_id
+    decision_id = seat.decision_id || Ecto.UUID.generate()
+
     {:ok,
      %{
        seat
@@ -164,6 +178,8 @@ defmodule PidroServer.Games.Room.Seat do
          bot_pid: bot_pid,
          user_id: nil,
          reserved_for: nil,
+         decision_id: decision_id,
+         decision_player_id: player_id,
          disconnected_at: nil,
          grace_expires_at: nil
      }}
@@ -203,7 +219,9 @@ defmodule PidroServer.Games.Room.Seat do
          bot_pid: nil,
          disconnected_at: nil,
          grace_expires_at: nil,
-         reserved_for: nil
+         reserved_for: nil,
+         decision_id: nil,
+         decision_player_id: nil
      }}
   end
 
@@ -221,7 +239,9 @@ defmodule PidroServer.Games.Room.Seat do
          bot_pid: nil,
          disconnected_at: nil,
          grace_expires_at: nil,
-         reserved_for: nil
+         reserved_for: nil,
+         decision_id: nil,
+         decision_player_id: nil
      }}
   end
 
@@ -247,7 +267,9 @@ defmodule PidroServer.Games.Room.Seat do
          user_id: nil,
          reserved_for: nil,
          disconnected_at: nil,
-         grace_expires_at: nil
+         grace_expires_at: nil,
+         decision_id: nil,
+         decision_player_id: nil
      }}
   end
 
@@ -267,7 +289,9 @@ defmodule PidroServer.Games.Room.Seat do
          occupant_type: :human,
          user_id: user_id,
          joined_at: DateTime.utc_now(),
-         substitute: true
+         substitute: true,
+         decision_id: nil,
+         decision_player_id: nil
      }}
   end
 

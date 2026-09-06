@@ -496,9 +496,13 @@ defmodule PidroServer.Accounts.Auth do
     # Filter out non-UUID IDs (like bot IDs or "dev_host")
     valid_uuids = Enum.filter(user_ids, &valid_uuid?/1)
 
-    from(u in User, where: u.id in ^valid_uuids)
-    |> Repo.all()
-    |> Map.new(&{&1.id, &1})
+    if valid_uuids == [] do
+      %{}
+    else
+      from(u in User, where: u.id in ^valid_uuids)
+      |> Repo.all()
+      |> Map.new(&{&1.id, &1})
+    end
   end
 
   @doc """
