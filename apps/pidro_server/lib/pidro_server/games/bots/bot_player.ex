@@ -61,7 +61,7 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
     bot_user_id = "bot_#{room_code}_#{position}"
 
-    case PidroServer.Games.RoomManager.join_room(room_code, bot_user_id, position) do
+    case PidroServer.Games.RoomManager.join_bot(room_code, bot_user_id, self(), position) do
       {:ok, _room, ^position} ->
         Logger.info("Bot #{bot_user_id} joined room #{room_code} at #{position}")
 
@@ -157,6 +157,14 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   def handle_info({:substitute_seat_closed, _}, state), do: {:noreply, state}
   @impl true
   def handle_info({:substitute_joined, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:readiness_updated, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:invite_redeemed, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:seat_moved, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:kicked, _}, state), do: {:noreply, state}
 
   # Ignore Phoenix Channel broadcast messages (presence_diff, game_state, etc.).
   # BotPlayer subscribes to the same PubSub topic as GameChannel, so it receives

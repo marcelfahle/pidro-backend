@@ -26,6 +26,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       for user <- [south, west],
           do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
 
+      PidroServer.RoomFixtures.ready_room(room.code)
+
       conn =
         conn
         |> put_req_header("authorization", "Bearer #{Token.generate(leaver)}")

@@ -35,6 +35,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
     {:ok, _, _} = RoomManager.join_room(room.code, "user2")
     {:ok, _, _} = RoomManager.join_room(room.code, "user3")
     {:ok, _, _} = RoomManager.join_room(room.code, "user4")
+    PidroServer.RoomFixtures.ready_room(room.code)
     {:ok, playing_room} = RoomManager.get_room(room.code)
 
     assert playing_room.status == :playing

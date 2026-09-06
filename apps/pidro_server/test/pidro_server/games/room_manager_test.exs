@@ -165,17 +165,16 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "user3")
       {:ok, _, _} = RoomManager.join_room(room.code, "user4")
 
-      # When 4th player joins, room becomes :ready/:playing, so returns :room_not_available
-      assert {:error, :room_not_available} = RoomManager.join_room(room.code, "user5")
+      assert {:error, :room_full} = RoomManager.join_room(room.code, "user5")
     end
 
-    test "changes status to ready when 4th player joins" do
+    test "stays waiting when 4th player joins" do
       {:ok, room} = RoomManager.create_room("user1", %{})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
       {:ok, _, _} = RoomManager.join_room(room.code, "user3")
       {:ok, final_room, _} = RoomManager.join_room(room.code, "user4")
 
-      assert final_room.status == :ready
+      assert final_room.status == :waiting
       assert Positions.count(final_room) == 4
     end
 
@@ -238,6 +237,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+      RoomFixtures.ready_room(room.code)
 
       wait_until(fn ->
         case RoomManager.get_room(room.code) do
@@ -331,6 +331,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+      RoomFixtures.ready_room(room.code)
 
       wait_until(fn ->
         case RoomManager.get_room(room.code) do
@@ -356,6 +357,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+      RoomFixtures.ready_room(room.code)
 
       wait_until(fn ->
         case RoomManager.get_room(room.code) do
@@ -379,6 +381,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
+      RoomFixtures.ready_room(room.code)
 
       wait_until(fn ->
         case RoomManager.get_room(room.code) do
@@ -423,8 +426,8 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
 
     # AE5: the host backgrounds the app to paste the link; the table fills
-    # while the seat is held and starts only when the host is back.
-    test "a full table waits for a held host and starts on the host's reclaim" do
+    # while the seat is held and needs fresh readiness after the host is back.
+    test "a full table waits for a held host and readiness after reclaim" do
       {room, [host]} = RoomFixtures.waiting_room_fixture()
       :ok = RoomManager.handle_player_disconnect(room.code, host)
 
@@ -442,11 +445,12 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, reclaimed} = RoomManager.handle_player_reconnect(room.code, host)
 
       assert Seat.connected_human?(reclaimed.seats[:north])
-      assert reclaimed.status == :playing
+      assert reclaimed.status == :waiting
+      RoomFixtures.ready_room(room.code)
       assert {:ok, %{status: :playing}} = RoomManager.get_room(room.code)
     end
 
-    test "a full table starts only when every held seat is reclaimed" do
+    test "a full table starts only after every held seat is reclaimed and readied" do
       {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
       :ok = RoomManager.handle_player_disconnect(room.code, host)
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
@@ -455,7 +459,8 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, %{status: :waiting}, :west} = RoomManager.join_room(room.code, "user4")
 
       assert {:ok, %{status: :waiting}} = RoomManager.handle_player_reconnect(room.code, host)
-      assert {:ok, %{status: :playing}} = RoomManager.handle_player_reconnect(room.code, "user2")
+      assert {:ok, %{status: :waiting}} = RoomManager.handle_player_reconnect(room.code, "user2")
+      assert RoomFixtures.ready_room(room.code).status == :playing
     end
   end
 
@@ -503,6 +508,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "user4")
 
       # Disconnect players at slightly different times
+      RoomFixtures.ready_room(room.code)
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
       Process.sleep(10)
       :ok = RoomManager.handle_player_disconnect(room.code, "user3")
@@ -554,6 +560,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room2.code, "user3")
       {:ok, _, _} = RoomManager.join_room(room2.code, "user4")
       {:ok, _, _} = RoomManager.join_room(room2.code, "user5")
+      RoomFixtures.ready_room(room2.code)
 
       waiting_rooms = RoomManager.list_rooms(:waiting)
       playing_rooms = RoomManager.list_rooms(:playing)
@@ -861,6 +868,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room_code, "user3")
       {:ok, _, _} = RoomManager.join_room(room_code, "user4")
 
+      RoomFixtures.ready_room(room_code)
       assert_receive {:turn_timer_started, payload}, 200
       assert payload.scope == :room
       assert payload.position == nil
@@ -1011,7 +1019,13 @@ defmodule PidroServer.Games.RoomManagerTest do
       :sys.replace_state(RoomManager, fn %RoomManager.State{} = manager_state ->
         current_room = Map.fetch!(manager_state.rooms, room_code)
         updated_room = %{current_room | consecutive_timeouts: %{position => threshold - 1}}
-        %{manager_state | rooms: Map.put(manager_state.rooms, room_code, updated_room)}
+        # Exercise the fallback with no routable channel, rather than the
+        # synthetic channel used to complete the pregame readiness handshake.
+        %{
+          manager_state
+          | rooms: Map.put(manager_state.rooms, room_code, updated_room),
+            channel_pids: Map.delete(manager_state.channel_pids, {room_code, timed_user})
+        }
       end)
 
       send(
@@ -1111,7 +1125,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
       {:ok, _, _} = RoomManager.join_room(room.code, "user3")
       {:ok, _, _} = RoomManager.join_room(room.code, "user4")
-      # Room is now :ready -> :playing.
+      RoomFixtures.ready_room(room.code)
 
       {:ok, _} = RoomManager.join_spectator_room(room.code, "spectator1")
 
@@ -1147,7 +1161,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       refute Positions.has_player?(updated_room, "user2")
     end
 
-    test "auto-starts game when 4 players assigned (returns :playing status)" do
+    test "four assigned players wait for explicit readiness" do
       {:ok, room} = RoomManager.create_room("user1", %{})
 
       {:ok, room2} = RoomManager.dev_set_position(room.code, :north, "user1")
@@ -1159,10 +1173,11 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, room4} = RoomManager.dev_set_position(room.code, :south, "user3")
       assert room4.status == :waiting
 
-      # When 4th player is assigned, game auto-starts and returns final :playing status
+      # Dev seating follows the same readiness contract as ordinary joins.
       {:ok, final_room} = RoomManager.dev_set_position(room.code, :west, "user4")
-      assert final_room.status == :playing
+      assert final_room.status == :waiting
       assert Positions.count(final_room) == 4
+      assert RoomFixtures.ready_room(room.code).status == :playing
     end
 
     test "broadcasts to correct topics on position change" do
@@ -1203,9 +1218,9 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _} = RoomManager.dev_set_position(room.code, :north, "user1")
       {:ok, _} = RoomManager.dev_set_position(room.code, :east, "user2")
       {:ok, _} = RoomManager.dev_set_position(room.code, :south, "user3")
-      {:ok, playing_room} = RoomManager.dev_set_position(room.code, :west, "user4")
+      {:ok, _} = RoomManager.dev_set_position(room.code, :west, "user4")
 
-      # Game auto-starts when 4 players are assigned
+      playing_room = RoomFixtures.ready_room(room.code)
       assert playing_room.status == :playing
 
       # Should allow changing a seat even during :playing status
@@ -1456,11 +1471,13 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, %{positions: %{east: nil}}} = RoomManager.get_room(room_b.code)
     end
 
-    test "the fourth claim starts the game" do
+    test "the fourth claim waits for readiness before starting the game" do
       {room, _ids} = RoomFixtures.waiting_room_fixture(seated: 3)
 
-      assert {:ok, %{status: :ready}, :west, true} =
+      assert {:ok, %{status: :waiting}, :west, true} =
                RoomManager.claim_seat(room.code, room.id, "guest1", [])
+
+      RoomFixtures.ready_room(room.code)
 
       wait_until(fn ->
         match?({:ok, %{status: :playing}}, RoomManager.get_room(room.code))
@@ -1622,6 +1639,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, _room, _pos} = RoomManager.join_room(room.code, "user3")
       {:ok, _room, _pos} = RoomManager.join_room(room.code, "user4")
       {:ok, _room, user5_position} = RoomManager.join_room(room.code, "user5")
+      RoomFixtures.ready_room(room.code)
 
       wait_until(fn ->
         match?({:ok, %{status: :playing}}, RoomManager.get_room(room.code))
@@ -1770,6 +1788,8 @@ defmodule PidroServer.Games.RoomManagerTest do
     {:ok, _, _} = RoomManager.join_room(room_code, "user2")
     {:ok, _, _} = RoomManager.join_room(room_code, "user3")
     {:ok, _, _} = RoomManager.join_room(room_code, "user4")
+
+    RoomFixtures.ready_room(room_code)
 
     _room =
       wait_until(fn ->

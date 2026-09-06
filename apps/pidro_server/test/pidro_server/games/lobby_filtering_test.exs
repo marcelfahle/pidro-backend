@@ -47,6 +47,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
     {:ok, _, _} = RoomManager.join_room(room.code, "#{host_id}_p2")
     {:ok, _, _} = RoomManager.join_room(room.code, "#{host_id}_p3")
     {:ok, _, _} = RoomManager.join_room(room.code, "#{host_id}_p4")
+    PidroServer.RoomFixtures.ready_room(room.code)
     {:ok, playing_room} = RoomManager.get_room(room.code)
     assert playing_room.status == :playing
     playing_room
@@ -100,9 +101,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
     end
 
     test "does not return full waiting rooms" do
-      # A waiting room with all 4 seats filled transitions to :playing,
-      # so this tests that :playing rooms don't appear in open_tables
-      _playing_room = create_playing_room()
+      PidroServer.RoomFixtures.waiting_room_fixture(seated: 4)
 
       lobby = RoomManager.list_lobby(nil)
 
@@ -249,6 +248,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
       {:ok, _, _} = RoomManager.join_room(room.code, "user1_p2")
       {:ok, _, _} = RoomManager.join_room(room.code, "user1_p3")
       {:ok, _, _} = RoomManager.join_room(room.code, "user1_p4")
+      PidroServer.RoomFixtures.ready_room(room.code)
 
       # Room should now be in spectatable, not open_tables
       lobby_after = RoomManager.list_lobby(nil)

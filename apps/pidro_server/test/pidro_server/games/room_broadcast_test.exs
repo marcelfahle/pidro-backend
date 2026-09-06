@@ -31,6 +31,7 @@ defmodule PidroServer.Games.RoomBroadcastTest do
     {:ok, _, _} = RoomManager.join_room(room_code, p2.id)
     {:ok, _, _} = RoomManager.join_room(room_code, p3.id)
     {:ok, _, _} = RoomManager.join_room(room_code, p4.id)
+    PidroServer.RoomFixtures.ready_room(room_code)
 
     # Wait for the game start broadcast (to ensure we are synced)
     assert_push "room_updated", %{room: %{status: :playing, player_count: 4}}

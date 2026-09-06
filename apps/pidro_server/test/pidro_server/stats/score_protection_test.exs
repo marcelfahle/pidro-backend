@@ -230,6 +230,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       for user_id <- [leaver, south, west],
           do: assert({:ok, _, _} = RoomManager.join_room(room.code, user_id))
 
+      PidroServer.RoomFixtures.ready_room(room.code)
       {:ok, playing_room} = RoomManager.get_room(room.code)
       position = position_for(playing_room, leaver)
       :ok = RoomManager.handle_player_disconnect(room.code, leaver)
@@ -271,6 +272,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       {:ok, _, _} = RoomManager.join_room(room.code, user2)
       {:ok, _, _} = RoomManager.join_room(room.code, user3)
       {:ok, _, _} = RoomManager.join_room(room.code, user4)
+      PidroServer.RoomFixtures.ready_room(room.code)
 
       {:ok, playing_room} = RoomManager.get_room(room.code)
       position = position_for(playing_room, user2)

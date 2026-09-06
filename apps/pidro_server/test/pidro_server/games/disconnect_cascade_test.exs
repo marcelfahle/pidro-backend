@@ -40,6 +40,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
     [host | others] = user_ids
     {:ok, room} = RoomManager.create_room(host, %{name: "Cascade Test"})
     for user_id <- others, do: assert({:ok, _, _} = RoomManager.join_room(room.code, user_id))
+    PidroServer.RoomFixtures.ready_room(room.code)
     {:ok, playing_room} = RoomManager.get_room(room.code)
 
     assert playing_room.status == :playing

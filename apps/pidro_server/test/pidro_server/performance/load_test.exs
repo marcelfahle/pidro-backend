@@ -39,6 +39,8 @@ defmodule PidroServer.Performance.LoadTest do
       users = create_users(40)
 
       # Create 10 rooms concurrently
+      channel_pid = self()
+
       room_tasks =
         Enum.map(0..9, fn i ->
           Task.async(fn ->
@@ -50,7 +52,8 @@ defmodule PidroServer.Performance.LoadTest do
             [p1, p2, p3] = Enum.slice(users, i * 4 + 1, 3)
             {:ok, _, _} = RoomManager.join_room(room_code, p1.id)
             {:ok, _, _} = RoomManager.join_room(room_code, p2.id)
-            {:ok, room, _} = RoomManager.join_room(room_code, p3.id)
+            {:ok, _, _} = RoomManager.join_room(room_code, p3.id)
+            room = PidroServer.RoomFixtures.ready_room(room_code, channel_pid)
 
             {room_code, room}
           end)
@@ -101,10 +104,12 @@ defmodule PidroServer.Performance.LoadTest do
         {:ok, room} = RoomManager.create_room(host)
         room_code = room.code
 
-        # Join players (game auto-starts when 4th player joins)
+        # Join and ready all players through registered channels.
         Enum.each(players, fn player_id ->
           {:ok, _, _} = RoomManager.join_room(room_code, player_id)
         end)
+
+        PidroServer.RoomFixtures.ready_room(room_code)
 
         # Verify game was auto-started
         {:ok, pid} = GameSupervisor.get_game(room_code)
@@ -151,6 +156,7 @@ defmodule PidroServer.Performance.LoadTest do
             {:ok, _, _} = RoomManager.join_room(room_code, player.id)
           end)
 
+          PidroServer.RoomFixtures.ready_room(room_code)
           {room_code, [host | players]}
         end)
 
@@ -227,8 +233,7 @@ defmodule PidroServer.Performance.LoadTest do
         {:ok, _, _} = RoomManager.join_room(room_code, player_id)
       end)
 
-      # Give a moment for auto-start to complete
-      Process.sleep(100)
+      PidroServer.RoomFixtures.ready_room(room_code)
 
       # Get initial state
       {:ok, state} = GameAdapter.get_state(room_code)
@@ -308,6 +313,7 @@ defmodule PidroServer.Performance.LoadTest do
             {:ok, _, _} = RoomManager.join_room(room_code, player.id)
           end)
 
+          PidroServer.RoomFixtures.ready_room(room_code)
           {:ok, pid} = GameSupervisor.get_game(room_code)
           {room_code, pid}
         end)
@@ -347,6 +353,7 @@ defmodule PidroServer.Performance.LoadTest do
         {:ok, _, _} = RoomManager.join_room(room_code, player_id)
       end)
 
+      PidroServer.RoomFixtures.ready_room(room_code)
       {:ok, pid} = GameSupervisor.get_game(room_code)
       assert Process.alive?(pid)
 
@@ -395,6 +402,7 @@ defmodule PidroServer.Performance.LoadTest do
             {:ok, _, _} = RoomManager.join_room(room_code, player.id)
           end)
 
+          PidroServer.RoomFixtures.ready_room(room_code)
           room_code
         end)
 
