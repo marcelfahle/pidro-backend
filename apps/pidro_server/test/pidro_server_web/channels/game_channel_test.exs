@@ -76,6 +76,125 @@ defmodule PidroServerWeb.GameChannelTest do
     }
   end
 
+  describe "seat lifecycle snapshot" do
+    test "all observers receive takeover and reclaim snapshots, including a cold join", context do
+      for user <- [context.user1, context.user2, context.user4] do
+        {:ok, _, _} =
+          subscribe_and_join(context.sockets[user.id], GameChannel, "game:#{context.room_code}")
+      end
+
+      assert :ok = RoomManager.handle_player_disconnect(context.room_code, context.user3.id)
+
+      for _ <- 1..3 do
+        assert_push "seat_lifecycle", %{seats: %{south: %{status: :reconnecting}}}
+      end
+
+      send(RoomManager, {:phase2_start, context.room_code, :south})
+
+      for _ <- 1..3 do
+        assert_push "seat_lifecycle", %{
+          seats: %{south: %{status: :bot_substitute, player_id: player_id}}
+        }
+
+        assert player_id == context.user3.id
+      end
+
+      # An observer that missed the transition receives its exact current status in join.
+      {:ok, reply, _} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      assert reply.seat_lifecycle.seats.south.status == :bot_substitute
+      assert reply.seat_lifecycle.seats.south.username == context.user3.username
+
+      {:ok, _, _} =
+        subscribe_and_join(
+          context.sockets[context.user3.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      for _ <- 1..5 do
+        assert_push "seat_lifecycle", %{seats: %{south: %{status: :normal, player_id: player_id}}}
+        assert player_id == context.user3.id
+      end
+    end
+
+    test "join and reconciliation return the authoritative four-seat snapshot", context do
+      {:ok, join_reply, socket} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      snapshot = join_reply.seat_lifecycle
+      assert snapshot.room_id == context.room.id
+      assert snapshot.room_code == context.room_code
+      assert snapshot.owner_id == context.user1.id
+      assert snapshot.room_status == "playing"
+      assert map_size(snapshot.seats) == 4
+      assert snapshot.seats.north.status == :normal
+      assert snapshot.seats.north.player_id == context.user1.id
+      assert snapshot.seats.north.username == context.user1.username
+
+      ref = push(socket, "get_seat_lifecycle", %{})
+      assert_reply ref, :ok, %{seat_lifecycle: ^snapshot}
+    end
+
+    test "disconnect, explicit leave, promotion, and stale open decisions are versioned",
+         context do
+      {:ok, _, owner_socket} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      assert :ok = RoomManager.handle_player_disconnect(context.room_code, context.user3.id)
+      assert_push "seat_lifecycle", reconnecting
+      assert reconnecting.seats.south.status == :reconnecting
+      assert reconnecting.seats.south.player_id == context.user3.id
+
+      assert :ok = RoomManager.leave_room(context.user2.id)
+      assert_push "seat_lifecycle", %{seats: %{east: %{status: :permanent_bot}}} = departed
+      decision = departed.seats.east.decision
+      assert departed.revision > reconnecting.revision
+      assert departed.seats.east.status == :permanent_bot
+      assert departed.seats.east.player_id == nil
+      assert departed.seats.east.username == "Bot"
+      assert decision.player_name == context.user2.username
+      assert is_binary(decision.id)
+
+      stale_ref =
+        push(owner_socket, "open_seat", %{
+          "position" => "east",
+          "decision_id" => Ecto.UUID.generate()
+        })
+
+      assert_reply stale_ref, :error, %{reason: "stale_decision", seat_lifecycle: stale}
+      assert stale.seats.east.decision.id == decision.id
+
+      valid_ref =
+        push(owner_socket, "open_seat", %{
+          "position" => "east",
+          "decision_id" => decision.id
+        })
+
+      assert_reply valid_ref, :ok, %{seat_lifecycle: opened}
+      assert opened.revision > departed.revision
+      assert opened.seats.east == %{status: :vacant, player_id: nil, username: nil, decision: nil}
+
+      assert :ok = RoomManager.leave_room(context.user1.id)
+      {:ok, promoted} = RoomManager.get_seat_lifecycle(context.room_code)
+      assert promoted.owner_id == context.user4.id
+      assert promoted.seats.north.decision.player_name == context.user1.username
+    end
+  end
+
   describe "explicit departure retires game authority" do
     test "the remaining channel receives bot takeover and advancing game states", context do
       alias PidroServer.Games.Lifecycle

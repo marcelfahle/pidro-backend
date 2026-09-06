@@ -94,6 +94,10 @@ defmodule PidroServerWeb.GameChannel do
   def join("game:" <> room_code, _params, socket) do
     user_id = socket.assigns.user_id
 
+    # Subscribe before any room read so lifecycle mutations racing with join
+    # are queued and ordered by their snapshot revision.
+    :ok = GameAdapter.subscribe(room_code)
+
     # First, check if this is a reconnection attempt
     with {:ok, room} <- RoomManager.get_room(room_code) do
       # Determine user role (player or spectator)
@@ -193,11 +197,8 @@ defmodule PidroServerWeb.GameChannel do
   # Extract the common join logic into a helper function
   defp proceed_with_join(room_code, user_id, socket, join_type, role) do
     with {:ok, room} <- RoomManager.get_room(room_code),
+         {:ok, seat_lifecycle} <- RoomManager.get_seat_lifecycle(room_code),
          true <- user_authorized?(user_id, room, role) do
-      # Subscribe to game PubSub eagerly - works even if game hasn't started yet.
-      # When the game starts later, state updates will arrive via this subscription.
-      :ok = GameAdapter.subscribe(room_code)
-
       # Position only applies to players, not spectators
       position = if role == :player, do: get_player_position(room, user_id), else: nil
 
@@ -224,7 +225,8 @@ defmodule PidroServerWeb.GameChannel do
         role: role,
         reconnected: join_type == :reconnect,
         legal_actions: legal_actions,
-        turn_timer: turn_timer
+        turn_timer: turn_timer,
+        seat_lifecycle: seat_lifecycle
       }
 
       # Add state only if game has started
@@ -386,15 +388,34 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
-  def handle_in("open_seat", %{"position" => position}, socket) do
+  def handle_in("open_seat", %{"position" => position} = params, socket) do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
     else
       case parse_position(position) do
         {:ok, pos_atom} ->
-          case RoomManager.open_seat(socket.assigns.room_code, pos_atom, socket.assigns.user_id) do
-            {:ok, _room} -> {:reply, :ok, socket}
-            {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+          decision_id = Map.get(params, "decision_id")
+
+          case RoomManager.open_seat(
+                 socket.assigns.room_code,
+                 pos_atom,
+                 socket.assigns.user_id,
+                 decision_id
+               ) do
+            {:ok, _room} ->
+              {:ok, snapshot} = RoomManager.get_seat_lifecycle(socket.assigns.room_code)
+              {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
+
+            {:error, reason} ->
+              reply = %{reason: format_error(reason)}
+
+              reply =
+                case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
+                  {:ok, snapshot} -> Map.put(reply, :seat_lifecycle, snapshot)
+                  _ -> reply
+                end
+
+              {:reply, {:error, reply}, socket}
           end
 
         :error ->
@@ -417,6 +438,13 @@ defmodule PidroServerWeb.GameChannel do
         :error ->
           {:reply, {:error, %{reason: "invalid position"}}, socket}
       end
+    end
+  end
+
+  def handle_in("get_seat_lifecycle", _params, socket) do
+    case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
+      {:ok, snapshot} -> {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
+      {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
     end
   end
 
@@ -531,8 +559,16 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:seat_lifecycle, snapshot}, socket) do
+    push(socket, "seat_lifecycle", snapshot)
+    {:noreply, socket}
+  end
+
   def handle_info({:owner_decision_available, %{position: position, owner_id: owner_id}}, socket) do
-    push(socket, "owner_decision_available", %{position: position, owner_id: owner_id})
+    if socket.assigns.user_id == owner_id do
+      push(socket, "owner_decision_available", %{position: position, owner_id: owner_id})
+    end
+
     {:noreply, socket}
   end
 
