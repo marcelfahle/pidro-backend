@@ -164,24 +164,22 @@ defmodule PidroServer.Games.GameIntegrationTest do
       assert state.phase in [:dealing, :bidding, :declaring]
     end
 
-    test "room manager integration - auto-start game when 4 players join" do
+    test "room manager integration - start game when 4 joined players confirm ready" do
       # Create a room
       assert {:ok, room} = RoomManager.create_room("player1", %{name: "Test Game"})
       room_code = room.code
+      on_exit(fn -> RoomManager.close_room(room_code) end)
 
       # Join 3 more players
       assert {:ok, _, _} = RoomManager.join_room(room_code, "player2")
       assert {:ok, _, _} = RoomManager.join_room(room_code, "player3")
       assert {:ok, room, _} = RoomManager.join_room(room_code, "player4")
 
-      # Room should be ready
+      # A full table still waits for explicit channel readiness.
       alias PidroServer.Games.Room.Positions
-      assert room.status == :ready
+      assert room.status == :waiting
       assert Positions.count(room) == 4
-
-      # Game should have auto-started
-      # Give it a moment to start
-      Process.sleep(100)
+      assert PidroServer.RoomFixtures.ready_room(room_code).status == :playing
 
       assert {:ok, _pid} = GameAdapter.get_game(room_code)
       assert {:ok, state} = GameAdapter.get_state(room_code)
