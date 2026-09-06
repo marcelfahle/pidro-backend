@@ -28,8 +28,8 @@ lib/pidro_server/games/bots/bot_brain.ex:132:16:
 lib/pidro_server/profiles/profiles.ex:45:30:
 lib/pidro_server/profiles/profiles.ex:98:55:
 lib/pidro_server/profiles/profiles.ex:99:30:
-lib/pidro_server/profiles/profiles.ex:305:20:
-lib/pidro_server/profiles/profiles.ex:598:30:
+lib/pidro_server/profiles/profiles.ex:307:5:
+lib/pidro_server/profiles/profiles.ex:612:30:
 lib/pidro_server/stats/stats.ex:239:62:
 lib/pidro_server/stats/stats.ex:443:68:
 lib/pidro_server/stats/stats.ex:504:8:
