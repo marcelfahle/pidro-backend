@@ -198,6 +198,10 @@ defmodule PidroServerWeb.GameChannel do
       # When the game starts later, state updates will arrive via this subscription.
       :ok = GameAdapter.subscribe(room_code)
 
+      # Subscription must precede the authoritative snapshot read so an update
+      # can never be missed between hydration and live delivery.
+      {:ok, readiness} = RoomManager.readiness(room_code)
+
       # Position only applies to players, not spectators
       position = if role == :player, do: get_player_position(room, user_id), else: nil
 
@@ -224,7 +228,8 @@ defmodule PidroServerWeb.GameChannel do
         role: role,
         reconnected: join_type == :reconnect,
         legal_actions: legal_actions,
-        turn_timer: turn_timer
+        turn_timer: turn_timer,
+        readiness: readiness
       }
 
       # Add state only if game has started
@@ -376,15 +381,37 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
-  def handle_in("ready", _params, socket) do
+  def handle_in("ready", %{"room_id" => room_id, "ready_epoch" => epoch}, socket)
+      when is_integer(epoch) do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot signal ready"}}, socket}
     else
-      Logger.debug("Player #{socket.assigns.position} is ready")
-      broadcast(socket, "player_ready", %{position: socket.assigns.position})
-      {:reply, :ok, socket}
+      case RoomManager.readiness(socket.assigns.room_code) do
+        {:ok, %{room_id: ^room_id}} ->
+          case RoomManager.confirm_ready(
+                 socket.assigns.room_code,
+                 socket.assigns.user_id,
+                 self(),
+                 epoch
+               ) do
+            {:ok, readiness} ->
+              {:reply, {:ok, %{readiness: readiness}}, socket}
+
+            {:error, reason, readiness} ->
+              {:reply, {:error, %{reason: Atom.to_string(reason), readiness: readiness}}, socket}
+          end
+
+        {:ok, readiness} ->
+          {:reply, {:error, %{reason: "stale_readiness", readiness: readiness}}, socket}
+
+        _ ->
+          {:reply, {:error, %{reason: "room_not_found"}}, socket}
+      end
     end
   end
+
+  def handle_in("ready", _params, socket),
+    do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
 
   def handle_in("open_seat", %{"position" => position}, socket) do
     if socket.assigns[:role] == :spectator do
@@ -508,6 +535,11 @@ defmodule PidroServerWeb.GameChannel do
   # Disconnect cascade PubSub events — push to client for UI updates
   def handle_info({:player_reconnecting, %{user_id: user_id, position: position}}, socket) do
     push(socket, "player_reconnecting", %{user_id: user_id, position: position})
+    {:noreply, socket}
+  end
+
+  def handle_info({:readiness_updated, snapshot}, socket) do
+    push(socket, "readiness_updated", snapshot)
     {:noreply, socket}
   end
 
@@ -711,31 +743,20 @@ defmodule PidroServerWeb.GameChannel do
             "Player #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}"
           )
 
-          last_channel_closed? =
-            case RoomManager.unregister_game_channel(room_code, user_id, self()) do
-              :last_channel_closed ->
-                true
+          case RoomManager.unregister_game_channel(room_code, user_id, self()) do
+            :last_channel_closed ->
+              broadcast_from(socket, "player_disconnected", %{
+                user_id: user_id,
+                position: socket.assigns[:position],
+                reason: format_reason(reason),
+                grace_period: true
+              })
 
-              :channels_remaining ->
-                false
+            :channels_remaining ->
+              :ok
 
-              :not_registered ->
-                false
-            end
-
-          if last_channel_closed? do
-            case RoomManager.handle_player_disconnect(room_code, user_id) do
-              :ok -> :ok
-              error -> Logger.warning("Failed to handle disconnect: #{inspect(error)}")
-            end
-
-            # Broadcast to other users in the game channel
-            broadcast_from(socket, "player_disconnected", %{
-              user_id: user_id,
-              position: socket.assigns[:position],
-              reason: format_reason(reason),
-              grace_period: true
-            })
+            :not_registered ->
+              :ok
           end
 
         :spectator ->
