@@ -81,6 +81,23 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     assert {:ok, ^pid} = GameSupervisor.get_game(room.code)
   end
 
+  test "late player joins at the authoritative snapshot position after a seat move", %{
+    room: room,
+    channels: [{host, _, _}, {second, _, _} | _],
+    last_user: last_user
+  } do
+    assert :ok = RoomManager.leave_room(second.id)
+    assert {:ok, _} = RoomManager.move_seat(room.code, host.id, last_user.id, :east)
+    {:ok, socket} = create_socket(last_user)
+    assert {:ok, reply, joined} = subscribe_and_join(socket, GameChannel, "game:#{room.code}")
+    assert reply.position == :east
+    assert reply.readiness.positions.east == last_user.id
+    assert :sys.get_state(joined.channel_pid).assigns.position == :east
+
+    {:ok, removed_socket} = create_socket(second)
+    assert {:error, _} = subscribe_and_join(removed_socket, GameChannel, "game:#{room.code}")
+  end
+
   test "ready after room closure omits readiness instead of inventing an incomplete roster", %{
     room: room,
     channels: [{_host, %{readiness: initial}, socket} | _]

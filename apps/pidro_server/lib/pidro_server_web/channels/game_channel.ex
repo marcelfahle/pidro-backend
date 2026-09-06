@@ -195,19 +195,20 @@ defmodule PidroServerWeb.GameChannel do
 
   # Extract the common join logic into a helper function
   defp proceed_with_join(room_code, user_id, socket, join_type, role) do
-    with {:ok, room} <- RoomManager.get_room(room_code),
-         true <- user_authorized?(user_id, room, role) do
-      # Subscribe to game PubSub eagerly - works even if game hasn't started yet.
-      # When the game starts later, state updates will arrive via this subscription.
-      :ok = GameAdapter.subscribe(room_code)
-
-      # Subscription must precede the authoritative snapshot read so an update
-      # can never be missed between hydration and live delivery.
-      {:ok, readiness} = RoomManager.readiness(room_code)
-
-      # Position only applies to players, not spectators
-      position = if role == :player, do: get_player_position(room, user_id), else: nil
-
+    # Subscribe before either room read. Derive the socket position from the
+    # same authoritative roster returned to the client, never an earlier room.
+    with :ok <- GameAdapter.subscribe(room_code),
+         {:ok, room} <- RoomManager.get_room(room_code),
+         true <- user_authorized?(user_id, room, role),
+         {:ok, readiness} <- RoomManager.readiness(room_code),
+         position = if(role == :player, do: get_player_position(readiness, user_id), else: nil),
+         true <- role == :spectator or position != nil,
+         :ok <-
+           if(role == :player,
+             do: RoomManager.register_game_channel(room_code, user_id, self()),
+             else: :ok
+           ),
+         {:ok, turn_timer} <- RoomManager.get_turn_timer(room_code) do
       # Try to get current game state (may not exist if game hasn't started)
       {serialized_state, legal_actions} = fetch_game_state(room_code, position)
 
@@ -218,14 +219,8 @@ defmodule PidroServerWeb.GameChannel do
         |> assign(:role, role)
         |> assign(:join_type, join_type)
 
-      if role == :player do
-        :ok = RoomManager.register_game_channel(room_code, user_id, self())
-      end
-
       # Track presence after join
       send(self(), :after_join)
-
-      {:ok, turn_timer} = RoomManager.get_turn_timer(room_code)
 
       reply_data = %{
         role: role,
@@ -871,11 +866,13 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
-  @spec get_player_position(RoomManager.Room.t(), String.t()) :: atom()
+  @spec get_player_position(map(), String.t()) :: atom() | nil
   defp get_player_position(room, user_id) do
-    alias PidroServer.Games.Room.Positions
     user_id_str = to_string(user_id)
-    Positions.get_position(room, user_id_str) || :north
+
+    Enum.find_value(room.positions, fn {position, id} ->
+      if id == user_id_str, do: position
+    end)
   end
 
   @spec format_error(term()) :: String.t()
