@@ -323,7 +323,7 @@ defmodule PidroServer.Games.RoomCleanupTest do
   end
 
   describe "health check" do
-    test "cleans up dead bot_pid references" do
+    test "recovers dead substitute controllers instead of clearing their references" do
       room = create_playing_room()
 
       # Disconnect a player through Phase 2 (bot spawns)
@@ -348,9 +348,17 @@ defmodule PidroServer.Games.RoomCleanupTest do
       # Synchronize
       _ = RoomManager.list_rooms()
 
-      # The dead bot_pid should have been cleared
+      # DOWN recovery and health reconciliation must converge on one live PID.
       {:ok, checked_room} = RoomManager.get_room(room.code)
-      assert checked_room.seats[position].bot_pid == nil
+      replacement = checked_room.seats[position].bot_pid
+      assert is_pid(replacement)
+      assert replacement != bot_pid
+      assert Process.alive?(replacement)
+
+      send(GenServer.whereis(RoomManager), {:DOWN, make_ref(), :process, bot_pid, :killed})
+      send(GenServer.whereis(RoomManager), :health_check)
+      {:ok, checked_again} = RoomManager.get_room(room.code)
+      assert checked_again.seats[position].bot_pid == replacement
     end
   end
 end
