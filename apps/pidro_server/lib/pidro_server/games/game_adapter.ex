@@ -46,6 +46,7 @@ defmodule PidroServer.Games.GameAdapter do
     - `room_code` - The room code (e.g., "A3F9")
     - `position` - The player position (`:north`, `:east`, `:south`, `:west`)
     - `action` - The action to apply (e.g., `{:bid, 8}`, `:pass`, `{:play_card, {14, :spades}}`)
+    - `timeout` - Maximum wait per engine call in milliseconds (defaults to 5000)
 
   ## Returns
 
@@ -68,12 +69,13 @@ defmodule PidroServer.Games.GameAdapter do
       GameAdapter.apply_action("A3F9", :west, {:play_card, {14, :spades}})
   """
   @spec apply_action(String.t(), atom(), term()) :: {:ok, term()} | {:error, term()}
-  def apply_action(room_code, position, action) do
+  @spec apply_action(String.t(), atom(), term(), timeout()) :: {:ok, term()} | {:error, term()}
+  def apply_action(room_code, position, action, timeout \\ 5_000) do
     with {:ok, pid} <- GameRegistry.lookup(room_code) do
       try do
-        old_state = Pidro.Server.get_state(pid)
+        old_state = Pidro.Server.get_state(pid, timeout)
 
-        case Pidro.Server.apply_action(pid, position, action) do
+        case Pidro.Server.apply_action(pid, position, action, timeout) do
           {:ok, new_state} = result ->
             # Broadcast state update to all subscribers
             broadcast_state_update(room_code, old_state, new_state)
@@ -143,8 +145,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec get_state(String.t(), atom()) :: {:ok, term()} | {:error, :not_found}
   def get_state(room_code, _position) do
-    # Note: Pidro.Server currently only has get_state/1
-    # Position-specific views could be added in the future
+    # The engine returns one authoritative state for every position.
     get_state(room_code)
   end
 

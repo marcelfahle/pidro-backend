@@ -21,7 +21,7 @@ lib/pidro/game/engine.ex:685:32:
 lib/pidro/game/engine.ex:789:8:
 lib/pidro/iex.ex:979:17:
 lib/pidro/iex.ex:1045:17:
-lib/pidro/server.ex:337:7:
+lib/pidro/server.ex:342:7:
 lib/pidro_server/dev/replay_controller.ex:88:24:
 lib/pidro_server/dev/replay_controller.ex:286:8:
 lib/pidro_server/games/bots/bot_brain.ex:132:16:
@@ -33,9 +33,9 @@ lib/pidro_server/profiles/profiles.ex:598:30:
 lib/pidro_server/stats/stats.ex:239:62:
 lib/pidro_server/stats/stats.ex:443:68:
 lib/pidro_server/stats/stats.ex:504:8:
-lib/pidro_server_web/channels/game_channel.ex:820:
-lib/pidro_server_web/channels/game_channel.ex:837:
-lib/pidro_server_web/channels/game_channel.ex:842:
+lib/pidro_server_web/channels/game_channel.ex:824:
+lib/pidro_server_web/channels/game_channel.ex:841:
+lib/pidro_server_web/channels/game_channel.ex:846:
 lib/pidro_server_web/channels/game_channel.ex:245:7:
 lib/pidro_server_web/components/card_helpers.ex:113:8:
 lib/pidro_server_web/live/dev/game_list_live.ex:234:18:

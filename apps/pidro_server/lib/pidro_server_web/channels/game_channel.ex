@@ -604,6 +604,10 @@ defmodule PidroServerWeb.GameChannel do
     {:stop, {:shutdown, :kicked}, assign(socket, :room_code, nil)}
   end
 
+  def handle_info({:force_disconnect, :left}, socket) do
+    {:stop, {:shutdown, :left}, assign(socket, :room_code, nil)}
+  end
+
   def handle_info({:broadcast_reconnection, user_id, position}, socket) do
     broadcast_from(socket, "player_reconnected", %{
       user_id: user_id,
@@ -765,7 +769,7 @@ defmodule PidroServerWeb.GameChannel do
     room_code = socket.assigns.room_code
     position = socket.assigns.position
 
-    case GameAdapter.apply_action(room_code, position, action) do
+    case RoomManager.apply_player_action(room_code, socket.assigns.user_id, position, action) do
       {:ok, _new_state} ->
         _ = RoomManager.reset_consecutive_timeouts(room_code, socket.assigns.user_id)
         # State update is broadcast via PubSub subscription

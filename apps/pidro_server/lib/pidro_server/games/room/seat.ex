@@ -17,6 +17,7 @@ defmodule PidroServer.Games.Room.Seat do
       bot_substitute -> connected      (reclaim/2, when reserved_for matches)
       bot_substitute -> vacant         (open_for_substitute/1)
       vacant -> connected              (fill_seat/2)
+      human/bot occupied -> bot_substitute (surrender/2, permanent, no reclaim)
   """
 
   @type position :: :north | :east | :south | :west
@@ -150,6 +151,25 @@ defmodule PidroServer.Games.Room.Seat do
   end
 
   def make_permanent_bot(%__MODULE__{}), do: {:error, :invalid_transition}
+
+  @doc "Surrenders an occupied seat to a permanent bot after explicit departure."
+  @spec surrender(t(), pid()) :: {:ok, t()} | {:error, :invalid_transition}
+  def surrender(%__MODULE__{occupant_type: type} = seat, bot_pid)
+      when type in [:human, :bot] and is_pid(bot_pid) do
+    {:ok,
+     %{
+       seat
+       | occupant_type: :bot,
+         status: :bot_substitute,
+         bot_pid: bot_pid,
+         user_id: nil,
+         reserved_for: nil,
+         disconnected_at: nil,
+         grace_expires_at: nil
+     }}
+  end
+
+  def surrender(%__MODULE__{}, _), do: {:error, :invalid_transition}
 
   @doc """
   Reclaims a seat for the original human. Restores the seat to `:connected`

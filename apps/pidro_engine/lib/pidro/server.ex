@@ -118,6 +118,7 @@ defmodule Pidro.Server do
   - `server` - The server pid or registered name
   - `position` - The position of the player making the action
   - `action` - The action to perform
+  - `timeout` - Maximum wait in milliseconds (defaults to 5000)
 
   ## Returns
 
@@ -131,8 +132,10 @@ defmodule Pidro.Server do
   """
   @spec apply_action(GenServer.server(), Types.position(), Types.action()) ::
           {:ok, GameState.t()} | {:error, term()}
-  def apply_action(server, position, action) do
-    GenServer.call(server, {:apply_action, position, action})
+  @spec apply_action(GenServer.server(), Types.position(), Types.action(), timeout()) ::
+          {:ok, GameState.t()} | {:error, term()}
+  def apply_action(server, position, action, timeout \\ 5_000) do
+    GenServer.call(server, {:apply_action, position, action}, timeout)
   end
 
   @doc """
@@ -163,6 +166,7 @@ defmodule Pidro.Server do
   ## Parameters
 
   - `server` - The server pid or registered name
+  - `timeout` - Maximum wait in milliseconds (defaults to 5000)
 
   ## Returns
 
@@ -174,8 +178,9 @@ defmodule Pidro.Server do
       IO.inspect(state.phase)
   """
   @spec get_state(GenServer.server()) :: GameState.t()
-  def get_state(server) do
-    GenServer.call(server, :get_state)
+  @spec get_state(GenServer.server(), timeout()) :: GameState.t()
+  def get_state(server, timeout \\ 5_000) do
+    GenServer.call(server, :get_state, timeout)
   end
 
   @doc """
