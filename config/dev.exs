@@ -111,7 +111,9 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   guest_create_daily: %{limit: 400, scale_ms: 86_400_000, key: :ip},
   guest_create_install: %{limit: 30, scale_ms: 3_600_000, key: :install_id},
   room_join: %{limit: 300, scale_ms: 60_000, key: :user},
-  auth_upgrade: %{limit: 100, scale_ms: 600_000, key: :ip}
+  auth_upgrade: %{limit: 100, scale_ms: 600_000, key: :ip},
+  avatar_upload: %{limit: 100, scale_ms: 600_000, key: :user},
+  avatar_read: %{limit: 3_000, scale_ms: 60_000, key: :ip}
 
 config :pidro_server, :password_reset,
   debug_tokens: true,

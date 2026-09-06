@@ -102,7 +102,9 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   guest_create_daily: %{limit: 1_000_000, scale_ms: 86_400_000, key: :ip},
   guest_create_install: %{limit: 1_000_000, scale_ms: 3_600_000, key: :install_id},
   room_join: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
-  auth_upgrade: %{limit: 1_000_000, scale_ms: 600_000, key: :ip}
+  auth_upgrade: %{limit: 1_000_000, scale_ms: 600_000, key: :ip},
+  avatar_upload: %{limit: 1_000_000, scale_ms: 600_000, key: :user},
+  avatar_read: %{limit: 1_000_000, scale_ms: 60_000, key: :ip}
 
 # Ops routes require a real admin session in tests. Only local development bypasses auth.
 config :pidro_server, dev_routes: false

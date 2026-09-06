@@ -33,7 +33,8 @@ FROM ${ELIXIR_IMAGE} AS runner
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends ca-certificates locales openssl && \
+    apt-get install -y --no-install-recommends ca-certificates locales openssl imagemagick && \
+    command -v convert >/dev/null && command -v identify >/dev/null && \
     sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
     locale-gen && \
     rm -rf /var/lib/apt/lists/*

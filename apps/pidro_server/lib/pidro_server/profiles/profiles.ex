@@ -302,7 +302,20 @@ defmodule PidroServer.Profiles do
   @spec public_profile(Ecto.UUID.t() | map()) :: map()
   def public_profile(user_id) when is_binary(user_id) do
     {:ok, screen} = get_profile_for_screen(user_id)
-    public_profile(screen)
+    user = Repo.get!(User, user_id)
+
+    screen
+    |> public_profile()
+    |> Map.merge(%{
+      username: user.username,
+      display_name: user.display_name,
+      bio: user.bio,
+      avatar_url:
+        PidroServer.Accounts.Avatars.url(
+          PidroServer.Accounts.Avatars.metadata_for(user_id),
+          user_id
+        )
+    })
   end
 
   def public_profile(%{} = screen) do
@@ -310,6 +323,7 @@ defmodule PidroServer.Profiles do
 
     %{
       user_id: screen.user_id,
+      avatar_url: Map.get(screen, :avatar_url),
 
       # Headline lifetime stats
       games_played: screen.games_played,

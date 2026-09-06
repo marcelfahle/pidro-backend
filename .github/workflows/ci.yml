@@ -39,6 +39,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install avatar image processor
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick
+
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29.0.3"

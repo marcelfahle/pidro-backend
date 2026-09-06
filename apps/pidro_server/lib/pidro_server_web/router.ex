@@ -60,6 +60,10 @@ defmodule PidroServerWeb.Router do
     plug PidroServerWeb.Plugs.RateLimit
   end
 
+  pipeline :public_asset do
+    plug PidroServerWeb.Plugs.RateLimit
+  end
+
   scope "/", PidroServerWeb do
     pipe_through :browser
 
@@ -111,12 +115,18 @@ defmodule PidroServerWeb.Router do
     # Room routes without authentication
     get "/rooms", RoomController, :index
     get "/rooms/:code", RoomController, :show, private: %{rate_limit: [:room_lookup]}
-
     # Invite preview for landing pages; never exposes the room code (KD2)
     post "/invites/deferred", DeferredInviteController, :create,
       private: %{rate_limit: [:invite_deferred, :invite_deferred_install]}
 
     get "/invites/:code", InviteController, :show, private: %{rate_limit: [:invite_preview]}
+  end
+
+  scope "/api/v1", PidroServerWeb.API do
+    pipe_through :public_asset
+
+    get "/users/:user_id/avatar/:version", AvatarController, :show,
+      private: %{rate_limit: [:avatar_read]}
   end
 
   # API v1 authenticated routes
@@ -135,6 +145,10 @@ defmodule PidroServerWeb.Router do
 
     # Player profile route with authentication (own profile)
     get "/profile", ProfileController, :show
+    patch "/profile", ProfileController, :update
+    get "/profiles/:id", ProfileController, :public
+    post "/profile/avatar", AvatarController, :create, private: %{rate_limit: [:avatar_upload]}
+    delete "/profile/avatar", AvatarController, :delete
 
     # Lobby route with authentication (needs user_id for rejoinable rooms)
     get "/lobby", RoomController, :lobby

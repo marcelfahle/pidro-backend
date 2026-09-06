@@ -312,6 +312,15 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, {:list_rooms, filter})
   end
 
+  @doc "Notifies every RoomManager node that user identity metadata changed."
+  def identity_changed(user_id) do
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "room_manager:identity",
+      {:identity_changed, user_id}
+    )
+  end
+
   @doc """
   Returns true when the room represents a single-player table.
   """
@@ -975,6 +984,7 @@ defmodule PidroServer.Games.RoomManager do
   @impl true
   def init(:ok) do
     Logger.info("RoomManager started")
+    :ok = Phoenix.PubSub.subscribe(PidroServer.PubSub, "room_manager:identity")
     schedule_cleanup()
     send(self(), :startup_sweep)
     schedule_health_check()
@@ -1878,6 +1888,15 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_info({:identity_changed, user_id}, %State{} = state) do
+    state.rooms
+    |> Map.values()
+    |> Enum.filter(&(user_id in Positions.player_ids(&1)))
+    |> Enum.each(&broadcast_lobby_event({:room_updated, &1}))
+
+    {:noreply, state}
+  end
+
   def handle_info(:cleanup_abandoned_rooms, state) do
     now = DateTime.utc_now()
     grace_period_minutes = 5

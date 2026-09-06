@@ -69,7 +69,7 @@ defmodule PidroServer.Accounts.Auth do
   require Logger
 
   alias Ecto.Changeset
-  alias PidroServer.Accounts.Token
+  alias PidroServer.Accounts.{Avatars, Token}
   alias PidroServer.Accounts.User
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -236,6 +236,31 @@ defmodule PidroServer.Accounts.Auth do
   """
   def get_user!(id) do
     Repo.get!(User, id)
+  end
+
+  @doc "Updates only the biography of the identified user."
+  def update_bio(user_id, attrs) when is_binary(user_id) and is_map(attrs) do
+    case Repo.get(User, user_id) do
+      nil -> {:error, :not_found}
+      user -> user |> User.bio_changeset(attrs) |> Repo.update()
+    end
+  end
+
+  @doc "Returns the exact public identity allowlist for a user."
+  def public_profile(user_id) when is_binary(user_id) do
+    with {:ok, id} <- Ecto.UUID.cast(user_id),
+         %User{} = user <- Repo.get(User, id) do
+      {:ok,
+       %{
+         user_id: user.id,
+         username: user.username,
+         display_name: user.display_name,
+         avatar_url: PidroServer.Accounts.Avatars.url(Avatars.metadata_for(user.id), user.id),
+         bio: user.bio
+       }}
+    else
+      _ -> {:error, :not_found}
+    end
   end
 
   @doc """
@@ -499,7 +524,21 @@ defmodule PidroServer.Accounts.Auth do
     if valid_uuids == [] do
       %{}
     else
-      from(u in User, where: u.id in ^valid_uuids)
+      from(u in User,
+        left_join: a in PidroServer.Accounts.UserAvatar,
+        on: a.user_id == u.id,
+        where: u.id in ^valid_uuids,
+        select_merge: %{
+          avatar_url:
+            fragment(
+              "CASE WHEN ? IS NULL THEN NULL ELSE ?::text || '/api/v1/users/' || ?::text || '/avatar/' || ? END",
+              a.version,
+              ^PidroServerWeb.Endpoint.url(),
+              u.id,
+              a.version
+            )
+        }
+      )
       |> Repo.all()
       |> Map.new(&{&1.id, &1})
     end

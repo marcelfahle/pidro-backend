@@ -46,6 +46,7 @@ defmodule PidroServer.Accounts.User do
   @username_min_length 3
   @password_min_length 8
   @email_format ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  @bio_edge_whitespace ~r/^[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}-\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+|[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}-\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+$/u
 
   # Unicode categories Cc (control) and Cf (format). The `u` modifier makes
   # the property classes match codepoints rather than bytes.
@@ -60,6 +61,7 @@ defmodule PidroServer.Accounts.User do
     field(:username, :string)
     field(:email, :string)
     field(:display_name, :string)
+    field(:bio, :string)
     field(:password, :string, virtual: true)
     field(:password_hash, :string)
     field(:password_reset_token_hash, :binary)
@@ -68,6 +70,7 @@ defmodule PidroServer.Accounts.User do
     field(:token_version, :integer, default: 0)
     field(:last_seen_at, :utc_datetime_usec)
     field(:install_id, :string)
+    field(:avatar_url, :string, virtual: true)
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -120,6 +123,51 @@ defmodule PidroServer.Accounts.User do
     |> unique_constraint(:username)
     |> unique_constraint(:email)
     |> unique_constraint(:email, name: :users_lower_email_index)
+  end
+
+  @doc "Builds a changeset that can change only the public profile biography."
+  def bio_changeset(user, attrs) when is_map(attrs) do
+    case fetch_attr(attrs, :bio) do
+      :error ->
+        change(user)
+
+      {:ok, nil} ->
+        change(user, bio: nil)
+
+      {:ok, bio} when is_binary(bio) ->
+        normalize_bio(user, bio)
+
+      {:ok, _invalid} ->
+        user
+        |> change()
+        |> add_error(:bio, "must be a string or null")
+    end
+  end
+
+  defp normalize_bio(user, bio) do
+    if String.valid?(bio) and not String.contains?(bio, <<0>>) do
+      normalized =
+        bio
+        |> String.replace("\r\n", "\n")
+        |> String.replace("\r", "\n")
+        |> then(&Regex.replace(@bio_edge_whitespace, &1, ""))
+
+      user
+      |> change(bio: if(normalized == "", do: nil, else: normalized))
+      |> validate_length(:bio, max: 280, count: :codepoints)
+    else
+      user
+      |> change()
+      |> add_error(:bio, "contains invalid Unicode")
+    end
+  end
+
+  defp fetch_attr(attrs, key) do
+    cond do
+      Map.has_key?(attrs, key) -> {:ok, Map.get(attrs, key)}
+      Map.has_key?(attrs, Atom.to_string(key)) -> {:ok, Map.get(attrs, Atom.to_string(key))}
+      true -> :error
+    end
   end
 
   @doc """

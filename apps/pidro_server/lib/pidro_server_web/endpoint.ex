@@ -62,6 +62,7 @@ defmodule PidroServerWeb.Endpoint do
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
+    length: 5_308_416,
     json_decoder: Phoenix.json_library()
 
   plug Plug.MethodOverride

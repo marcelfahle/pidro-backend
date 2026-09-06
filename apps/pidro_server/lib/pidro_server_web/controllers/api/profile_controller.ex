@@ -30,6 +30,7 @@ defmodule PidroServerWeb.API.ProfileController do
   use PidroServerWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  alias PidroServer.Accounts.Auth
   alias PidroServer.Profiles
   alias PidroServerWeb.Schemas.{ErrorSchemas, ProfileSchemas}
 
@@ -72,6 +73,27 @@ defmodule PidroServerWeb.API.ProfileController do
     ]
   )
 
+  operation(:update,
+    summary: "Update current user's biography",
+    security: [%{"bearer" => []}],
+    request_body: {"Biography", "application/json", %OpenApiSpex.Schema{type: :object}},
+    responses: [
+      ok: {"Biography updated", "application/json", %OpenApiSpex.Schema{type: :object}},
+      unprocessable_entity:
+        {"Invalid biography", "application/json", ErrorSchemas.validation_error()}
+    ]
+  )
+
+  operation(:public,
+    summary: "Get a user's public profile",
+    security: [%{"bearer" => []}],
+    parameters: [id: [in: :path, type: :string, required: true]],
+    responses: [
+      ok: {"Public profile", "application/json", %OpenApiSpex.Schema{type: :object}},
+      not_found: {"User not found", "application/json", ErrorSchemas.not_found_error()}
+    ]
+  )
+
   @doc """
   Get the current user's full profile screen.
 
@@ -96,5 +118,17 @@ defmodule PidroServerWeb.API.ProfileController do
     conn
     |> put_status(:ok)
     |> json(%{data: Profiles.public_profile(user_id)})
+  end
+
+  def update(conn, params) do
+    with {:ok, user} <- Auth.update_bio(conn.assigns.current_user.id, params) do
+      json(conn, %{data: %{bio: user.bio}})
+    end
+  end
+
+  def public(conn, %{"id" => id}) do
+    with {:ok, profile} <- Auth.public_profile(id) do
+      json(conn, %{data: profile})
+    end
   end
 end
