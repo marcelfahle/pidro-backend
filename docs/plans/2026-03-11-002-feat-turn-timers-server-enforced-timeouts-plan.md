@@ -9,6 +9,12 @@ origin: docs/brainstorms/2026-02-09-bot-system-and-dev-control-brainstorm.md
 
 # feat: Turn Timers — Server-enforced timeouts with auto-play
 
+> **PID-30 correction (2026-09-06):** The pause/resume design below is historical.
+> Disconnect now adds `reconnect_turn_extension_ms` to the active seat's remaining
+> deadline without pausing. Reconnecting preserves that deadline; Phase 2 retires
+> the human timer when the bot takes over. Off-turn disconnects do not change the
+> active timer. The paused timer state and helpers have been removed.
+
 ## Overview
 
 A player can sit on an actionable game state forever and the game stalls. This feature adds server-enforced timers that auto-play when connected human players take too long.

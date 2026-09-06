@@ -9,9 +9,24 @@ defmodule PidroServer.RoomFixtures do
 
   alias PidroServer.Games.RoomManager
 
+  @doc "Registers the fixture's human channels and explicitly readies a full table."
+  def ready_room(room_code, channel_pid \\ self()) do
+    {:ok, room} = RoomManager.get_room(room_code)
+    {:ok, snapshot} = RoomManager.readiness(room_code)
+
+    for {_position, %{occupant_type: :human, user_id: user_id}} <- room.seats do
+      :ok = RoomManager.register_game_channel(room_code, user_id, channel_pid)
+
+      {:ok, _} =
+        RoomManager.confirm_ready(room_code, room.id, user_id, channel_pid, snapshot.ready_epoch)
+    end
+
+    {:ok, room} = RoomManager.get_room(room_code)
+    room
+  end
+
   @doc """
-  Creates a `:waiting` room with `seated` connected humans (1 to 3; four would
-  auto-start the game).
+  Creates a `:waiting` room with `seated` connected humans (1 to 4).
 
   ## Options
 
@@ -28,8 +43,8 @@ defmodule PidroServer.RoomFixtures do
   def waiting_room_fixture(opts \\ []) do
     seated = Keyword.get(opts, :seated, 1)
 
-    unless seated in 1..3 do
-      raise ArgumentError, "a waiting room seats 1 to 3 users, got #{inspect(seated)}"
+    unless seated in 1..4 do
+      raise ArgumentError, "a waiting room seats 1 to 4 users, got #{inspect(seated)}"
     end
 
     host_id = Keyword.get(opts, :host_id, "host")

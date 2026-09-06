@@ -521,23 +521,27 @@ defmodule PidroServer.Accounts.Auth do
     # Filter out non-UUID IDs (like bot IDs or "dev_host")
     valid_uuids = Enum.filter(user_ids, &valid_uuid?/1)
 
-    from(u in User,
-      left_join: a in PidroServer.Accounts.UserAvatar,
-      on: a.user_id == u.id,
-      where: u.id in ^valid_uuids,
-      select_merge: %{
-        avatar_url:
-          fragment(
-            "CASE WHEN ? IS NULL THEN NULL ELSE ?::text || '/api/v1/users/' || ?::text || '/avatar/' || ? END",
-            a.version,
-            ^PidroServerWeb.Endpoint.url(),
-            u.id,
-            a.version
-          )
-      }
-    )
-    |> Repo.all()
-    |> Map.new(&{&1.id, &1})
+    if valid_uuids == [] do
+      %{}
+    else
+      from(u in User,
+        left_join: a in PidroServer.Accounts.UserAvatar,
+        on: a.user_id == u.id,
+        where: u.id in ^valid_uuids,
+        select_merge: %{
+          avatar_url:
+            fragment(
+              "CASE WHEN ? IS NULL THEN NULL ELSE ?::text || '/api/v1/users/' || ?::text || '/avatar/' || ? END",
+              a.version,
+              ^PidroServerWeb.Endpoint.url(),
+              u.id,
+              a.version
+            )
+        }
+      )
+      |> Repo.all()
+      |> Map.new(&{&1.id, &1})
+    end
   end
 
   @doc """

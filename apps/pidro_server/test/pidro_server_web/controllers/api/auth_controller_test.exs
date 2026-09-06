@@ -560,6 +560,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       others = Enum.map(1..2, fn _ -> AccountsFixtures.guest_fixture() end)
       assert {:ok, _, position} = RoomManager.join_room(room.code, leaver.id)
       for user <- others, do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
+      PidroServer.RoomFixtures.ready_room(room.code)
 
       conn =
         conn
