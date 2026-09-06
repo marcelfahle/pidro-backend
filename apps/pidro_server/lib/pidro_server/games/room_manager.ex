@@ -930,7 +930,7 @@ defmodule PidroServer.Games.RoomManager do
     do: GenServer.call(__MODULE__, {:readiness, String.upcase(room_code)})
 
   @spec confirm_ready(String.t(), String.t(), any(), pid(), non_neg_integer()) ::
-          {:ok, map()} | {:error, atom(), map()}
+          {:ok, map()} | {:error, atom(), map() | nil}
   def confirm_ready(room_code, room_id, user_id, pid, epoch),
     do:
       GenServer.call(
@@ -1364,18 +1364,7 @@ defmodule PidroServer.Games.RoomManager do
       ) do
     room = Map.get(state.rooms, room_code)
 
-    snapshot =
-      if room,
-        do: readiness_snapshot(room),
-        else: %{
-          room_id: nil,
-          ready_epoch: 0,
-          snapshot_revision: 0,
-          status: :closed,
-          positions: %{},
-          seats: %{},
-          ready_players: []
-        }
+    snapshot = if room, do: readiness_snapshot(room), else: nil
 
     registered? =
       MapSet.member?(Map.get(state.channel_pids, {room_code, user_id}, MapSet.new()), pid) and

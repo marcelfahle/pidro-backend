@@ -399,6 +399,9 @@ defmodule PidroServerWeb.GameChannel do
         {:ok, readiness} ->
           {:reply, {:ok, %{readiness: RoomJSON.readiness(readiness)}}, socket}
 
+        {:error, :room_not_found, nil} ->
+          {:reply, {:error, %{reason: "room_not_found"}}, socket}
+
         {:error, reason, readiness} ->
           {:reply,
            {:error, %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)}},

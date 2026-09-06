@@ -13,20 +13,24 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     {:ok, room} = RoomManager.create_room(host.id, %{})
     for user <- others, do: RoomManager.join_room(room.code, user.id)
 
+    # Deliberately withhold the fourth channel join: filling the room via HTTP
+    # must not start a game while the slow final client is still connecting.
     channels =
-      Enum.map(users, fn user ->
+      Enum.map(Enum.take(users, 3), fn user ->
         {:ok, socket} = create_socket(user)
         {:ok, reply, joined} = subscribe_and_join(socket, GameChannel, "game:#{room.code}")
         {user, reply, joined}
       end)
 
-    %{room: room, channels: channels}
+    %{room: room, channels: channels, last_user: List.last(users)}
   end
 
-  test "join, broadcast, ack and stale errors carry the same versioned named roster", %{
-    room: room,
-    channels: channels
-  } do
+  test "late fourth join and staggered confirmations share named snapshots and start only on final ready",
+       %{
+         room: room,
+         channels: channels,
+         last_user: last_user
+       } do
     [{host, %{readiness: initial} = reply, socket} | rest] = channels
     refute Map.has_key?(reply, :state)
     assert initial.status == :waiting
@@ -34,6 +38,15 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     assert initial.room_id == room.id
     assert initial.seats.north.username == host.username
     assert initial.seats.north.display_name == host.display_name
+    assert {:error, :not_found} = GameSupervisor.get_game(room.code)
+
+    {:ok, last_socket} = create_socket(last_user)
+
+    {:ok, last_reply, last_joined} =
+      subscribe_and_join(last_socket, GameChannel, "game:#{room.code}")
+
+    assert last_reply.readiness == initial
+    refute Map.has_key?(last_reply, :state)
     assert {:error, :not_found} = GameSupervisor.get_game(room.code)
 
     ref = push(socket, "ready", %{})
@@ -54,7 +67,8 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     assert_reply ref, :ok, %{readiness: ^accepted}
     assert {:error, :not_found} = GameSupervisor.get_game(room.code)
 
-    Enum.each(rest, fn {_user, _reply, joined} ->
+    Enum.each(rest ++ [{last_user, last_reply, last_joined}], fn {_user, _reply, joined} ->
+      assert {:error, :not_found} = GameSupervisor.get_game(room.code)
       ref = push(joined, "ready", params)
       assert_reply ref, :ok, %{readiness: %{ready_epoch: epoch}}
       assert epoch == initial.ready_epoch
@@ -65,6 +79,16 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     ref = push(socket, "ready", params)
     assert_reply ref, :ok, %{readiness: %{status: :playing}}
     assert {:ok, ^pid} = GameSupervisor.get_game(room.code)
+  end
+
+  test "ready after room closure omits readiness instead of inventing an incomplete roster", %{
+    room: room,
+    channels: [{_host, %{readiness: initial}, socket} | _]
+  } do
+    assert :ok = RoomManager.close_room(room.code)
+    ref = push(socket, "ready", %{"room_id" => room.id, "ready_epoch" => initial.ready_epoch})
+    assert_reply ref, :error, response
+    assert response == %{reason: "room_not_found"}
   end
 
   test "roster replacement rejects old intent with the current full snapshot", %{
