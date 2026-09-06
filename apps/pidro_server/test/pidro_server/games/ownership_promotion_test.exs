@@ -299,6 +299,7 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
       refute Process.alive?(returning_bot)
 
       assert room_with_second_bot.seats[open_pos].status == :bot_substitute
+      {:ok, _} = RoomManagerCase.expire_phase(room.code, open_pos, :phase3_gone)
       {:ok, opened_room} = RoomManager.open_seat(room.code, open_pos, "user2")
       assert opened_room.seats[open_pos].occupant_type == :vacant
       {:ok, closed_room} = RoomManager.close_seat(room.code, open_pos, "user2")
@@ -307,7 +308,7 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
 
     test "a substitute joining an already-open seat restores ownership to an ownerless room" do
       {room, _positions} = create_playing_room()
-      {_grace, position} = trigger_phase2(room.code, "user2")
+      {_gone, position} = trigger_full_cascade(room.code, "user2")
       {:ok, _} = RoomManager.open_seat(room.code, position, "user1")
       :ok = RoomManager.handle_player_disconnect(room.code, "user3")
       :ok = RoomManager.handle_player_disconnect(room.code, "user4")

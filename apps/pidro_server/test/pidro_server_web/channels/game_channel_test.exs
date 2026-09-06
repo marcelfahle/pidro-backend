@@ -73,6 +73,51 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "seat lifecycle snapshot" do
+    test "Keep Bot broadcasts resolution to all observers and cold joins", context do
+      {:ok, _, owner} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      {:ok, _, _} =
+        subscribe_and_join(
+          context.sockets[context.user3.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      :ok = RoomManager.leave_room(context.user2.id)
+      {:ok, pending} = RoomManager.get_seat_lifecycle(context.room_code)
+      id = pending.seats.east.decision.id
+
+      for event <- ["keep_bot", "open_seat"] do
+        ref = push(owner, event, %{"position" => "east"})
+        assert_reply ref, :error, %{reason: "stale_decision"}
+      end
+
+      ref = push(owner, "keep_bot", %{"position" => "east", "decision_id" => id})
+      assert_reply ref, :ok, %{seat_lifecycle: kept}
+      assert kept.seats.east.decision == nil
+      assert kept.revision > pending.revision
+
+      for _ <- 1..2 do
+        assert_push "seat_lifecycle", %{seats: %{east: %{status: :permanent_bot, decision: nil}}}
+      end
+
+      {:ok, reply, _} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      assert reply.seat_lifecycle == kept
+      ref = push(owner, "open_seat", %{"position" => "east", "decision_id" => id})
+      assert_reply ref, :error, %{reason: "stale_decision", seat_lifecycle: ^kept}
+    end
+
     test "all observers receive takeover and reclaim snapshots, including a cold join", context do
       for user <- [context.user1, context.user2, context.user4] do
         {:ok, _, _} =
