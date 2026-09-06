@@ -9,6 +9,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
   use ExUnit.Case, async: false
 
   alias PidroServer.Games.RoomManager
+  alias PidroServer.RoomManagerCase
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -34,6 +35,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
     {:ok, _, _} = RoomManager.join_room(room.code, "user2")
     {:ok, _, _} = RoomManager.join_room(room.code, "user3")
     {:ok, _, _} = RoomManager.join_room(room.code, "user4")
+    PidroServer.RoomFixtures.ready_room(room.code)
     {:ok, playing_room} = RoomManager.get_room(room.code)
 
     assert playing_room.status == :playing
@@ -58,8 +60,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
     :ok = RoomManager.handle_player_disconnect(room.code, user_id)
 
     # Trigger Phase 2: bot substitution
-    send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
-    {:ok, room_after_p2} = RoomManager.get_room(room.code)
+    {:ok, room_after_p2} = RoomManagerCase.expire_phase(room.code, position, :phase2_start)
 
     {room_after_p2, position}
   end

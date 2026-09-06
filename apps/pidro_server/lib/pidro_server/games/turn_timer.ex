@@ -20,13 +20,6 @@ defmodule PidroServer.Games.TurnTimer do
           deadline_mono: integer()
         }
 
-  @type paused_t :: %{
-          key: key(),
-          actor_position: atom() | nil,
-          phase: atom(),
-          remaining_ms: non_neg_integer()
-        }
-
   @spec start_timer(
           pid(),
           String.t(),
@@ -80,27 +73,6 @@ defmodule PidroServer.Games.TurnTimer do
   def cancel_timer(%{ref: ref}) do
     Process.cancel_timer(ref)
     :ok
-  end
-
-  @spec pause_timer(t() | nil) :: paused_t() | nil
-  def pause_timer(nil), do: nil
-
-  def pause_timer(%{
-        ref: ref,
-        key: key,
-        actor_position: actor_position,
-        phase: phase,
-        deadline_mono: deadline_mono
-      }) do
-    Process.cancel_timer(ref)
-    now_mono = System.monotonic_time(:millisecond)
-
-    %{
-      key: key,
-      actor_position: actor_position,
-      phase: phase,
-      remaining_ms: max(deadline_mono - now_mono, 0)
-    }
   end
 
   @spec remaining_ms(t()) :: non_neg_integer()

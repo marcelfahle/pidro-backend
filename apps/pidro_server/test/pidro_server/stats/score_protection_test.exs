@@ -7,6 +7,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
 
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
+  alias PidroServer.RoomManagerCase
   alias PidroServer.Stats
   alias PidroServer.Stats.{AbandonmentEvent, GameStats}
 
@@ -229,16 +230,21 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       for user_id <- [leaver, south, west],
           do: assert({:ok, _, _} = RoomManager.join_room(room.code, user_id))
 
+      PidroServer.RoomFixtures.ready_room(room.code)
       {:ok, playing_room} = RoomManager.get_room(room.code)
       position = position_for(playing_room, leaver)
       :ok = RoomManager.handle_player_disconnect(room.code, leaver)
-      send(RoomManager, {:phase2_start, room.code, position})
-      {:ok, before_leave} = RoomManager.get_room(room.code)
+      {:ok, before_leave} = RoomManagerCase.expire_phase(room.code, position, :phase2_start)
       bot_pid = before_leave.seats[position].bot_pid
 
       assert :ok = RoomManager.leave_room(leaver)
       assert {:error, :not_in_room} = RoomManager.leave_room(leaver)
-      send(RoomManager, {:phase3_gone, room.code, position})
+
+      send(
+        RoomManager,
+        {:timeout, before_leave.phase_timers[position], {:phase3_gone, room.code, position}}
+      )
+
       {:ok, after_leave} = RoomManager.get_room(room.code)
       assert after_leave.seats[position].bot_pid == bot_pid
       position_name = Atom.to_string(position)
@@ -266,13 +272,14 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       {:ok, _, _} = RoomManager.join_room(room.code, user2)
       {:ok, _, _} = RoomManager.join_room(room.code, user3)
       {:ok, _, _} = RoomManager.join_room(room.code, user4)
+      PidroServer.RoomFixtures.ready_room(room.code)
 
       {:ok, playing_room} = RoomManager.get_room(room.code)
       position = position_for(playing_room, user2)
 
       :ok = RoomManager.handle_player_disconnect(room.code, user2)
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
-      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
+      {:ok, _} = RoomManagerCase.expire_phase(room.code, position, :phase2_start)
+      {:ok, _} = RoomManagerCase.expire_phase(room.code, position, :phase3_gone)
       {:ok, _} = RoomManager.open_seat(room.code, position, user1)
       {:ok, _, ^position} = RoomManager.join_as_substitute(room.code, substitute)
 

@@ -12,9 +12,10 @@ defmodule PidroServerWeb.GameChannelTest do
   """
 
   use PidroServerWeb.ChannelCase, async: false
+  import Phoenix.ChannelTest, except: [subscribe_and_join: 4]
 
   alias PidroServer.Accounts
-  alias PidroServer.Games.{GameAdapter, GameSupervisor, RoomManager}
+  alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.GameChannel
   alias PidroServerWeb.Serializers.GameStateSerializer
 
@@ -48,13 +49,8 @@ defmodule PidroServerWeb.GameChannelTest do
 
     {:ok, _, _} = RoomManager.join_room(room_code, user2.id)
     {:ok, _, _} = RoomManager.join_room(room_code, user3.id)
-    {:ok, room, _} = RoomManager.join_room(room_code, user4.id)
-
-    # Start the game (handle case where it's already started)
-    case GameSupervisor.start_game(room_code) do
-      {:ok, game_pid} -> {:ok, game_pid}
-      {:error, {:already_started, game_pid}} -> {:ok, game_pid}
-    end
+    {:ok, _, _} = RoomManager.join_room(room_code, user4.id)
+    room = PidroServer.RoomFixtures.ready_room(room_code)
 
     # Create sockets for all users
     sockets =
@@ -89,7 +85,8 @@ defmodule PidroServerWeb.GameChannelTest do
         assert_push "seat_lifecycle", %{seats: %{south: %{status: :reconnecting}}}
       end
 
-      send(RoomManager, {:phase2_start, context.room_code, :south})
+      {:ok, _} =
+        PidroServer.RoomManagerCase.expire_phase(context.room_code, :south, :phase2_start)
 
       for _ <- 1..3 do
         assert_push "seat_lifecycle", %{
@@ -192,6 +189,53 @@ defmodule PidroServerWeb.GameChannelTest do
       {:ok, promoted} = RoomManager.get_seat_lifecycle(context.room_code)
       assert promoted.owner_id == context.user4.id
       assert promoted.seats.north.decision.player_name == context.user1.username
+    end
+  end
+
+  describe "disconnect cascade delivery" do
+    test "grace reclaim sends the current state and retires the bot", context do
+      room_code = context.room_code
+      user_id = context.user2.id
+
+      {:ok, _, _observer} =
+        subscribe_and_join(context.sockets[context.user1.id], GameChannel, "game:#{room_code}")
+
+      :ok = RoomManager.handle_player_disconnect(room_code, user_id)
+      assert_push "player_reconnecting", %{user_id: ^user_id, position: position}
+      {:ok, grace} = PidroServer.RoomManagerCase.expire_phase(room_code, position, :phase2_start)
+      bot = grace.seats[position].bot_pid
+      assert_push "bot_substitute_active", %{user_id: ^user_id, position: ^position}
+
+      {:ok, reply, _returned} =
+        subscribe_and_join(context.sockets[user_id], GameChannel, "game:#{room_code}")
+
+      assert reply.reconnected
+      assert reply.position == position
+      refute Process.alive?(bot)
+      assert_push "player_reclaimed_seat", %{user_id: ^user_id, position: ^position}
+      {:ok, game} = GameAdapter.get_state(room_code)
+      assert reply.state == GameStateSerializer.serialize(game)
+    end
+
+    test "owner removal and restoration are delivered with nullable ownership", context do
+      room_code = context.room_code
+      user_id = context.user4.id
+
+      {:ok, _, _observer} =
+        subscribe_and_join(context.sockets[user_id], GameChannel, "game:#{room_code}")
+
+      for user <- context.users do
+        :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+      end
+
+      {:ok, _} = PidroServer.RoomManagerCase.expire_phase(room_code, :north, :phase2_start)
+      {:ok, _} = PidroServer.RoomManagerCase.expire_phase(room_code, :north, :phase3_gone)
+      assert_push "seat_permanently_botted", %{position: :north}
+      assert_push "owner_changed", %{new_owner_id: nil, new_owner_position: nil}
+
+      {:ok, returned} = RoomManager.handle_player_reconnect(room_code, user_id)
+      position = PidroServer.Games.Room.Positions.get_position(returned, user_id)
+      assert_push "owner_changed", %{new_owner_id: ^user_id, new_owner_position: ^position}
     end
   end
 
@@ -603,14 +647,12 @@ defmodule PidroServerWeb.GameChannelTest do
     } do
       socket = sockets[user.id]
 
-      {:ok, _reply, socket} =
+      {:ok, reply, socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
-      ref = push(socket, "ready", %{})
-      assert_reply ref, :ok, %{}, 1000
-
-      # Should broadcast player_ready event
-      assert_broadcast "player_ready", %{position: _position}, 1000
+      ref = push(socket, "ready", Map.take(reply.readiness, [:room_id, :ready_epoch]))
+      assert_reply ref, :ok, %{readiness: %{status: :playing}}, 1000
+      refute_broadcast "player_ready", _, 0
     end
   end
 
@@ -1336,6 +1378,7 @@ defmodule PidroServerWeb.GameChannelTest do
       dave = AccountsFixtures.user_fixture(%{display_name: "Dave"})
       {:ok, _room, _position} = RoomManager.join_room(table.code, carl.id)
       {:ok, _room, _position} = RoomManager.join_room(table.code, dave.id)
+      PidroServer.RoomFixtures.ready_room(table.code)
 
       assert_eventually(fn ->
         match?({:ok, %{status: :playing}}, RoomManager.get_room(table.code))
@@ -1396,6 +1439,26 @@ defmodule PidroServerWeb.GameChannelTest do
           drive_bidding_to(room_code, position, attempts - 1)
       end
     end
+  end
+
+  # Replace the setup fixture's synthetic registration only after a real channel
+  # joins, preserving last-channel disconnect semantics in lifecycle tests.
+  defp subscribe_and_join(socket, channel, topic, params) do
+    result = Phoenix.ChannelTest.subscribe_and_join(socket, channel, topic, params)
+
+    case result do
+      {:ok, _, joined} ->
+        RoomManager.unregister_game_channel(
+          joined.assigns.room_code,
+          joined.assigns.user_id,
+          self()
+        )
+
+      _ ->
+        :ok
+    end
+
+    result
   end
 
   defp wait_for_turn_timer(room_code, attempts \\ 40)

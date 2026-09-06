@@ -5,15 +5,15 @@ defmodule PidroServer.Games.RoomManager do
   The RoomManager handles the lifecycle of game rooms, including:
   - Creating new rooms with unique codes
   - Managing player joins and leaves
-  - Auto-starting games when rooms reach 4 players
+  - Starting full tables after every human confirms readiness on a live channel
   - Broadcasting room and lobby updates via PubSub
   - Tracking player-to-room mappings to prevent duplicate room membership
 
   ## Room Lifecycle
 
   1. **Creation**: A host creates a room with a unique 4-character alphanumeric code
-  2. **Waiting**: Room status is `:waiting` while players join (1-3 players)
-  3. **Ready**: When 4 players join, status changes to `:ready` and game auto-starts
+  2. **Waiting**: Players join and confirm readiness for the current roster epoch
+  3. **Ready**: A full table with all humans ready transitions through `:ready` to `:playing`
   4. **Closed**: Room closes when host leaves or all players leave
 
   ## PubSub Events
@@ -22,7 +22,7 @@ defmodule PidroServer.Games.RoomManager do
   - `lobby:updates` - Notifies all clients about room list changes
   - `room:<room_code>` - Notifies players in a specific room about room changes
   - `game:<room_code>` - Seat events for game channels: the disconnect cascade,
-    substitutes, `invite_redeemed`, `seat_moved` and `kicked`
+    substitutes, `invite_redeemed`, `seat_moved`, `kicked` and `readiness_updated`
 
   ## Examples
 
@@ -90,7 +90,7 @@ defmodule PidroServer.Games.RoomManager do
     @type t :: %__MODULE__{
             id: Ecto.UUID.t() | nil,
             code: String.t(),
-            host_id: String.t(),
+            host_id: String.t() | nil,
             locked: boolean(),
             kicked_ids: [String.t()],
             invite_live_until: DateTime.t() | nil,
@@ -105,9 +105,11 @@ defmodule PidroServer.Games.RoomManager do
             seats: map(),
             last_activity: DateTime.t(),
             turn_timer: TurnTimer.t() | nil,
-            paused_turn_timer: TurnTimer.paused_t() | nil,
             consecutive_timeouts: %{optional(Positions.position()) => non_neg_integer()},
             last_hand_number: non_neg_integer() | nil,
+            ready_epoch: non_neg_integer(),
+            snapshot_revision: non_neg_integer(),
+            ready_player_ids: MapSet.t(String.t()),
             seat_lifecycle_revision: non_neg_integer()
           }
 
@@ -129,9 +131,11 @@ defmodule PidroServer.Games.RoomManager do
       phase_timers: %{},
       seats: %{},
       turn_timer: nil,
-      paused_turn_timer: nil,
       consecutive_timeouts: %{},
       last_hand_number: nil,
+      ready_epoch: 0,
+      snapshot_revision: 0,
+      ready_player_ids: MapSet.new(),
       seat_lifecycle_revision: 0
     ]
   end
@@ -207,8 +211,9 @@ defmodule PidroServer.Games.RoomManager do
   @doc """
   Joins an existing room.
 
-  A player can only be in one room at a time. When the 4th player joins,
-  the room status changes to `:ready` and a game is automatically started.
+  A player can only be in one room at a time. Filling the table does not start
+  it: every human must confirm readiness through a registered live channel
+  for the current roster epoch. Trusted bot seats count as ready.
 
   ## Parameters
 
@@ -249,6 +254,11 @@ defmodule PidroServer.Games.RoomManager do
              | :kicked}
   def join_room(room_code, player_id, position \\ nil) do
     GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id, position})
+  end
+
+  @doc "Trusted server-only bot seating; unlike join_room/3 this records a bot occupant."
+  def join_bot(room_code, bot_id, bot_pid, position) when is_pid(bot_pid) do
+    GenServer.call(__MODULE__, {:join_bot, String.upcase(room_code), bot_id, bot_pid, position})
   end
 
   @doc """
@@ -645,7 +655,10 @@ defmodule PidroServer.Games.RoomManager do
   @doc "Returns the authoritative, versioned four-seat lifecycle snapshot."
   @spec get_seat_lifecycle(String.t()) :: {:ok, map()} | {:error, :room_not_found}
   def get_seat_lifecycle(room_code) do
-    GenServer.call(__MODULE__, {:get_seat_lifecycle, String.upcase(room_code)})
+    case GenServer.call(__MODULE__, {:get_seat_lifecycle, String.upcase(room_code)}) do
+      {:ok, snapshot} -> {:ok, PidroServer.Games.SeatLifecycle.with_names(snapshot)}
+      error -> error
+    end
   end
 
   @doc """
@@ -924,6 +937,19 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, {:unregister_game_channel, String.upcase(room_code), user_id, pid})
   end
 
+  @spec readiness(String.t()) :: {:ok, map()} | {:error, :room_not_found}
+  def readiness(room_code),
+    do: GenServer.call(__MODULE__, {:readiness, String.upcase(room_code)})
+
+  @spec confirm_ready(String.t(), String.t(), any(), pid(), non_neg_integer()) ::
+          {:ok, map()} | {:error, atom(), map() | nil}
+  def confirm_ready(room_code, room_id, user_id, pid, epoch),
+    do:
+      GenServer.call(
+        __MODULE__,
+        {:confirm_ready, String.upcase(room_code), room_id, user_id, pid, epoch}
+      )
+
   @spec reset_consecutive_timeouts(String.t(), any()) :: :ok | {:error, :room_not_found}
   def reset_consecutive_timeouts(room_code, user_id) do
     GenServer.call(__MODULE__, {:reset_consecutive_timeouts, String.upcase(room_code), user_id})
@@ -1038,6 +1064,37 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  def handle_call({:join_bot, room_code, bot_id, bot_pid, position}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      %Room{} = room ->
+        with :ok <- ensure_room_open(room),
+             :ok <- ensure_not_in_other_room(state, bot_id, room_code),
+             {:ok, assigned_room, assigned_position} <- Positions.assign(room, bot_id, position) do
+          bot_seat = Seat.new_bot(assigned_position, bot_pid)
+
+          updated =
+            assigned_room
+            |> Map.put(:seats, Map.put(room.seats, assigned_position, bot_seat))
+            |> reset_readiness()
+            |> maybe_set_ready()
+            |> touch_last_activity()
+
+          next = put_room_and_player(state, updated, bot_id)
+          broadcast_room(room_code, updated)
+          broadcast_lobby_event({:room_updated, updated})
+          broadcast_readiness(updated)
+          next = maybe_start_game(updated, next)
+          {:reply, {:ok, Map.fetch!(next.rooms, room_code), assigned_position}, next}
+        else
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+
+      nil ->
+        {:reply, {:error, :room_not_found}, state}
+    end
+  end
+
   @impl true
   def handle_call({:claim_seat, room_code, room_id, user_id, claim}, _from, %State{} = state) do
     with {:ok, %Room{} = room} <- fetch_room(state, room_code),
@@ -1102,6 +1159,7 @@ defmodule PidroServer.Games.RoomManager do
         moved_room
         |> move_seat_struct(from, position)
         |> bump_seat_lifecycle_revision()
+        |> reset_readiness()
         |> touch_last_activity()
 
       Logger.info(
@@ -1118,6 +1176,8 @@ defmodule PidroServer.Games.RoomManager do
         "game:#{room_code}",
         {:seat_moved, %{user_id: target_user_id, from: from, to: position}}
       )
+
+      broadcast_readiness(updated_room)
 
       {:reply, {:ok, updated_room}, put_room(state, updated_room)}
     else
@@ -1253,7 +1313,68 @@ defmodule PidroServer.Games.RoomManager do
   @impl true
   def handle_call({:unregister_game_channel, room_code, user_id, pid}, _from, %State{} = state) do
     {result, new_state} = unregister_channel_pid(state, room_code, user_id, pid)
+
+    new_state =
+      if result == :last_channel_closed,
+        do: disconnect_after_last_channel(new_state, room_code, user_id),
+        else: new_state
+
     {:reply, result, new_state}
+  end
+
+  def handle_call({:readiness, room_code}, _from, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      nil -> {:reply, {:error, :room_not_found}, state}
+      room -> {:reply, {:ok, readiness_snapshot(room)}, state}
+    end
+  end
+
+  def handle_call(
+        {:confirm_ready, room_code, room_id, user_id, pid, epoch},
+        _from,
+        %State{} = state
+      ) do
+    room = Map.get(state.rooms, room_code)
+
+    snapshot = if room, do: readiness_snapshot(room), else: nil
+
+    registered? =
+      MapSet.member?(Map.get(state.channel_pids, {room_code, user_id}, MapSet.new()), pid) and
+        Process.alive?(pid)
+
+    cond do
+      is_nil(room) ->
+        {:reply, {:error, :room_not_found, snapshot}, state}
+
+      room_id != room.id or epoch != room.ready_epoch ->
+        {:reply, {:error, :stale_readiness, snapshot}, state}
+
+      not registered? or not human_connected_seat?(room, user_id) ->
+        {:reply, {:error, :stale_identity, snapshot}, state}
+
+      not full_table?(room) ->
+        {:reply, {:error, :table_not_full, snapshot}, state}
+
+      MapSet.member?(room.ready_player_ids, user_id) ->
+        {:reply, {:ok, snapshot}, state}
+
+      room.status not in [:waiting, :ready] ->
+        {:reply, {:error, :room_not_waiting, snapshot}, state}
+
+      true ->
+        updated = %{
+          room
+          | ready_player_ids: MapSet.put(room.ready_player_ids, user_id),
+            snapshot_revision: room.snapshot_revision + 1
+        }
+
+        updated = if all_players_ready?(updated), do: %{updated | status: :ready}, else: updated
+        next = put_room(state, updated)
+        broadcast_readiness(updated)
+        next = maybe_start_game(updated, next)
+        final = Map.get(next.rooms, room_code, updated)
+        {:reply, {:ok, readiness_snapshot(final)}, next}
+    end
   end
 
   @impl true
@@ -1461,6 +1582,7 @@ defmodule PidroServer.Games.RoomManager do
       # This preserves :playing, :finished, etc. statuses for dev testing
       updated_room =
         %{room | positions: updated_positions, seats: updated_seats}
+        |> reset_readiness()
         |> dev_maybe_set_ready()
         |> bump_seat_lifecycle_revision()
         |> touch_last_activity()
@@ -1496,14 +1618,10 @@ defmodule PidroServer.Games.RoomManager do
       broadcast_room(room_code, updated_room)
       broadcast_lobby_event({:room_updated, updated_room})
       broadcast_seat_lifecycle(updated_room)
+      broadcast_readiness(updated_room)
 
       # Auto-start game if room is now ready (4 players)
-      final_state =
-        if updated_room.status == :ready do
-          start_game_for_room(updated_room, new_state)
-        else
-          new_state
-        end
+      final_state = maybe_start_game(updated_room, new_state)
 
       # Return the final room from final_state (may have :playing status if auto-started)
       final_room = Map.get(final_state.rooms, room_code, updated_room)
@@ -1708,6 +1826,7 @@ defmodule PidroServer.Games.RoomManager do
         |> reset_timeout_counter(position)
         |> bump_seat_lifecycle_revision()
         |> touch_last_activity()
+        |> restore_owner(position)
 
       new_state = put_room_and_player(state, updated_room, player_id)
 
@@ -1781,7 +1900,7 @@ defmodule PidroServer.Games.RoomManager do
 
   # Phase 2 handler — hiccup timer fired, spawn substitute bot and start grace countdown.
   @impl true
-  def handle_info({:phase2_start, room_code, position}, %State{} = state) do
+  def handle_info({:timeout, ref, {:phase2_start, room_code, position}}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
         {:noreply, state}
@@ -1789,7 +1908,8 @@ defmodule PidroServer.Games.RoomManager do
       %Room{} = room ->
         seat = Map.get(room.seats, position)
 
-        if seat && seat.status == :reconnecting do
+        if is_reference(ref) && room.phase_timers[position] == ref && seat &&
+             seat.status == :reconnecting do
           # Calculate remaining grace duration (total grace minus hiccup already elapsed)
           grace_ms = Lifecycle.config(:grace_timeout_ms)
           hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
@@ -1805,7 +1925,7 @@ defmodule PidroServer.Games.RoomManager do
 
           # Schedule Phase 3 (gone/permanent) timer
           timer_ref =
-            Process.send_after(self(), {:phase3_gone, room_code, position}, remaining_grace_ms)
+            :erlang.start_timer(remaining_grace_ms, self(), {:phase3_gone, room_code, position})
 
           updated_room =
             %{
@@ -1814,6 +1934,9 @@ defmodule PidroServer.Games.RoomManager do
                 phase_timers: Map.put(room.phase_timers, position, timer_ref)
             }
             |> bump_seat_lifecycle_revision()
+
+          {updated_room, state} =
+            reconcile_turn_timer_for_current_state(updated_room, room_code, state)
 
           updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
 
@@ -1840,7 +1963,7 @@ defmodule PidroServer.Games.RoomManager do
 
   # Phase 3 handler — grace period expired, make bot permanent.
   @impl true
-  def handle_info({:phase3_gone, room_code, position}, %State{} = state) do
+  def handle_info({:timeout, ref, {:phase3_gone, room_code, position}}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
         {:noreply, state}
@@ -1848,7 +1971,8 @@ defmodule PidroServer.Games.RoomManager do
       %Room{} = room ->
         seat = Map.get(room.seats, position)
 
-        if seat && seat.status == :bot_substitute && seat.reserved_for != nil do
+        if is_reference(ref) && room.phase_timers[position] == ref && seat &&
+             seat.status == :bot_substitute && seat.reserved_for != nil do
           # Record abandonment before clearing reserved_for
           PidroServer.Stats.record_abandonment(seat.reserved_for, room_code, position)
 
@@ -1865,41 +1989,12 @@ defmodule PidroServer.Games.RoomManager do
             |> bump_seat_lifecycle_revision()
 
           # If this seat was the owner, promote ownership to next connected human
-          updated_room =
-            if seat.is_owner do
-              case promote_owner(updated_room) do
-                {:ok, promoted_room} ->
-                  Phoenix.PubSub.broadcast(
-                    PidroServer.PubSub,
-                    "game:#{room_code}",
-                    {:owner_changed,
-                     %{
-                       new_owner_id: promoted_room.host_id,
-                       new_owner_position:
-                         Enum.find_value(promoted_room.seats, fn {pos, s} ->
-                           if Seat.owner?(s), do: pos
-                         end)
-                     }}
-                  )
-
-                  Logger.info(
-                    "Ownership promoted to #{promoted_room.host_id} in room #{room_code}"
-                  )
-
-                  promoted_room
-
-                {:no_humans, room} ->
-                  Logger.info(
-                    "No connected humans remaining in room #{room_code} for ownership promotion"
-                  )
-
-                  room
-              end
-            else
-              updated_room
-            end
+          updated_room = promote_departed_owner(updated_room, seat.reserved_for)
 
           updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+
+          broadcast_room(room_code, updated_room)
+          broadcast_lobby_event({:room_updated, updated_room})
 
           # Broadcast seat permanently botted
           Phoenix.PubSub.broadcast(
@@ -2073,11 +2168,20 @@ defmodule PidroServer.Games.RoomManager do
             {:error, _reason} -> nil
           end
 
+        # The game is over: no new controllers or abandonment transitions should
+        # run. Preserve reservations so players can still return to the result.
+        cancel_all_phase_timers(room)
+        terminate_room_bots(room)
+
         finished_room =
           room
+          |> maybe_cancel_turn_timer()
           |> Map.put(:status, :finished)
-          |> Map.put(:turn_timer, nil)
-          |> Map.put(:paused_turn_timer, nil)
+          |> Map.put(:phase_timers, %{})
+          |> Map.put(
+            :seats,
+            Map.new(room.seats, fn {pos, seat} -> {pos, %{seat | bot_pid: nil}} end)
+          )
           |> bump_seat_lifecycle_revision()
           |> touch_last_activity()
 
@@ -2142,7 +2246,14 @@ defmodule PidroServer.Games.RoomManager do
             Map.put(state.channel_pids, key, remaining)
           end
 
-        {:noreply, %{state | channel_monitors: channel_monitors, channel_pids: channel_pids}}
+        next = %{state | channel_monitors: channel_monitors, channel_pids: channel_pids}
+
+        next =
+          if MapSet.size(remaining) == 0,
+            do: disconnect_after_last_channel(next, room_code, user_id),
+            else: next
+
+        {:noreply, next}
     end
   end
 
@@ -2506,7 +2617,61 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   # Four positions taken and no held seat (R19). Bots count as before.
   defp ready_to_start?(%Room{} = room) do
-    Positions.count(room) == @max_players and not held_seat?(room)
+    full_table?(room) and all_players_ready?(room)
+  end
+
+  defp full_table?(room), do: Positions.count(room) == @max_players and not held_seat?(room)
+
+  defp all_players_ready?(room) do
+    Enum.all?(room.seats, fn {_position, seat} ->
+      seat.occupant_type == :bot or
+        (seat.occupant_type == :human and seat.status == :connected and
+           MapSet.member?(room.ready_player_ids, seat.user_id))
+    end)
+  end
+
+  defp human_connected_seat?(room, user_id) do
+    Enum.any?(room.seats, fn {_position, seat} ->
+      match?(%Seat{occupant_type: :human, user_id: ^user_id, status: :connected}, seat)
+    end)
+  end
+
+  defp readiness_snapshot(room) do
+    ready_players =
+      room.seats
+      |> Enum.filter(fn {_position, seat} ->
+        seat.occupant_type == :bot or MapSet.member?(room.ready_player_ids, seat.user_id)
+      end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    %{
+      room_id: room.id,
+      ready_epoch: room.ready_epoch,
+      snapshot_revision: room.snapshot_revision,
+      status: room.status,
+      positions: room.positions,
+      seats: Map.new(room.seats, fn {position, seat} -> {position, Seat.serialize(seat)} end),
+      ready_players: ready_players
+    }
+  end
+
+  defp reset_readiness(room) do
+    %{
+      room
+      | ready_player_ids: MapSet.new(),
+        ready_epoch: room.ready_epoch + 1,
+        snapshot_revision: room.snapshot_revision + 1,
+        status: if(room.status == :ready, do: :waiting, else: room.status)
+    }
+  end
+
+  defp broadcast_readiness(room) do
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "game:#{room.code}",
+      {:readiness_updated, readiness_snapshot(room)}
+    )
   end
 
   @doc false
@@ -2534,11 +2699,11 @@ defmodule PidroServer.Games.RoomManager do
 
     case seat && Seat.disconnect(seat) do
       {:ok, disconnected_seat} ->
-        room = pause_active_turn_timer(room, room_code, position)
+        room = extend_active_turn_timer(room, room_code, position)
         hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
 
         timer_ref =
-          Process.send_after(self(), {:phase2_start, room_code, position}, hiccup_ms)
+          :erlang.start_timer(hiccup_ms, self(), {:phase2_start, room_code, position})
 
         broadcast_player_reconnecting(room_code, user_id, position)
 
@@ -2589,20 +2754,6 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  # A reclaim in a `:waiting` room re-runs the ready check (R19, R20): the
-  # table may have filled while the seat was held, and it starts through the
-  # same path as the fourth join. Returns `{room, state}` with the started
-  # room when the check passes.
-  defp maybe_start_after_reclaim(%Room{status: :waiting, code: code} = room, %State{} = state) do
-    ready_room = maybe_set_ready(room)
-    new_state = maybe_start_game(ready_room, put_room(state, ready_room))
-
-    {Map.get(new_state.rooms, code, ready_room), new_state}
-  end
-
-  defp maybe_start_after_reclaim(%Room{} = room, %State{} = state), do: {room, state}
-
-  @doc false
   # Handles reconnection based on the seat's current cascade phase.
   # Phase 1 (:reconnecting) — cancel timer, reclaim seat
   # Phase 2 (:bot_substitute with reserved_for) — terminate bot, cancel timer, reclaim seat
@@ -2619,10 +2770,11 @@ defmodule PidroServer.Games.RoomManager do
               %{
                 room
                 | seats: Map.put(room.seats, position, reclaimed),
+                  snapshot_revision: room.snapshot_revision + 1,
                   last_activity: DateTime.utc_now()
               }
               |> reset_timeout_counter(position)
-              |> maybe_resume_paused_turn_timer(room_code, position)
+              |> restore_owner(position)
               |> bump_seat_lifecycle_revision()
 
             updated_state = %State{state | rooms: Map.put(state.rooms, room_code, reclaimed_room)}
@@ -2646,12 +2798,12 @@ defmodule PidroServer.Games.RoomManager do
             )
 
             broadcast_room(room_code, updated_room)
+            broadcast_readiness(updated_room)
             broadcast_lobby_event({:room_updated, updated_room})
 
-            {final_room, final_state} = maybe_start_after_reclaim(updated_room, updated_state)
-            broadcast_seat_lifecycle(final_room)
-
-            {:reply, {:ok, final_room}, final_state}
+            broadcast_seat_lifecycle(updated_room)
+            # Reclaim restores connectivity, never pre-disconnect readiness.
+            {:reply, {:ok, updated_room}, updated_state}
 
           {:error, reason} ->
             {:reply, {:error, reason}, state}
@@ -2675,7 +2827,7 @@ defmodule PidroServer.Games.RoomManager do
                   last_activity: DateTime.utc_now()
               }
               |> reset_timeout_counter(position)
-              |> maybe_resume_paused_turn_timer(room_code, position)
+              |> restore_owner(position)
               |> bump_seat_lifecycle_revision()
 
             updated_state = %State{state | rooms: Map.put(state.rooms, room_code, reclaimed_room)}
@@ -2786,26 +2938,39 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp promote_departed_owner(%Room{host_id: player_id} = room, player_id) do
-    case promote_owner(room) do
-      {:ok, promoted_room} ->
-        Phoenix.PubSub.broadcast(
-          PidroServer.PubSub,
-          "game:#{room.code}",
-          {:owner_changed,
-           %{
-             new_owner_id: promoted_room.host_id,
-             new_owner_position: Positions.get_position(promoted_room, promoted_room.host_id)
-           }}
-        )
-
-        promoted_room
-
-      {:no_humans, room} ->
-        room
-    end
+    {_result, promoted_room} = promote_owner(room)
+    if promoted_room.host_id != room.host_id, do: broadcast_owner_changed(promoted_room)
+    promoted_room
   end
 
   defp promote_departed_owner(room, _player_id), do: room
+
+  defp restore_owner(%Room{host_id: nil} = room, position) do
+    seat = room.seats[position]
+
+    room = %{
+      room
+      | host_id: seat.user_id,
+        seats: Map.put(room.seats, position, %{seat | is_owner: true})
+    }
+
+    broadcast_owner_changed(room)
+    room
+  end
+
+  defp restore_owner(room, _position), do: room
+
+  defp broadcast_owner_changed(room) do
+    broadcast_game_event(
+      room.code,
+      {:owner_changed,
+       %{
+         new_owner_id: room.host_id,
+         new_owner_position:
+           Enum.find_value(room.seats, fn {pos, seat} -> if Seat.owner?(seat), do: pos end)
+       }}
+    )
+  end
 
   defp broadcast_departure_takeover(_room_code, _seat, nil, _player_id), do: :ok
 
@@ -2914,6 +3079,9 @@ defmodule PidroServer.Games.RoomManager do
       nil ->
         {:no_humans, room}
 
+      {_owner_pos, %Seat{occupant_type: :human, status: :connected}} ->
+        {:ok, room}
+
       {owner_pos, _owner_seat} ->
         partner_pos = partner_position(owner_pos)
         other_positions = [:north, :east, :south, :west] -- [owner_pos, partner_pos]
@@ -2937,7 +3105,8 @@ defmodule PidroServer.Games.RoomManager do
 
         case new_owner_pos do
           nil ->
-            {:no_humans, room}
+            seats = Map.new(room.seats, fn {pos, seat} -> {pos, %{seat | is_owner: false}} end)
+            {:no_humans, %{room | host_id: nil, seats: seats}}
 
           pos ->
             old_owner_seat = Map.get(room.seats, owner_pos)
@@ -3014,6 +3183,7 @@ defmodule PidroServer.Games.RoomManager do
 
     final_room =
       %{room | seats: Map.put(room.seats, position, filled_seat)}
+      |> reset_readiness()
       |> maybe_set_ready()
       |> bump_seat_lifecycle_revision()
       |> touch_last_activity()
@@ -3028,13 +3198,28 @@ defmodule PidroServer.Games.RoomManager do
     broadcast_room(room_code, final_room)
     broadcast_lobby_event({:room_updated, final_room})
     broadcast_seat_lifecycle(final_room)
+    broadcast_readiness(final_room)
 
     {final_room, new_state}
   end
 
   @doc false
-  defp maybe_start_game(%Room{status: :ready} = room, %State{} = state),
-    do: start_game_for_room(room, state)
+  defp maybe_start_game(%Room{status: :ready} = room, %State{} = state) do
+    channels_alive? =
+      Enum.all?(room.seats, fn
+        {_position, %Seat{occupant_type: :bot, bot_pid: pid}} ->
+          is_pid(pid) and Process.alive?(pid)
+
+        {_position, %Seat{user_id: user_id}} ->
+          state.channel_pids
+          |> Map.get({room.code, user_id}, MapSet.new())
+          |> Enum.any?(&Process.alive?/1)
+      end)
+
+    if ready_to_start?(room) and channels_alive?,
+      do: start_game_for_room(room, state),
+      else: state
+  end
 
   defp maybe_start_game(%Room{}, %State{} = state), do: state
 
@@ -3051,6 +3236,7 @@ defmodule PidroServer.Games.RoomManager do
       room
       |> Positions.remove(player_id)
       |> vacate_seat(player_position)
+      |> reset_readiness()
 
     if Positions.count(updated_room) == 0 do
       Logger.info("Room #{room_code} is now empty, deleting")
@@ -3070,6 +3256,7 @@ defmodule PidroServer.Games.RoomManager do
         }
 
       broadcast_room(room_code, final_room)
+      broadcast_readiness(final_room)
       broadcast_lobby_event({:room_updated, final_room})
       broadcast_seat_lifecycle(final_room)
 
@@ -3392,8 +3579,8 @@ defmodule PidroServer.Games.RoomManager do
       %Room{
         room
         | status: :playing,
+          snapshot_revision: room.snapshot_revision + 1,
           turn_timer: nil,
-          paused_turn_timer: nil,
           consecutive_timeouts: %{},
           last_hand_number: nil
       }
@@ -3405,6 +3592,7 @@ defmodule PidroServer.Games.RoomManager do
       |> subscribe_to_game_topic(room.code)
 
     broadcast_room(room.code, updated_room)
+    broadcast_readiness(updated_room)
     broadcast_lobby_event({:room_updated, updated_room})
     broadcast_seat_lifecycle(updated_room)
     broadcast_initial_game_state(room.code, pid)
@@ -3488,8 +3676,14 @@ defmodule PidroServer.Games.RoomManager do
       {:ok, held_seat} ->
         broadcast_player_reconnecting(room_code, user_id, position)
 
-        %{room | seats: Map.put(room.seats, position, held_seat)}
-        |> bump_seat_lifecycle_revision()
+        updated =
+          room
+          |> Map.put(:seats, Map.put(room.seats, position, held_seat))
+          |> reset_readiness()
+          |> bump_seat_lifecycle_revision()
+
+        broadcast_readiness(updated)
+        updated
 
       _ ->
         room
@@ -3553,6 +3747,23 @@ defmodule PidroServer.Games.RoomManager do
 
       result = if MapSet.size(remaining) == 0, do: :last_channel_closed, else: :channels_remaining
       {result, %State{state | channel_pids: channel_pids, channel_monitors: channel_monitors}}
+    end
+  end
+
+  defp disconnect_after_last_channel(state, room_code, user_id) do
+    case Map.get(state.rooms, room_code) do
+      %Room{} = room ->
+        case disconnect_player(state, room, room_code, user_id) do
+          {:ok, updated, next} ->
+            broadcast_room(room_code, updated)
+            next
+
+          _ ->
+            state
+        end
+
+      nil ->
+        state
     end
   end
 
@@ -3633,7 +3844,6 @@ defmodule PidroServer.Games.RoomManager do
          %State{} = state
        ) do
     current_window = current_action_window(room, game_state)
-    room = drop_stale_paused_turn_timer(room, current_window)
 
     case {room.turn_timer, current_window} do
       {%{key: key}, {:ok, key, _scope, _actor_position, _phase, _duration_ms}} ->
@@ -3663,27 +3873,23 @@ defmodule PidroServer.Games.RoomManager do
 
       {nil, {:ok, key, scope, actor_position, phase, duration_ms}} ->
         room =
-          if room.paused_turn_timer && room.paused_turn_timer.key == key do
-            room
-          else
-            start_turn_timer(
-              room,
-              room_code,
-              key,
-              scope,
-              actor_position,
-              phase,
-              duration_ms,
-              transition_delay_ms
-            )
-          end
+          start_turn_timer(
+            room,
+            room_code,
+            key,
+            scope,
+            actor_position,
+            phase,
+            duration_ms,
+            transition_delay_ms
+          )
 
         {room, state}
     end
   end
 
   defp current_action_window(%Room{} = room, game_state) do
-    if single_player_room?(room) do
+    if room.status != :playing or single_player_room?(room) do
       :none
     else
       phase = Map.get(game_state, :phase)
@@ -3705,7 +3911,8 @@ defmodule PidroServer.Games.RoomManager do
           seat = position && Map.get(room.seats, position)
           actions = if position, do: Engine.legal_actions(game_state, position), else: []
 
-          if seat && Seat.connected_human?(seat) && actions != [] do
+          if seat && seat.occupant_type == :human &&
+               seat.status in [:connected, :reconnecting] && actions != [] do
             {:ok, {:seat, position, phase, event_seq}, :seat, position, phase,
              turn_timer_duration_ms(phase)}
           else
@@ -3745,11 +3952,7 @@ defmodule PidroServer.Games.RoomManager do
 
     broadcast_game_event(room_code, {:turn_timer_started, turn_timer_payload(timer)})
 
-    %{
-      room
-      | turn_timer: timer,
-        paused_turn_timer: nil
-    }
+    %{room | turn_timer: timer}
   end
 
   defp maybe_cancel_turn_timer(%Room{turn_timer: nil} = room), do: room
@@ -3771,80 +3974,26 @@ defmodule PidroServer.Games.RoomManager do
     %{room | turn_timer: nil}
   end
 
-  defp pause_active_turn_timer(%Room{turn_timer: nil} = room, _room_code, _position), do: room
-
-  defp pause_active_turn_timer(%Room{} = room, room_code, position) do
+  defp extend_active_turn_timer(%Room{} = room, room_code, position) do
     case room.turn_timer do
       %{scope: :seat, actor_position: ^position} = timer ->
-        paused_timer = TurnTimer.pause_timer(timer)
+        duration_ms =
+          TurnTimer.remaining_ms(timer) + Lifecycle.config(:reconnect_turn_extension_ms)
 
-        broadcast_game_event(
+        room
+        |> cancel_active_turn_timer(room_code, :disconnected)
+        |> start_turn_timer(
           room_code,
-          {:turn_timer_cancelled, turn_timer_cancelled_payload(timer, :disconnected)}
+          timer.key,
+          :seat,
+          position,
+          timer.phase,
+          duration_ms,
+          0
         )
-
-        %{room | turn_timer: nil, paused_turn_timer: paused_timer}
 
       _ ->
         room
-    end
-  end
-
-  defp maybe_resume_paused_turn_timer(
-         %Room{paused_turn_timer: nil} = room,
-         _room_code,
-         _position
-       ),
-       do: room
-
-  defp maybe_resume_paused_turn_timer(%Room{} = room, room_code, position) do
-    paused_timer = room.paused_turn_timer
-
-    cond do
-      room.turn_timer != nil ->
-        %{room | paused_turn_timer: nil}
-
-      paused_timer.actor_position != position ->
-        %{room | paused_turn_timer: nil}
-
-      true ->
-        case GameAdapter.get_state(room_code) do
-          {:ok, game_state} ->
-            case current_action_window(room, game_state) do
-              {:ok, key, :seat, ^position, phase, configured_duration_ms}
-              when key == paused_timer.key ->
-                resume_ms =
-                  min(
-                    configured_duration_ms,
-                    paused_timer.remaining_ms + Lifecycle.config(:reconnect_turn_extension_ms)
-                  )
-
-                start_turn_timer(room, room_code, key, :seat, position, phase, resume_ms, 0)
-
-              _ ->
-                %{room | paused_turn_timer: nil}
-            end
-
-          {:error, _reason} ->
-            %{room | paused_turn_timer: nil}
-        end
-    end
-  end
-
-  defp drop_stale_paused_turn_timer(%Room{paused_turn_timer: nil} = room, _current_window),
-    do: room
-
-  defp drop_stale_paused_turn_timer(%Room{} = room, current_window) do
-    case current_window do
-      {:ok, key, _scope, _actor_position, _phase, _duration_ms} ->
-        if key == room.paused_turn_timer.key do
-          room
-        else
-          %{room | paused_turn_timer: nil}
-        end
-
-      _ ->
-        %{room | paused_turn_timer: nil}
     end
   end
 
@@ -4079,15 +4228,6 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp seat_lifecycle_snapshot(%Room{} = room) do
-    user_ids =
-      room.seats
-      |> Map.values()
-      |> Enum.flat_map(&[&1.user_id, &1.reserved_for, &1.decision_player_id])
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-
-    users = Auth.get_users_map(user_ids)
-
     %{
       room_id: room.id || "#{room.code}:#{DateTime.to_iso8601(room.created_at)}",
       room_code: room.code,
@@ -4097,50 +4237,43 @@ defmodule PidroServer.Games.RoomManager do
       seats:
         Map.new([:north, :east, :south, :west], fn position ->
           seat = Map.get(room.seats, position, Seat.new_vacant(position))
-          {position, serialize_seat_lifecycle(seat, users)}
+          {position, serialize_seat_lifecycle(seat)}
         end)
     }
   end
 
-  defp serialize_seat_lifecycle(%Seat{occupant_type: :vacant}, _users) do
+  defp serialize_seat_lifecycle(%Seat{occupant_type: :vacant}) do
     %{status: :vacant, player_id: nil, username: nil, decision: nil}
   end
 
-  defp serialize_seat_lifecycle(%Seat{occupant_type: :human} = seat, users) do
+  defp serialize_seat_lifecycle(%Seat{occupant_type: :human} = seat) do
     status = if seat.status == :connected, do: :normal, else: :reconnecting
 
     %{
       status: status,
       player_id: seat.user_id,
-      username: player_name(users, seat.user_id),
+      username: nil,
       decision: nil
     }
   end
 
-  defp serialize_seat_lifecycle(%Seat{reserved_for: player_id}, users)
+  defp serialize_seat_lifecycle(%Seat{reserved_for: player_id})
        when not is_nil(player_id) do
     %{
       status: :bot_substitute,
       player_id: player_id,
-      username: player_name(users, player_id),
+      username: nil,
       decision: nil
     }
   end
 
-  defp serialize_seat_lifecycle(%Seat{occupant_type: :bot} = seat, users) do
+  defp serialize_seat_lifecycle(%Seat{occupant_type: :bot} = seat) do
     decision =
       if seat.decision_id do
-        %{id: seat.decision_id, player_name: player_name(users, seat.decision_player_id)}
+        %{id: seat.decision_id, player_id: seat.decision_player_id, player_name: nil}
       end
 
     %{status: :permanent_bot, player_id: nil, username: "Bot", decision: decision}
-  end
-
-  defp player_name(users, user_id) do
-    case Map.get(users, user_id) do
-      nil -> nil
-      user -> user.display_name || user.username
-    end
   end
 
   defp lifecycle_owner_id(%Room{} = room) do
