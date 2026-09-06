@@ -140,15 +140,15 @@ defmodule PidroServerWeb.API.RoomJSON do
       host_id: room.host_id,
       # New fields for position selection feature
       positions: serialize_positions(room.positions),
-      available_positions: Positions.available(room),
+      available_positions: PidroServer.Games.RoomManager.available_positions(room),
       player_count: Positions.count(room),
       # Legacy field for backward compatibility - derive from positions
       player_ids: Positions.player_ids(room),
-      spectator_ids: room.spectator_ids || [],
+      spectator_ids: room.spectator_ids,
       status: room.status,
       locked: Map.get(room, :locked, false),
       max_players: room.max_players,
-      max_spectators: room.max_spectators || 10,
+      max_spectators: room.max_spectators,
       created_at: DateTime.to_iso8601(room.created_at),
       seats: serialize_room_seats(Map.get(room, :seats, %{}), users)
     }

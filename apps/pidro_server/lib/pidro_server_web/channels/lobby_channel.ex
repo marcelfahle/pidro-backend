@@ -182,6 +182,7 @@ defmodule PidroServerWeb.LobbyChannel do
       code: room.code,
       host_id: room.host_id,
       player_count: Positions.count(room),
+      available_positions: RoomManager.available_positions(room),
       max_players: room.max_players,
       status: room.status,
       locked: room.locked,
@@ -257,21 +258,9 @@ defmodule PidroServerWeb.LobbyChannel do
   end
 
   defp determine_category(room, user_id) do
-    cond do
-      room.status == :waiting ->
-        "open_tables"
-
-      room.status == :playing && Seat.reserved_for_user?(room.seats, user_id) ->
-        "my_rejoinable"
-
-      room.status == :playing && Seat.any_vacant?(room.seats) ->
-        "substitute_needed"
-
-      room.status == :playing ->
-        "spectatable"
-
-      true ->
-        nil
+    case RoomManager.lobby_category(room, user_id) do
+      nil -> nil
+      category -> Atom.to_string(category)
     end
   end
 

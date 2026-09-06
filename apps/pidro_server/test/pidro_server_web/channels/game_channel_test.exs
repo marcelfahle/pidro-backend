@@ -21,7 +21,9 @@ defmodule PidroServerWeb.GameChannelTest do
 
   @moduletag :channel
 
-  setup do
+  setup tags do
+    if tags[:stable_turn_timer], do: slow_turn_timers()
+
     # Trap exits to handle channel shutdowns gracefully
     Process.flag(:trap_exit, true)
 
@@ -70,6 +72,87 @@ defmodule PidroServerWeb.GameChannelTest do
       room: room,
       sockets: sockets
     }
+  end
+
+  describe "PID-79 spectator isolation" do
+    test "two departures, delayed decisions and watcher reconnect never claim an open seat",
+         ctx do
+      {:ok, _, host} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}")
+
+      {:ok, _, player} =
+        subscribe_and_join(ctx.sockets[ctx.user4.id], GameChannel, "game:#{ctx.room_code}")
+
+      {:ok, _, _} =
+        Phoenix.ChannelTest.subscribe_and_join(
+          ctx.sockets[ctx.user4.id],
+          PidroServerWeb.LobbyChannel,
+          "lobby",
+          %{}
+        )
+
+      :ok = RoomManager.leave_room(ctx.user2.id)
+      assert_push "room_updated", %{room: %{available_positions: []}, category: "spectatable"}
+      # Keep Bot is a dismissal: the surrendered seat is already a permanent bot.
+      {:ok, _} = RoomManager.join_spectator_room(ctx.room_code, ctx.user2.id)
+
+      {:ok, %{role: :spectator}, watcher} =
+        subscribe_and_join(ctx.sockets[ctx.user2.id], GameChannel, "game:#{ctx.room_code}")
+
+      :ok = RoomManager.leave_room(ctx.user3.id)
+      {:ok, _} = RoomManager.join_spectator_room(ctx.room_code, ctx.user3.id)
+
+      {:ok, %{role: :spectator}, departing} =
+        subscribe_and_join(ctx.sockets[ctx.user3.id], GameChannel, "game:#{ctx.room_code}")
+
+      {:ok, _} = RoomManager.open_seat(ctx.room_code, :south, ctx.user1.id)
+
+      assert_push "room_updated", %{
+        room: %{available_positions: [:south]},
+        category: "substitute_needed"
+      }
+
+      close(departing)
+      # This broadcast used to crash every subscribed game channel.
+      assert_push "spectator_left", %{user_id: user_id}
+      assert user_id == ctx.user3.id
+      # A round-trip processes queued broadcasts before checking each recipient.
+      for socket <- [host, player, watcher] do
+        :sys.get_state(socket.channel_pid)
+        assert Process.alive?(socket.channel_pid)
+      end
+
+      close(watcher)
+
+      {:ok, reply, _} =
+        subscribe_and_join(ctx.sockets[ctx.user2.id], GameChannel, "game:#{ctx.room_code}")
+
+      assert reply.role == :spectator
+      refute Map.has_key?(reply, :position)
+      assert reply.legal_actions == []
+      {:ok, room} = RoomManager.get_room(ctx.room_code)
+      assert room.seats.south.occupant_type == :vacant
+      assert ctx.user2.id in room.spectator_ids
+      refute ctx.user2.id in Map.values(room.positions)
+
+      # Ending Watch is an explicit membership change, not a channel reconnect.
+      assert :ok = RoomManager.leave_spectator(ctx.room_code, ctx.user3.id)
+
+      assert {:error, _} =
+               subscribe_and_join(
+                 ctx.sockets[ctx.user3.id],
+                 GameChannel,
+                 "game:#{ctx.room_code}",
+                 %{"role" => "player"}
+               )
+
+      {:ok, _, :south} = RoomManager.join_room(ctx.room_code, ctx.user3.id)
+
+      {:ok, %{role: :player, position: :south}, _} =
+        subscribe_and_join(ctx.sockets[ctx.user3.id], GameChannel, "game:#{ctx.room_code}")
+
+      assert_push "room_updated", %{room: %{available_positions: []}, category: "spectatable"}
+    end
   end
 
   describe "seat lifecycle snapshot" do
@@ -470,6 +553,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert reason == "room not found"
     end
 
+    @tag stable_turn_timer: true
     test "join reply includes the active turn timer hydration", %{
       user1: user,
       room_code: room_code,
@@ -493,6 +577,35 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "presence tracking" do
+    test "joined channels receive each broadcast and engine event once", context do
+      {:ok, _, joined} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      assert_push "presence_state", _, 1000
+      :sys.get_state(joined.channel_pid)
+      marker = System.unique_integer([:positive])
+
+      PidroServerWeb.Endpoint.broadcast!("game:#{context.room_code}", "player_ready", %{
+        probe: marker
+      })
+
+      assert_push "player_ready", %{probe: ^marker}, 1000
+      refute_push "player_ready", %{probe: ^marker}, 100
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{context.room_code}",
+        {:turn_timer_cancelled, %{timer_id: marker}}
+      )
+
+      assert_push "turn_timer_cancelled", %{timer_id: ^marker}, 1000
+      refute_push "turn_timer_cancelled", %{timer_id: ^marker}, 100
+    end
+
     test "tracks presence when user joins", %{
       user1: user,
       room_code: room_code,
