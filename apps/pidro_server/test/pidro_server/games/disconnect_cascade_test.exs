@@ -203,6 +203,56 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       end
     end
 
+    test "failed phase 2 startup preserves the seat and retries after supervisor recovery" do
+      {room, _} = create_playing_room()
+      position = position_for(room, "user2")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      {:ok, before_start} = RoomManager.get_room(room.code)
+      manager = Process.whereis(RoomManager)
+      supervisor = PidroServer.Games.Bots.BotSupervisor
+      supervisor_pid = Process.whereis(supervisor)
+      Process.unregister(supervisor)
+
+      try do
+        {:ok, failed} = expire_phase(room.code, position, :phase2_start)
+        assert Process.whereis(RoomManager) == manager
+        assert failed.seats == before_start.seats
+        assert failed.phase_timers[position] != before_start.phase_timers[position]
+        assert is_integer(Process.read_timer(failed.phase_timers[position]))
+      after
+        Process.register(supervisor_pid, supervisor)
+      end
+
+      {:ok, recovered} = expire_phase(room.code, position, :phase2_start)
+      assert recovered.seats[position].status == :bot_substitute
+      assert Process.alive?(recovered.seats[position].bot_pid)
+    end
+
+    test "failed close seat preserves the vacancy and allows a later retry" do
+      {room, _} = create_playing_room()
+      position = position_for(room, "user2")
+      :ok = RoomManager.leave_room("user2")
+      {:ok, vacant} = RoomManager.open_seat(room.code, position, room.host_id)
+      manager = Process.whereis(RoomManager)
+      supervisor = PidroServer.Games.Bots.BotSupervisor
+      supervisor_pid = Process.whereis(supervisor)
+      Process.unregister(supervisor)
+
+      try do
+        assert {:error, :bot_start_failed} =
+                 RoomManager.close_seat(room.code, position, room.host_id)
+
+        assert Process.whereis(RoomManager) == manager
+        {:ok, failed} = RoomManager.get_room(room.code)
+        assert failed.seats == vacant.seats
+      after
+        Process.register(supervisor_pid, supervisor)
+      end
+
+      assert {:ok, recovered} = RoomManager.close_seat(room.code, position, room.host_id)
+      assert Process.alive?(recovered.seats[position].bot_pid)
+    end
+
     test "an engine exit during an action does not take down other rooms" do
       {room, positions} = create_playing_room()
       bidding = start_bidding(room.code)
@@ -404,7 +454,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
 
     test "restart on the current bid schedules one move despite repeated state updates" do
       config = Application.get_env(:pidro_server, Lifecycle, [])
-      Application.put_env(:pidro_server, Lifecycle, Keyword.put(config, :bot_delay_ms, 100))
+      Application.put_env(:pidro_server, Lifecycle, Keyword.put(config, :bot_delay_ms, 1_000))
       {room, _} = create_playing_room()
       bidding = start_bidding(room.code)
       position = bidding.current_turn

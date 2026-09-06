@@ -1796,10 +1796,9 @@ defmodule PidroServer.Games.RoomManager do
     with {:ok, room} <- fetch_room(state, room_code),
          :ok <- ensure_owner(room, requesting_user_id),
          :ok <- ensure_playing(room),
-         :ok <- ensure_seat_vacant(room, position) do
-      # Spawn a new substitute bot for this position
-      {:ok, bot_pid} = start_substitute_bot(room_code, position)
-
+         :ok <- ensure_seat_vacant(room, position),
+         {:start_bot, {:ok, bot_pid}} <-
+           {:start_bot, start_substitute_bot(room_code, position)} do
       seat = Map.get(room.seats, position)
 
       # Fill seat then transition to bot_substitute (vacant -> connected -> bot path
@@ -1840,7 +1839,12 @@ defmodule PidroServer.Games.RoomManager do
 
       {:reply, {:ok, updated_room}, updated_state}
     else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:start_bot, {:error, reason}} ->
+        Logger.error("Bot start failed in room #{room_code}: #{inspect(reason)}")
+        {:reply, {:error, :bot_start_failed}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -1959,50 +1963,65 @@ defmodule PidroServer.Games.RoomManager do
 
         if is_reference(ref) && room.phase_timers[position] == ref && seat &&
              seat.status == :reconnecting do
-          # Calculate remaining grace duration (total grace minus hiccup already elapsed)
-          grace_ms = Lifecycle.config(:grace_timeout_ms)
-          hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
-          remaining_grace_ms = grace_ms - hiccup_ms
-          grace_expires_at = DateTime.add(DateTime.utc_now(), remaining_grace_ms, :millisecond)
+          with {:ok, bot_pid} <- start_substitute_bot(room_code, position) do
+            # Calculate remaining grace duration (total grace minus hiccup already elapsed)
+            grace_ms = Lifecycle.config(:grace_timeout_ms)
+            hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
+            remaining_grace_ms = grace_ms - hiccup_ms
+            grace_expires_at = DateTime.add(DateTime.utc_now(), remaining_grace_ms, :millisecond)
 
-          # Transition seat: reconnecting -> grace -> bot_substitute
-          {:ok, grace_seat} = Seat.start_grace(seat, grace_expires_at)
+            # Transition seat: reconnecting -> grace -> bot_substitute
+            {:ok, grace_seat} = Seat.start_grace(seat, grace_expires_at)
 
-          # Spawn substitute bot to play moves for the disconnected player
-          {:ok, bot_pid} = start_substitute_bot(room_code, position)
-          {:ok, bot_seat} = Seat.substitute_bot(grace_seat, bot_pid)
+            {:ok, bot_seat} = Seat.substitute_bot(grace_seat, bot_pid)
 
-          # Schedule Phase 3 (gone/permanent) timer
-          timer_ref =
-            :erlang.start_timer(remaining_grace_ms, self(), {:phase3_gone, room_code, position})
+            # Schedule Phase 3 (gone/permanent) timer
+            timer_ref =
+              :erlang.start_timer(remaining_grace_ms, self(), {:phase3_gone, room_code, position})
 
-          updated_room =
-            %{
-              room
-              | seats: Map.put(room.seats, position, bot_seat),
-                phase_timers: Map.put(room.phase_timers, position, timer_ref)
-            }
-            |> bump_seat_lifecycle_revision()
+            updated_room =
+              %{
+                room
+                | seats: Map.put(room.seats, position, bot_seat),
+                  phase_timers: Map.put(room.phase_timers, position, timer_ref)
+              }
+              |> bump_seat_lifecycle_revision()
 
-          {updated_room, state} =
-            reconcile_turn_timer_for_current_state(updated_room, room_code, state)
+            {updated_room, state} =
+              reconcile_turn_timer_for_current_state(updated_room, room_code, state)
 
-          updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+            updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
 
-          # Broadcast bot substitution event
-          Phoenix.PubSub.broadcast(
-            PidroServer.PubSub,
-            "game:#{room_code}",
-            {:bot_substitute_active, %{position: position, user_id: seat.user_id}}
-          )
+            # Broadcast bot substitution event
+            Phoenix.PubSub.broadcast(
+              PidroServer.PubSub,
+              "game:#{room_code}",
+              {:bot_substitute_active, %{position: position, user_id: seat.user_id}}
+            )
 
-          Logger.info(
-            "Phase 2 (Grace): Bot substituted at #{position} in room #{room_code} for user #{seat.user_id}"
-          )
+            Logger.info(
+              "Phase 2 (Grace): Bot substituted at #{position} in room #{room_code} for user #{seat.user_id}"
+            )
 
-          broadcast_seat_lifecycle(updated_room)
+            broadcast_seat_lifecycle(updated_room)
 
-          {:noreply, updated_state}
+            {:noreply, updated_state}
+          else
+            {:error, reason} ->
+              Logger.error("Phase 2 bot start failed in room #{room_code}: #{inspect(reason)}")
+
+              # The hiccup timer already fired. Keep the human seat and rearm
+              # a cancellable retry, rather than leaving an inert timer reference.
+              timer_ref =
+                :erlang.start_timer(
+                  Lifecycle.config(:health_check_interval_ms),
+                  self(),
+                  {:phase2_start, room_code, position}
+                )
+
+              room = %{room | phase_timers: Map.put(room.phase_timers, position, timer_ref)}
+              {:noreply, %{state | rooms: Map.put(state.rooms, room_code, room)}}
+          end
         else
           # Player already reconnected or seat state changed, skip
           {:noreply, state}
