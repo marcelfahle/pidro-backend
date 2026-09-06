@@ -22,6 +22,7 @@ required_packages=(
   libffi-dev
   libgdbm-dev
   inotify-tools
+  imagemagick
   libncurses-dev
   libreadline-dev
   libssl-dev

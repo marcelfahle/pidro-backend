@@ -101,7 +101,11 @@ rate_limit_overrides =
     {:room_join, :limit, "RATE_LIMIT_ROOM_JOIN_LIMIT"},
     {:room_join, :scale_ms, "RATE_LIMIT_ROOM_JOIN_SCALE_MS"},
     {:auth_upgrade, :limit, "RATE_LIMIT_AUTH_UPGRADE_LIMIT"},
-    {:auth_upgrade, :scale_ms, "RATE_LIMIT_AUTH_UPGRADE_SCALE_MS"}
+    {:auth_upgrade, :scale_ms, "RATE_LIMIT_AUTH_UPGRADE_SCALE_MS"},
+    {:avatar_upload, :limit, "RATE_LIMIT_AVATAR_UPLOAD_LIMIT"},
+    {:avatar_upload, :scale_ms, "RATE_LIMIT_AVATAR_UPLOAD_SCALE_MS"},
+    {:avatar_read, :limit, "RATE_LIMIT_AVATAR_READ_LIMIT"},
+    {:avatar_read, :scale_ms, "RATE_LIMIT_AVATAR_READ_SCALE_MS"}
   ]
   |> Enum.reduce([], fn {policy, field, env_var}, acc ->
     case System.get_env(env_var) do

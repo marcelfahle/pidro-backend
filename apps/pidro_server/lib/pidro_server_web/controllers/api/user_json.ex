@@ -68,9 +68,19 @@ defmodule PidroServerWeb.API.UserJSON do
       username: user.username,
       email: user.email,
       display_name: user.display_name,
+      avatar_url: avatar_url(user),
       guest: user.guest,
       inserted_at: DateTime.to_iso8601(user.inserted_at),
       updated_at: DateTime.to_iso8601(user.updated_at)
     }
   end
+
+  defp avatar_url(%{avatar_url: url}) when is_binary(url), do: url
+
+  defp avatar_url(user),
+    do:
+      PidroServer.Accounts.Avatars.url(
+        PidroServer.Accounts.Avatars.metadata_for(user.id),
+        user.id
+      )
 end

@@ -283,8 +283,7 @@ defmodule PidroServerWeb.LobbyChannel do
           username: user.username,
           display_name: user.display_name,
           is_bot: false,
-          # Placeholder for future avatar implementation
-          avatar_url: nil
+          avatar_url: user.avatar_url
         }
 
       nil ->

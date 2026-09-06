@@ -72,7 +72,9 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   guest_create_daily: %{limit: 40, scale_ms: 86_400_000, key: :ip},
   guest_create_install: %{limit: 3, scale_ms: 3_600_000, key: :install_id},
   room_join: %{limit: 30, scale_ms: 60_000, key: :user},
-  auth_upgrade: %{limit: 10, scale_ms: 600_000, key: :ip}
+  auth_upgrade: %{limit: 10, scale_ms: 600_000, key: :ip},
+  avatar_upload: %{limit: 10, scale_ms: 600_000, key: :user},
+  avatar_read: %{limit: 300, scale_ms: 60_000, key: :ip}
 
 # PidroServerWeb.Plugs.TrustedProxy honours X-Forwarded-For / X-Forwarded-Proto
 # only when this is true and the TCP peer is proxy-side. config/runtime.exs sets

@@ -2,8 +2,10 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
   use PidroServerWeb.ConnCase, async: false
 
   alias PidroServer.Accounts.Token
+  alias PidroServer.Accounts.Auth
   alias PidroServer.AccountsFixtures
   alias PidroServer.Profiles
+  alias PidroServer.Repo
 
   defp auth(conn, user) do
     put_req_header(conn, "authorization", "Bearer #{Token.generate(user)}")
@@ -38,6 +40,10 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
       assert Map.has_key?(data["skill"], "provisional")
       assert data["veteran"]["level"] != nil
       assert Map.has_key?(data["playstyle"], "avg_winning_bid")
+      assert data["username"] == user.username
+      assert data["display_name"] == user.display_name
+      assert Map.has_key?(data, "avatar_url")
+      assert Map.has_key?(data, "bio")
     end
 
     test "raw rating internals are ABSENT from the payload (security contract)", %{conn: conn} do
@@ -111,6 +117,124 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
 
       # Migration seeds no rating, so skill stays provisional.
       assert data["skill"]["provisional"] == true
+    end
+  end
+
+  describe "PATCH /api/v1/profile" do
+    test "creates, normalizes, omits, and clears only the caller's bio", %{conn: conn} do
+      user = AccountsFixtures.user_fixture(%{display_name: "Owner"})
+      other = AccountsFixtures.user_fixture(%{display_name: "Other"})
+
+      assert %{"data" => %{"bio" => "first\nsecond"}} =
+               conn
+               |> auth(user)
+               |> patch(~p"/api/v1/profile", %{
+                 "bio" => "\uFEFF first\r\nsecond \u3000",
+                 "user_id" => other.id,
+                 "display_name" => "Hacked",
+                 "email" => "private@example.com"
+               })
+               |> json_response(200)
+
+      assert Repo.get!(PidroServer.Accounts.User, user.id).display_name == "Owner"
+      assert Repo.get!(PidroServer.Accounts.User, other.id).bio == nil
+
+      assert %{"data" => %{"bio" => "first\nsecond"}} =
+               build_conn() |> auth(user) |> patch(~p"/api/v1/profile", %{}) |> json_response(200)
+
+      assert %{"data" => %{"bio" => nil}} =
+               build_conn()
+               |> auth(user)
+               |> patch(~p"/api/v1/profile", %{"bio" => " \t\r\n\u00A0"})
+               |> json_response(200)
+    end
+
+    test "counts Unicode scalars, preserves Unicode and rejects invalid values" do
+      user = AccountsFixtures.user_fixture()
+      zwj_sequence = "👩‍👩‍👧‍👦"
+      combining = "e\u0301"
+
+      for bio <- [
+            String.duplicate("a", 280),
+            String.duplicate("界", 280),
+            String.duplicate("😀", 280)
+          ] do
+        assert %{"data" => %{"bio" => ^bio}} =
+                 build_conn()
+                 |> auth(user)
+                 |> patch(~p"/api/v1/profile", %{"bio" => bio})
+                 |> json_response(200)
+      end
+
+      preserved = "\u0085\u200B#{zwj_sequence}#{combining}\u0085\u200B"
+
+      assert %{"data" => %{"bio" => ^preserved}} =
+               build_conn()
+               |> auth(user)
+               |> patch(~p"/api/v1/profile", %{"bio" => preserved})
+               |> json_response(200)
+
+      for invalid <- [String.duplicate("a", 281), "has\0nul", 12, true, %{}, []] do
+        assert build_conn()
+               |> auth(user)
+               |> patch(~p"/api/v1/profile", %{"bio" => invalid})
+               |> json_response(422)
+      end
+
+      refute PidroServer.Accounts.User.bio_changeset(user, %{bio: <<255>>}).valid?
+    end
+  end
+
+  describe "GET /api/v1/profiles/:id" do
+    test "returns the exact public allowlist to registered and guest callers" do
+      owner = AccountsFixtures.user_fixture(%{display_name: "Public Name"})
+      guest = AccountsFixtures.guest_fixture()
+      {:ok, _} = Auth.update_bio(owner.id, %{bio: "Public bio"})
+
+      for caller <- [AccountsFixtures.user_fixture(), guest] do
+        data =
+          build_conn()
+          |> auth(caller)
+          |> get(~p"/api/v1/profiles/#{owner.id}")
+          |> json_response(200)
+          |> Map.fetch!("data")
+
+        assert Map.keys(data) |> Enum.sort() ==
+                 ~w(avatar_url bio display_name user_id username)a
+                 |> Enum.map(&Atom.to_string/1)
+                 |> Enum.sort()
+
+        assert data["user_id"] == owner.id
+        assert data["username"] == owner.username
+        assert data["display_name"] == "Public Name"
+        assert data["bio"] == "Public bio"
+        refute Map.has_key?(data, "email")
+        refute Map.has_key?(data, "token")
+      end
+    end
+
+    test "missing and malformed UUIDs are 404 and authentication is required", %{conn: conn} do
+      caller = AccountsFixtures.user_fixture()
+
+      for id <- [Ecto.UUID.generate(), "not-a-uuid"] do
+        assert build_conn()
+               |> auth(caller)
+               |> get("/api/v1/profiles/#{id}")
+               |> json_response(404)
+      end
+
+      assert conn |> get(~p"/api/v1/profiles/#{caller.id}") |> json_response(401)
+    end
+
+    test "guest upgrade preserves the bio on the same row" do
+      guest = AccountsFixtures.guest_fixture()
+      {:ok, _} = Auth.update_bio(guest.id, %{bio: "Keep me"})
+
+      assert {:ok, upgraded} =
+               Auth.upgrade_guest(guest, %{email: "upgrade@example.com", password: "long-enough"})
+
+      assert upgraded.id == guest.id
+      assert Repo.get!(PidroServer.Accounts.User, guest.id).bio == "Keep me"
     end
   end
 end
