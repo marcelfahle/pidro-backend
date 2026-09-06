@@ -14,6 +14,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
   use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
+  import PidroServer.RoomManagerCase, only: [expire_phase: 3]
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -89,11 +90,11 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
         assert :ok = RoomManager.handle_player_disconnect(room.code, "user2")
 
         if unquote(phase) != :hiccup do
-          send(RoomManager, {:phase2_start, room.code, position})
+          expire_phase(room.code, position, :phase2_start)
         end
 
         if unquote(phase) == :permanent do
-          send(RoomManager, {:phase3_gone, room.code, position})
+          expire_phase(room.code, position, :phase3_gone)
         end
 
         {:ok, before_leave} = RoomManager.get_room(room.code)
@@ -106,8 +107,9 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
         assert after_leave.seats[position].reserved_for == nil
         refute Map.has_key?(after_leave.phase_timers, position)
 
-        send(RoomManager, {:phase2_start, room.code, position})
-        send(RoomManager, {:phase3_gone, room.code, position})
+        stale_ref = before_leave.phase_timers[position] || make_ref()
+        send(RoomManager, {:timeout, stale_ref, {:phase2_start, room.code, position}})
+        send(RoomManager, {:timeout, stale_ref, {:phase3_gone, room.code, position}})
         RoomManager.handle_player_disconnect(room.code, "user2")
         {:ok, later} = RoomManager.get_room(room.code)
         assert later.seats[position].bot_pid == bot_pid
@@ -129,7 +131,8 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
                seat.occupant_type == :bot and Process.alive?(seat.bot_pid)
              end)
 
-      assert is_binary(updated.host_id)
+      assert updated.host_id == nil
+      refute Enum.any?(updated.seats, fn {_, seat} -> seat.is_owner end)
 
       for user <- ["user1", "user2", "user3", "user4"] do
         assert {:error, :not_owner} = RoomManager.open_seat(room.code, :north, user)
@@ -167,7 +170,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       {room, _positions} = create_playing_room()
       position = position_for(room, "user2")
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
-      send(RoomManager, {:phase2_start, room.code, position})
+      expire_phase(room.code, position, :phase2_start)
       assert {:ok, _} = RoomManager.open_seat(room.code, position, room.host_id)
 
       assert :ok = RoomManager.leave_room("user2")
@@ -395,8 +398,40 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
 
       assert Process.read_timer(timer.ref) == false
       {:ok, continued} = RoomManager.get_room(room.code)
-      assert continued.paused_turn_timer == nil
       assert continued.turn_timer == nil or continued.turn_timer.actor_position != bidder
+    end
+
+    test "reclaim after a grace bot's bid preserves its moves and retires the controller" do
+      config = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.put(config, :grace_timeout_ms, 60_000)
+      )
+
+      {room, _} = create_playing_room()
+      bidding = start_bidding(room.code)
+      position = bidding.current_turn
+      user = room.positions[position]
+      :ok = RoomManager.handle_player_disconnect(room.code, user)
+
+      advanced =
+        eventually(fn ->
+          {:ok, game} = GameAdapter.get_state(room.code)
+          if game.current_turn != position, do: game
+        end)
+
+      {:ok, grace} = RoomManager.get_room(room.code)
+      bot = grace.seats[position].bot_pid
+      assert Process.alive?(bot)
+      assert grace.seats[position].reserved_for == user
+      assert length(advanced.events) > length(bidding.events)
+      assert grace.turn_timer == nil or grace.turn_timer.actor_position != position
+
+      {:ok, _} = RoomManager.handle_player_reconnect(room.code, user)
+      refute Process.alive?(bot)
+      assert {:ok, ^advanced} = GameAdapter.get_state(room.code)
     end
 
     test "all bots finish the game and persist every departed human's result" do
@@ -675,14 +710,13 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
     end
   end
 
-  # Helper: disconnect a player and manually trigger Phase 2 by sending
-  # the {:phase2_start, ...} message to RoomManager (bypasses 20s timer).
+  # Helper: disconnect a player and expire its current Phase 2 timer.
   # Returns the updated room after Phase 2 completes.
   defp trigger_phase2(room_code, user_id) do
     {_room, position} = disconnect_and_get_position(room_code, user_id)
 
     # Manually send the Phase 2 timer message
-    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
+    expire_phase(room_code, position, :phase2_start)
 
     # Synchronize: get_room is a GenServer.call, ensuring handle_info processed
     {:ok, updated_room} = RoomManager.get_room(room_code)
@@ -701,7 +735,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
     {_room, position} = trigger_phase2(room_code, user_id)
 
     # Manually send the Phase 3 timer message
-    send(GenServer.whereis(RoomManager), {:phase3_gone, room_code, position})
+    expire_phase(room_code, position, :phase3_gone)
 
     {:ok, updated_room} = RoomManager.get_room(room_code)
     {updated_room, position}
@@ -819,7 +853,11 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       {:ok, _} = RoomManager.handle_player_reconnect(room.code, user_id)
 
       # Now manually send Phase 2 message (timer would have fired)
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
+      send(
+        RoomManager,
+        {:timeout, disc_room.phase_timers[position], {:phase2_start, room.code, position}}
+      )
+
       {:ok, updated_room} = RoomManager.get_room(room.code)
 
       # Seat should still be :connected (Phase 2 was a no-op)
@@ -881,13 +919,17 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       {room, _positions} = create_playing_room()
       user_id = "user2"
 
-      {_phase2_room, position} = trigger_phase2(room.code, user_id)
+      {phase2_room, position} = trigger_phase2(room.code, user_id)
 
       # Reconnect during Phase 2
       {:ok, _} = RoomManager.handle_player_reconnect(room.code, user_id)
 
       # Now manually send Phase 3 message (timer would have fired)
-      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
+      send(
+        RoomManager,
+        {:timeout, phase2_room.phase_timers[position], {:phase3_gone, room.code, position}}
+      )
+
       {:ok, updated_room} = RoomManager.get_room(room.code)
 
       # Seat should still be :connected (Phase 3 was a no-op)
@@ -916,6 +958,68 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
   end
 
   describe "Multiple disconnects and full lifecycle" do
+    for phase <- [:phase2_start, :phase3_gone] do
+      test "a queued #{phase} from an earlier disconnect cannot advance a fresh cascade" do
+        {room, _} = create_playing_room()
+        {disconnected, position} = disconnect_and_get_position(room.code, "user2")
+
+        old_room =
+          if unquote(phase) == :phase3_gone do
+            {:ok, grace} = expire_phase(room.code, position, :phase2_start)
+            grace
+          else
+            disconnected
+          end
+
+        old_ref = old_room.phase_timers[position]
+        {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user2")
+        assert Process.read_timer(old_ref) == false
+        :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+
+        if unquote(phase) == :phase3_gone do
+          expire_phase(room.code, position, :phase2_start)
+        end
+
+        {:ok, fresh} = RoomManager.get_room(room.code)
+        Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+        send(RoomManager, {:timeout, old_ref, {unquote(phase), room.code, position}})
+        {:ok, unchanged} = RoomManager.get_room(room.code)
+        assert unchanged.seats == fresh.seats
+        assert unchanged.phase_timers == fresh.phase_timers
+        refute_receive {:bot_substitute_active, _}, 20
+        refute_receive {:seat_permanently_botted, _}, 20
+      end
+    end
+
+    test "real timers advance through grace and permanence while preserving one bot" do
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.merge(original, hiccup_timeout_ms: 100, grace_timeout_ms: 400)
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
+      {room, _} = create_playing_room()
+      position = position_for(room, "user2")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      assert_receive {:player_reconnecting, %{position: ^position}}, 100
+      {:ok, hiccup} = RoomManager.get_room(room.code)
+      assert hiccup.seats[position].status == :reconnecting
+      assert_receive {:bot_substitute_active, %{position: ^position}}, 500
+      {:ok, grace} = RoomManager.get_room(room.code)
+      assert grace.seats[position].reserved_for == "user2"
+      bot = grace.seats[position].bot_pid
+      assert Process.alive?(bot)
+      assert_receive {:seat_permanently_botted, %{position: ^position}}, 800
+      {:ok, permanent} = RoomManager.get_room(room.code)
+      assert permanent.seats[position].bot_pid == bot
+      assert permanent.seats[position].reserved_for == nil
+      assert permanent.phase_timers == %{}
+    end
+
     test "multiple simultaneous disconnects each have independent cascades through Phase 2" do
       {room, _positions} = create_playing_room()
       user2_position = position_for(room, "user2")
@@ -925,8 +1029,8 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user3")
 
       # Trigger Phase 2 for both
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user2_position})
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user3_position})
+      expire_phase(room.code, user2_position, :phase2_start)
+      expire_phase(room.code, user3_position, :phase2_start)
       {:ok, updated_room} = RoomManager.get_room(room.code)
 
       # Both should have independent bots
@@ -951,8 +1055,8 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       :ok = RoomManager.handle_player_disconnect(room.code, "user3")
 
       # Trigger Phase 2 for both
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user2_position})
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, user3_position})
+      expire_phase(room.code, user2_position, :phase2_start)
+      expire_phase(room.code, user3_position, :phase2_start)
       {:ok, _} = RoomManager.get_room(room.code)
 
       # Reclaim user2's seat only
@@ -968,6 +1072,32 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert Process.alive?(updated_room.seats[user3_position].bot_pid)
     end
 
+    test "game end cancels pending phases and stops bots without losing grace reservations" do
+      {room, _} = create_playing_room()
+      {grace, grace_pos} = trigger_phase2(room.code, "user2")
+      bot = grace.seats[grace_pos].bot_pid
+      {hiccup, hiccup_pos} = disconnect_and_get_position(room.code, "user3")
+      refs = hiccup.phase_timers
+
+      send(RoomManager, {:game_over, room.code, :north_south, %{north_south: 62, east_west: 40}})
+      {:ok, finished} = RoomManager.get_room(room.code)
+      assert finished.status == :finished
+      assert finished.phase_timers == %{}
+      assert finished.turn_timer == nil
+      refute Process.alive?(bot)
+      assert finished.seats[grace_pos].bot_pid == nil
+      assert finished.seats[grace_pos].reserved_for == "user2"
+      for {_, ref} <- refs, do: assert(Process.read_timer(ref) == false)
+
+      send(RoomManager, {:timeout, refs[hiccup_pos], {:phase2_start, room.code, hiccup_pos}})
+      send(RoomManager, {:timeout, refs[grace_pos], {:phase3_gone, room.code, grace_pos}})
+      {:ok, unchanged} = RoomManager.get_room(room.code)
+      assert unchanged.seats == finished.seats
+      {:ok, returned} = RoomManager.handle_player_reconnect(room.code, "user2")
+      assert returned.seats[grace_pos].status == :connected
+      assert returned.turn_timer == nil
+    end
+
     test "full lifecycle: disconnect → Phase 2 → Phase 3 → rejected reconnect" do
       {room, _positions} = create_playing_room()
       user_id = "user2"
@@ -979,13 +1109,13 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert room1.seats[position].status == :reconnecting
 
       # Phase 2: Bot spawns
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
+      expire_phase(room.code, position, :phase2_start)
       {:ok, room2} = RoomManager.get_room(room.code)
       assert room2.seats[position].status == :bot_substitute
       assert room2.seats[position].reserved_for == user_id
 
       # Phase 3: Bot permanent
-      send(GenServer.whereis(RoomManager), {:phase3_gone, room.code, position})
+      expire_phase(room.code, position, :phase3_gone)
       {:ok, room3} = RoomManager.get_room(room.code)
       assert room3.seats[position].status == :bot_substitute
       assert room3.seats[position].reserved_for == nil

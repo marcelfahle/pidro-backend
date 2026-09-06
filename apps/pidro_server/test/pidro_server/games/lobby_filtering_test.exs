@@ -14,6 +14,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
   use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.RoomManager
+  alias PidroServer.RoomManagerCase
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -63,11 +64,8 @@ defmodule PidroServer.Games.LobbyFilteringTest do
     {:ok, room} = RoomManager.get_room(room_code)
     position = position_for(room, user_id)
 
-    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
-    {:ok, _} = RoomManager.get_room(room_code)
-
-    send(GenServer.whereis(RoomManager), {:phase3_gone, room_code, position})
-    {:ok, updated_room} = RoomManager.get_room(room_code)
+    {:ok, _} = RoomManagerCase.expire_phase(room_code, position, :phase2_start)
+    {:ok, updated_room} = RoomManagerCase.expire_phase(room_code, position, :phase3_gone)
 
     {updated_room, position}
   end
@@ -86,8 +84,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
     {:ok, room} = RoomManager.get_room(room_code)
     position = position_for(room, user_id)
 
-    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
-    {:ok, updated_room} = RoomManager.get_room(room_code)
+    {:ok, updated_room} = RoomManagerCase.expire_phase(room_code, position, :phase2_start)
 
     {updated_room, position}
   end

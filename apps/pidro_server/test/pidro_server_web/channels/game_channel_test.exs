@@ -76,6 +76,53 @@ defmodule PidroServerWeb.GameChannelTest do
     }
   end
 
+  describe "disconnect cascade delivery" do
+    test "grace reclaim sends the current state and retires the bot", context do
+      room_code = context.room_code
+      user_id = context.user2.id
+
+      {:ok, _, _observer} =
+        subscribe_and_join(context.sockets[context.user1.id], GameChannel, "game:#{room_code}")
+
+      :ok = RoomManager.handle_player_disconnect(room_code, user_id)
+      assert_push "player_reconnecting", %{user_id: ^user_id, position: position}
+      {:ok, grace} = PidroServer.RoomManagerCase.expire_phase(room_code, position, :phase2_start)
+      bot = grace.seats[position].bot_pid
+      assert_push "bot_substitute_active", %{user_id: ^user_id, position: ^position}
+
+      {:ok, reply, _returned} =
+        subscribe_and_join(context.sockets[user_id], GameChannel, "game:#{room_code}")
+
+      assert reply.reconnected
+      assert reply.position == position
+      refute Process.alive?(bot)
+      assert_push "player_reclaimed_seat", %{user_id: ^user_id, position: ^position}
+      {:ok, game} = GameAdapter.get_state(room_code)
+      assert reply.state == GameStateSerializer.serialize(game)
+    end
+
+    test "owner removal and restoration are delivered with nullable ownership", context do
+      room_code = context.room_code
+      user_id = context.user4.id
+
+      {:ok, _, _observer} =
+        subscribe_and_join(context.sockets[user_id], GameChannel, "game:#{room_code}")
+
+      for user <- context.users do
+        :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+      end
+
+      {:ok, _} = PidroServer.RoomManagerCase.expire_phase(room_code, :north, :phase2_start)
+      {:ok, _} = PidroServer.RoomManagerCase.expire_phase(room_code, :north, :phase3_gone)
+      assert_push "seat_permanently_botted", %{position: :north}
+      assert_push "owner_changed", %{new_owner_id: nil, new_owner_position: nil}
+
+      {:ok, returned} = RoomManager.handle_player_reconnect(room_code, user_id)
+      position = PidroServer.Games.Room.Positions.get_position(returned, user_id)
+      assert_push "owner_changed", %{new_owner_id: ^user_id, new_owner_position: ^position}
+    end
+  end
+
   describe "explicit departure retires game authority" do
     test "the remaining channel receives bot takeover and advancing game states", context do
       alias PidroServer.Games.Lifecycle

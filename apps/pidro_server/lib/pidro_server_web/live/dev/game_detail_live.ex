@@ -1026,7 +1026,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               Host
             </dt>
             <dd class="mt-1 text-sm text-zinc-900">
-              {@room.host_id |> String.slice(0..7)}...
+              <%= if @room.host_id do %>
+                {String.slice(@room.host_id, 0..7)}...
+              <% else %>
+                No owner
+              <% end %>
             </dd>
           </div>
         </dl>

@@ -11,6 +11,7 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
 
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.Room.Seat
+  alias PidroServer.RoomManagerCase
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -72,13 +73,9 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
     {:ok, room} = RoomManager.get_room(room_code)
     position = position_for(room, user_id)
 
-    # Phase 2: bot spawns
-    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
-    {:ok, _} = RoomManager.get_room(room_code)
-
-    # Phase 3: bot permanent
-    send(GenServer.whereis(RoomManager), {:phase3_gone, room_code, position})
-    {:ok, updated_room} = RoomManager.get_room(room_code)
+    # Phase 2: bot spawns; Phase 3: bot becomes permanent.
+    {:ok, _} = RoomManagerCase.expire_phase(room_code, position, :phase2_start)
+    {:ok, updated_room} = RoomManagerCase.expire_phase(room_code, position, :phase3_gone)
 
     {updated_room, position}
   end
@@ -89,8 +86,7 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
     {:ok, room} = RoomManager.get_room(room_code)
     position = position_for(room, user_id)
 
-    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
-    {:ok, updated_room} = RoomManager.get_room(room_code)
+    {:ok, updated_room} = RoomManagerCase.expire_phase(room_code, position, :phase2_start)
 
     {updated_room, position}
   end
@@ -136,11 +132,16 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
       # Now disconnect the owner (full cascade)
       {updated_room, _pos} = trigger_full_cascade(room.code, "user1")
 
-      # Partner is a permanent bot, so one of the opponents should be promoted
+      # Partner is a permanent bot, so the longest-joined connected opponent wins.
+      opponent_positions = [:north, :east, :south, :west] -- [owner_pos, partner_pos]
+
+      expected_owner_pos =
+        Enum.min_by(opponent_positions, fn position ->
+          DateTime.to_unix(updated_room.seats[position].joined_at, :microsecond)
+        end)
+
       new_owner_pos = owner_position(updated_room)
-      assert new_owner_pos != nil
-      assert new_owner_pos != owner_pos
-      assert new_owner_pos != partner_pos
+      assert new_owner_pos == expected_owner_pos
 
       new_owner_seat = updated_room.seats[new_owner_pos]
       assert Seat.connected_human?(new_owner_seat)
@@ -203,6 +204,7 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
   describe "all humans disconnected returns {:no_humans, room}" do
     test "no promotion when all humans disconnect permanently" do
       {room, _positions} = create_playing_room()
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
 
       # Disconnect all 4 players through full cascade
       trigger_full_cascade(room.code, "user1")
@@ -218,17 +220,14 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
         assert seat.reserved_for == nil
       end
 
-      # No seat should be owner (or the original owner seat still has is_owner but is a bot)
-      connected_owner =
-        Enum.find(updated_room.seats, fn {_pos, seat} ->
-          Seat.owner?(seat) && Seat.connected_human?(seat)
-        end)
-
-      assert connected_owner == nil
+      assert updated_room.host_id == nil
+      refute Enum.any?(updated_room.seats, fn {_pos, seat} -> Seat.owner?(seat) end)
+      assert_receive {:owner_changed, %{new_owner_id: nil, new_owner_position: nil}}, 500
     end
 
     test "all non-owner humans disconnect first, then owner — no connected owner remains" do
       {room, _positions} = create_playing_room()
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
 
       # Disconnect non-owners first
       trigger_full_cascade(room.code, "user2")
@@ -253,6 +252,111 @@ defmodule PidroServer.Games.OwnershipPromotionTest do
         end)
 
       assert connected_humans == []
+      assert final_room.host_id == nil
+      refute Enum.any?(final_room.seats, fn {_pos, seat} -> Seat.owner?(seat) end)
+      assert_receive {:owner_changed, %{new_owner_id: nil, new_owner_position: nil}}, 500
     end
+  end
+
+  describe "ownerless room reclamation" do
+    test "a Phase 1 returning human becomes owner after the owner permanently departs" do
+      {room, _positions} = create_playing_room()
+
+      for user_id <- ["user2", "user3", "user4"] do
+        :ok = RoomManager.handle_player_disconnect(room.code, user_id)
+      end
+
+      {ownerless_room, _} = trigger_full_cascade(room.code, "user1")
+      assert ownerless_room.host_id == nil
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      returning_pos = position_for(ownerless_room, "user2")
+      {:ok, reclaimed_room} = RoomManager.handle_player_reconnect(room.code, "user2")
+
+      assert reclaimed_room.host_id == "user2"
+      assert reclaimed_room.seats[returning_pos].is_owner
+
+      assert_receive {:owner_changed,
+                      %{new_owner_id: "user2", new_owner_position: ^returning_pos}},
+                     500
+    end
+
+    test "a Phase 2 returning human becomes owner, stops its bot, and can manage a substitute seat" do
+      {room, _positions} = create_playing_room()
+      {phase2_room, returning_pos} = trigger_phase2(room.code, "user2")
+      returning_bot = phase2_room.seats[returning_pos].bot_pid
+      {room_with_second_bot, open_pos} = trigger_phase2(room.code, "user3")
+      assert Process.alive?(returning_bot)
+
+      :ok = RoomManager.handle_player_disconnect(room.code, "user4")
+      {ownerless_room, _} = trigger_full_cascade(room.code, "user1")
+      assert ownerless_room.host_id == nil
+
+      {:ok, reclaimed_room} = RoomManager.handle_player_reconnect(room.code, "user2")
+      assert reclaimed_room.host_id == "user2"
+      assert reclaimed_room.seats[returning_pos].is_owner
+      refute Process.alive?(returning_bot)
+
+      assert room_with_second_bot.seats[open_pos].status == :bot_substitute
+      {:ok, opened_room} = RoomManager.open_seat(room.code, open_pos, "user2")
+      assert opened_room.seats[open_pos].occupant_type == :vacant
+      {:ok, closed_room} = RoomManager.close_seat(room.code, open_pos, "user2")
+      assert closed_room.seats[open_pos].status == :bot_substitute
+    end
+
+    test "a substitute joining an already-open seat restores ownership to an ownerless room" do
+      {room, _positions} = create_playing_room()
+      {_grace, position} = trigger_phase2(room.code, "user2")
+      {:ok, _} = RoomManager.open_seat(room.code, position, "user1")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user3")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user4")
+      :ok = RoomManager.leave_room("user1")
+      {:ok, ownerless} = RoomManager.get_room(room.code)
+      assert ownerless.host_id == nil
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      {:ok, joined, ^position} = RoomManager.join_as_substitute(room.code, "new-human")
+      assert joined.host_id == "new-human"
+      assert joined.seats[position].is_owner
+      assert_receive {:owner_changed, %{new_owner_id: "new-human", new_owner_position: ^position}}
+      {:ok, stored} = RoomManager.get_room(room.code)
+      assert stored.host_id == "new-human"
+    end
+
+    test "a returning human does not steal ownership from the promoted owner" do
+      {room, _positions} = create_playing_room()
+      {_phase2_room, returning_pos} = trigger_phase2(room.code, "user2")
+      {promoted_room, _} = trigger_full_cascade(room.code, "user1")
+      existing_owner_id = promoted_room.host_id
+      existing_owner_pos = owner_position(promoted_room)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      {:ok, reconnected_room} = RoomManager.handle_player_reconnect(room.code, "user2")
+
+      assert reconnected_room.host_id == existing_owner_id
+      assert owner_position(reconnected_room) == existing_owner_pos
+      refute reconnected_room.seats[returning_pos].is_owner
+      refute_receive {:owner_changed, _}, 100
+    end
+  end
+
+  test "repeated Phase 3 envelope is ignored without replacing the bot or rebroadcasting ownership" do
+    {room, _positions} = create_playing_room()
+    owner_pos = owner_position(room)
+    :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+    {:ok, _} = RoomManagerCase.expire_phase(room.code, owner_pos, :phase2_start)
+    {:ok, phase2_room} = RoomManager.get_room(room.code)
+    phase3_ref = Map.fetch!(phase2_room.phase_timers, owner_pos)
+
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+    {:ok, permanent_room} = RoomManagerCase.expire_phase(room.code, owner_pos, :phase3_gone)
+    controller = permanent_room.seats[owner_pos].bot_pid
+    assert_receive {:owner_changed, _}, 500
+
+    send(RoomManager, {:timeout, phase3_ref, {:phase3_gone, room.code, owner_pos}})
+    {:ok, unchanged_room} = RoomManager.get_room(room.code)
+
+    assert unchanged_room.seats[owner_pos].bot_pid == controller
+    refute_receive {:owner_changed, _}, 100
   end
 end
