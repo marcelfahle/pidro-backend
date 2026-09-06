@@ -1076,12 +1076,14 @@ defmodule PidroServer.Games.RoomManager do
             |> Map.put(:seats, Map.put(room.seats, assigned_position, bot_seat))
             |> reset_readiness()
             |> maybe_set_ready()
+            |> bump_seat_lifecycle_revision()
             |> touch_last_activity()
 
           next = put_room_and_player(state, updated, bot_id)
           broadcast_room(room_code, updated)
           broadcast_lobby_event({:room_updated, updated})
           broadcast_readiness(updated)
+          broadcast_seat_lifecycle(updated)
           next = maybe_start_game(updated, next)
           {:reply, {:ok, Map.fetch!(next.rooms, room_code), assigned_position}, next}
         else
