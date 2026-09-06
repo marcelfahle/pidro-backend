@@ -203,6 +203,56 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       end
     end
 
+    test "failed phase 2 startup preserves the seat and retries after supervisor recovery" do
+      {room, _} = create_playing_room()
+      position = position_for(room, "user2")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      {:ok, before_start} = RoomManager.get_room(room.code)
+      manager = Process.whereis(RoomManager)
+      supervisor = PidroServer.Games.Bots.BotSupervisor
+      supervisor_pid = Process.whereis(supervisor)
+      Process.unregister(supervisor)
+
+      try do
+        {:ok, failed} = expire_phase(room.code, position, :phase2_start)
+        assert Process.whereis(RoomManager) == manager
+        assert failed.seats == before_start.seats
+        assert failed.phase_timers[position] != before_start.phase_timers[position]
+        assert is_integer(Process.read_timer(failed.phase_timers[position]))
+      after
+        Process.register(supervisor_pid, supervisor)
+      end
+
+      {:ok, recovered} = expire_phase(room.code, position, :phase2_start)
+      assert recovered.seats[position].status == :bot_substitute
+      assert Process.alive?(recovered.seats[position].bot_pid)
+    end
+
+    test "failed close seat preserves the vacancy and allows a later retry" do
+      {room, _} = create_playing_room()
+      position = position_for(room, "user2")
+      :ok = RoomManager.leave_room("user2")
+      {:ok, vacant} = RoomManager.open_seat(room.code, position, room.host_id)
+      manager = Process.whereis(RoomManager)
+      supervisor = PidroServer.Games.Bots.BotSupervisor
+      supervisor_pid = Process.whereis(supervisor)
+      Process.unregister(supervisor)
+
+      try do
+        assert {:error, :bot_start_failed} =
+                 RoomManager.close_seat(room.code, position, room.host_id)
+
+        assert Process.whereis(RoomManager) == manager
+        {:ok, failed} = RoomManager.get_room(room.code)
+        assert failed.seats == vacant.seats
+      after
+        Process.register(supervisor_pid, supervisor)
+      end
+
+      assert {:ok, recovered} = RoomManager.close_seat(room.code, position, room.host_id)
+      assert Process.alive?(recovered.seats[position].bot_pid)
+    end
+
     test "an engine exit during an action does not take down other rooms" do
       {room, positions} = create_playing_room()
       bidding = start_bidding(room.code)
@@ -402,6 +452,44 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert continued.turn_timer == nil or continued.turn_timer.actor_position != bidder
     end
 
+    test "restart on the current bid schedules one move despite repeated state updates" do
+      config = Application.get_env(:pidro_server, Lifecycle, [])
+      Application.put_env(:pidro_server, Lifecycle, Keyword.put(config, :bot_delay_ms, 1_000))
+      {room, _} = create_playing_room()
+      bidding = start_bidding(room.code)
+      position = bidding.current_turn
+      :ok = RoomManager.leave_room(room.positions[position])
+      {:ok, current} = RoomManager.get_room(room.code)
+      original = current.seats[position].bot_pid
+      Process.exit(original, :kill)
+
+      replacement =
+        eventually(fn ->
+          {:ok, current} = RoomManager.get_room(room.code)
+          pid = current.seats[position].bot_pid
+          if is_pid(pid) && pid != original && Process.alive?(pid), do: pid
+        end)
+
+      for _ <- 1..20 do
+        send(replacement, {:state_update, room.code, bidding})
+        send(replacement, {:readiness_updated, %{}})
+      end
+
+      assert :sys.get_state(replacement).move_scheduled?
+
+      advanced =
+        eventually(fn ->
+          {:ok, game} = GameAdapter.get_state(room.code)
+          if game.current_turn != position, do: game
+        end)
+
+      refute :sys.get_state(replacement).move_scheduled?
+      Process.sleep(150)
+      assert {:ok, ^advanced} = GameAdapter.get_state(room.code)
+      {:ok, current} = RoomManager.get_room(room.code)
+      assert current.seats[position].bot_pid == replacement
+    end
+
     test "reclaim after a grace bot's bid preserves its moves and retires the controller" do
       config = Application.get_env(:pidro_server, Lifecycle, [])
 
@@ -433,6 +521,152 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       {:ok, _} = RoomManager.handle_player_reconnect(room.code, user)
       refute Process.alive?(bot)
       assert {:ok, ^advanced} = GameAdapter.get_state(room.code)
+    end
+
+    for transition <- [:reclaim, :open] do
+      test "recovered temporary bot tolerates shared messages and cannot survive #{transition}" do
+        config = Application.get_env(:pidro_server, Lifecycle, [])
+
+        Application.put_env(
+          :pidro_server,
+          Lifecycle,
+          Keyword.merge(config, bot_delay_ms: 1_000, grace_timeout_ms: 60_000)
+        )
+
+        {room, _} = create_playing_room()
+        start_bidding(room.code)
+        position = position_for(room, "user2")
+        :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+        {:ok, temporary} = expire_phase(room.code, position, :phase2_start)
+        original = temporary.seats[position].bot_pid
+
+        for message <- [
+              {:readiness_updated, %{}},
+              {:seat_lifecycle, %{}},
+              {:future_event, %{}},
+              {:state_update, room.code, :invalid}
+            ] do
+          send(original, message)
+        end
+
+        assert :sys.get_state(original).room_code == room.code
+        Process.exit(original, :kill)
+
+        replacement =
+          eventually(fn ->
+            {:ok, current} = RoomManager.get_room(room.code)
+            pid = current.seats[position].bot_pid
+            if is_pid(pid) && pid != original && Process.alive?(pid), do: pid
+          end)
+
+        # The shared supervisor has no orphan controller for this seat.
+        controllers = DynamicSupervisor.which_children(PidroServer.Games.Bots.BotSupervisor)
+
+        assert Enum.count(controllers, fn {_, pid, _, modules} ->
+                 PidroServer.Games.Bots.SubstituteBot in modules &&
+                   :sys.get_state(pid).room_code == room.code
+               end) == 1
+
+        if unquote(transition) == :reclaim do
+          assert {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user2")
+        else
+          assert {:ok, _} = RoomManager.open_seat(room.code, position, room.host_id)
+        end
+
+        refute Process.alive?(replacement)
+        send(RoomManager, {:DOWN, make_ref(), :process, original, :killed})
+        send(RoomManager, {:DOWN, make_ref(), :process, replacement, :shutdown})
+        send(RoomManager, :health_check)
+        {:ok, current} = RoomManager.get_room(room.code)
+        assert current.seats[position].bot_pid == nil
+
+        state = :sys.get_state(RoomManager)
+
+        assert {:reply, {:error, :seat_not_controlled}, ^state} =
+                 RoomManager.handle_call(
+                   {:apply_substitute_action, room.code, position, :pass},
+                   {replacement, make_ref()},
+                   state
+                 )
+      end
+    end
+
+    test "mixed game survives readiness traffic and controller crashes through every active phase" do
+      previous_level = Logger.level()
+      Logger.configure(level: :info)
+      on_exit(fn -> Logger.configure(level: previous_level) end)
+      users = Enum.map(1..4, fn _ -> Ecto.UUID.generate() end)
+      {room, _} = create_playing_room(users)
+      start_bidding(room.code)
+      human = room.host_id
+      human_position = position_for(room, human)
+
+      for user <- users -- [human], do: assert(:ok = RoomManager.leave_room(user))
+
+      assert {:ok, _} = RoomManager.join_spectator_room(room.code, "watcher")
+      assert :ok = RoomManager.leave_spectator("watcher")
+      assert :ok = RoomManager.handle_player_disconnect(room.code, human)
+      assert {:ok, _} = RoomManager.handle_player_reconnect(room.code, human)
+
+      # Crash the current controller once in each phase. Human actions go through
+      # the same authoritative API as a channel; no bot turn is driven by the test.
+      crashed = :ets.new(:crashed_phases, [:set])
+
+      logs =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          eventually(
+            fn ->
+              {:ok, game} = GameAdapter.get_state(room.code)
+              {:ok, current} = RoomManager.get_room(room.code)
+
+              if game.phase == :complete do
+                true
+              else
+                seat = current.seats[game.current_turn]
+
+                if seat && seat.occupant_type == :bot &&
+                     :ets.insert_new(crashed, {game.phase}) do
+                  old_pid = seat.bot_pid
+                  Process.exit(old_pid, :kill)
+
+                  replacement =
+                    eventually(fn ->
+                      {:ok, recovered} = RoomManager.get_room(room.code)
+                      pid = recovered.seats[game.current_turn].bot_pid
+                      if is_pid(pid) && pid != old_pid && Process.alive?(pid), do: pid
+                    end)
+
+                  send(RoomManager, {:DOWN, make_ref(), :process, old_pid, :killed})
+                  send(RoomManager, :health_check)
+                  {:ok, recovered} = RoomManager.get_room(room.code)
+                  assert recovered.seats[game.current_turn].bot_pid == replacement
+                end
+
+                Phoenix.PubSub.broadcast(
+                  PidroServer.PubSub,
+                  "game:#{room.code}",
+                  {:readiness_updated, %{}}
+                )
+
+                Phoenix.PubSub.broadcast(
+                  PidroServer.PubSub,
+                  "game:#{room.code}",
+                  {:future_shared_topic_event, %{}}
+                )
+
+                play_human_turn(room.code, human, human_position, game)
+                false
+              end
+            end,
+            8_000
+          )
+        end)
+
+      for phase <- [:bidding, :declaring, :playing], do: assert(:ets.member(crashed, phase))
+      :ets.delete(crashed)
+      assert logs =~ "Recovered substitute bot"
+      refute logs =~ "FunctionClauseError"
+      refute logs =~ "dead bot_pid"
     end
 
     test "all bots finish the game and persist every departed human's result" do

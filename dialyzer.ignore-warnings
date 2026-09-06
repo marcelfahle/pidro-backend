@@ -24,7 +24,7 @@ lib/pidro/iex.ex:1045:17:
 lib/pidro/server.ex:342:7:
 lib/pidro_server/dev/replay_controller.ex:88:24:
 lib/pidro_server/dev/replay_controller.ex:286:8:
-lib/pidro_server/games/bots/bot_brain.ex:132:16:
+lib/pidro_server/games/bots/bot_brain.ex:135:16:
 lib/pidro_server/profiles/profiles.ex:45:30:
 lib/pidro_server/profiles/profiles.ex:98:55:
 lib/pidro_server/profiles/profiles.ex:99:30:

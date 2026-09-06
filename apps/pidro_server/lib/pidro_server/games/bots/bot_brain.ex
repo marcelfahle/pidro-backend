@@ -80,9 +80,12 @@ defmodule PidroServer.Games.Bots.BotBrain do
   resolves it, and applies it through the GameAdapter.
 
   `bot_label` is used for log messages (e.g., "BotPlayer" or "SubstituteBot").
+  SubstituteBot supplies RoomManager's PID-checked action function; BotPlayer
+  retains direct GameAdapter application.
   """
   @spec execute_move(map(), String.t()) :: :ok
-  def execute_move(state, bot_label) do
+  @spec execute_move(map(), String.t(), (String.t(), atom(), term() -> term())) :: :ok
+  def execute_move(state, bot_label, apply_action \\ &GameAdapter.apply_action/3) do
     case GameAdapter.get_legal_actions(state.room_code, state.position) do
       {:ok, legal_actions} when legal_actions != [] ->
         game_state = get_game_state(state.room_code)
@@ -95,7 +98,7 @@ defmodule PidroServer.Games.Bots.BotBrain do
               "#{bot_label} (#{state.room_code}/#{state.position}) executing: #{inspect(action)} - #{reasoning}"
             )
 
-            case GameAdapter.apply_action(state.room_code, state.position, action) do
+            case apply_action.(state.room_code, state.position, action) do
               {:ok, _new_state} ->
                 :ok
 
@@ -112,7 +115,7 @@ defmodule PidroServer.Games.Bots.BotBrain do
               "#{bot_label} (#{state.room_code}/#{state.position}) executing: #{inspect(action)} (legacy)"
             )
 
-            case GameAdapter.apply_action(state.room_code, state.position, action) do
+            case apply_action.(state.room_code, state.position, action) do
               {:ok, _new_state} ->
                 :ok
 
