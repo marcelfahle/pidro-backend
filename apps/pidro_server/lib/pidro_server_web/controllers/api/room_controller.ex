@@ -221,8 +221,10 @@ defmodule PidroServerWeb.API.RoomController do
       summary: "Join a room",
       description: """
       Adds the authenticated player to a room. The player can only be in one room
-      at a time. When the 4th player joins and no seat is held, the room status
-      automatically changes to "ready" and the game starts.
+      at a time. A full waiting room starts only after every human confirms readiness.
+      In a playing room, this explicit command claims an owner-opened substitute
+      seat. Successful admission ends any spectator membership atomically; game
+      channel joins/reconnects never claim unowned seats.
 
       A locked table answers 423 `TABLE_LOCKED`; a user the host kicked answers
       403 `KICKED`. Limited at policy `room_join` (per user).
@@ -920,8 +922,9 @@ defmodule PidroServerWeb.API.RoomController do
   Joins an existing room.
 
   Adds the authenticated player to a room. The player can only be in one room
-  at a time. When the 4th player joins, the room status automatically changes to
-  "ready" and the game starts.
+  at a time. Waiting rooms require explicit readiness before starting. Playing
+  rooms admit substitutes only into owner-opened seats. A successful claim ends
+  spectator membership; failed admission leaves watching unchanged.
 
   Requires authentication via Bearer token.
 
@@ -1257,10 +1260,10 @@ defmodule PidroServerWeb.API.RoomController do
       }
   """
   @spec unwatch(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def unwatch(conn, %{"code" => _code}) do
+  def unwatch(conn, %{"code" => code}) do
     user = conn.assigns[:current_user]
 
-    with :ok <- RoomManager.leave_spectator(user.id) do
+    with :ok <- RoomManager.leave_spectator(code, user.id) do
       conn
       |> put_status(:no_content)
       |> send_resp(:no_content, "")

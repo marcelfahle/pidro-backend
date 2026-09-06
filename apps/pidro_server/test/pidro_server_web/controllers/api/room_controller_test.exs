@@ -17,6 +17,38 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  describe "PID-79 explicit admission" do
+    test "REST Join promotes a watcher only after an opened seat is explicitly claimed", %{
+      conn: conn
+    } do
+      [host, leaver, south, west, watcher] =
+        Enum.map(1..5, fn _ -> AccountsFixtures.guest_fixture() end)
+
+      {:ok, room} = RoomManager.create_room(host.id)
+
+      for user <- [leaver, south, west],
+          do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
+
+      PidroServer.RoomFixtures.ready_room(room.code)
+      auth = put_req_header(conn, "authorization", "Bearer #{Token.generate(watcher)}")
+      assert json_response(post(auth, ~p"/api/v1/rooms/#{room.code}/watch"), 200)
+      assert json_response(post(auth, ~p"/api/v1/rooms/#{room.code}/watch"), 200)
+      assert RoomManager.is_spectator?(room.code, watcher.id)
+      :ok = RoomManager.leave_room(leaver.id)
+      {:ok, _} = RoomManager.open_seat(room.code, :east, host.id)
+
+      # A stale URL may not remove this account's current watch.
+      assert json_response(delete(auth, ~p"/api/v1/rooms/OLD1/unwatch"), 404)
+      assert RoomManager.is_spectator?(room.code, watcher.id)
+      response = post(auth, ~p"/api/v1/rooms/#{room.code}/join") |> json_response(200)
+      assert response["data"]["assigned_position"] == "east"
+      assert response["data"]["room"]["positions"]["east"] == watcher.id
+      refute watcher.id in response["data"]["room"]["spectator_ids"]
+      assert response["data"]["room"]["available_positions"] == []
+      refute RoomManager.is_spectator?(room.code, watcher.id)
+    end
+  end
+
   describe "leave/2" do
     test "returns 204 and transfers the running seat to a bot", %{conn: conn} do
       [host, leaver, south, west] = Enum.map(1..4, fn _ -> AccountsFixtures.guest_fixture() end)

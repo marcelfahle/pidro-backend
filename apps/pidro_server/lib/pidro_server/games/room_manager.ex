@@ -149,7 +149,9 @@ defmodule PidroServer.Games.RoomManager do
             spectator_rooms: %{String.t() => String.t()},
             subscribed_game_topics: MapSet.t(String.t()),
             channel_pids: %{{String.t(), any()} => MapSet.t(pid())},
-            channel_monitors: %{reference() => {String.t(), any(), pid()}}
+            channel_monitors: %{reference() => {String.t(), any(), pid()}},
+            spectator_monitors: %{reference() => {String.t(), any(), pid()}},
+            spectator_timers: %{{String.t(), any()} => reference()}
           }
 
     defstruct rooms: %{},
@@ -157,7 +159,9 @@ defmodule PidroServer.Games.RoomManager do
               spectator_rooms: %{},
               subscribed_game_topics: MapSet.new(),
               channel_pids: %{},
-              channel_monitors: %{}
+              channel_monitors: %{},
+              spectator_monitors: %{},
+              spectator_timers: %{}
   end
 
   ## Client API
@@ -214,6 +218,10 @@ defmodule PidroServer.Games.RoomManager do
   it: every human must confirm readiness through a registered live channel
   for the current roster epoch. Trusted bot seats count as ready.
 
+  In a playing room this explicit command claims an owner-opened substitute
+  seat (auto-assigned). A successful join ends the player's spectator membership;
+  channel attachment alone never claims a seat.
+
   ## Parameters
 
   - `room_code` - The unique room code (case-insensitive)
@@ -229,7 +237,9 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :seat_taken}` - Requested specific seat is already occupied
   - `{:error, :team_full}` - Requested team is fully occupied
   - `{:error, :invalid_position}` - Invalid position parameter
-  - `{:error, :room_not_available}` - Room is not `:waiting` or `:ready`
+  - `{:error, :room_not_available}` - Room is not `:waiting`, `:ready`, or `:playing`
+  - `{:error, :no_vacant_seat}` - Playing room has no owner-opened seat
+  - `{:error, :already_seated}` - Player already occupies a seat in this room
   - `{:error, :table_locked}` - The host locked the table (see `set_locked/3`)
   - `{:error, :kicked}` - The host kicked this player from the room (see `kick_player/3`)
 
@@ -249,6 +259,8 @@ defmodule PidroServer.Games.RoomManager do
              | :team_full
              | :invalid_position
              | :room_not_available
+             | :no_vacant_seat
+             | :already_seated
              | :table_locked
              | :kicked}
   def join_room(room_code, player_id, position \\ nil) do
@@ -394,6 +406,17 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, {:get_room, String.upcase(room_code)})
   end
 
+  @doc "Publicly claimable seats, shared by REST and lobby snapshots. Bots are not vacancies."
+  @spec available_positions(Room.t()) :: [Positions.position()]
+  def available_positions(%Room{locked: false, status: status, seats: seats})
+      when status in [:waiting, :ready, :playing] do
+    Enum.filter([:north, :east, :south, :west], fn position ->
+      match?(%Seat{occupant_type: :vacant}, seats[position])
+    end)
+  end
+
+  def available_positions(%Room{}), do: []
+
   @doc """
   Updates the status of a room.
 
@@ -441,7 +464,9 @@ defmodule PidroServer.Games.RoomManager do
   Joins a room as a spectator.
 
   Spectators can only join rooms that are currently `:playing` or `:finished`.
-  They can watch the game but cannot participate.
+  They can watch the game but cannot participate. Repeating Watch for the same
+  room succeeds without adding membership. Unattached/disconnected watches have
+  a bounded grace period; see `docs/spectator-lifecycle.md`.
 
   ## Parameters
 
@@ -454,7 +479,7 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :room_not_found}` - Room code doesn't exist
   - `{:error, :room_not_available_for_spectators}` - Room is not playing or finished
   - `{:error, :spectators_full}` - Maximum spectators reached
-  - `{:error, :already_spectating}` - User is already spectating this room
+  - `{:error, :already_spectating}` - User is already spectating another room
   - `{:error, :already_in_room}` - User is a player in another room
 
   ## Examples
@@ -491,7 +516,22 @@ defmodule PidroServer.Games.RoomManager do
   """
   @spec leave_spectator(String.t()) :: :ok | {:error, :not_spectating}
   def leave_spectator(spectator_id) do
-    GenServer.call(__MODULE__, {:leave_spectator, spectator_id})
+    GenServer.call(__MODULE__, {:leave_spectator, nil, spectator_id})
+  end
+
+  @doc "Removes a watch only in the specified room; stale requests cannot unwatch another room."
+  def leave_spectator(room_code, spectator_id) do
+    GenServer.call(__MODULE__, {:leave_spectator, String.upcase(room_code), spectator_id})
+  end
+
+  @doc false
+  def register_spectator_channel(room_code, user_id, pid) do
+    GenServer.call(__MODULE__, {:register_spectator_channel, room_code, user_id, pid})
+  end
+
+  @doc false
+  def unregister_spectator_channel(room_code, user_id, pid) do
+    GenServer.call(__MODULE__, {:unregister_spectator_channel, room_code, user_id, pid})
   end
 
   @doc """
@@ -1027,6 +1067,8 @@ defmodule PidroServer.Games.RoomManager do
       # Auto-assign host to first available position
       {:ok, room_with_host, host_pos} = Positions.assign(room, host_id, :auto)
 
+      state = end_spectating(state, host_id)
+
       # Update seat for host
       room_with_host = %{
         room_with_host
@@ -1068,6 +1110,7 @@ defmodule PidroServer.Games.RoomManager do
   @impl true
   def handle_call({:join_room, room_code, player_id, position}, _from, %State{} = state) do
     case fetch_room(state, room_code) do
+      {:ok, %Room{status: :playing} = room} -> join_substitute(state, room, player_id)
       {:ok, %Room{} = room} -> join_open_seat(state, room, player_id, position)
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -1473,9 +1516,9 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :already_in_room}, state}
 
       Map.has_key?(state.spectator_rooms, spectator_id) ->
-        # Check if already spectating this specific room
+        # Repeated Watch is idempotent, including during reconnect grace.
         if state.spectator_rooms[spectator_id] == room_code do
-          {:reply, {:error, :already_spectating}, state}
+          {:reply, {:ok, state.rooms[room_code]}, state}
         else
           {:reply, {:error, :already_spectating}, state}
         end
@@ -1507,6 +1550,9 @@ defmodule PidroServer.Games.RoomManager do
                   spectator_rooms: Map.put(state.spectator_rooms, spectator_id, room_code)
               }
 
+            # Bound capacity even if the Watch command is never followed by a channel attach.
+            new_state = schedule_spectator_expiry(new_state, room_code, spectator_id)
+
             Logger.info("Spectator #{spectator_id} joined room #{room_code}")
 
             broadcast_room(room_code, updated_room)
@@ -1519,37 +1565,38 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:leave_spectator, spectator_id}, _from, %State{} = state) do
+  def handle_call({:leave_spectator, requested_room, spectator_id}, _from, %State{} = state) do
     case Map.get(state.spectator_rooms, spectator_id) do
       nil ->
         {:reply, {:error, :not_spectating}, state}
 
-      room_code ->
-        %Room{} = room = state.rooms[room_code]
+      room_code when requested_room == nil or requested_room == room_code ->
+        {:reply, :ok, end_spectating(state, spectator_id)}
 
-        updated_spectator_ids = List.delete(room.spectator_ids, spectator_id)
-
-        %Room{} =
-          updated_room = %Room{
-            room
-            | spectator_ids: updated_spectator_ids,
-              last_activity: DateTime.utc_now()
-          }
-
-        %State{} =
-          new_state = %State{
-            state
-            | rooms: Map.put(state.rooms, room_code, updated_room),
-              spectator_rooms: Map.delete(state.spectator_rooms, spectator_id)
-          }
-
-        Logger.info("Spectator #{spectator_id} left room #{room_code}")
-
-        broadcast_room(room_code, updated_room)
-        broadcast_lobby_event({:room_updated, updated_room})
-
-        {:reply, :ok, new_state}
+      _other_room ->
+        {:reply, {:error, :not_spectating}, state}
     end
+  end
+
+  def handle_call({:register_spectator_channel, room_code, user_id, pid}, _from, state) do
+    if state.spectator_rooms[user_id] == room_code do
+      state = cancel_spectator_expiry(state, room_code, user_id)
+      registration = {room_code, user_id, pid}
+
+      monitors =
+        if registration in Map.values(state.spectator_monitors),
+          do: state.spectator_monitors,
+          else: Map.put(state.spectator_monitors, Process.monitor(pid), registration)
+
+      {:reply, :ok, %{state | spectator_monitors: monitors}}
+    else
+      {:reply, {:error, :not_spectating}, state}
+    end
+  end
+
+  def handle_call({:unregister_spectator_channel, room_code, user_id, pid}, _from, state) do
+    {result, state} = unregister_spectator_pid(state, room_code, user_id, pid)
+    {:reply, result, state}
   end
 
   @impl true
@@ -1817,51 +1864,8 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_call({:join_as_substitute, room_code, player_id}, _from, %State{} = state) do
-    with {:ok, room} <- fetch_room(state, room_code),
-         :ok <- ensure_not_in_other_room(state, player_id, room_code),
-         :ok <- ensure_playing(room),
-         :ok <- ensure_not_kicked(room, player_id),
-         {:ok, position} <- find_vacant_seat_position(room) do
-      # Fill the vacant seat with the new human player
-      {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
-
-      # Update the positions map so the engine sees this player at the position
-      updated_positions = Map.put(room.positions, position, player_id)
-
-      updated_room =
-        %{
-          room
-          | seats: Map.put(room.seats, position, filled_seat),
-            positions: updated_positions
-        }
-        |> reset_timeout_counter(position)
-        |> bump_seat_lifecycle_revision()
-        |> touch_last_activity()
-        |> restore_owner(position)
-
-      new_state = put_room_and_player(state, updated_room, player_id)
-
-      {updated_room, new_state} =
-        reconcile_turn_timer_for_current_state(updated_room, room_code, new_state)
-
-      Logger.info(
-        "Substitute player #{player_id} joined room #{room_code} at position #{position}"
-      )
-
-      # Broadcast to game channel and lobby
-      broadcast_room(room_code, updated_room)
-      broadcast_lobby_event({:room_updated, updated_room})
-
-      Phoenix.PubSub.broadcast(
-        PidroServer.PubSub,
-        "game:#{room_code}",
-        {:substitute_joined, %{position: position, user_id: player_id}}
-      )
-
-      broadcast_seat_lifecycle(updated_room)
-
-      {:reply, {:ok, updated_room, position}, new_state}
-    else
+    case fetch_room(state, room_code) do
+      {:ok, room} -> join_substitute(state, room, player_id)
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -2250,10 +2254,27 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_info({:timeout, ref, {:spectator_expired, room_code, user_id}}, state) do
+    if state.spectator_timers[{room_code, user_id}] == ref and
+         state.spectator_rooms[user_id] == room_code do
+      {:noreply, end_spectating(state, user_id)}
+    else
+      {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info({:DOWN, ref, :process, pid, _reason}, %State{} = state) do
     case Map.pop(state.channel_monitors, ref) do
       {nil, _} ->
-        {:noreply, state}
+        case state.spectator_monitors[ref] do
+          {room_code, user_id, ^pid} ->
+            {_, state} = unregister_spectator_pid(state, room_code, user_id, pid)
+            {:noreply, state}
+
+          nil ->
+            {:noreply, state}
+        end
 
       {{room_code, user_id, ^pid}, channel_monitors} ->
         key = {room_code, user_id}
@@ -2460,6 +2481,54 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
+  # Only explicit admission commands use this transition. Validate everything
+  # before ending a watch, then commit ownership and both membership indexes together.
+  defp join_substitute(%State{} = state, %Room{code: room_code} = room, player_id) do
+    with :ok <- ensure_not_in_other_room(state, player_id, room_code),
+         :ok <- ensure_playing(room),
+         :ok <- ensure_not_locked(room),
+         :ok <- ensure_not_kicked(room, player_id),
+         {:ok, position} <- find_vacant_seat_position(room) do
+      {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
+      state = end_spectating(state, player_id, room_code)
+
+      updated_room =
+        %{
+          room
+          | seats: Map.put(room.seats, position, filled_seat),
+            positions: Map.put(room.positions, position, player_id),
+            spectator_ids: List.delete(room.spectator_ids, player_id)
+        }
+        |> reset_timeout_counter(position)
+        |> bump_seat_lifecycle_revision()
+        |> touch_last_activity()
+        |> restore_owner(position)
+
+      new_state = put_room_and_player(state, updated_room, player_id)
+
+      {updated_room, new_state} =
+        reconcile_turn_timer_for_current_state(updated_room, room_code, new_state)
+
+      Logger.info(
+        "Substitute player #{player_id} joined room #{room_code} at position #{position}"
+      )
+
+      broadcast_room(room_code, updated_room)
+      broadcast_lobby_event({:room_updated, updated_room})
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:substitute_joined, %{position: position, user_id: player_id}}
+      )
+
+      broadcast_seat_lifecycle(updated_room)
+      {:reply, {:ok, updated_room, position}, new_state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   # Validate the requested claim against the target room before evicting a
   # disconnected seat elsewhere, then perform the two in-memory mutations in
   # the same callback.
@@ -3200,6 +3269,8 @@ defmodule PidroServer.Games.RoomManager do
   # became `:ready` (see `maybe_start_game/2`).
   defp seat_player(%State{} = state, %Room{code: room_code} = room, player_id, position) do
     {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
+    state = end_spectating(state, player_id, room_code)
+    room = %{room | spectator_ids: List.delete(room.spectator_ids, player_id)}
 
     final_room =
       %{room | seats: Map.put(room.seats, position, filled_seat)}
@@ -3322,6 +3393,11 @@ defmodule PidroServer.Games.RoomManager do
         terminate_room_bots(room)
         state = unsubscribe_from_game_topic(state, room_code)
         state = drop_room_channel_registrations(state, room_code)
+
+        %State{} =
+          state =
+          Enum.reduce(room.spectator_ids, state, &drop_spectator_connections(&2, room_code, &1))
+
         _ = GameSupervisor.stop_game(room_code)
 
         # Remove room and all player/spectator mappings
@@ -3520,36 +3596,36 @@ defmodule PidroServer.Games.RoomManager do
     initial = %{my_rejoinable: [], open_tables: [], substitute_needed: [], spectatable: []}
 
     Enum.reduce(rooms, initial, fn room, acc ->
-      # Skip rooms with zero connected humans
-      if not has_connected_human?(room) do
-        acc
-      else
-        cond do
-          # Playing rooms where the user has a reserved seat (reconnecting or grace)
-          room.status == :playing && user_id != nil &&
-              Seat.reserved_for_user?(room.seats, user_id) ->
-            %{acc | my_rejoinable: [room | acc.my_rejoinable]}
-
-          # Waiting rooms with vacant seats
-          room.status == :waiting &&
-              Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end) ->
-            %{acc | open_tables: [room | acc.open_tables]}
-
-          # Playing rooms with vacant seats (explicitly opened by owner)
-          room.status == :playing &&
-              Enum.any?(room.seats, fn {_pos, seat} -> Seat.vacant?(seat) end) ->
-            %{acc | substitute_needed: [room | acc.substitute_needed]}
-
-          # Playing rooms with spectator capacity remaining
-          room.status == :playing &&
-              length(room.spectator_ids) < room.max_spectators ->
-            %{acc | spectatable: [room | acc.spectatable]}
-
-          true ->
-            acc
-        end
+      case lobby_category(room, user_id) do
+        nil -> acc
+        category -> Map.update!(acc, category, &[room | &1])
       end
     end)
+  end
+
+  @doc "Authoritative category shared by initial lobby reads and incremental broadcasts."
+  @spec lobby_category(Room.t(), String.t() | nil) ::
+          :my_rejoinable | :open_tables | :substitute_needed | :spectatable | nil
+  def lobby_category(room, user_id) do
+    cond do
+      not has_connected_human?(room) ->
+        nil
+
+      room.status == :playing && user_id != nil && Seat.reserved_for_user?(room.seats, user_id) ->
+        :my_rejoinable
+
+      room.status == :waiting && available_positions(room) != [] ->
+        :open_tables
+
+      room.status == :playing && available_positions(room) != [] ->
+        :substitute_needed
+
+      room.status == :playing && length(room.spectator_ids) < room.max_spectators ->
+        :spectatable
+
+      true ->
+        nil
+    end
   end
 
   defp has_connected_human?(%Room{seats: seats}) when map_size(seats) == 0, do: false
@@ -3720,6 +3796,95 @@ defmodule PidroServer.Games.RoomManager do
     )
   end
 
+  # Watch membership outlives a transport, but only for the existing reconnect
+  # grace window. Timer references and monitored PIDs fence reordered cleanup.
+  defp schedule_spectator_expiry(%State{} = state, room_code, user_id) do
+    state = cancel_spectator_expiry(state, room_code, user_id)
+
+    ref =
+      :erlang.start_timer(
+        Lifecycle.config(:grace_timeout_ms),
+        self(),
+        {:spectator_expired, room_code, user_id}
+      )
+
+    %{state | spectator_timers: Map.put(state.spectator_timers, {room_code, user_id}, ref)}
+  end
+
+  defp cancel_spectator_expiry(%State{} = state, room_code, user_id) do
+    {ref, timers} = Map.pop(state.spectator_timers, {room_code, user_id})
+    if ref, do: :erlang.cancel_timer(ref)
+    %{state | spectator_timers: timers}
+  end
+
+  defp unregister_spectator_pid(%State{} = state, room_code, user_id, pid) do
+    refs =
+      for {ref, registration} <- state.spectator_monitors,
+          registration == {room_code, user_id, pid},
+          do: ref
+
+    if refs == [] do
+      {:not_registered, state}
+    else
+      Enum.each(refs, &Process.demonitor(&1, [:flush]))
+      state = %{state | spectator_monitors: Map.drop(state.spectator_monitors, refs)}
+
+      remaining? =
+        Enum.any?(state.spectator_monitors, fn {_, {code, id, _}} ->
+          code == room_code and id == user_id
+        end)
+
+      if remaining?,
+        do: {:channels_remaining, state},
+        else: {:last_channel_closed, schedule_spectator_expiry(state, room_code, user_id)}
+    end
+  end
+
+  defp drop_spectator_connections(%State{} = state, room_code, user_id) do
+    refs =
+      for {ref, {code, id, pid}} <- state.spectator_monitors,
+          code == room_code and id == user_id do
+        Process.demonitor(ref, [:flush])
+        send(pid, {:force_disconnect, :left})
+        ref
+      end
+
+    state = %{state | spectator_monitors: Map.drop(state.spectator_monitors, refs)}
+    cancel_spectator_expiry(state, room_code, user_id)
+  end
+
+  defp end_spectating(%State{} = state, user_id, claimed_room \\ nil) do
+    case state.spectator_rooms[user_id] do
+      nil ->
+        state
+
+      room_code ->
+        state = drop_spectator_connections(state, room_code, user_id)
+        room = state.rooms[room_code]
+        room = %{room | spectator_ids: List.delete(room.spectator_ids, user_id)}
+        # A same-room promotion publishes one completed seat/membership snapshot,
+        # not an intermediate watch removal with the same revision as the claim.
+        room =
+          if room_code == claimed_room,
+            do: room,
+            else: room |> bump_seat_lifecycle_revision() |> touch_last_activity()
+
+        state = %{
+          state
+          | rooms: Map.put(state.rooms, room_code, room),
+            spectator_rooms: Map.delete(state.spectator_rooms, user_id)
+        }
+
+        unless room_code == claimed_room do
+          broadcast_room(room_code, room)
+          broadcast_lobby_event({:room_updated, room})
+          broadcast_seat_lifecycle(room)
+        end
+
+        state
+    end
+  end
+
   defp register_channel_pid(%State{} = state, room_code, user_id, pid) do
     key = {room_code, user_id}
     existing = Map.get(state.channel_pids, key, MapSet.new())
@@ -3822,6 +3987,8 @@ defmodule PidroServer.Games.RoomManager do
     end)
 
     Enum.each(Map.keys(state.channel_monitors), &Process.demonitor(&1, [:flush]))
+    Enum.each(Map.keys(state.spectator_monitors), &Process.demonitor(&1, [:flush]))
+    Enum.each(Map.values(state.spectator_timers), &:erlang.cancel_timer/1)
 
     Enum.each(state.subscribed_game_topics, fn room_code ->
       GameAdapter.unsubscribe(room_code)

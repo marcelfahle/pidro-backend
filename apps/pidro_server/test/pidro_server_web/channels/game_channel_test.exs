@@ -72,6 +72,87 @@ defmodule PidroServerWeb.GameChannelTest do
     }
   end
 
+  describe "PID-79 spectator isolation" do
+    test "two departures, delayed decisions and watcher reconnect never claim an open seat",
+         ctx do
+      {:ok, _, host} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}")
+
+      {:ok, _, player} =
+        subscribe_and_join(ctx.sockets[ctx.user4.id], GameChannel, "game:#{ctx.room_code}")
+
+      {:ok, _, _} =
+        Phoenix.ChannelTest.subscribe_and_join(
+          ctx.sockets[ctx.user4.id],
+          PidroServerWeb.LobbyChannel,
+          "lobby",
+          %{}
+        )
+
+      :ok = RoomManager.leave_room(ctx.user2.id)
+      assert_push "room_updated", %{room: %{available_positions: []}, category: "spectatable"}
+      # Keep Bot is a dismissal: the surrendered seat is already a permanent bot.
+      {:ok, _} = RoomManager.join_spectator_room(ctx.room_code, ctx.user2.id)
+
+      {:ok, %{role: :spectator}, watcher} =
+        subscribe_and_join(ctx.sockets[ctx.user2.id], GameChannel, "game:#{ctx.room_code}")
+
+      :ok = RoomManager.leave_room(ctx.user3.id)
+      {:ok, _} = RoomManager.join_spectator_room(ctx.room_code, ctx.user3.id)
+
+      {:ok, %{role: :spectator}, departing} =
+        subscribe_and_join(ctx.sockets[ctx.user3.id], GameChannel, "game:#{ctx.room_code}")
+
+      {:ok, _} = RoomManager.open_seat(ctx.room_code, :south, ctx.user1.id)
+
+      assert_push "room_updated", %{
+        room: %{available_positions: [:south]},
+        category: "substitute_needed"
+      }
+
+      close(departing)
+      # This broadcast used to crash every subscribed game channel.
+      assert_push "spectator_left", %{user_id: user_id}
+      assert user_id == ctx.user3.id
+      # A round-trip processes queued broadcasts before checking each recipient.
+      for socket <- [host, player, watcher] do
+        :sys.get_state(socket.channel_pid)
+        assert Process.alive?(socket.channel_pid)
+      end
+
+      close(watcher)
+
+      {:ok, reply, _} =
+        subscribe_and_join(ctx.sockets[ctx.user2.id], GameChannel, "game:#{ctx.room_code}")
+
+      assert reply.role == :spectator
+      refute Map.has_key?(reply, :position)
+      assert reply.legal_actions == []
+      {:ok, room} = RoomManager.get_room(ctx.room_code)
+      assert room.seats.south.occupant_type == :vacant
+      assert ctx.user2.id in room.spectator_ids
+      refute ctx.user2.id in Map.values(room.positions)
+
+      # Ending Watch is an explicit membership change, not a channel reconnect.
+      assert :ok = RoomManager.leave_spectator(ctx.room_code, ctx.user3.id)
+
+      assert {:error, _} =
+               subscribe_and_join(
+                 ctx.sockets[ctx.user3.id],
+                 GameChannel,
+                 "game:#{ctx.room_code}",
+                 %{"role" => "player"}
+               )
+
+      {:ok, _, :south} = RoomManager.join_room(ctx.room_code, ctx.user3.id)
+
+      {:ok, %{role: :player, position: :south}, _} =
+        subscribe_and_join(ctx.sockets[ctx.user3.id], GameChannel, "game:#{ctx.room_code}")
+
+      assert_push "room_updated", %{room: %{available_positions: []}, category: "spectatable"}
+    end
+  end
+
   describe "seat lifecycle snapshot" do
     test "all observers receive takeover and reclaim snapshots, including a cold join", context do
       for user <- [context.user1, context.user2, context.user4] do
