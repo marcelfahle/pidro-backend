@@ -6,7 +6,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
   :playing rooms with vacant seats, and owner can close vacant seats back to bots.
   """
 
-  use ExUnit.Case, async: false
+  use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.RoomManager
   alias PidroServer.RoomManagerCase
@@ -60,12 +60,82 @@ defmodule PidroServer.Games.SubstituteSeatTest do
     :ok = RoomManager.handle_player_disconnect(room.code, user_id)
 
     # Trigger Phase 2: bot substitution
-    {:ok, room_after_p2} = RoomManagerCase.expire_phase(room.code, position, :phase2_start)
+    {:ok, _} = RoomManagerCase.expire_phase(room.code, position, :phase2_start)
+    {:ok, room_after_p2} = RoomManagerCase.expire_phase(room.code, position, :phase3_gone)
 
     {room_after_p2, position}
   end
 
   describe "open_seat — owner opens a bot-filled seat" do
+    test "a reserved seat cannot be opened, and host reclaim preserves another pending decision" do
+      {room, _} = create_playing_room()
+      {_, departed} = make_seat_bot_substitute(room, "user2")
+      {:ok, before} = RoomManager.get_seat_lifecycle(room.code)
+      :ok = RoomManager.handle_player_disconnect(room.code, "user1")
+      {:ok, _} = RoomManagerCase.expire_phase(room.code, :north, :phase2_start)
+      {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user1")
+      {:ok, after_reclaim} = RoomManager.get_seat_lifecycle(room.code)
+      assert after_reclaim.owner_id == "user1"
+      assert after_reclaim.seats.north.decision == nil
+      assert after_reclaim.seats[departed].decision == before.seats[departed].decision
+
+      :ok = RoomManager.handle_player_disconnect(room.code, "user4")
+      {:ok, reserved} = RoomManagerCase.expire_phase(room.code, :west, :phase2_start)
+
+      for id <- [nil, before.seats[departed].decision.id] do
+        assert {:error, :stale_decision} = RoomManager.open_seat(room.code, :west, "user1", id)
+      end
+
+      {:ok, reclaimed} = RoomManager.handle_player_reconnect(room.code, "user4")
+      assert reclaimed.seats.west.user_id == "user4"
+      refute Process.alive?(reserved.seats.west.bot_pid)
+    end
+
+    test "Keep Bot survives repeat Leave and owner transfer, without consuming other decisions" do
+      {room, _} = create_playing_room()
+      {with_bot, position} = make_seat_bot_substitute(room, "user2")
+      id = with_bot.seats[position].decision_id
+      pid = with_bot.seats[position].bot_pid
+      assert {:error, :not_owner} = RoomManager.keep_bot(room.code, position, "user3", id)
+      assert {:error, :stale_decision} = RoomManager.keep_bot(room.code, position, "user1", nil)
+      {:ok, kept} = RoomManager.keep_bot(room.code, position, "user1", id)
+      assert kept.seat_lifecycle_revision > with_bot.seat_lifecycle_revision
+      assert kept.seats[position].bot_pid == pid
+      assert Process.alive?(pid)
+      assert kept.seats[position].decision_id == nil
+      assert {:error, :stale_decision} = RoomManager.open_seat(room.code, position, "user1", id)
+      assert {:error, :stale_decision} = RoomManager.keep_bot(room.code, position, "user1", id)
+      :ok = RoomManager.leave_room("user2")
+      :ok = RoomManager.leave_room("user1")
+      {:ok, transferred} = RoomManager.get_seat_lifecycle(room.code)
+      assert transferred.owner_id == "user3"
+      assert transferred.seats[position].decision == nil
+      assert is_binary(transferred.seats.north.decision.id)
+      # Keeping a bot does not prohibit a later deliberate manual opening.
+      {:ok, _} = RoomManager.open_seat(room.code, position, "user3")
+    end
+
+    test "old decision cannot affect a filled seat or its next departure" do
+      {room, _} = create_playing_room()
+      {with_bot, position} = make_seat_bot_substitute(room, "user2")
+      id = with_bot.seats[position].decision_id
+      {:ok, _} = RoomManager.open_seat(room.code, position, "user1", id)
+      {:ok, _, ^position} = RoomManager.join_as_substitute(room.code, "new-player")
+
+      for action <- [:open_seat, :keep_bot] do
+        assert {:error, :seat_not_bot_substitute} =
+                 apply(RoomManager, action, [room.code, position, "user1", id])
+      end
+
+      {:ok, filled} = RoomManager.get_seat_lifecycle(room.code)
+      assert filled.seats[position].player_id == "new-player"
+      assert filled.seats[position].decision == nil
+      :ok = RoomManager.leave_room("new-player")
+      assert {:error, :stale_decision} = RoomManager.keep_bot(room.code, position, "user1", id)
+      {:ok, next} = RoomManager.get_seat_lifecycle(room.code)
+      assert next.seats[position].decision.id != id
+    end
+
     test "owner can open a bot_substitute seat — seat becomes vacant" do
       {room, _positions} = create_playing_room()
 

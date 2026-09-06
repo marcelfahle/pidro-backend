@@ -669,6 +669,14 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  @doc "Resolves a departure decision by keeping its bot, for all clients and future owners."
+  def keep_bot(room_code, position, requesting_user_id, decision_id) do
+    GenServer.call(
+      __MODULE__,
+      {:keep_bot, String.upcase(room_code), position, requesting_user_id, decision_id}
+    )
+  end
+
   @doc """
   Closes a vacant seat by spawning a new bot to fill it.
 
@@ -1741,6 +1749,27 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:keep_bot, room_code, position, user_id, decision_id}, _from, %State{} = state) do
+    with {:ok, room} <- fetch_room(state, room_code),
+         :ok <- ensure_owner(room, user_id),
+         :ok <- ensure_playing(room),
+         :ok <- ensure_seat_bot_substitute(room, position),
+         {:ok, seat} <- Seat.keep_bot(room.seats[position], decision_id) do
+      updated_room =
+        %{room | seats: Map.put(room.seats, position, seat)}
+        |> bump_seat_lifecycle_revision()
+        |> touch_last_activity()
+
+      broadcast_seat_lifecycle(updated_room)
+
+      {:reply, {:ok, updated_room},
+       %{state | rooms: Map.put(state.rooms, room_code, updated_room)}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call(
         {:open_seat, room_code, position, requesting_user_id, decision_id},
         _from,
@@ -2657,11 +2686,12 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  defp ensure_open_decision(%Seat{}, nil), do: :ok
-
   defp ensure_open_decision(%Seat{reserved_for: reserved_for}, _decision_id)
        when not is_nil(reserved_for),
        do: {:error, :stale_decision}
+
+  # Legacy manual opening targets the current unreserved bot, not a prompt generation.
+  defp ensure_open_decision(%Seat{}, nil), do: :ok
 
   defp ensure_open_decision(%Seat{decision_id: decision_id}, decision_id)
        when not is_nil(decision_id),
@@ -3131,7 +3161,7 @@ defmodule PidroServer.Games.RoomManager do
       |> Map.values()
       |> Enum.find(&Seat.owner?/1)
 
-    if owner_seat &&
+    if room.seats[botted_position].decision_id && owner_seat &&
          Seat.connected_human?(owner_seat) &&
          owner_seat.position != botted_position do
       Phoenix.PubSub.broadcast(

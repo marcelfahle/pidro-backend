@@ -172,6 +172,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       position = position_for(room, "user2")
       :ok = RoomManager.handle_player_disconnect(room.code, "user2")
       expire_phase(room.code, position, :phase2_start)
+      expire_phase(room.code, position, :phase3_gone)
       assert {:ok, _} = RoomManager.open_seat(room.code, position, room.host_id)
 
       assert :ok = RoomManager.leave_room("user2")

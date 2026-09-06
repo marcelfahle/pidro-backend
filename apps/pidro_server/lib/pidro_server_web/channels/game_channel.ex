@@ -410,7 +410,8 @@ defmodule PidroServerWeb.GameChannel do
   def handle_in("ready", _params, socket),
     do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
 
-  def handle_in("open_seat", %{"position" => position} = params, socket) do
+  def handle_in(event, %{"position" => position} = params, socket)
+      when event in ["open_seat", "keep_bot"] do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
     else
@@ -418,12 +419,21 @@ defmodule PidroServerWeb.GameChannel do
         {:ok, pos_atom} ->
           decision_id = Map.get(params, "decision_id")
 
-          case RoomManager.open_seat(
-                 socket.assigns.room_code,
-                 pos_atom,
-                 socket.assigns.user_id,
-                 decision_id
-               ) do
+          result =
+            if is_binary(decision_id) and byte_size(decision_id) > 0 do
+              action = if event == "open_seat", do: :open_seat, else: :keep_bot
+
+              apply(RoomManager, action, [
+                socket.assigns.room_code,
+                pos_atom,
+                socket.assigns.user_id,
+                decision_id
+              ])
+            else
+              {:error, :stale_decision}
+            end
+
+          case result do
             {:ok, _room} ->
               case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
                 {:ok, snapshot} -> {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}

@@ -1097,11 +1097,12 @@ defmodule PidroServerWeb.API.RoomController do
   Returns HTTP 200 (OK) on success.
   """
   @spec open_seat(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def open_seat(conn, %{"code" => code, "position" => position}) do
+  def open_seat(conn, %{"code" => code, "position" => position} = params) do
     user = conn.assigns[:current_user]
 
     with {:ok, pos_atom} <- parse_position_strict(position),
-         {:ok, room} <- RoomManager.open_seat(code, pos_atom, user.id) do
+         {:ok, room} <-
+           RoomManager.open_seat(code, pos_atom, user.id, Map.get(params, "decision_id")) do
       conn
       |> put_view(RoomJSON)
       |> render(:show, %{room: room})
