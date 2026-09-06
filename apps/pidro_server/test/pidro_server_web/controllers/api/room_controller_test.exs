@@ -17,6 +17,30 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  describe "leave/2" do
+    test "returns 204 and transfers the running seat to a bot", %{conn: conn} do
+      [host, leaver, south, west] = Enum.map(1..4, fn _ -> AccountsFixtures.guest_fixture() end)
+      {:ok, room} = RoomManager.create_room(host.id, %{})
+      assert {:ok, _, position} = RoomManager.join_room(room.code, leaver.id)
+
+      for user <- [south, west],
+          do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
+
+      PidroServer.RoomFixtures.ready_room(room.code)
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(leaver)}")
+        |> delete(~p"/api/v1/rooms/#{room.code}/leave")
+
+      assert response(conn, 204)
+      assert {:ok, updated} = RoomManager.get_room(room.code)
+      assert updated.status == :playing
+      assert updated.seats[position].status == :bot_substitute
+      assert Process.alive?(updated.seats[position].bot_pid)
+    end
+  end
+
   describe "create/2" do
     test "marks all-AI tables as single-player rooms", %{conn: conn} do
       user = AccountsFixtures.user_fixture()
