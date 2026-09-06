@@ -11,6 +11,7 @@ defmodule PidroServer.Games.RoomCleanupTest do
   use PidroServer.DataCase, async: false
 
   alias PidroServer.Games.{Lifecycle, RoomManager}
+  alias PidroServer.RoomManagerCase
 
   @user1 "00000000-0000-0000-0000-000000000001"
   @user2 "00000000-0000-0000-0000-000000000002"
@@ -58,11 +59,8 @@ defmodule PidroServer.Games.RoomCleanupTest do
     {:ok, room} = RoomManager.get_room(room_code)
     position = position_for(room, user_id)
 
-    send(GenServer.whereis(RoomManager), {:phase2_start, room_code, position})
-    {:ok, _} = RoomManager.get_room(room_code)
-
-    send(GenServer.whereis(RoomManager), {:phase3_gone, room_code, position})
-    {:ok, updated_room} = RoomManager.get_room(room_code)
+    {:ok, _} = RoomManagerCase.expire_phase(room_code, position, :phase2_start)
+    {:ok, updated_room} = RoomManagerCase.expire_phase(room_code, position, :phase3_gone)
 
     {updated_room, position}
   end
@@ -332,8 +330,7 @@ defmodule PidroServer.Games.RoomCleanupTest do
       {:ok, disc_room} = RoomManager.get_room(room.code)
       position = position_for(disc_room, @user2)
 
-      send(GenServer.whereis(RoomManager), {:phase2_start, room.code, position})
-      {:ok, phase2_room} = RoomManager.get_room(room.code)
+      {:ok, phase2_room} = RoomManagerCase.expire_phase(room.code, position, :phase2_start)
 
       bot_pid = phase2_room.seats[position].bot_pid
       assert bot_pid != nil

@@ -104,7 +104,8 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         host_id: %Schema{
           type: :string,
-          description: "User ID of the room host/creator",
+          nullable: true,
+          description: "User ID of the current room owner, or null when no human owner remains",
           example: "user123"
         },
         player_count: %Schema{

@@ -855,7 +855,11 @@ defmodule PidroServerWeb.Dev.GameListLive do
                       <% end %>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                      {room.host_id |> String.slice(0..7)}...
+                      <%= if room.host_id do %>
+                        {String.slice(room.host_id, 0..7)}...
+                      <% else %>
+                        No owner
+                      <% end %>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
                       {format_time(room.created_at)}
