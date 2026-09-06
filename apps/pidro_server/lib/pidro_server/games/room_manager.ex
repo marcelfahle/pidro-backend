@@ -3776,6 +3776,8 @@ defmodule PidroServer.Games.RoomManager do
         case disconnect_player(state, room, room_code, user_id) do
           {:ok, updated, next} ->
             broadcast_room(room_code, updated)
+            broadcast_lobby_event({:room_updated, updated})
+            broadcast_seat_lifecycle(updated)
             next
 
           _ ->

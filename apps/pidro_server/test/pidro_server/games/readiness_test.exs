@@ -105,9 +105,12 @@ defmodule PidroServer.Games.ReadinessTest do
       {:ok, initial} = RoomManager.readiness(room.code)
       {:ok, accepted} = ready(room, host, initial.ready_epoch)
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
       assert :channels_remaining = RoomManager.unregister_game_channel(room.code, host, self())
       assert {:ok, ^accepted} = RoomManager.readiness(room.code)
+      refute_receive {:room_updated, _}, 0
+      refute_receive {:seat_lifecycle, _}, 0
 
       if unquote(close) == :unregister do
         assert :last_channel_closed = RoomManager.unregister_game_channel(room.code, host, other)
@@ -119,8 +122,12 @@ defmodule PidroServer.Games.ReadinessTest do
       assert disconnected.ready_epoch == initial.ready_epoch + 1
       assert disconnected.ready_players == []
       assert disconnected.seats.north.status == :reconnecting
+      assert_receive {:room_updated, %{seats: %{north: %{status: :reconnecting}}}}
+      assert_receive {:seat_lifecycle, %{seats: %{north: %{status: :reconnecting}}}}
       assert :not_registered = RoomManager.unregister_game_channel(room.code, host, other)
       assert {:ok, ^disconnected} = RoomManager.readiness(room.code)
+      refute_receive {:room_updated, _}, 0
+      refute_receive {:seat_lifecycle, _}, 0
 
       assert {:ok, _} = RoomManager.handle_player_reconnect(room.code, host)
       assert_receive {:readiness_updated, reconnected}
