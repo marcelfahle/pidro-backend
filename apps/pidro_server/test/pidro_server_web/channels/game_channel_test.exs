@@ -21,7 +21,9 @@ defmodule PidroServerWeb.GameChannelTest do
 
   @moduletag :channel
 
-  setup do
+  setup tags do
+    if tags[:stable_turn_timer], do: slow_turn_timers()
+
     # Trap exits to handle channel shutdowns gracefully
     Process.flag(:trap_exit, true)
 
@@ -506,6 +508,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert reason == "room not found"
     end
 
+    @tag stable_turn_timer: true
     test "join reply includes the active turn timer hydration", %{
       user1: user,
       room_code: room_code,
@@ -529,6 +532,35 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "presence tracking" do
+    test "joined channels receive each broadcast and engine event once", context do
+      {:ok, _, joined} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      assert_push "presence_state", _, 1000
+      :sys.get_state(joined.channel_pid)
+      marker = System.unique_integer([:positive])
+
+      PidroServerWeb.Endpoint.broadcast!("game:#{context.room_code}", "player_ready", %{
+        probe: marker
+      })
+
+      assert_push "player_ready", %{probe: ^marker}, 1000
+      refute_push "player_ready", %{probe: ^marker}, 100
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{context.room_code}",
+        {:turn_timer_cancelled, %{timer_id: marker}}
+      )
+
+      assert_push "turn_timer_cancelled", %{timer_id: ^marker}, 1000
+      refute_push "turn_timer_cancelled", %{timer_id: ^marker}, 100
+    end
+
     test "tracks presence when user joins", %{
       user1: user,
       room_code: room_code,

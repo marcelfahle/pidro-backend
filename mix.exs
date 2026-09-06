@@ -36,7 +36,7 @@ defmodule PidroBackend.MixProject do
         "hex.audit",
         "format --check-formatted",
         "compile --warnings-as-errors",
-        "test",
+        "test --raise",
         &credo_diff/1,
         "dialyzer"
       ]

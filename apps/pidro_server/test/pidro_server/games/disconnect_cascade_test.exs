@@ -570,6 +570,10 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
         if unquote(transition) == :reclaim do
           assert {:ok, _} = RoomManager.handle_player_reconnect(room.code, "user2")
         else
+          # A temporary replacement remains reserved until grace expires.
+          {:ok, permanent} = expire_phase(room.code, position, :phase3_gone)
+          assert permanent.seats[position].reserved_for == nil
+          assert permanent.seats[position].bot_pid == replacement
           assert {:ok, _} = RoomManager.open_seat(room.code, position, room.host_id)
         end
 

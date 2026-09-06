@@ -526,12 +526,18 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc false
   def register_spectator_channel(room_code, user_id, pid) do
-    GenServer.call(__MODULE__, {:register_spectator_channel, room_code, user_id, pid})
+    GenServer.call(
+      __MODULE__,
+      {:register_spectator_channel, String.upcase(room_code), user_id, pid}
+    )
   end
 
   @doc false
   def unregister_spectator_channel(room_code, user_id, pid) do
-    GenServer.call(__MODULE__, {:unregister_spectator_channel, room_code, user_id, pid})
+    GenServer.call(
+      __MODULE__,
+      {:unregister_spectator_channel, String.upcase(room_code), user_id, pid}
+    )
   end
 
   @doc """

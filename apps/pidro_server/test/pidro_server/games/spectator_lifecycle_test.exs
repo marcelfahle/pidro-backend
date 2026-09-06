@@ -43,6 +43,20 @@ defmodule PidroServer.Games.SpectatorLifecycleTest do
     assert timer(room.code) == nil
   end
 
+  test "spectator channel registration normalizes room codes", %{room: room} do
+    {:ok, _} = RoomManager.join_spectator_room(room.code, "watcher")
+    lowercase = String.downcase(room.code)
+    assert :ok = RoomManager.register_spectator_channel(lowercase, "watcher", self())
+    assert timer(room.code) == nil
+
+    assert :last_channel_closed =
+             RoomManager.unregister_spectator_channel(lowercase, "watcher", self())
+
+    assert is_reference(timer(room.code))
+    expire(room.code, timer(room.code))
+    refute RoomManager.is_spectator?(room.code, "watcher")
+  end
+
   test "never attached and killed watchers release capacity after fenced grace expiry", %{
     room: room
   } do

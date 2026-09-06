@@ -674,6 +674,11 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   def handle_info(:after_join, socket) do
+    # Phoenix has now installed its channel subscription. Remove only the
+    # temporary plain subscription used to queue updates during join reads;
+    # unsubscribing the whole topic would also remove Phoenix's fastlane entry.
+    :ok = Phoenix.PubSub.unsubscribe_match(socket.pubsub_server, socket.topic, nil)
+
     user_id = socket.assigns.user_id
     role = socket.assigns.role
 
