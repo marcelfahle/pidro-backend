@@ -973,6 +973,13 @@ defmodule PidroServer.Games.RoomManager do
     )
   end
 
+  @doc "Applies an action only for the currently tracked substitute controller."
+  @spec apply_substitute_action(String.t(), Positions.position(), term()) ::
+          {:ok, map()} | {:error, term()}
+  def apply_substitute_action(room_code, position, action) do
+    GenServer.call(__MODULE__, {:apply_substitute_action, room_code, position, action})
+  end
+
   if Mix.env() == :test do
     def set_last_activity_for_test(room_code, datetime) do
       GenServer.call(__MODULE__, {:set_last_activity_for_test, room_code, datetime})
@@ -1412,6 +1419,28 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:apply_substitute_action, room_code, position, action}, {caller, _}, state) do
+    result =
+      with {:ok, %Room{status: :playing} = room} <- fetch_room(state, room_code),
+           %Seat{status: :bot_substitute, occupant_type: :bot, bot_pid: ^caller} <-
+             Map.get(room.seats, position) do
+        # Keep admission and engine application serialized with seat transitions.
+        # Never retry an ambiguous engine timeout: its action may have committed.
+        try do
+          GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
+        catch
+          :exit, reason ->
+            Logger.error("Substitute action failed in room #{room_code}: #{inspect(reason)}")
+            {:error, :game_unavailable}
+        end
+      else
+        _ -> {:error, :seat_not_controlled}
+      end
+
+    {:reply, result, state}
+  end
+
+  @impl true
   def handle_call({:update_room_status, room_code, new_status}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
@@ -1769,7 +1798,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_playing(room),
          :ok <- ensure_seat_vacant(room, position) do
       # Spawn a new substitute bot for this position
-      {:ok, bot_pid} = SubstituteBot.start(room_code, position)
+      {:ok, bot_pid} = start_substitute_bot(room_code, position)
 
       seat = Map.get(room.seats, position)
 
@@ -1940,7 +1969,7 @@ defmodule PidroServer.Games.RoomManager do
           {:ok, grace_seat} = Seat.start_grace(seat, grace_expires_at)
 
           # Spawn substitute bot to play moves for the disconnected player
-          {:ok, bot_pid} = SubstituteBot.start(room_code, position)
+          {:ok, bot_pid} = start_substitute_bot(room_code, position)
           {:ok, bot_seat} = Seat.substitute_bot(grace_seat, bot_pid)
 
           # Schedule Phase 3 (gone/permanent) timer
@@ -2253,7 +2282,21 @@ defmodule PidroServer.Games.RoomManager do
   def handle_info({:DOWN, ref, :process, pid, _reason}, %State{} = state) do
     case Map.pop(state.channel_monitors, ref) do
       {nil, _} ->
-        {:noreply, state}
+        rooms =
+          Map.new(state.rooms, fn {code, room} ->
+            seats =
+              Map.new(room.seats, fn {position, seat} ->
+                if seat.bot_pid == pid do
+                  {position, recover_substitute_bot(room, seat, code)}
+                else
+                  {position, seat}
+                end
+              end)
+
+            {code, %{room | seats: seats}}
+          end)
+
+        {:noreply, %{state | rooms: rooms}}
 
       {{room_code, user_id, ^pid}, channel_monitors} ->
         key = {room_code, user_id}
@@ -2944,7 +2987,7 @@ defmodule PidroServer.Games.RoomManager do
     if is_pid(seat.bot_pid) and Process.alive?(seat.bot_pid) do
       {:ok, seat.bot_pid}
     else
-      SubstituteBot.start(room_code, seat.position)
+      start_substitute_bot(room_code, seat.position)
     end
   catch
     :exit, reason -> {:error, reason}
@@ -3387,16 +3430,42 @@ defmodule PidroServer.Games.RoomManager do
     |> check_missing_game_process(room_code)
   end
 
-  # Auto-fix: clean up dead bot_pid references in seats
+  # RoomManager is the sole restart authority for replacement controllers.
+  # A delayed DOWN after reclaim/open or another recovery cannot resurrect a seat.
+  defp start_substitute_bot(room_code, position) do
+    with {:ok, pid} <- SubstituteBot.start(room_code, position) do
+      Process.monitor(pid)
+      {:ok, pid}
+    end
+  catch
+    :exit, reason -> {:error, reason}
+  end
+
+  defp recover_substitute_bot(
+         %Room{status: :playing},
+         %Seat{occupant_type: :bot, status: :bot_substitute} = seat,
+         room_code
+       ) do
+    case start_substitute_bot(room_code, seat.position) do
+      {:ok, pid} ->
+        Logger.info("Recovered substitute bot in room #{room_code} at #{seat.position}")
+        %{seat | bot_pid: pid}
+
+      {:error, reason} ->
+        Logger.error("Substitute bot recovery failed in #{room_code}: #{inspect(reason)}")
+        %{seat | bot_pid: nil}
+    end
+  end
+
+  defp recover_substitute_bot(_room, seat, _room_code), do: %{seat | bot_pid: nil}
+
   defp check_dead_bot_pids(%Room{seats: seats} = room, room_code) do
     updated_seats =
       Map.new(seats, fn {pos, seat} ->
-        if seat.bot_pid && !Process.alive?(seat.bot_pid) do
-          Logger.warning(
-            "Health check: dead bot_pid at #{pos} in room #{room_code}, clearing reference"
-          )
-
-          {pos, %{seat | bot_pid: nil}}
+        if (seat.bot_pid && !Process.alive?(seat.bot_pid)) ||
+             (seat.occupant_type == :bot && seat.status == :bot_substitute &&
+                is_nil(seat.bot_pid) && room.status == :playing) do
+          {pos, recover_substitute_bot(room, seat, room_code)}
         else
           {pos, seat}
         end

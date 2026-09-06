@@ -7,11 +7,19 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   game PubSub updates, detects when it's the bot's turn, and plays moves
   using the random strategy.
 
-  Started under `BotSupervisor` via `start/2`. Stopped by calling
-  `GenServer.stop/1` or `DynamicSupervisor.terminate_child/2`.
+  RoomManager starts and monitors these temporary children under BotSupervisor.
+  The seat's bot_pid is the sole action authority; only RoomManager replaces it
+  after a crash. Reclaim/open/finish terminate the child via
+  `DynamicSupervisor.terminate_child/2`, which also stops a bot waiting on an
+  action reply from RoomManager without a synchronous-stop deadlock.
+
+  Recovery reads the current engine state and schedules at most one pending
+  move. Shared-topic lifecycle notifications do not alter that pending move.
   """
 
-  use GenServer
+  # RoomManager owns recovery and the authoritative seat PID. An automatic
+  # supervisor restart would create an untracked controller.
+  use GenServer, restart: :temporary
   require Logger
 
   alias PidroServer.Games.Bots.BotBrain
@@ -107,7 +115,12 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
   @impl true
   def handle_info(:make_move, state) do
-    BotBrain.execute_move(state, "SubstituteBot")
+    BotBrain.execute_move(
+      state,
+      "SubstituteBot",
+      &PidroServer.Games.RoomManager.apply_substitute_action/3
+    )
+
     {:noreply, %{state | move_scheduled?: false}}
   end
 
@@ -134,6 +147,13 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   def handle_info({:substitute_joined, _}, state), do: {:noreply, state}
   @impl true
   def handle_info({:seat_lifecycle, _}, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info({:readiness_updated, _}, state), do: {:noreply, state}
+
+  # This is a shared topic, not a private bot protocol.
+  @impl true
+  def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do
