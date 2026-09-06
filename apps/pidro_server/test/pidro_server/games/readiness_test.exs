@@ -249,15 +249,23 @@ defmodule PidroServer.Games.ReadinessTest do
     assert {:ok, _} = GameSupervisor.get_game(room.code)
   end
 
-  test "practice bots count as ready but a bot-like human ID still needs a channel confirmation" do
+  test "practice bots survive waiting-room events but a bot-like human ID still needs confirmation" do
     {:ok, room} = RoomManager.create_room("bot_human", %{})
 
     for position <- [:east, :south, :west] do
-      start_supervised!(
-        {PidroServer.Games.Bots.BotPlayer,
-         room_code: room.code, position: position, paused?: true},
-        id: position
-      )
+      pid =
+        start_supervised!(
+          {PidroServer.Games.Bots.BotPlayer,
+           room_code: room.code, position: position, paused?: true},
+          id: position
+        )
+
+      before = :sys.get_state(pid)
+
+      for event <- [:invite_redeemed, :seat_moved, :kicked] do
+        send(pid, {event, %{user_id: "human", position: :north}})
+        assert :sys.get_state(pid) == before
+      end
     end
 
     {:ok, snapshot} = RoomManager.readiness(room.code)
