@@ -30,10 +30,10 @@ defmodule PidroServerWeb.InvitePageControllerTest do
       conn = get(conn, ~p"/j/#{invite.code}")
       document = conn |> html_response(200) |> LazyHTML.from_document()
 
-      assert LazyHTML.text(LazyHTML.query(document, "h1")) =~ "Marcel & friends"
+      assert LazyHTML.text(LazyHTML.query(document, "h1")) =~ host.username
       assert LazyHTML.text(LazyHTML.query(document, "[data-seat-count]")) =~ "1 of 4"
       assert attribute(document, "link[rel=canonical]", "href") == canonical(invite.code)
-      assert attribute(document, "meta[property='og:title']", "content") =~ "Marcel & friends"
+      assert attribute(document, "meta[property='og:title']", "content") =~ host.username
       assert attribute(document, "meta[property='og:url']", "content") == canonical(invite.code)
       assert attribute(document, "meta[property='og:image']", "content") =~ "/images/invite/"
       assert attribute(document, "meta[name=apple-itunes-app]", "content") =~ "app-id=1137091987"

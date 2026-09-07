@@ -1484,17 +1484,25 @@ defmodule PidroServer.Games.RoomManagerTest do
       end)
     end
 
-    test "broadcasts invite_redeemed with the display name on game:<code>" do
+    test "broadcasts invite_redeemed with distinct account names on game:<code>" do
       {room, _ids} = RoomFixtures.waiting_room_fixture()
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room.code}")
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
       assert {:ok, _room, :east, true} =
-               RoomManager.claim_seat(room.code, room.id, "guest1", display_name: "Ada")
+               RoomManager.claim_seat(room.code, room.id, "guest1",
+                 username: "ada_123",
+                 display_name: "Ada"
+               )
 
       assert_receive {:invite_redeemed,
-                      %{position: :east, user_id: "guest1", display_name: "Ada"}},
+                      %{
+                        position: :east,
+                        user_id: "guest1",
+                        username: "ada_123",
+                        display_name: "Ada"
+                      }},
                      100
 
       assert_receive {:room_update, %{positions: %{east: "guest1"}}}, 100

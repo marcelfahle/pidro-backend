@@ -13,9 +13,12 @@ defmodule PidroServerWeb.GameChannelTest do
 
   use PidroServerWeb.ChannelCase, async: false
   import Phoenix.ChannelTest, except: [subscribe_and_join: 4]
+  import Ecto.Query, only: [from: 2]
 
   alias PidroServer.Accounts
+  alias PidroServer.Accounts.UserAvatar
   alias PidroServer.Games.{GameAdapter, RoomManager}
+  alias PidroServer.Repo
   alias PidroServerWeb.GameChannel
   alias PidroServerWeb.Serializers.GameStateSerializer
 
@@ -34,6 +37,7 @@ defmodule PidroServerWeb.GameChannelTest do
       Enum.map(1..4, fn i ->
         %{
           username: "player#{i}",
+          display_name: "Shared public name",
           email: "player#{i}@test.com",
           password: "password123"
         }
@@ -42,6 +46,19 @@ defmodule PidroServerWeb.GameChannelTest do
       end)
 
     [user1, user2, user3, user4] = users
+
+    avatar_urls =
+      users
+      |> Enum.with_index(1)
+      |> Map.new(fn {user, index} ->
+        version = String.duplicate(Integer.to_string(index), 64)
+
+        %UserAvatar{}
+        |> UserAvatar.changeset(%{user_id: user.id, image: <<index>>, version: version})
+        |> Repo.insert!()
+
+        {user.id, "#{PidroServerWeb.Endpoint.url()}/api/v1/users/#{user.id}/avatar/#{version}"}
+      end)
 
     # Create a room with 4 players
     {:ok, room} = RoomManager.create_room(user1.id, %{name: "Test Game"})
@@ -68,6 +85,7 @@ defmodule PidroServerWeb.GameChannelTest do
       user4: user4,
       room_code: room_code,
       room: room,
+      avatar_urls: avatar_urls,
       sockets: sockets
     }
   end
@@ -137,6 +155,12 @@ defmodule PidroServerWeb.GameChannelTest do
       assert snapshot.seats.north.status == :normal
       assert snapshot.seats.north.player_id == context.user1.id
       assert snapshot.seats.north.username == context.user1.username
+      assert snapshot.seats.north.display_name == context.user1.display_name
+      assert snapshot.seats.north.avatar_url == context.avatar_urls[context.user1.id]
+      assert snapshot.seats.east.username == context.user2.username
+      assert snapshot.seats.east.display_name == context.user2.display_name
+      assert snapshot.seats.east.avatar_url == context.avatar_urls[context.user2.id]
+      refute snapshot.seats.north.avatar_url == snapshot.seats.east.avatar_url
 
       ref = push(socket, "get_seat_lifecycle", %{})
       assert_reply ref, :ok, %{seat_lifecycle: ^snapshot}
@@ -163,6 +187,8 @@ defmodule PidroServerWeb.GameChannelTest do
       assert departed.seats.east.status == :permanent_bot
       assert departed.seats.east.player_id == nil
       assert departed.seats.east.username == "Bot"
+      assert departed.seats.east.display_name == "Bot"
+      assert departed.seats.east.avatar_url == nil
       assert decision.player_name == context.user2.username
       assert is_binary(decision.id)
 
@@ -183,12 +209,57 @@ defmodule PidroServerWeb.GameChannelTest do
 
       assert_reply valid_ref, :ok, %{seat_lifecycle: opened}
       assert opened.revision > departed.revision
-      assert opened.seats.east == %{status: :vacant, player_id: nil, username: nil, decision: nil}
+
+      assert opened.seats.east == %{
+               status: :vacant,
+               player_id: nil,
+               username: nil,
+               display_name: nil,
+               avatar_url: nil,
+               decision: nil
+             }
+
+      assert {:ok, _room, :east} =
+               RoomManager.join_as_substitute(context.room_code, context.user2.id)
+
+      assert_push "seat_lifecycle", rejoined
+      assert rejoined.seats.east.player_id == context.user2.id
+      assert rejoined.seats.east.username == context.user2.username
+      assert rejoined.seats.east.avatar_url == context.avatar_urls[context.user2.id]
+
+      assert :ok = RoomManager.leave_room(context.user2.id)
+      assert_push "seat_lifecycle", %{seats: %{east: %{player_id: nil}}} = left_again
+      assert left_again.seats.east.avatar_url == nil
 
       assert :ok = RoomManager.leave_room(context.user1.id)
       {:ok, promoted} = RoomManager.get_seat_lifecycle(context.room_code)
       assert promoted.owner_id == context.user4.id
       assert promoted.seats.north.decision.player_name == context.user1.username
+    end
+
+    test "uses stable usernames and IDs while returning display names unchanged", context do
+      variants = [nil, "", "Kettu 🦊", "Shared public name"]
+
+      Enum.zip([context.user1, context.user2, context.user3, context.user4], variants)
+      |> Enum.each(fn {user, display_name} ->
+        from(u in Accounts.User, where: u.id == ^user.id)
+        |> PidroServer.Repo.update_all(set: [display_name: display_name])
+      end)
+
+      {:ok, snapshot} = RoomManager.get_seat_lifecycle(context.room_code)
+
+      Enum.zip(
+        [:north, :east, :south, :west],
+        [context.user1, context.user2, context.user3, context.user4]
+      )
+      |> Enum.zip(variants)
+      |> Enum.each(fn {{position, user}, display_name} ->
+        seat = snapshot.seats[position]
+        assert seat.player_id == user.id
+        assert seat.username == user.username
+        assert seat.display_name == display_name
+        assert seat.avatar_url == context.avatar_urls[user.id]
+      end)
     end
   end
 
@@ -1306,7 +1377,7 @@ defmodule PidroServerWeb.GameChannelTest do
       %{host: host, ben: ben, carl: carl, table: table}
     end
 
-    test "pushes invite_redeemed with the guest's display name after a claim (AE2)", %{
+    test "pushes invite_redeemed with the guest's account names after a claim (AE2)", %{
       host: host,
       table: table
     } do
@@ -1317,12 +1388,20 @@ defmodule PidroServerWeb.GameChannelTest do
       assert {:ok, _room, :south, true} =
                RoomManager.claim_seat(table.code, table.id, anna.id,
                  hint: :south,
+                 username: anna.username,
                  display_name: anna.display_name
                )
 
       assert_push "invite_redeemed",
-                  %{position: :south, user_id: ^anna_id, display_name: "Anna"},
+                  %{
+                    position: :south,
+                    user_id: ^anna_id,
+                    username: anna_username,
+                    display_name: "Anna"
+                  },
                   1000
+
+      assert anna_username == anna.username
     end
 
     test "a kicked player's channel pushes kicked and stops while the seat stays vacant (AE11)",

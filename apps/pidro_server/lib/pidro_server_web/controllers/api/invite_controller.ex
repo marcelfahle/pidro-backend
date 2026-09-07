@@ -317,7 +317,8 @@ defmodule PidroServerWeb.API.InviteController do
     RoomManager.claim_seat(invite.room_code, invite.room_id, user.id,
       hint: Map.get(@hints, invite.seat_hint),
       position: position,
-      display_name: user.display_name || user.username
+      username: user.username,
+      display_name: user.display_name
     )
   end
 

@@ -760,7 +760,8 @@ defmodule PidroServer.Games.RoomManager do
     the first open seat is used and `hint_honored` is `false`
   - `:position` - an explicit position chosen by the caller; it overrides the
     hint and answers `{:error, {:seat_taken, next_open}}` when taken
-  - `:display_name` - carried on the `invite_redeemed` broadcast
+  - `:username` and `:display_name` - account names carried unchanged on the
+    `invite_redeemed` broadcast
 
   ## Returns
 
@@ -776,12 +777,17 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :room_full}` / `{:error, :invalid_position}` - from `Positions.assign/3`
 
   Every successful claim broadcasts
-  `{:invite_redeemed, %{position, user_id, display_name}}` on `game:<room_code>`.
+  `{:invite_redeemed, %{position, user_id, username, display_name}}` on
+  `game:<room_code>`.
 
   ## Examples
 
       {:ok, room, :south, true} =
-        RoomManager.claim_seat("A1B2", room.id, "user456", hint: :south, display_name: "Ada")
+        RoomManager.claim_seat("A1B2", room.id, "user456",
+          hint: :south,
+          username: "ada_123",
+          display_name: "Ada"
+        )
   """
   @spec claim_seat(String.t(), Ecto.UUID.t(), String.t(), keyword() | map()) ::
           {:ok, Room.t(), Positions.position(), boolean()}
@@ -795,7 +801,7 @@ defmodule PidroServer.Games.RoomManager do
              | :invalid_position
              | {:seat_taken, [Positions.position()]}}
   def claim_seat(room_code, room_id, user_id, opts \\ []) do
-    claim = opts |> Map.new() |> Map.take([:hint, :position, :display_name])
+    claim = opts |> Map.new() |> Map.take([:hint, :position, :username, :display_name])
 
     GenServer.call(
       __MODULE__,
@@ -2477,7 +2483,12 @@ defmodule PidroServer.Games.RoomManager do
           PidroServer.PubSub,
           "game:#{room_code}",
           {:invite_redeemed,
-           %{position: position, user_id: user_id, display_name: Map.get(claim, :display_name)}}
+           %{
+             position: position,
+             user_id: user_id,
+             username: Map.get(claim, :username),
+             display_name: Map.get(claim, :display_name)
+           }}
         )
 
         {:reply, {:ok, final_room, position, hint_honored},
