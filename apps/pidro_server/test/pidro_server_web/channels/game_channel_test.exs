@@ -337,6 +337,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
       assert_reply valid_ref, :ok, %{seat_lifecycle: opened}
       assert opened.revision > departed.revision
+      assert_push "seat_lifecycle", ^opened
 
       assert opened.seats.east == %{
                status: :vacant,
@@ -350,7 +351,8 @@ defmodule PidroServerWeb.GameChannelTest do
       assert {:ok, _room, :east} =
                RoomManager.join_as_substitute(context.room_code, context.user2.id)
 
-      assert_push "seat_lifecycle", rejoined
+      returning_id = context.user2.id
+      assert_push "seat_lifecycle", %{seats: %{east: %{player_id: ^returning_id}}} = rejoined
       assert rejoined.seats.east.player_id == context.user2.id
       assert rejoined.seats.east.username == context.user2.username
       assert rejoined.seats.east.avatar_url == context.avatar_urls[context.user2.id]
