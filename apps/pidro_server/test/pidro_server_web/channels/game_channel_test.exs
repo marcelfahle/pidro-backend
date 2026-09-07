@@ -266,6 +266,39 @@ defmodule PidroServerWeb.GameChannelTest do
       end
     end
 
+    test "avatar edits and removal publish revised identities to game observers", context do
+      {:ok, reply, socket} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+      version = String.duplicate("a", 64)
+
+      from(a in UserAvatar, where: a.user_id == ^context.user2.id)
+      |> Repo.update_all(set: [version: version])
+
+      RoomManager.identity_changed(context.user2.id)
+      assert_receive {:room_updated, _}
+      assert_push "seat_lifecycle", updated
+      assert updated.revision > reply.seat_lifecycle.revision
+      assert updated.seats.east.player_id == context.user2.id
+      assert updated.seats.east.username == context.user2.username
+      assert updated.seats.east.avatar_url == Accounts.Avatars.url(version, context.user2.id)
+
+      Accounts.Avatars.delete(context.user2.id)
+      assert_receive {:room_updated, _}
+      assert_push "seat_lifecycle", removed
+      assert removed.revision > updated.revision
+      assert removed.seats.east.avatar_url == nil
+      assert removed.seats.north.avatar_url == context.avatar_urls[context.user1.id]
+
+      ref = push(socket, "get_seat_lifecycle", %{})
+      assert_reply ref, :ok, %{seat_lifecycle: ^removed}
+    end
+
     test "join and reconciliation return the authoritative four-seat snapshot", context do
       {:ok, join_reply, socket} =
         subscribe_and_join(

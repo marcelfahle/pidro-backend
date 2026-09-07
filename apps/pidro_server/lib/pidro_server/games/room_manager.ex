@@ -1967,12 +1967,18 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_info({:identity_changed, user_id}, %State{} = state) do
-    state.rooms
-    |> Map.values()
-    |> Enum.filter(&(user_id in Positions.player_ids(&1)))
-    |> Enum.each(&broadcast_lobby_event({:room_updated, &1}))
+    updated_state =
+      state.rooms
+      |> Map.values()
+      |> Enum.filter(&(user_id in Positions.player_ids(&1)))
+      |> Enum.reduce(state, fn room, acc ->
+        updated_room = bump_seat_lifecycle_revision(room)
+        broadcast_lobby_event({:room_updated, updated_room})
+        broadcast_seat_lifecycle(updated_room)
+        put_room(acc, updated_room)
+      end)
 
-    {:noreply, state}
+    {:noreply, updated_state}
   end
 
   def handle_info(:cleanup_abandoned_rooms, state) do
