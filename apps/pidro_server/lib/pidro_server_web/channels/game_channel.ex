@@ -110,17 +110,6 @@ defmodule PidroServerWeb.GameChannel do
         :player ->
           join_player(room_code, user_id, socket)
 
-        :substitute ->
-          # Stranger joining a :playing room with a vacant seat
-          case RoomManager.join_as_substitute(room_code, user_id) do
-            {:ok, _updated_room, _position} ->
-              proceed_with_join(room_code, user_id, socket, :new, :player)
-
-            {:error, reason} ->
-              Logger.warning("Substitute join failed for #{user_id}: #{inspect(reason)}")
-              {:error, %{reason: "substitute join failed: #{format_error(reason)}"}}
-          end
-
         :spectator ->
           # Spectators join directly without reconnection logic
           proceed_with_join(room_code, user_id, socket, :new, :spectator)
@@ -199,10 +188,9 @@ defmodule PidroServerWeb.GameChannel do
 
   # Extract the common join logic into a helper function
   defp proceed_with_join(room_code, user_id, socket, join_type, role) do
-    # Subscribe before either room read. Derive the socket position from the
+    # Already subscribed before join's first room read. Derive the socket position from the
     # same authoritative roster returned to the client, never an earlier room.
-    with :ok <- GameAdapter.subscribe(room_code),
-         {:ok, room} <- RoomManager.get_room(room_code),
+    with {:ok, room} <- RoomManager.get_room(room_code),
          true <- user_authorized?(user_id, room, role),
          {:ok, seat_lifecycle} <- RoomManager.get_seat_lifecycle(room_code),
          {:ok, readiness} <- RoomManager.readiness(room_code),
@@ -211,7 +199,7 @@ defmodule PidroServerWeb.GameChannel do
          :ok <-
            if(role == :player,
              do: RoomManager.register_game_channel(room_code, user_id, self()),
-             else: :ok
+             else: RoomManager.register_spectator_channel(room_code, user_id, self())
            ),
          {:ok, turn_timer} <- RoomManager.get_turn_timer(room_code) do
       # Try to get current game state (may not exist if game hasn't started)
@@ -249,6 +237,9 @@ defmodule PidroServerWeb.GameChannel do
         {:error, %{reason: "Room not found"}}
 
       false ->
+        {:error, %{reason: "Not authorized for this room"}}
+
+      {:error, :not_spectating} ->
         {:error, %{reason: "Not authorized for this room"}}
     end
   end
@@ -410,7 +401,8 @@ defmodule PidroServerWeb.GameChannel do
   def handle_in("ready", _params, socket),
     do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
 
-  def handle_in("open_seat", %{"position" => position} = params, socket) do
+  def handle_in(event, %{"position" => position} = params, socket)
+      when event in ["open_seat", "keep_bot"] do
     if socket.assigns[:role] == :spectator do
       {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
     else
@@ -418,12 +410,21 @@ defmodule PidroServerWeb.GameChannel do
         {:ok, pos_atom} ->
           decision_id = Map.get(params, "decision_id")
 
-          case RoomManager.open_seat(
-                 socket.assigns.room_code,
-                 pos_atom,
-                 socket.assigns.user_id,
-                 decision_id
-               ) do
+          result =
+            if is_binary(decision_id) and byte_size(decision_id) > 0 do
+              action = if event == "open_seat", do: :open_seat, else: :keep_bot
+
+              apply(RoomManager, action, [
+                socket.assigns.room_code,
+                pos_atom,
+                socket.assigns.user_id,
+                decision_id
+              ])
+            else
+              {:error, :stale_decision}
+            end
+
+          case result do
             {:ok, _room} ->
               case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
                 {:ok, snapshot} -> {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
@@ -690,6 +691,11 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   def handle_info(:after_join, socket) do
+    # Phoenix has now installed its channel subscription. Remove only the
+    # temporary plain subscription used to queue updates during join reads;
+    # unsubscribing the whole topic would also remove Phoenix's fastlane entry.
+    :ok = Phoenix.PubSub.unsubscribe_match(socket.pubsub_server, socket.topic, nil)
+
     user_id = socket.assigns.user_id
     role = socket.assigns.role
 
@@ -733,23 +739,9 @@ defmodule PidroServerWeb.GameChannel do
   custom broadcast messages like player_ready.
   """
   @impl true
-  def handle_out("presence_diff", msg, socket) do
-    push(socket, "presence_diff", msg)
-    {:noreply, socket}
-  end
-
-  def handle_out("player_ready", msg, socket) do
-    push(socket, "player_ready", msg)
-    {:noreply, socket}
-  end
-
-  def handle_out("player_reconnected", msg, socket) do
-    push(socket, "player_reconnected", msg)
-    {:noreply, socket}
-  end
-
-  def handle_out("player_disconnected", msg, socket) do
-    push(socket, "player_disconnected", msg)
+  # The early plain PubSub subscription also delivers non-intercepted events.
+  def handle_out(event, msg, socket) do
+    push(socket, event, msg)
     {:noreply, socket}
   end
 
@@ -763,7 +755,7 @@ defmodule PidroServerWeb.GameChannel do
 
   1. Extracts room_code, user_id, and role from socket assigns
   2. Notifies RoomManager about the disconnect (players only)
-  3. Spectators are removed immediately
+  3. The last spectator channel starts a bounded reconnect grace period
   4. Broadcasts disconnect event to other users in the channel
 
   ## Disconnect reasons:
@@ -808,14 +800,17 @@ defmodule PidroServerWeb.GameChannel do
             "Spectator #{user_id} disconnected from room #{room_code}: #{format_reason(reason)}"
           )
 
-          # Remove spectator immediately (no reconnection grace period)
-          RoomManager.leave_spectator(user_id)
+          # A stale transport must not remove a new watch or a promoted player.
+          case RoomManager.unregister_spectator_channel(room_code, user_id, self()) do
+            :last_channel_closed ->
+              broadcast_from(socket, "spectator_left", %{
+                user_id: user_id,
+                reason: format_reason(reason)
+              })
 
-          # Broadcast to other users in the game channel
-          broadcast_from(socket, "spectator_left", %{
-            user_id: user_id,
-            reason: format_reason(reason)
-          })
+            _ ->
+              :ok
+          end
       end
     end
 
@@ -889,7 +884,7 @@ defmodule PidroServerWeb.GameChannel do
   end
 
   @spec determine_user_role(RoomManager.Room.t(), String.t()) ::
-          :player | :substitute | :spectator | :unauthorized
+          :player | :spectator | :unauthorized
   defp determine_user_role(room, user_id) do
     alias PidroServer.Games.Room.Positions
     user_id_str = to_string(user_id)
@@ -902,11 +897,7 @@ defmodule PidroServerWeb.GameChannel do
       Seat.reserved_for_user?(room.seats, user_id_str) ->
         :player
 
-      # In a :playing room, vacant seats can only exist via Seat.open_for_substitute/1,
-      # which requires the owner to explicitly open them. Safe to grant :substitute role.
-      room.status == :playing && Seat.any_vacant?(room.seats) ->
-        :substitute
-
+      # Channel joins/rejoins attach to membership; only explicit REST Join claims seats.
       Enum.any?(room.spectator_ids, fn id -> to_string(id) == user_id_str end) ->
         :spectator
 

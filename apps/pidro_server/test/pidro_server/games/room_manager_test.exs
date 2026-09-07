@@ -1638,6 +1638,7 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
 
     test "a kicked id is refused on join, claim and a later substitute join" do
+      PidroServer.DataCase.setup_sandbox(%{async: false})
       {room, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
       {:ok, _room} = RoomManager.kick_player(room.code, host, :east)
 
@@ -1653,9 +1654,10 @@ defmodule PidroServer.Games.RoomManagerTest do
         match?({:ok, %{status: :playing}}, RoomManager.get_room(room.code))
       end)
 
-      # Open a seat for substitutes: disconnect, skip the hiccup timer, open.
+      # Open a seat for substitutes only after the reclaim reservation expires.
       :ok = RoomManager.handle_player_disconnect(room.code, "user5")
       PidroServer.RoomManagerCase.expire_phase(room.code, user5_position, :phase2_start)
+      PidroServer.RoomManagerCase.expire_phase(room.code, user5_position, :phase3_gone)
 
       wait_until(fn ->
         match?(

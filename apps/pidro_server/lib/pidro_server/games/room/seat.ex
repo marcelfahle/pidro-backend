@@ -165,6 +165,13 @@ defmodule PidroServer.Games.Room.Seat do
 
   @doc "Surrenders an occupied seat to a permanent bot after explicit departure."
   @spec surrender(t(), pid()) :: {:ok, t()} | {:error, :invalid_transition}
+  # Repeated departure cleanup is not a new generation, even after Keep Bot.
+  def surrender(
+        %__MODULE__{occupant_type: :bot, status: :bot_substitute, reserved_for: nil} = seat,
+        bot_pid
+      )
+      when is_pid(bot_pid), do: {:ok, %{seat | bot_pid: bot_pid}}
+
   def surrender(%__MODULE__{occupant_type: type} = seat, bot_pid)
       when type in [:human, :bot] and is_pid(bot_pid) do
     player_id = seat.user_id || seat.reserved_for || seat.decision_player_id
@@ -187,6 +194,23 @@ defmodule PidroServer.Games.Room.Seat do
 
   def surrender(%__MODULE__{}, _), do: {:error, :invalid_transition}
 
+  @doc "Consumes a departure decision without changing the bot's control of the seat."
+  @spec keep_bot(t(), String.t()) :: {:ok, t()} | {:error, :stale_decision}
+  def keep_bot(
+        %__MODULE__{
+          occupant_type: :bot,
+          status: :bot_substitute,
+          reserved_for: nil,
+          decision_id: id
+        } = seat,
+        id
+      )
+      when is_binary(id) and byte_size(id) > 0 do
+    {:ok, %{seat | decision_id: nil, decision_player_id: nil}}
+  end
+
+  def keep_bot(%__MODULE__{}, _), do: {:error, :stale_decision}
+
   @doc """
   Reclaims a seat for the original human. Restores the seat to `:connected`
   with occupant_type `:human`. Only succeeds if `user_id` matches the
@@ -201,7 +225,9 @@ defmodule PidroServer.Games.Room.Seat do
      %{
        seat
        | status: :connected,
-         disconnected_at: nil
+         disconnected_at: nil,
+         decision_id: nil,
+         decision_player_id: nil
      }}
   end
 
