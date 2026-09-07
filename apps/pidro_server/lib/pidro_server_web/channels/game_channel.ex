@@ -991,11 +991,13 @@ defmodule PidroServerWeb.GameChannel do
   defp stale_snapshot?(socket, snapshot) do
     instance_id = Map.get(snapshot, :game_instance_id)
     revision = Map.get(snapshot, :state_revision)
+    accepted_instance_id = socket.assigns[:game_instance_id]
 
     is_binary(instance_id) and is_integer(revision) and
-      socket.assigns[:game_instance_id] == instance_id and
-      is_integer(socket.assigns[:state_revision]) and
-      revision <= socket.assigns.state_revision
+      is_binary(accepted_instance_id) and
+      (instance_id != accepted_instance_id or
+         (is_integer(socket.assigns[:state_revision]) and
+            revision <= socket.assigns.state_revision))
   end
 
   defp assign_snapshot_cursor(socket, nil) do

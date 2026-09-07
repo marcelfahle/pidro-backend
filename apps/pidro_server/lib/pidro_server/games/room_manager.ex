@@ -152,7 +152,8 @@ defmodule PidroServer.Games.RoomManager do
             channel_monitors: %{reference() => {String.t(), any(), pid()}},
             spectator_monitors: %{reference() => {String.t(), any(), pid()}},
             spectator_timers: %{{String.t(), any()} => reference()},
-            game_snapshot_cursors: %{String.t() => {String.t(), non_neg_integer()}}
+            game_snapshot_cursors: %{String.t() => {String.t(), non_neg_integer()}},
+            active_game_instances: %{String.t() => String.t()}
           }
 
     defstruct rooms: %{},
@@ -163,7 +164,8 @@ defmodule PidroServer.Games.RoomManager do
               channel_monitors: %{},
               spectator_monitors: %{},
               spectator_timers: %{},
-              game_snapshot_cursors: %{}
+              game_snapshot_cursors: %{},
+              active_game_instances: %{}
   end
 
   ## Client API
@@ -3547,7 +3549,8 @@ defmodule PidroServer.Games.RoomManager do
             | rooms: new_rooms,
               player_rooms: new_player_rooms,
               spectator_rooms: new_spectator_rooms,
-              game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code)
+              game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code),
+              active_game_instances: Map.delete(state.active_game_instances, room_code)
           }
 
         broadcast_room(room_code, nil)
@@ -3839,6 +3842,7 @@ defmodule PidroServer.Games.RoomManager do
       new_state =
       %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
       |> subscribe_to_game_topic(room.code)
+      |> put_active_game_instance(room.code, pid)
 
     broadcast_room(room.code, updated_room)
     broadcast_readiness(updated_room)
@@ -3891,9 +3895,16 @@ defmodule PidroServer.Games.RoomManager do
 
   defp stale_game_snapshot?(state, room_code, game_instance_id, state_revision)
        when is_binary(game_instance_id) and is_integer(state_revision) do
-    case Map.get(state.game_snapshot_cursors, room_code) do
-      {^game_instance_id, accepted_revision} -> state_revision <= accepted_revision
-      _ -> false
+    case {Map.get(state.active_game_instances, room_code),
+          Map.get(state.game_snapshot_cursors, room_code)} do
+      {active_instance_id, _cursor} when active_instance_id != game_instance_id ->
+        true
+
+      {^game_instance_id, {^game_instance_id, accepted_revision}} ->
+        state_revision <= accepted_revision
+
+      _ ->
+        false
     end
   end
 
@@ -3909,6 +3920,16 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp put_game_snapshot_cursor(state, _room_code, _game_instance_id, _state_revision), do: state
+
+  defp put_active_game_instance(state, room_code, pid) do
+    instance_id = Pidro.Server.get_snapshot(pid).game_instance_id
+
+    %{
+      state
+      | active_game_instances: Map.put(state.active_game_instances, room_code, instance_id),
+        game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code)
+    }
+  end
 
   defp disconnect_player(%State{} = state, %Room{} = room, room_code, user_id) do
     if Positions.has_player?(room, user_id) do

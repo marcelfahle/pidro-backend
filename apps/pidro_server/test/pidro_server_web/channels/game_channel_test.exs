@@ -1014,6 +1014,35 @@ defmodule PidroServerWeb.GameChannelTest do
       refute_push "game_state", %{state_revision: _}, 100
     end
 
+    test "drops a queued snapshot from another game instance", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      socket = sockets[user.id]
+
+      {:ok, reply, _socket} =
+        subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
+
+      {:ok, state} = GameAdapter.get_state(room_code)
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "game:#{room_code}",
+        {:state_update, room_code,
+         %{
+           state: state,
+           transition_delay_ms: 0,
+           game_instance_id: "retired-game-instance",
+           state_revision: reply.state_revision + 100,
+           server_time_ms: 2,
+           presentation: %{dealer_selection: nil}
+         }}
+      )
+
+      refute_push "game_state", %{game_instance_id: "retired-game-instance"}, 100
+    end
+
     test "broadcasts state updates to all players", %{
       users: users,
       room_code: room_code,
