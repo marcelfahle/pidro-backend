@@ -299,6 +299,31 @@ defmodule PidroServerWeb.GameChannelTest do
       assert_reply ref, :ok, %{seat_lifecycle: ^removed}
     end
 
+    test "identity notifications refresh a departed player's pending decision", context do
+      {:ok, _, _socket} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      assert :ok = RoomManager.leave_room(context.user2.id)
+      assert_push "seat_lifecycle", %{seats: %{east: %{status: :permanent_bot}}} = departed
+      decision_id = departed.seats.east.decision.id
+      assert {:ok, _} = Accounts.Auth.update_user(context.user2, %{username: "renamed_player"})
+
+      RoomManager.identity_changed(context.user2.id)
+
+      assert_push "seat_lifecycle",
+                  %{seats: %{east: %{decision: %{player_name: "renamed_player"}}}} = updated
+
+      assert updated.revision > departed.revision
+      assert updated.seats.east.player_id == nil
+      assert updated.seats.east.avatar_url == nil
+      assert updated.seats.east.decision.id == decision_id
+      assert {:ok, ^updated} = RoomManager.get_seat_lifecycle(context.room_code)
+    end
+
     test "join and reconciliation return the authoritative four-seat snapshot", context do
       {:ok, join_reply, socket} =
         subscribe_and_join(

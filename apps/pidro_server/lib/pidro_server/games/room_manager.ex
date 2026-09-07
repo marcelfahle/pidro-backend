@@ -1970,7 +1970,10 @@ defmodule PidroServer.Games.RoomManager do
     updated_state =
       state.rooms
       |> Map.values()
-      |> Enum.filter(&(user_id in Positions.player_ids(&1)))
+      |> Enum.filter(fn room ->
+        user_id in Positions.player_ids(room) ||
+          Enum.any?(room.seats, fn {_position, seat} -> seat.decision_player_id == user_id end)
+      end)
       |> Enum.reduce(state, fn room, acc ->
         updated_room = bump_seat_lifecycle_revision(room)
         broadcast_lobby_event({:room_updated, updated_room})
