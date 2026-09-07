@@ -55,7 +55,7 @@ defmodule PidroServerWeb.InvitePreview do
   defp host_name(%Invite{host_user_id: host_user_id}) do
     case Auth.get_user(host_user_id) do
       nil -> nil
-      user -> user.display_name || user.username
+      user -> user.username
     end
   end
 

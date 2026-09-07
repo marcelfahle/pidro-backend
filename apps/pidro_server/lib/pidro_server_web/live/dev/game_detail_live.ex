@@ -2025,7 +2025,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   defp user_label(user) do
-    Map.get(user, :display_name) || Map.get(user, :username) || String.slice(user.id, 0..11)
+    Map.get(user, :username) || String.slice(user.id, 0..11)
   end
 
   # DEV-1106: Render bot position configuration

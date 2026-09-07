@@ -814,7 +814,8 @@ defmodule PidroServer.Games.RoomManager do
     the first open seat is used and `hint_honored` is `false`
   - `:position` - an explicit position chosen by the caller; it overrides the
     hint and answers `{:error, {:seat_taken, next_open}}` when taken
-  - `:display_name` - carried on the `invite_redeemed` broadcast
+  - `:username` and `:display_name` - account names carried unchanged on the
+    `invite_redeemed` broadcast
 
   ## Returns
 
@@ -830,12 +831,17 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :room_full}` / `{:error, :invalid_position}` - from `Positions.assign/3`
 
   Every successful claim broadcasts
-  `{:invite_redeemed, %{position, user_id, display_name}}` on `game:<room_code>`.
+  `{:invite_redeemed, %{position, user_id, username, display_name}}` on
+  `game:<room_code>`.
 
   ## Examples
 
       {:ok, room, :south, true} =
-        RoomManager.claim_seat("A1B2", room.id, "user456", hint: :south, display_name: "Ada")
+        RoomManager.claim_seat("A1B2", room.id, "user456",
+          hint: :south,
+          username: "ada_123",
+          display_name: "Ada"
+        )
   """
   @spec claim_seat(String.t(), Ecto.UUID.t(), String.t(), keyword() | map()) ::
           {:ok, Room.t(), Positions.position(), boolean()}
@@ -849,7 +855,7 @@ defmodule PidroServer.Games.RoomManager do
              | :invalid_position
              | {:seat_taken, [Positions.position()]}}
   def claim_seat(room_code, room_id, user_id, opts \\ []) do
-    claim = opts |> Map.new() |> Map.take([:hint, :position, :display_name])
+    claim = opts |> Map.new() |> Map.take([:hint, :position, :username, :display_name])
 
     GenServer.call(
       __MODULE__,
@@ -1961,12 +1967,21 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_info({:identity_changed, user_id}, %State{} = state) do
-    state.rooms
-    |> Map.values()
-    |> Enum.filter(&(user_id in Positions.player_ids(&1)))
-    |> Enum.each(&broadcast_lobby_event({:room_updated, &1}))
+    updated_state =
+      state.rooms
+      |> Map.values()
+      |> Enum.filter(fn room ->
+        user_id in Positions.player_ids(room) ||
+          Enum.any?(room.seats, fn {_position, seat} -> seat.decision_player_id == user_id end)
+      end)
+      |> Enum.reduce(state, fn room, acc ->
+        updated_room = bump_seat_lifecycle_revision(room)
+        broadcast_lobby_event({:room_updated, updated_room})
+        broadcast_seat_lifecycle(updated_room)
+        put_room(acc, updated_room)
+      end)
 
-    {:noreply, state}
+    {:noreply, updated_state}
   end
 
   def handle_info(:cleanup_abandoned_rooms, state) do
@@ -2643,7 +2658,12 @@ defmodule PidroServer.Games.RoomManager do
           PidroServer.PubSub,
           "game:#{room_code}",
           {:invite_redeemed,
-           %{position: position, user_id: user_id, display_name: Map.get(claim, :display_name)}}
+           %{
+             position: position,
+             user_id: user_id,
+             username: Map.get(claim, :username),
+             display_name: Map.get(claim, :display_name)
+           }}
         )
 
         {:reply, {:ok, final_room, position, hint_honored},

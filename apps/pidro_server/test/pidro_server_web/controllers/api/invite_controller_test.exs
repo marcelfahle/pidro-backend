@@ -224,7 +224,7 @@ defmodule PidroServerWeb.API.InviteControllerTest do
 
       assert preview["code"] == invite.code
       assert preview["state"] == "open"
-      assert preview["host"] == "Marcel"
+      assert preview["host"] == host.username
       assert preview["seats_taken"] == 1
       assert preview["seats_total"] == 4
       assert preview["seat_hint"] == "partner"

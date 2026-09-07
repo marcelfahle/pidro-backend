@@ -32,7 +32,7 @@ defmodule PidroServerWeb.GameChannel do
   * `"progression_summary"` - Per-player post-game "what changed" deltas (XP/level,
     achievements, and a rated tier move); only this socket's own slice (PID-52)
   * `"invite_redeemed"` - A guest claimed a seat through an invite:
-    `%{position: :south, user_id: id, display_name: "Anna"}`
+    `%{position: :south, user_id: id, username: "anna_123", display_name: "Anna"}`
   * `"seat_moved"` - The host moved a seat: `%{user_id: id, from: :east, to: :west}`;
     the moved player's own channel follows the seat
   * `"player_kicked"` - The host kicked a seat: `%{position: :east, user_id: id}`
@@ -631,12 +631,19 @@ defmodule PidroServerWeb.GameChannel do
 
   # Invite and host-control events broadcast by the RoomManager on the game topic.
   def handle_info(
-        {:invite_redeemed, %{position: position, user_id: user_id, display_name: display_name}},
+        {:invite_redeemed,
+         %{
+           position: position,
+           user_id: user_id,
+           username: username,
+           display_name: display_name
+         }},
         socket
       ) do
     push(socket, "invite_redeemed", %{
       position: position,
       user_id: user_id,
+      username: username,
       display_name: display_name
     })
 
