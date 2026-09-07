@@ -139,6 +139,21 @@ defmodule Pidro.Server do
   end
 
   @doc """
+  Applies an action and returns the previous state plus the atomically committed
+  server snapshot. This is used by real-time adapters that must publish phase
+  timing from the same commit as the game state.
+  """
+  @spec apply_action_with_snapshot(
+          GenServer.server(),
+          Types.position(),
+          Types.action(),
+          timeout()
+        ) :: {:ok, GameState.t(), map()} | {:error, term()}
+  def apply_action_with_snapshot(server, position, action, timeout \\ 5_000) do
+    GenServer.call(server, {:apply_action_with_snapshot, position, action}, timeout)
+  end
+
+  @doc """
   Gets the list of legal actions for a position.
 
   ## Parameters
@@ -181,6 +196,14 @@ defmodule Pidro.Server do
   @spec get_state(GenServer.server(), timeout()) :: GameState.t()
   def get_state(server, timeout \\ 5_000) do
     GenServer.call(server, :get_state, timeout)
+  end
+
+  @doc """
+  Gets an atomic game-state snapshot with server-owned presentation timing.
+  """
+  @spec get_snapshot(GenServer.server(), timeout()) :: map()
+  def get_snapshot(server, timeout \\ 5_000) do
+    GenServer.call(server, :get_snapshot, timeout)
   end
 
   @doc """
@@ -281,19 +304,80 @@ defmodule Pidro.Server do
     dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
     pubsub = Keyword.get(opts, :pubsub)
 
-    state = %{
-      game_state: initial_state,
-      game_id: game_id,
-      telemetry_enabled?: telemetry_enabled?,
-      dealer_selection_delay_ms: dealer_selection_delay_ms,
-      pubsub: pubsub
-    }
+    state =
+      %{
+        game_state: initial_state,
+        game_id: game_id,
+        telemetry_enabled?: telemetry_enabled?,
+        dealer_selection_delay_ms: dealer_selection_delay_ms,
+        pubsub: pubsub,
+        game_instance_id: Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false),
+        state_revision: 0,
+        dealer_selection_presentation: nil,
+        dealer_selection_timer_ref: nil,
+        dealer_selection_token: nil
+      }
+      |> maybe_schedule_dealer_selection_advance()
 
     {:ok, state}
   end
 
   @impl true
   def handle_call({:apply_action, position, action}, _from, state) do
+    apply_game_action(position, action, :state, state)
+  end
+
+  def handle_call({:apply_action_with_snapshot, position, action}, _from, state) do
+    apply_game_action(position, action, :snapshot, state)
+  end
+
+  @impl true
+  def handle_call({:legal_actions, position}, _from, state) do
+    actions = Engine.legal_actions(state.game_state, position)
+    {:reply, actions, state}
+  end
+
+  @impl true
+  def handle_call(:get_state, _from, state) do
+    {:reply, state.game_state, state}
+  end
+
+  @impl true
+  def handle_call(:get_snapshot, _from, state) do
+    {:reply, snapshot(state), state}
+  end
+
+  @impl true
+  def handle_call(:game_over?, _from, state) do
+    result = Engine.game_over?(state.game_state)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call(:winner, _from, state) do
+    result = Engine.winner(state.game_state)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call(:get_history, _from, state) do
+    events = state.game_state.events
+    {:reply, events, state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, state) do
+    new_state = replace_game_state(state, GS.new())
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call({:set_state, new_game_state}, _from, state) do
+    new_state = replace_game_state(state, new_game_state)
+    {:reply, :ok, new_state}
+  end
+
+  defp apply_game_action(position, action, reply_kind, state) do
     %{game_state: game_state, telemetry_enabled?: telemetry?} = state
 
     if telemetry? do
@@ -322,9 +406,19 @@ defmodule Pidro.Server do
           emit_redeal_telemetry(game_state, new_game_state, state)
         end
 
-        new_state = %{state | game_state: new_game_state}
-        maybe_schedule_dealer_selection_advance(new_game_state, state)
-        {:reply, {:ok, new_game_state}, new_state}
+        new_state =
+          state
+          |> Map.put(:game_state, new_game_state)
+          |> Map.update!(:state_revision, &(&1 + 1))
+          |> maybe_schedule_dealer_selection_advance()
+
+        reply =
+          case reply_kind do
+            :state -> {:ok, new_game_state}
+            :snapshot -> {:ok, game_state, snapshot(new_state)}
+          end
+
+        {:reply, reply, new_state}
 
       {:error, _reason} = error ->
         if telemetry? do
@@ -338,98 +432,102 @@ defmodule Pidro.Server do
         end
 
         {:reply, error, state}
-
-      {:error, _reason, _message} = error ->
-        if telemetry? do
-          duration = System.monotonic_time() - start_time
-
-          emit_telemetry(
-            :exception,
-            %{position: position, action: action, reason: error, duration: duration},
-            state
-          )
-        end
-
-        {:reply, error, state}
     end
   end
 
   @impl true
-  def handle_call({:legal_actions, position}, _from, state) do
-    actions = Engine.legal_actions(state.game_state, position)
-    {:reply, actions, state}
-  end
-
-  @impl true
-  def handle_call(:get_state, _from, state) do
-    {:reply, state.game_state, state}
-  end
-
-  @impl true
-  def handle_call(:game_over?, _from, state) do
-    result = Engine.game_over?(state.game_state)
-    {:reply, result, state}
-  end
-
-  @impl true
-  def handle_call(:winner, _from, state) do
-    result = Engine.winner(state.game_state)
-    {:reply, result, state}
-  end
-
-  @impl true
-  def handle_call(:get_history, _from, state) do
-    events = state.game_state.events
-    {:reply, events, state}
-  end
-
-  @impl true
-  def handle_call(:reset, _from, state) do
-    new_state = %{state | game_state: GS.new()}
-    {:reply, :ok, new_state}
-  end
-
-  @impl true
-  def handle_call({:set_state, new_game_state}, _from, state) do
-    new_state = %{state | game_state: new_game_state}
-    {:reply, :ok, new_state}
-  end
-
-  @impl true
-  def handle_info(:advance_from_dealer_selection, state) do
+  def handle_info(
+        {:advance_from_dealer_selection, token},
+        %{dealer_selection_token: token} = state
+      )
+      when not is_nil(token) do
     %{game_state: game_state} = state
 
     case Engine.advance_from_dealer_selection(game_state) do
       {:ok, new_game_state} ->
-        broadcast_state_change(state, new_game_state)
-        {:noreply, %{state | game_state: new_game_state}}
+        new_state =
+          state
+          |> Map.put(:game_state, new_game_state)
+          |> Map.update!(:state_revision, &(&1 + 1))
+          |> clear_dealer_selection_presentation()
+
+        broadcast_state_change(new_state)
+        {:noreply, new_state}
 
       {:error, _reason} ->
         # Already advanced (e.g., by a concurrent action) — ignore
-        {:noreply, state}
+        {:noreply, clear_dealer_selection_presentation(state)}
     end
   end
+
+  def handle_info({:advance_from_dealer_selection, _stale_token}, state), do: {:noreply, state}
 
   # Private Helpers
 
   defp maybe_schedule_dealer_selection_advance(
-         %{phase: :dealer_selection} = game_state,
-         %{dealer_selection_delay_ms: delay_ms}
+         %{
+           game_state: %{phase: :dealer_selection, dealer_selection_cuts: cuts},
+           dealer_selection_delay_ms: delay_ms
+         } = state
        )
-       when not is_nil(game_state.dealer_selection_cuts) do
-    Process.send_after(self(), :advance_from_dealer_selection, delay_ms)
+       when not is_nil(cuts) do
+    state = clear_dealer_selection_presentation(state)
+    token = make_ref()
+    started_at_ms = System.system_time(:millisecond)
+    timer_ref = Process.send_after(self(), {:advance_from_dealer_selection, token}, delay_ms)
+
+    %{
+      state
+      | dealer_selection_presentation: %{
+          started_at_ms: started_at_ms,
+          ends_at_ms: started_at_ms + delay_ms
+        },
+        dealer_selection_timer_ref: timer_ref,
+        dealer_selection_token: token
+    }
   end
 
-  defp maybe_schedule_dealer_selection_advance(_game_state, _server_state), do: :ok
+  defp maybe_schedule_dealer_selection_advance(state), do: state
 
-  defp broadcast_state_change(%{pubsub: nil}, _new_game_state), do: :ok
+  defp broadcast_state_change(%{pubsub: nil}), do: :ok
 
-  defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id}, new_game_state) do
+  defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id} = state) do
     apply(Phoenix.PubSub, :broadcast, [
       pubsub,
       "game:#{game_id}",
-      {:state_update, game_id, %{state: new_game_state, transition_delay_ms: 0}}
+      {:state_update, game_id, Map.put(snapshot(state), :transition_delay_ms, 0)}
     ])
+  end
+
+  defp snapshot(state) do
+    %{
+      game_instance_id: state.game_instance_id,
+      state_revision: state.state_revision,
+      server_time_ms: System.system_time(:millisecond),
+      state: state.game_state,
+      presentation: %{dealer_selection: state.dealer_selection_presentation}
+    }
+  end
+
+  defp replace_game_state(state, game_state) do
+    state
+    |> clear_dealer_selection_presentation()
+    |> Map.put(:game_state, game_state)
+    |> Map.update!(:state_revision, &(&1 + 1))
+    |> maybe_schedule_dealer_selection_advance()
+  end
+
+  defp clear_dealer_selection_presentation(state) do
+    if state.dealer_selection_timer_ref do
+      Process.cancel_timer(state.dealer_selection_timer_ref)
+    end
+
+    %{
+      state
+      | dealer_selection_presentation: nil,
+        dealer_selection_timer_ref: nil,
+        dealer_selection_token: nil
+    }
   end
 
   defp emit_telemetry(event_suffix, measurements, state) do

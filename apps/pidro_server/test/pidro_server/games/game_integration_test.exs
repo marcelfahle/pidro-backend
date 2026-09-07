@@ -79,10 +79,20 @@ defmodule PidroServer.Games.GameIntegrationTest do
       # Select-dealer can carry an animation delay before the next state. Match
       # this action's state, not a later zero-delay auto-advance broadcast.
       assert_receive {:state_update, ^room_code,
-                      %{state: ^new_state, transition_delay_ms: delay}},
+                      %{
+                        state: ^new_state,
+                        transition_delay_ms: delay,
+                        game_instance_id: instance_id,
+                        state_revision: 1,
+                        server_time_ms: server_time_ms,
+                        presentation: %{dealer_selection: presentation}
+                      }},
                      1000
 
       assert is_integer(delay) and delay >= 0
+      assert is_binary(instance_id)
+      assert is_integer(server_time_ms)
+      assert presentation.ends_at_ms >= presentation.started_at_ms
 
       # Cleanup
       GameAdapter.unsubscribe(room_code)

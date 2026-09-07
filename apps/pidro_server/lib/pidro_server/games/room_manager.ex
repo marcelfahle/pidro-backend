@@ -151,7 +151,8 @@ defmodule PidroServer.Games.RoomManager do
             channel_pids: %{{String.t(), any()} => MapSet.t(pid())},
             channel_monitors: %{reference() => {String.t(), any(), pid()}},
             spectator_monitors: %{reference() => {String.t(), any(), pid()}},
-            spectator_timers: %{{String.t(), any()} => reference()}
+            spectator_timers: %{{String.t(), any()} => reference()},
+            game_snapshot_cursors: %{String.t() => {String.t(), non_neg_integer()}}
           }
 
     defstruct rooms: %{},
@@ -161,7 +162,8 @@ defmodule PidroServer.Games.RoomManager do
               channel_pids: %{},
               channel_monitors: %{},
               spectator_monitors: %{},
-              spectator_timers: %{}
+              spectator_timers: %{},
+              game_snapshot_cursors: %{}
   end
 
   ## Client API
@@ -2258,19 +2260,25 @@ defmodule PidroServer.Games.RoomManager do
   @impl true
   def handle_info({:state_update, room_code, payload}, %State{} = state) do
     case {Map.get(state.rooms, room_code), normalize_state_update_payload(payload)} do
-      {%Room{} = room, {:ok, game_state, transition_delay_ms}} ->
-        room =
-          room
-          |> maybe_reset_timeout_counters_for_new_hand(game_state)
-          |> Map.put(:last_hand_number, Map.get(game_state, :hand_number))
+      {%Room{} = room, {:ok, game_state, transition_delay_ms, game_instance_id, state_revision}} ->
+        if stale_game_snapshot?(state, room_code, game_instance_id, state_revision) do
+          {:noreply, state}
+        else
+          state = put_game_snapshot_cursor(state, room_code, game_instance_id, state_revision)
 
-        updated_state = %{state | rooms: Map.put(state.rooms, room_code, room)}
+          room =
+            room
+            |> maybe_reset_timeout_counters_for_new_hand(game_state)
+            |> Map.put(:last_hand_number, Map.get(game_state, :hand_number))
 
-        {updated_room, updated_state} =
-          reconcile_turn_timer(room, room_code, game_state, transition_delay_ms, updated_state)
+          updated_state = %{state | rooms: Map.put(state.rooms, room_code, room)}
 
-        {:noreply,
-         %{updated_state | rooms: Map.put(updated_state.rooms, room_code, updated_room)}}
+          {updated_room, updated_state} =
+            reconcile_turn_timer(room, room_code, game_state, transition_delay_ms, updated_state)
+
+          {:noreply,
+           %{updated_state | rooms: Map.put(updated_state.rooms, room_code, updated_room)}}
+        end
 
       _ ->
         {:noreply, state}
@@ -3538,7 +3546,8 @@ defmodule PidroServer.Games.RoomManager do
             state
             | rooms: new_rooms,
               player_rooms: new_player_rooms,
-              spectator_rooms: new_spectator_rooms
+              spectator_rooms: new_spectator_rooms,
+              game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code)
           }
 
         broadcast_room(room_code, nil)
@@ -3842,12 +3851,12 @@ defmodule PidroServer.Games.RoomManager do
   @spec broadcast_initial_game_state(String.t(), pid()) :: :ok
   defp broadcast_initial_game_state(room_code, pid) do
     try do
-      game_state = Pidro.Server.get_state(pid)
+      snapshot = Pidro.Server.get_snapshot(pid)
 
       Phoenix.PubSub.broadcast(
         PidroServer.PubSub,
         "game:#{room_code}",
-        {:state_update, room_code, %{state: game_state, transition_delay_ms: 0}}
+        {:state_update, room_code, Map.put(snapshot, :transition_delay_ms, 0)}
       )
     rescue
       e ->
@@ -3859,23 +3868,47 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  defp normalize_state_update_payload(%{
-         state: game_state,
-         transition_delay_ms: transition_delay_ms
-       })
+  defp normalize_state_update_payload(
+         %{
+           state: game_state,
+           transition_delay_ms: transition_delay_ms
+         } = payload
+       )
        when is_map(game_state) and is_integer(transition_delay_ms) do
-    {:ok, game_state, transition_delay_ms}
+    {:ok, game_state, transition_delay_ms, Map.get(payload, :game_instance_id),
+     Map.get(payload, :state_revision)}
   end
 
   defp normalize_state_update_payload(%{state: game_state}) when is_map(game_state) do
-    {:ok, game_state, 0}
+    {:ok, game_state, 0, nil, nil}
   end
 
   defp normalize_state_update_payload(game_state) when is_map(game_state) do
-    {:ok, game_state, 0}
+    {:ok, game_state, 0, nil, nil}
   end
 
   defp normalize_state_update_payload(_payload), do: :error
+
+  defp stale_game_snapshot?(state, room_code, game_instance_id, state_revision)
+       when is_binary(game_instance_id) and is_integer(state_revision) do
+    case Map.get(state.game_snapshot_cursors, room_code) do
+      {^game_instance_id, accepted_revision} -> state_revision <= accepted_revision
+      _ -> false
+    end
+  end
+
+  defp stale_game_snapshot?(_state, _room_code, _game_instance_id, _state_revision), do: false
+
+  defp put_game_snapshot_cursor(state, room_code, game_instance_id, state_revision)
+       when is_binary(game_instance_id) and is_integer(state_revision) do
+    %{
+      state
+      | game_snapshot_cursors:
+          Map.put(state.game_snapshot_cursors, room_code, {game_instance_id, state_revision})
+    }
+  end
+
+  defp put_game_snapshot_cursor(state, _room_code, _game_instance_id, _state_revision), do: state
 
   defp disconnect_player(%State{} = state, %Room{} = room, room_code, user_id) do
     if Positions.has_player?(room, user_id) do
