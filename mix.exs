@@ -61,7 +61,10 @@ defmodule PidroBackend.MixProject do
     {_, status} =
       System.cmd("mix", ["hex.audit"],
         into: IO.stream(),
-        env: [{"HEX_IGNORE_ADVISORIES", Enum.join(decimal_audit_exceptions(), ",")}]
+        env: [
+          {"MIX_ENV", Atom.to_string(Mix.env())},
+          {"HEX_IGNORE_ADVISORIES", Enum.join(decimal_audit_exceptions(), ",")}
+        ]
       )
 
     if status != 0, do: Mix.raise("Hex dependency audit failed")
