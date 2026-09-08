@@ -913,6 +913,69 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert started.timer_id != active_timer.timer_id
     end
 
+    test "does not reconcile an already accepted game-state revision twice" do
+      room_code = create_playing_room()
+      bidding_state = advance_room_to_bidding(room_code)
+      _active_timer = wait_for_turn_timer(room_code)
+      {:ok, snapshot} = GameAdapter.get_snapshot(room_code)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      payload =
+        snapshot
+        |> Map.put(:state, %{bidding_state | events: bidding_state.events ++ [:new_window]})
+        |> Map.put(:state_revision, snapshot.state_revision + 1)
+        |> Map.put(:transition_delay_ms, 0)
+
+      send(RoomManager, {:state_update, room_code, payload})
+
+      assert_receive {:turn_timer_cancelled, %{reason: :acted}}, 200
+      assert_receive {:turn_timer_started, _accepted}, 200
+
+      send(RoomManager, {:state_update, room_code, payload})
+
+      refute_receive {:turn_timer_cancelled, _}, 100
+      refute_receive {:turn_timer_started, _}, 100
+    end
+
+    test "rejects a queued snapshot from a replaced game instance" do
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.put(original, :turn_timer_bid_ms, 10_000)
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, original) end)
+
+      room_code = create_playing_room()
+      bidding_state = advance_room_to_bidding(room_code)
+      _active_timer = wait_for_turn_timer(room_code)
+      {:ok, snapshot} = GameAdapter.get_snapshot(room_code)
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      stale_payload =
+        snapshot
+        |> Map.put(:game_instance_id, "retired-game-instance")
+        |> Map.put(:state, %{bidding_state | events: bidding_state.events ++ [:stale_window]})
+        |> Map.put(:state_revision, snapshot.state_revision + 100)
+        |> Map.put(:transition_delay_ms, 0)
+
+      manager_before = :sys.get_state(RoomManager)
+      send(RoomManager, {:state_update, room_code, stale_payload})
+
+      refute_receive {:turn_timer_cancelled, _}, 100
+      refute_receive {:turn_timer_started, _}, 100
+
+      manager_after = :sys.get_state(RoomManager)
+      assert manager_after.game_snapshot_cursors == manager_before.game_snapshot_cursors
+
+      assert manager_after.rooms[room_code].turn_timer.timer_id ==
+               manager_before.rooms[room_code].turn_timer.timer_id
+    end
+
     test "disconnect extends the active deadline without pausing or topping up again on reconnect" do
       room_code = create_playing_room()
       bidding_state = advance_room_to_bidding(room_code)

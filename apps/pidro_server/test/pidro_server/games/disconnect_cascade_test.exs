@@ -277,7 +277,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
           {:messages, messages} = Process.info(game_pid, :messages)
 
           Enum.any?(messages, fn
-            {:"$gen_call", {^manager, _}, :get_state} -> true
+            {:"$gen_call", {^manager, _}, {:apply_action_with_snapshot, _, _}} -> true
             _ -> false
           end)
         end)

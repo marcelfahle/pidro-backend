@@ -73,13 +73,10 @@ defmodule PidroServer.Games.GameAdapter do
   def apply_action(room_code, position, action, timeout \\ 5_000) do
     with {:ok, pid} <- GameRegistry.lookup(room_code) do
       try do
-        old_state = Pidro.Server.get_state(pid, timeout)
-
-        case Pidro.Server.apply_action(pid, position, action, timeout) do
-          {:ok, new_state} = result ->
-            # Broadcast state update to all subscribers
-            broadcast_state_update(room_code, old_state, new_state)
-            result
+        case Pidro.Server.apply_action_with_snapshot(pid, position, action, timeout) do
+          {:ok, old_state, snapshot} ->
+            broadcast_state_update(room_code, old_state, snapshot)
+            {:ok, snapshot.state}
 
           {:error, _reason} = error ->
             error
@@ -147,6 +144,16 @@ defmodule PidroServer.Games.GameAdapter do
   def get_state(room_code, _position) do
     # The engine returns one authoritative state for every position.
     get_state(room_code)
+  end
+
+  @doc """
+  Gets the authoritative state and server-owned presentation timing atomically.
+  """
+  @spec get_snapshot(String.t()) :: {:ok, map()} | {:error, :not_found}
+  def get_snapshot(room_code) do
+    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+      {:ok, Pidro.Server.get_snapshot(pid)}
+    end
   end
 
   @doc """
@@ -291,7 +298,8 @@ defmodule PidroServer.Games.GameAdapter do
             case GenServer.call(pid, {:set_state, previous_state}) do
               :ok ->
                 # Broadcast the state update
-                broadcast_state_update(room_code, current_state, previous_state)
+                snapshot = Pidro.Server.get_snapshot(pid)
+                broadcast_state_update(room_code, current_state, snapshot)
                 {:ok, previous_state}
 
               error ->
@@ -316,12 +324,10 @@ defmodule PidroServer.Games.GameAdapter do
 
   @doc false
   @spec broadcast_state_update(String.t(), map(), map()) :: :ok | {:error, term()}
-  defp broadcast_state_update(room_code, old_state, new_state) do
+  defp broadcast_state_update(room_code, old_state, %{state: new_state} = snapshot) do
     try do
-      payload = %{
-        state: new_state,
-        transition_delay_ms: transition_delay_ms(old_state, new_state)
-      }
+      payload =
+        Map.put(snapshot, :transition_delay_ms, transition_delay_ms(old_state, new_state))
 
       Phoenix.PubSub.broadcast(
         PidroServer.PubSub,

@@ -62,6 +62,7 @@ defmodule PidroServerWeb.GameChannel do
   use PidroServerWeb, :channel
   require Logger
 
+  alias Pidro.Game.Engine
   alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
   alias PidroServer.Games.Room.Seat
   alias PidroServerWeb.API.RoomJSON
@@ -203,7 +204,7 @@ defmodule PidroServerWeb.GameChannel do
            ),
          {:ok, turn_timer} <- RoomManager.get_turn_timer(room_code) do
       # Try to get current game state (may not exist if game hasn't started)
-      {serialized_state, legal_actions} = fetch_game_state(room_code, position)
+      game_snapshot = fetch_game_snapshot(room_code)
 
       socket =
         socket
@@ -211,6 +212,7 @@ defmodule PidroServerWeb.GameChannel do
         |> assign(:position, position)
         |> assign(:role, role)
         |> assign(:join_type, join_type)
+        |> assign_snapshot_cursor(game_snapshot)
 
       # Track presence after join
       send(self(), :after_join)
@@ -218,7 +220,6 @@ defmodule PidroServerWeb.GameChannel do
       reply_data = %{
         role: role,
         reconnected: join_type == :reconnect,
-        legal_actions: legal_actions,
         turn_timer: turn_timer,
         readiness: RoomJSON.readiness(readiness),
         seat_lifecycle: seat_lifecycle
@@ -226,7 +227,9 @@ defmodule PidroServerWeb.GameChannel do
 
       # Add state only if game has started
       reply_data =
-        if serialized_state, do: Map.put(reply_data, :state, serialized_state), else: reply_data
+        if game_snapshot,
+          do: Map.merge(reply_data, client_snapshot_payload(game_snapshot, position)),
+          else: Map.put(reply_data, :legal_actions, [])
 
       # Add position only for players
       reply_data = if position, do: Map.put(reply_data, :position, position), else: reply_data
@@ -244,26 +247,10 @@ defmodule PidroServerWeb.GameChannel do
     end
   end
 
-  defp fetch_game_state(room_code, position) do
-    case GameAdapter.get_game(room_code) do
-      {:ok, _pid} ->
-        {:ok, state} = GameAdapter.get_state(room_code)
-        serialized = GameStateSerializer.serialize(state)
-
-        actions =
-          if position do
-            case GameAdapter.get_legal_actions(room_code, position) do
-              {:ok, a} -> GameStateSerializer.serialize_legal_actions(a)
-              _ -> []
-            end
-          else
-            []
-          end
-
-        {serialized, actions}
-
-      {:error, :not_found} ->
-        {nil, []}
+  defp fetch_game_snapshot(room_code) do
+    case GameAdapter.get_snapshot(room_code) do
+      {:ok, snapshot} -> snapshot
+      {:error, :not_found} -> nil
     end
   end
 
@@ -490,17 +477,18 @@ defmodule PidroServerWeb.GameChannel do
         %{assigns: %{room_code: room_code}} = socket
       ) do
     case extract_state_update(payload) do
-      {:ok, new_state, delay_ms} ->
-        serialized_state = GameStateSerializer.serialize(new_state)
-        legal_actions = legal_actions_for_socket(socket)
+      {:ok, snapshot} ->
+        if stale_snapshot?(socket, snapshot) do
+          {:noreply, socket}
+        else
+          push(
+            socket,
+            "game_state",
+            client_snapshot_payload(snapshot, socket.assigns[:position])
+          )
 
-        push(socket, "game_state", %{
-          state: serialized_state,
-          legal_actions: legal_actions,
-          transition_delay_ms: delay_ms
-        })
-
-        {:noreply, socket}
+          {:noreply, assign_snapshot_cursor(socket, snapshot)}
+        end
 
       :error ->
         {:noreply, socket}
@@ -920,19 +908,12 @@ defmodule PidroServerWeb.GameChannel do
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason), do: inspect(reason)
 
-  @spec legal_actions_for_socket(Phoenix.Socket.t()) :: list()
-  defp legal_actions_for_socket(socket) do
-    position = socket.assigns[:position]
-    room_code = socket.assigns[:room_code]
+  defp legal_actions_for_state(_state, nil), do: []
 
-    if position && room_code do
-      case GameAdapter.get_legal_actions(room_code, position) do
-        {:ok, actions} -> GameStateSerializer.serialize_legal_actions(actions)
-        _ -> []
-      end
-    else
-      []
-    end
+  defp legal_actions_for_state(state, position) do
+    state
+    |> Engine.legal_actions(position)
+    |> GameStateSerializer.serialize_legal_actions()
   end
 
   @position_map %{
@@ -979,13 +960,61 @@ defmodule PidroServerWeb.GameChannel do
   defp format_reason({:shutdown, _}), do: "connection_lost"
   defp format_reason(_), do: "error"
 
-  defp extract_state_update(%{state: game_state, transition_delay_ms: delay_ms})
+  defp extract_state_update(%{state: game_state, transition_delay_ms: delay_ms} = snapshot)
        when is_map(game_state) and is_integer(delay_ms),
-       do: {:ok, game_state, delay_ms}
+       do: {:ok, snapshot}
 
   defp extract_state_update(%{state: game_state}) when is_map(game_state),
-    do: {:ok, game_state, 0}
+    do: {:ok, %{state: game_state, transition_delay_ms: 0}}
 
-  defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
+  defp extract_state_update(game_state) when is_map(game_state),
+    do: {:ok, %{state: game_state, transition_delay_ms: 0}}
+
   defp extract_state_update(_payload), do: :error
+
+  defp client_snapshot_payload(snapshot, position) do
+    %{
+      state: GameStateSerializer.serialize(snapshot.state),
+      legal_actions: legal_actions_for_state(snapshot.state, position),
+      transition_delay_ms: Map.get(snapshot, :transition_delay_ms, 0)
+    }
+    |> Map.merge(
+      Map.take(snapshot, [
+        :game_instance_id,
+        :state_revision,
+        :server_time_ms,
+        :presentation
+      ])
+    )
+  end
+
+  defp stale_snapshot?(socket, snapshot) do
+    instance_id = Map.get(snapshot, :game_instance_id)
+    revision = Map.get(snapshot, :state_revision)
+    accepted_instance_id = socket.assigns[:game_instance_id]
+
+    is_binary(instance_id) and is_integer(revision) and
+      is_binary(accepted_instance_id) and
+      (instance_id != accepted_instance_id or
+         (is_integer(socket.assigns[:state_revision]) and
+            revision <= socket.assigns.state_revision))
+  end
+
+  defp assign_snapshot_cursor(socket, nil) do
+    socket
+    |> assign(:game_instance_id, nil)
+    |> assign(:state_revision, nil)
+  end
+
+  defp assign_snapshot_cursor(socket, snapshot) do
+    case {Map.get(snapshot, :game_instance_id), Map.get(snapshot, :state_revision)} do
+      {instance_id, revision} when is_binary(instance_id) and is_integer(revision) ->
+        socket
+        |> assign(:game_instance_id, instance_id)
+        |> assign(:state_revision, revision)
+
+      _ ->
+        socket
+    end
+  end
 end

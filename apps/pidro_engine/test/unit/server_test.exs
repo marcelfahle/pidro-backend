@@ -39,6 +39,62 @@ defmodule Pidro.ServerTest do
     end
   end
 
+  describe "authoritative snapshots" do
+    test "keeps one dealer-selection window across reads and clears it on advance" do
+      {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 80)
+
+      assert {:ok, old_state, selected} =
+               Server.apply_action_with_snapshot(pid, :north, :select_dealer)
+
+      assert old_state.dealer_selection_cuts == nil
+      assert selected.state.phase == :dealer_selection
+      assert selected.state.current_dealer in [:north, :east, :south, :west]
+      assert selected.state_revision == 1
+      assert is_binary(selected.game_instance_id)
+
+      window = selected.presentation.dealer_selection
+      assert window.ends_at_ms - window.started_at_ms == 80
+      assert selected.server_time_ms >= window.started_at_ms
+
+      Process.sleep(20)
+      catch_up = Server.get_snapshot(pid)
+      assert catch_up.state_revision == selected.state_revision
+      assert catch_up.presentation.dealer_selection == window
+      assert catch_up.server_time_ms > selected.server_time_ms
+
+      Process.sleep(80)
+      advanced = Server.get_snapshot(pid)
+      assert advanced.state.phase == :bidding
+      assert advanced.state_revision == 2
+      assert advanced.presentation.dealer_selection == nil
+    end
+
+    test "a slow or absent consumer never extends the server deadline" do
+      {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 30)
+      assert {:ok, _state} = Server.apply_action(pid, :north, :select_dealer)
+
+      Process.sleep(50)
+
+      assert %{state: %{phase: :bidding}, presentation: %{dealer_selection: nil}} =
+               Server.get_snapshot(pid)
+    end
+
+    test "a queued timer from a replaced state cannot advance the replacement" do
+      {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 10_000)
+      assert {:ok, _state} = Server.apply_action(pid, :north, :select_dealer)
+
+      %{dealer_selection_token: stale_token} = :sys.get_state(pid)
+      assert :ok = Server.reset(pid)
+      send(pid, {:advance_from_dealer_selection, stale_token})
+      Process.sleep(10)
+
+      snapshot = Server.get_snapshot(pid)
+      assert snapshot.state.phase == :dealer_selection
+      assert snapshot.state.dealer_selection_cuts == nil
+      assert snapshot.presentation.dealer_selection == nil
+    end
+  end
+
   describe "apply_action/3" do
     test "applies valid action and returns new state" do
       {:ok, pid} = Server.start_link(dealer_selection_delay_ms: 0)
