@@ -412,11 +412,27 @@ curl -X POST http://localhost:4000/api/v1/rooms \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "room": {
-      "name": "Friday Night Game"
-    }
+    "name": "Friday Night Game",
+    "seats": { "seat_2": "ai", "seat_3": "open", "seat_4": "ai" },
+    "bot_difficulty": "smart"
   }'
 ```
+
+The body is a flat JSON object. Every field is optional, and an empty body (or none) creates an
+unnamed room with three open seats.
+
+| Field | Type | Default | Rules |
+|-------|------|---------|-------|
+| `name` | string | none | Trimmed. At most 60 characters after trimming. Missing or blank means no name (`config.name` is `null`) |
+| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"` or `"open"`. A missing seat is open. The host takes the remaining seat |
+| `bot_difficulty` | string | `"basic"` | One of `"random"`, `"basic"`, `"smart"`. Applies to the bots started for `"ai"` seats |
+
+A bot is started for every `"ai"` seat. When all three seats are `"ai"` the room is a solo room
+(`config.solo` is `true`) and is hidden from the lobby. The seat plan is a create-time input only:
+it is not stored, so read `seats` on the room for the table as it stands.
+
+Any other key is rejected, including a `room` wrapper around the fields and `settings`. See
+[Invalid create request](#invalid-create-request) below.
 
 **Response** (201 Created):
 ```json
@@ -425,8 +441,8 @@ curl -X POST http://localhost:4000/api/v1/rooms \
     "room": {
       "code": "A1B2",
       "host_id": "user123",
-      "positions": { "north": null, "east": null, "south": null, "west": "user123" },
-      "available_positions": ["north", "east", "south"],
+      "positions": { "north": "user123", "east": null, "south": null, "west": null },
+      "available_positions": ["east", "south", "west"],
       "player_count": 1,
       "player_ids": ["user123"],
       "spectator_ids": [],
@@ -434,9 +450,10 @@ curl -X POST http://localhost:4000/api/v1/rooms \
       "max_players": 4,
       "max_spectators": 10,
       "created_at": "2025-11-02T10:30:00Z",
+      "config": { "name": "Friday Night Game", "bot_difficulty": "smart", "solo": false },
       "seats": {
-        "west": {
-          "position": "west",
+        "north": {
+          "position": "north",
           "occupant_type": "human",
           "user_id": "user123",
           "status": "connected",
@@ -452,6 +469,56 @@ curl -X POST http://localhost:4000/api/v1/rooms \
 }
 ```
 
+The host is seated north. The 201 body is the room as created, before the bots for `"ai"` seats sit
+down: they appear in `GET /rooms/:code` and in the lobby and game channel updates that follow.
+
+Every room object, from REST and from the lobby channel, carries `config`: the record of how the
+room was set up. It is set once at creation and does not change.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `config.name` | string or `null` | The room name, or `null` when none was given |
+| `config.bot_difficulty` | string | `"random"`, `"basic"` or `"smart"`. The difficulty requested at creation, not what each seat's bot runs now |
+| `config.solo` | boolean | `true` when the room was created with all three other seats as bots |
+
+#### Invalid create request
+
+A request with an unknown key or an invalid value answers **422 Unprocessable Entity**. No room is
+created and no bot is started. The response lists every problem at once, one entry per problem,
+with the field path as `code`.
+
+```bash
+curl -X POST http://localhost:4000/api/v1/rooms \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "seats": { "seat_5": "ai" },
+    "bot_difficulty": "expert",
+    "settings": { "private": true }
+  }'
+```
+
+**Response** (422 Unprocessable Entity):
+```json
+{
+  "errors": [
+    { "code": "seats.seat_5", "title": "Seats seat 5", "detail": "is not an accepted field" },
+    { "code": "bot_difficulty", "title": "Bot difficulty", "detail": "must be one of: random, basic, smart" },
+    { "code": "settings", "title": "Settings", "detail": "is not an accepted field" }
+  ]
+}
+```
+
+| `code` | `detail` |
+|--------|----------|
+| `name` | `must be a string`, or `must be at most 60 characters` |
+| `seats` | `must be an object` |
+| `seats.seat_2`, `seats.seat_3`, `seats.seat_4` | `must be one of: ai, open` |
+| `seats.<key>` | `is not an accepted field` (any other seat key) |
+| `bot_difficulty` | `must be one of: random, basic, smart` |
+| `<key>` | `is not an accepted field` (any other top-level key, such as `room` or `settings`) |
+| `body` | `must be a JSON object` |
+
 **Join a Room** (Auto-assign):
 ```bash
 curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
@@ -463,7 +530,7 @@ curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
 curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{ "position": "north" }'
+  -d '{ "position": "south" }'
 ```
 
 **Join a Room** (Team Preference):
@@ -486,14 +553,15 @@ curl -X POST http://localhost:4000/api/v1/rooms/A1B2/join \
     "room": {
       "code": "A1B2",
       "host_id": "user123",
-      "positions": { "north": "user456", "east": null, "south": null, "west": "user123" },
-      "available_positions": ["east", "south"],
-      "player_count": 2,
-      "player_ids": ["user123", "user456"],
+      "positions": { "north": "user123", "east": "bot_A1B2_east", "south": "user456", "west": "bot_A1B2_west" },
+      "available_positions": [],
+      "player_count": 4,
+      "player_ids": ["user123", "bot_A1B2_east", "user456", "bot_A1B2_west"],
       "status": "waiting",
-      "max_players": 4
+      "max_players": 4,
+      "config": { "name": "Friday Night Game", "bot_difficulty": "smart", "solo": false }
     },
-    "assigned_position": "north"
+    "assigned_position": "south"
   }
 }
 ```
@@ -791,6 +859,7 @@ by omitting `user_id`. The target position must be vacant.
       "code": "A3F9",
       "locked": false,
       "positions": { "north": "…host id…", "east": null, "south": null, "west": "0f2b8c1e-..." },
+      "config": { "name": null, "bot_difficulty": "basic", "solo": false },
       "seats": {
         "west": { "position": "west", "user_id": "0f2b8c1e-...", "username": "guest_7Q4M2XBA", "display_name": "Ben", "status": "connected" }
       }

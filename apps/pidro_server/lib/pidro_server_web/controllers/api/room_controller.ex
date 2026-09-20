@@ -114,9 +114,24 @@ defmodule PidroServerWeb.API.RoomController do
     %Operation{
       summary: "Create a new room",
       description: """
-      Creates a new room with the authenticated user as the host. The room is created
-      in a "waiting" status and is immediately joinable by other players. The response
-      includes the newly created room's details and unique room code.
+      Creates a new room with the authenticated user as the host, seated north. The room
+      is created in a "waiting" status and is immediately joinable by other players. The
+      response includes the newly created room's details and unique room code.
+
+      The body is a flat JSON object with three optional fields:
+
+      - `name` - trimmed, at most 60 characters; missing or blank means no name
+      - `seats` - `seat_2` (east), `seat_3` (south) and `seat_4` (west), each `"ai"` or
+        `"open"`; a missing seat is open. A bot is started for every `"ai"` seat, and a
+        room whose three seats are all `"ai"` is a solo room, hidden from the lobby
+      - `bot_difficulty` - `"random"`, `"basic"` or `"smart"`; defaults to `"basic"`
+
+      Name, difficulty and solo are stored on the room and returned as `config`.
+
+      Every other key is rejected, including a `room` wrapper and `settings`. A rejected
+      request creates no room and starts no bot. The 422 response lists every problem at
+      once, one entry per field, with the field path as `code`: `name`, `bot_difficulty`,
+      `seats`, `seats.seat_5`, `settings`, or `body` when the body is not a JSON object.
 
       Requires authentication via Bearer token.
       """,
@@ -127,20 +142,7 @@ defmodule PidroServerWeb.API.RoomController do
         Operation.request_body(
           "Room creation parameters",
           "application/json",
-          %OpenApiSpex.Schema{
-            type: :object,
-            properties: %{
-              room: %OpenApiSpex.Schema{
-                type: :object,
-                properties: %{
-                  name: %OpenApiSpex.Schema{
-                    type: :string,
-                    description: "Optional room name"
-                  }
-                }
-              }
-            }
-          },
+          RoomSchemas.RoomCreateRequest,
           required: false
         ),
       responses: %{
@@ -158,7 +160,8 @@ defmodule PidroServerWeb.API.RoomController do
           ),
         422 =>
           Operation.response(
-            "Validation error",
+            "Invalid request: one error per problem, each with the field path as its code " <>
+              "(e.g. `settings`, `bot_difficulty`, `seats.seat_5`); or ALREADY_IN_ROOM",
             "application/json",
             ErrorSchemas.validation_error()
           ),

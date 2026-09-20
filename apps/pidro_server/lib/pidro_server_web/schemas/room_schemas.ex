@@ -87,6 +87,115 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
+  defmodule RoomConfig do
+    @moduledoc "Schema for a room's config: how the table was set up when it was created."
+
+    OpenApiSpex.schema(%{
+      title: "RoomConfig",
+      description: """
+      How the room was set up when it was created. Set once at creation and
+      unchanged for the life of the room. The seat plan sent at creation is not
+      part of it: seats change during play, so read `seats` for the table as it stands.
+      """,
+      type: :object,
+      properties: %{
+        name: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 60,
+          description: "Room name, or null when none was given",
+          example: "Fun Game Night"
+        },
+        bot_difficulty: %Schema{
+          type: :string,
+          enum: ["random", "basic", "smart"],
+          description:
+            "Bot difficulty requested at creation. Records the request, not what each seat's bot runs now",
+          example: "basic"
+        },
+        solo: %Schema{
+          type: :boolean,
+          description:
+            "Whether the room was created with all three other seats as bots. Solo rooms are hidden from the lobby",
+          example: false
+        }
+      },
+      required: [:name, :bot_difficulty, :solo],
+      example: %{
+        "name" => "Fun Game Night",
+        "bot_difficulty" => "basic",
+        "solo" => false
+      }
+    })
+  end
+
+  defmodule RoomCreateRequest do
+    @moduledoc "Schema for the create-room request body."
+
+    OpenApiSpex.schema(%{
+      title: "RoomCreateRequest",
+      description: """
+      The create-room request body: a flat object. Every field is optional, and an
+      empty body creates an unnamed room with three open seats and `basic` bots.
+      Any other key is rejected with a 422 that names it.
+
+      The top-level properties must match `PidroServer.Games.Room.Config.accepted_fields/0`;
+      a spec test fails when the two drift apart.
+      """,
+      type: :object,
+      additionalProperties: false,
+      properties: %{
+        name: %Schema{
+          type: :string,
+          maxLength: 60,
+          description:
+            "Room name. Trimmed; at most 60 characters after trimming. Missing or blank means no name",
+          example: "Fun Game Night"
+        },
+        seats: %Schema{
+          type: :object,
+          additionalProperties: false,
+          description: """
+          Seat plan for the three seats other than the host's: `seat_2` is east,
+          `seat_3` is south, `seat_4` is west. A missing seat is `open`. When all
+          three are `ai` the room is a solo room.
+          """,
+          properties: %{
+            seat_2: %Schema{
+              type: :string,
+              enum: ["ai", "open"],
+              default: "open",
+              description: "East seat"
+            },
+            seat_3: %Schema{
+              type: :string,
+              enum: ["ai", "open"],
+              default: "open",
+              description: "South seat"
+            },
+            seat_4: %Schema{
+              type: :string,
+              enum: ["ai", "open"],
+              default: "open",
+              description: "West seat"
+            }
+          }
+        },
+        bot_difficulty: %Schema{
+          type: :string,
+          enum: ["random", "basic", "smart"],
+          default: "basic",
+          description: "Difficulty of the bots started for `ai` seats"
+        }
+      },
+      example: %{
+        "name" => "Fun Game Night",
+        "seats" => %{"seat_2" => "ai", "seat_3" => "open", "seat_4" => "ai"},
+        "bot_difficulty" => "smart"
+      }
+    })
+  end
+
   defmodule Room do
     @moduledoc "Schema for a Room object representing a game room."
 
@@ -108,10 +217,40 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           description: "User ID of the current room owner, or null when no human owner remains",
           example: "user123"
         },
+        positions: %Schema{
+          type: :object,
+          description: "Map of position names to the seated player's ID, or null when unoccupied",
+          properties: %{
+            north: %Schema{type: :string, nullable: true},
+            east: %Schema{type: :string, nullable: true},
+            south: %Schema{type: :string, nullable: true},
+            west: %Schema{type: :string, nullable: true}
+          },
+          example: %{"north" => "user123", "east" => nil, "south" => "user456", "west" => nil}
+        },
+        available_positions: %Schema{
+          type: :array,
+          items: %Schema{type: :string, enum: [:north, :east, :south, :west]},
+          description:
+            "Positions a player can claim now. Empty when the table is locked or the room is over",
+          example: ["east", "west"]
+        },
         player_count: %Schema{
           type: :integer,
-          description: "Number of human players currently in the room",
+          description: "Number of occupied seats, bots included",
           example: 2
+        },
+        player_ids: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description: "Legacy: IDs of seated players in north, east, south, west order",
+          example: ["user123", "user456"]
+        },
+        spectator_ids: %Schema{
+          type: :array,
+          items: %Schema{type: :string},
+          description: "IDs of users spectating the room",
+          example: []
         },
         status: %Schema{
           type: :string,
@@ -130,13 +269,12 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           description: "Maximum number of players allowed",
           example: 4
         },
-        metadata: %Schema{
-          type: :object,
-          properties: %{
-            name: %Schema{type: :string, description: "Optional room name"}
-          },
-          description: "Room metadata"
+        max_spectators: %Schema{
+          type: :integer,
+          description: "Maximum number of spectators allowed",
+          example: 10
         },
+        config: RoomConfig,
         seats: %Schema{
           type: :object,
           additionalProperties: Seat,
@@ -152,20 +290,41 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       required: [
         :code,
         :host_id,
+        :positions,
+        :available_positions,
         :player_count,
+        :player_ids,
+        :spectator_ids,
         :status,
         :locked,
         :max_players,
+        :max_spectators,
         :created_at,
+        :config,
         :seats
       ],
       example: %{
         "code" => "A1B2",
         "host_id" => "user123",
+        "positions" => %{
+          "north" => "user123",
+          "east" => nil,
+          "south" => "user456",
+          "west" => nil
+        },
+        "available_positions" => ["east", "west"],
         "player_count" => 2,
+        "player_ids" => ["user123", "user456"],
+        "spectator_ids" => [],
         "status" => "waiting",
         "locked" => false,
         "max_players" => 4,
+        "max_spectators" => 10,
+        "config" => %{
+          "name" => "Fun Game Night",
+          "bot_difficulty" => "basic",
+          "solo" => false
+        },
         "seats" => %{
           "north" => %{
             "position" => "north",
@@ -233,10 +392,25 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           "room" => %{
             "code" => "A1B2",
             "host_id" => "user123",
-            "player_count" => 2,
+            "positions" => %{
+              "north" => "user123",
+              "east" => nil,
+              "south" => nil,
+              "west" => nil
+            },
+            "available_positions" => ["east", "south", "west"],
+            "player_count" => 1,
+            "player_ids" => ["user123"],
+            "spectator_ids" => [],
             "status" => "waiting",
             "locked" => false,
             "max_players" => 4,
+            "max_spectators" => 10,
+            "config" => %{
+              "name" => "Fun Game Night",
+              "bot_difficulty" => "basic",
+              "solo" => false
+            },
             "seats" => %{
               "north" => %{
                 "position" => "north",
@@ -281,20 +455,50 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             %{
               "code" => "A1B2",
               "host_id" => "user123",
+              "positions" => %{
+                "north" => "user123",
+                "east" => nil,
+                "south" => "user456",
+                "west" => nil
+              },
+              "available_positions" => ["east", "west"],
               "player_count" => 2,
+              "player_ids" => ["user123", "user456"],
+              "spectator_ids" => [],
               "status" => "waiting",
               "locked" => false,
               "max_players" => 4,
+              "max_spectators" => 10,
+              "config" => %{
+                "name" => "Fun Game Night",
+                "bot_difficulty" => "basic",
+                "solo" => false
+              },
               "seats" => %{},
               "created_at" => "2024-11-02T10:30:00Z"
             },
             %{
               "code" => "X9Z8",
               "host_id" => "user789",
+              "positions" => %{
+                "north" => "user789",
+                "east" => nil,
+                "south" => nil,
+                "west" => nil
+              },
+              "available_positions" => ["east", "south", "west"],
               "player_count" => 1,
+              "player_ids" => ["user789"],
+              "spectator_ids" => [],
               "status" => "waiting",
               "locked" => false,
               "max_players" => 4,
+              "max_spectators" => 10,
+              "config" => %{
+                "name" => nil,
+                "bot_difficulty" => "basic",
+                "solo" => false
+              },
               "seats" => %{},
               "created_at" => "2024-11-02T10:35:00Z"
             }
@@ -332,10 +536,25 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           "room" => %{
             "code" => "A1B2",
             "host_id" => "user123",
+            "positions" => %{
+              "north" => "user123",
+              "east" => nil,
+              "south" => nil,
+              "west" => nil
+            },
+            "available_positions" => ["east", "south", "west"],
             "player_count" => 1,
+            "player_ids" => ["user123"],
+            "spectator_ids" => [],
             "status" => "waiting",
             "locked" => false,
             "max_players" => 4,
+            "max_spectators" => 10,
+            "config" => %{
+              "name" => "Fun Game Night",
+              "bot_difficulty" => "basic",
+              "solo" => false
+            },
             "seats" => %{
               "north" => %{
                 "position" => "north",

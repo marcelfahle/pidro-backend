@@ -3,6 +3,7 @@ defmodule PidroServerWeb.ApiSpecTest do
 
   import ExUnit.CaptureIO
 
+  alias PidroServer.Games.Room.Config
   alias PidroServerWeb.ApiSpec
   alias PidroServerWeb.Schemas.{ErrorSchemas, UserSchemas}
 
@@ -80,4 +81,56 @@ defmodule PidroServerWeb.ApiSpecTest do
 
     refute registered_email.nullable
   end
+
+  describe "the room config contract" do
+    # Drift guard (KTD12): the OpenAPI create-request schema and the boundary
+    # parser are two hand-written descriptions of one request. Adding a field to
+    # either without the other fails here.
+    test "the create-room request accepts exactly the fields the parser accepts" do
+      schema = create_room_request_schema(ApiSpec.spec())
+
+      assert property_names(schema) == Enum.sort(Config.accepted_fields())
+      assert schema.additionalProperties == false
+    end
+
+    test "the create-room seats schema names exactly the three non-host seats" do
+      spec = ApiSpec.spec()
+
+      seats =
+        spec |> create_room_request_schema() |> Map.fetch!(:properties) |> Map.fetch!(:seats)
+
+      seats = resolve(seats, spec)
+
+      assert property_names(seats) == ["seat_2", "seat_3", "seat_4"]
+      assert seats.additionalProperties == false
+    end
+
+    test "the room schema carries the config and no metadata" do
+      spec = ApiSpec.spec()
+      room = Map.fetch!(spec.components.schemas, "Room")
+      names = property_names(room)
+
+      assert "config" in names
+      refute "metadata" in names
+
+      config = resolve(room.properties.config, spec)
+      assert property_names(config) == ["bot_difficulty", "name", "solo"]
+    end
+  end
+
+  defp create_room_request_schema(spec) do
+    %OpenApiSpex.PathItem{post: %OpenApiSpex.Operation{requestBody: body}} =
+      Map.fetch!(spec.paths, "/api/v1/rooms")
+
+    %OpenApiSpex.MediaType{schema: schema} = Map.fetch!(body.content, "application/json")
+    resolve(schema, spec)
+  end
+
+  defp resolve(%OpenApiSpex.Reference{"$ref": "#/components/schemas/" <> name}, spec),
+    do: Map.fetch!(spec.components.schemas, name)
+
+  defp resolve(%OpenApiSpex.Schema{} = schema, _spec), do: schema
+
+  defp property_names(%OpenApiSpex.Schema{properties: properties}),
+    do: properties |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
 end
