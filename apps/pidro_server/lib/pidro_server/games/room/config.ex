@@ -180,13 +180,14 @@ defmodule PidroServer.Games.Room.Config do
   # `{key, value}` pairs.
   defp build(attrs) do
     {known, duplicates, unknown} = classify(attrs)
+    defaults = %__MODULE__{}
 
     results =
       Enum.map(@fields, fn field ->
         cond do
           field in duplicates -> {field, {:error, "was given more than once"}}
           Map.has_key?(known, field) -> {field, validate(field, Map.fetch!(known, field))}
-          true -> {field, {:ok, Map.fetch!(%__MODULE__{}, field)}}
+          true -> {field, {:ok, Map.fetch!(defaults, field)}}
         end
       end)
 
