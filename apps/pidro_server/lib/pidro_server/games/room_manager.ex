@@ -1340,6 +1340,9 @@ defmodule PidroServer.Games.RoomManager do
           room.status == :playing ->
             leave_live_room(state, room, player_id)
 
+          room.status == :finished ->
+            {:reply, :ok, leave_finished_room(state, room, player_id)}
+
           # Host leaves non-playing room — close the room entirely
           room.host_id == player_id ->
             Logger.info("Host #{player_id} left room #{room_code}, closing room")
@@ -2286,6 +2289,19 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_info({:finished_absence, room_code, user_id, game_number}, %State{} = state) do
+    with %Room{status: :finished, game_number: ^game_number} = room <-
+           Map.get(state.rooms, room_code),
+         true <- Positions.has_player?(room, user_id),
+         false <- channel_alive?(state, room_code, user_id) do
+      Logger.info("Player #{user_id} did not return to finished room #{room_code}, leaving")
+      {:noreply, leave_finished_room(state, room, user_id)}
+    else
+      _ -> {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info({:game_over, room_code, winner, scores}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
@@ -2521,6 +2537,52 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:ok, readiness_snapshot(final)}, next}
     end
   end
+
+  defp channel_alive?(%State{} = state, room_code, user_id) do
+    state.channel_pids
+    |> Map.get({room_code, user_id}, MapSet.new())
+    |> Enum.any?(&Process.alive?/1)
+  end
+
+  # Leaving a finished room opens the seat for the others rather than ending the
+  # table: the room goes back to waiting (`remove_player/3`), where a human can
+  # join or the host can seat a bot. A departing host hands the table on. With
+  # no other human left to play there is no table to keep.
+  defp leave_finished_room(%State{} = state, %Room{code: room_code} = room, player_id) do
+    others? =
+      Enum.any?(room.seats, fn {_position, seat} ->
+        Seat.connected_human?(seat) and seat.user_id != player_id and
+          channel_alive?(state, room_code, seat.user_id)
+      end)
+
+    if others? do
+      room = hand_on_host(room, player_id)
+
+      case remove_player(state, room, player_id) do
+        {:ok, _room, new_state} -> new_state
+        {:closed, new_state} -> new_state
+      end
+    else
+      Logger.info("Last player #{player_id} left finished room #{room_code}, closing room")
+      remove_room(state, room_code)
+    end
+  end
+
+  defp hand_on_host(%Room{host_id: player_id} = room, player_id) do
+    position = Positions.get_position(room, player_id)
+
+    # `promote_owner/1` passes the table on when the owner's seat is not a
+    # connected human; the seat is vacated right after.
+    case Seat.disconnect(Map.fetch!(room.seats, position)) do
+      {:ok, away} ->
+        promote_departed_owner(%{room | seats: Map.put(room.seats, position, away)}, player_id)
+
+      {:error, _reason} ->
+        room
+    end
+  end
+
+  defp hand_on_host(%Room{} = room, _player_id), do: room
 
   defp bot_holds_seat?(%Room{} = room, bot_id, position) do
     Map.get(room.positions, position) == bot_id and
@@ -3621,8 +3683,11 @@ defmodule PidroServer.Games.RoomManager do
   defp remove_player(%State{} = state, %Room{code: room_code} = room, player_id) do
     player_position = Positions.get_position(room, player_id)
 
+    # A finished room that loses a player reopens as a waiting table, so its
+    # completed game goes: the next start must be a new game, not this one.
     updated_room =
       room
+      |> retire_finished_game()
       |> Positions.remove(player_id)
       |> vacate_seat(player_position)
       |> reset_readiness()
@@ -4117,6 +4182,19 @@ defmodule PidroServer.Games.RoomManager do
   defp mark_disconnected(%Room{status: status} = room, room_code, user_id)
        when status in [:waiting, :ready],
        do: hold_seat(room, room_code, user_id)
+
+  # Nothing is at stake in a finished room, so the seat is left alone. But the
+  # others may be waiting on this player for a rematch: if they are still gone
+  # after the hiccup window, treat it as having left.
+  defp mark_disconnected(%Room{status: :finished} = room, room_code, user_id) do
+    Process.send_after(
+      self(),
+      {:finished_absence, room_code, user_id, room.game_number},
+      Lifecycle.config(:hiccup_timeout_ms)
+    )
+
+    room
+  end
 
   defp mark_disconnected(%Room{} = room, _room_code, _user_id), do: room
 

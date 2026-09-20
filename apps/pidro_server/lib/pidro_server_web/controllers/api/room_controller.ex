@@ -441,6 +441,35 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc false
+  def open_api_operation(:seat_bot) do
+    %Operation{
+      summary: "Seat a bot in an open seat",
+      description: """
+      Fills the vacant seat at `position` with a bot at the room's configured
+      `bot_difficulty`. Host only, waiting rooms only. This is how a table that
+      lost a player after a game carries on without leaving the room.
+
+      A seat that is not vacant answers 422 `SEAT_NOT_VACANT`.
+      """,
+      operationId: "RoomController.seat_bot",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [room_code_parameter()],
+      requestBody:
+        Operation.request_body(
+          "Seat position",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:position],
+            properties: %{position: position_schema()}
+          }
+        ),
+      responses: host_control_responses()
+    }
+  end
+
+  @doc false
   def open_api_operation(:watch) do
     %Operation{
       summary: "Watch a room as a spectator",
@@ -1444,7 +1473,54 @@ defmodule PidroServerWeb.API.RoomController do
     end
   end
 
+  @doc """
+  Seats a bot in a vacant seat (host only). See `open_api_operation(:seat_bot)`.
+  """
+  @spec seat_bot(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def seat_bot(conn, %{"code" => code} = params) do
+    user = conn.assigns[:current_user]
+
+    with {:ok, position} <- parse_position_strict(params["position"]),
+         {:ok, room} <- RoomManager.get_room(code),
+         :ok <- ensure_host(room, user.id),
+         :ok <- ensure_waiting(room),
+         :ok <- ensure_vacant(room, position),
+         {:ok, room} <- start_seated_bot(room, position) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room})
+    end
+  end
+
   ## Private Helper Functions
+
+  defp ensure_vacant(%Room{seats: seats}, position) do
+    case Map.get(seats, position) do
+      %{occupant_type: :vacant} -> :ok
+      _ -> {:error, :seat_not_vacant}
+    end
+  end
+
+  # The bot seats itself through `RoomManager.join_bot/4`, which is where the
+  # seat is really claimed: a human may have taken it since the check above. A
+  # bot that did not get the seat is stopped again.
+  defp start_seated_bot(%Room{code: code} = room, position) do
+    # A bot that held this seat in an earlier game may have left a stale entry.
+    _ = BotManager.stop_bot(code, position)
+
+    with {:ok, pid} <- BotManager.start_bot(code, position, room.config.bot_difficulty),
+         {:ok, %Room{} = seated} <- RoomManager.get_room(code),
+         %{occupant_type: :bot, bot_pid: ^pid} <- Map.get(seated.seats, position) do
+      {:ok, seated}
+    else
+      {:error, reason} when reason in [:room_not_found] ->
+        {:error, reason}
+
+      _ ->
+        _ = BotManager.stop_bot(code, position)
+        {:error, :seat_not_vacant}
+    end
+  end
 
   defp ensure_host(%Room{host_id: host_id}, host_id), do: :ok
   defp ensure_host(%Room{}, _user_id), do: {:error, :not_owner}

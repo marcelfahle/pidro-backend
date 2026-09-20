@@ -190,6 +190,123 @@ defmodule PidroServer.Games.RematchTest do
     end
   end
 
+  describe "a player leaves after the game" do
+    test "the seat opens and the room carries on as a waiting table" do
+      {room, [host, leaver | _] = user_ids} = four_player_game()
+      first_game = game_pid(room.code)
+      finish_game(room.code)
+      {:ok, vote} = RoomManager.readiness(room.code)
+      leaver_position = Enum.find_value(room.positions, fn {pos, id} -> id == leaver && pos end)
+
+      assert :ok = RoomManager.leave_room(leaver)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      assert reopened.id == room.id
+      assert reopened.host_id == host
+      assert reopened.seats[leaver_position].occupant_type == :vacant
+      assert reopened.ready_epoch > vote.ready_epoch
+
+      for user_id <- user_ids -- [leaver] do
+        assert Enum.any?(reopened.seats, fn {_pos, seat} -> seat.user_id == user_id end)
+      end
+
+      # The finished game goes with the vote: the next start is a new game.
+      refute Process.alive?(first_game)
+    end
+
+    test "a new player takes the seat and the next game is a fresh one with its own stats" do
+      {room, [_host, leaver | _] = user_ids} = four_player_game()
+      finish_game(room.code)
+      :ok = RoomManager.leave_room(leaver)
+
+      newcomer = AccountsFixtures.user_fixture(%{display_name: "Newcomer"})
+      assert {:ok, _room, _position} = RoomManager.join_room(room.code, newcomer.id)
+
+      playing = RoomFixtures.ready_room(room.code)
+      assert playing.status == :playing
+      assert playing.game_number == 2
+
+      {:ok, state} = GameAdapter.get_state(room.code)
+      assert state.phase == :dealer_selection
+      assert state.cumulative_scores == %{north_south: 0, east_west: 0}
+
+      finish_game(room.code)
+      assert Repo.aggregate(from(gs in GameStats, where: gs.room_code == ^room.code), :count) == 2
+      assert {:ok, %{games_played: 1}} = Profiles.get_or_create_profile(newcomer.id)
+      assert {:ok, %{games_played: 1}} = Profiles.get_or_create_profile(leaver)
+      assert {:ok, %{games_played: 2}} = Profiles.get_or_create_profile(hd(user_ids))
+    end
+
+    test "a bot takes the seat and the three who stayed play on" do
+      {room, [_host, leaver | _] = user_ids} = four_player_game()
+      finish_game(room.code)
+      leaver_position = Enum.find_value(room.positions, fn {pos, id} -> id == leaver && pos end)
+      :ok = RoomManager.leave_room(leaver)
+
+      {:ok, bot} = BotManager.start_bot(room.code, leaver_position, room.config.bot_difficulty)
+
+      playing = RoomFixtures.ready_room(room.code)
+      assert playing.status == :playing
+      assert playing.game_number == 2
+      assert %{occupant_type: :bot, bot_pid: ^bot} = playing.seats[leaver_position]
+
+      for user_id <- user_ids -- [leaver] do
+        assert Enum.any?(playing.seats, fn {_pos, seat} -> seat.user_id == user_id end)
+      end
+    end
+
+    test "a host who leaves hands the table on instead of closing it" do
+      {room, [host, partner_or_other | _]} = four_player_game()
+      finish_game(room.code)
+
+      assert :ok = RoomManager.leave_room(host)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      refute reopened.host_id == host
+      assert reopened.host_id in Map.values(reopened.positions)
+      assert Enum.count(reopened.seats, fn {_pos, seat} -> seat.is_owner end) == 1
+      assert is_binary(partner_or_other)
+    end
+
+    test "the last one out closes the room" do
+      {room, user_ids} = four_player_game()
+      finish_game(room.code)
+
+      for user_id <- user_ids, do: RoomManager.leave_room(user_id)
+
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
+
+    test "a player who drops and stays away is treated as having left" do
+      {room, [_host, absent | _]} = four_player_game()
+      finish_game(room.code)
+
+      # `ready_room/2` registered this test process as everybody's channel.
+      RoomManager.unregister_game_channel(room.code, absent, self())
+      {:ok, still_finished} = RoomManager.get_room(room.code)
+      assert still_finished.status == :finished
+
+      Process.sleep(Lifecycle.config(:hiccup_timeout_ms) + 100)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      refute absent in Map.values(reopened.positions)
+    end
+
+    test "a player who drops and comes back in time keeps the seat and the vote" do
+      {room, [_host, blip | _]} = four_player_game()
+      finish_game(room.code)
+
+      RoomManager.unregister_game_channel(room.code, blip, self())
+      :ok = RoomManager.register_game_channel(room.code, blip, self())
+      Process.sleep(Lifecycle.config(:hiccup_timeout_ms) + 100)
+
+      assert {:ok, %{status: :finished}} = RoomManager.get_room(room.code)
+    end
+  end
+
   describe "solo with bots" do
     test "the bots stay seated after game over and the rematch starts on the human's word" do
       user = AccountsFixtures.user_fixture(%{display_name: "Solo"})
