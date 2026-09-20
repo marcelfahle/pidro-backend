@@ -18,6 +18,8 @@ defmodule PidroServerWeb.API.FallbackController do
     and `{:invite_moved, next_code}` answer 410; `:table_locked` answers 423;
     `:kicked` answers 403; `{:seat_taken, next_open}` answers 409 with the open
     positions while the bare `:seat_taken` keeps its 422 for room joins
+  - `{:error, {:invalid_room_params, errors}}` - Room config validation errors;
+    answers 422 with one entry per error and the field path as the code
   - Any other atom answers 422 with the atom upcased as the code
   """
 
@@ -517,6 +519,21 @@ defmodule PidroServerWeb.API.FallbackController do
         }
       ]
     })
+  end
+
+  # Room config validation errors (`Room.Config`). Must stay above the
+  # `is_atom(reason)` catch-all like every tuple clause here; an unmatched tuple
+  # would raise and answer 500. One entry per error in the changeset clause's
+  # shape, with the field path (`name`, `settings`, `seats.seat_5`) as the code.
+  def call(conn, {:error, {:invalid_room_params, errors}}) when is_list(errors) do
+    formatted_errors =
+      Enum.map(errors, fn %{field: field, message: message} ->
+        %{code: field, title: humanize_field(field), detail: message}
+      end)
+
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{errors: formatted_errors})
   end
 
   def call(conn, {:error, reason}) when is_atom(reason) do

@@ -120,7 +120,7 @@ defmodule PidroServer.Games.LobbyFilteringTest do
     end
 
     test "does not return single-player tables" do
-      _solo_room = create_waiting_room("solo_host", %{single_player: true})
+      _solo_room = create_waiting_room("solo_host", %{solo: true})
       room = create_waiting_room("host1")
 
       lobby = RoomManager.list_lobby(nil)

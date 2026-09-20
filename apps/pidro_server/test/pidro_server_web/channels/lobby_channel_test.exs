@@ -13,6 +13,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
   alias PidroServer.Accounts
   alias PidroServer.Games.RoomManager
+  alias PidroServerWeb.API.RoomJSON
   alias PidroServerWeb.LobbyChannel
 
   @moduletag :channel
@@ -58,21 +59,32 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert created_room.status == :waiting
     end
 
-    test "room list includes metadata", %{socket: socket, user: user} do
-      # Create a room with metadata
-      {:ok, room} =
-        RoomManager.create_room(user.id, %{name: "Epic Game", difficulty: "hard"})
+    test "room list carries the config and no metadata", %{socket: socket, user: user} do
+      {:ok, room} = RoomManager.create_room(user.id, %{name: "Epic Game"})
 
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
 
       assert %{rooms: rooms} = reply
       created_room = Enum.find(rooms, fn r -> r.code == room.code end)
-      assert created_room.metadata.name == "Epic Game"
-      assert created_room.metadata.difficulty == "hard"
+      assert created_room.config == %{name: "Epic Game", bot_difficulty: "basic", solo: false}
+      refute Map.has_key?(created_room, :metadata)
+    end
+
+    test "an unknown room attribute is rejected and no room reaches the lobby", %{
+      socket: socket,
+      user: user
+    } do
+      assert {:error, {:invalid_room_params, [%{field: "difficulty"}]}} =
+               RoomManager.create_room(user.id, %{name: "Epic Game", difficulty: "hard"})
+
+      {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      refute Enum.any?(reply.rooms, &(&1.host_id == user.id))
+      refute Enum.any?(RoomManager.list_rooms(:all), &(&1.host_id == user.id))
     end
 
     test "does not return single-player rooms on join", %{socket: socket, user: user} do
-      {:ok, solo_room} = RoomManager.create_room(user.id, %{name: "Solo", single_player: true})
+      {:ok, solo_room} = RoomManager.create_room(user.id, %{name: "Solo", solo: true})
 
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
 
@@ -121,7 +133,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
         })
 
       {:ok, _room} =
-        RoomManager.create_room(other_user.id, %{name: "Solo Table", single_player: true})
+        RoomManager.create_room(other_user.id, %{name: "Solo Table", solo: true})
 
       refute_push "room_created", _payload, 200
     end
@@ -230,12 +242,13 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
   describe "room serialization" do
     test "serializes room data correctly", %{socket: socket, user: user} do
-      {:ok, room} =
-        RoomManager.create_room(user.id, %{
-          name: "Test Room",
-          mode: "competitive"
-        })
+      # A free-form key is no longer carried through to the lobby: it is rejected.
+      assert {:error, {:invalid_room_params, [%{field: "mode", message: _}]}} =
+               RoomManager.create_room(user.id, %{name: "Test Room", mode: "competitive"})
 
+      refute Enum.any?(RoomManager.list_rooms(:all), &(&1.host_id == user.id))
+
+      {:ok, room} = RoomManager.create_room(user.id, %{name: "Test Room"})
       {:ok, _room} = RoomManager.set_locked(room.code, user.id, true)
 
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
@@ -253,8 +266,53 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert serialized_room.status == :waiting
       assert serialized_room.locked == true
       assert is_binary(serialized_room.created_at)
-      assert serialized_room.metadata.name == "Test Room"
-      assert serialized_room.metadata.mode == "competitive"
+      assert serialized_room.config == %{name: "Test Room", bot_difficulty: "basic", solo: false}
+      refute Map.has_key?(serialized_room, :metadata)
+    end
+
+    test "AE4: the lobby payload and the REST serializer report the same config", %{
+      socket: socket,
+      user: user
+    } do
+      {:ok, room} =
+        RoomManager.create_room(user.id, %{name: "Friday", bot_difficulty: "smart"})
+
+      {:ok, %{rooms: rooms}, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      lobby_room = Enum.find(rooms, &(&1.code == room.code))
+      rest_room = RoomJSON.room(room)
+
+      assert lobby_room.config == %{name: "Friday", bot_difficulty: "smart", solo: false}
+      assert rest_room.config == lobby_room.config
+
+      # Same shape on the wire, not only in Elixir terms.
+      assert Jason.decode!(Jason.encode!(rest_room.config)) ==
+               Jason.decode!(Jason.encode!(lobby_room.config))
+    end
+
+    test "a room created without a name serializes a null name on both transports", %{
+      socket: socket,
+      user: user
+    } do
+      {:ok, room} = RoomManager.create_room(user.id)
+
+      {:ok, %{rooms: rooms}, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      lobby_room = Enum.find(rooms, &(&1.code == room.code))
+
+      assert %{"name" => nil} = Jason.decode!(Jason.encode!(lobby_room.config))
+      assert %{"name" => nil} = Jason.decode!(Jason.encode!(RoomJSON.room(room).config))
+    end
+
+    test "the room_created push carries the config", %{socket: socket} do
+      {:ok, _reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      {:ok, room} = RoomManager.create_room("push-host", %{name: "Pushed"})
+
+      assert_push "room_created", %{room: pushed}, 1000
+      assert pushed.code == room.code
+      assert pushed.config == %{name: "Pushed", bot_difficulty: "basic", solo: false}
+      refute Map.has_key?(pushed, :metadata)
     end
 
     test "seats carry the display name; a guest shows their name, not the generated username",

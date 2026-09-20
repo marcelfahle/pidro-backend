@@ -5,6 +5,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   alias PidroServer.Accounts.Token
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.{RoomCodes, RoomManager}
+  alias PidroServer.Games.Room.Config
 
   setup do
     case GenServer.whereis(RoomManager) do
@@ -101,7 +102,106 @@ defmodule PidroServerWeb.API.RoomControllerTest do
              |> Enum.all?(&(&1["username"] == "Bot"))
 
       assert {:ok, room} = RoomManager.get_room(code)
-      assert room.metadata.single_player == true
+      assert room.config.solo == true
+
+      assert data["room"]["config"] == %{
+               "name" => "Solo Table",
+               "bot_difficulty" => "basic",
+               "solo" => true
+             }
+    end
+
+    test "an all-AI create with bot_difficulty smart stores :smart and solo on the room", %{
+      conn: conn
+    } do
+      user = AccountsFixtures.user_fixture()
+
+      data =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> post(~p"/api/v1/rooms", %{
+          "seats" => %{"seat_2" => "ai", "seat_3" => "ai", "seat_4" => "ai"},
+          "bot_difficulty" => "smart"
+        })
+        |> json_response(201)
+        |> Map.fetch!("data")
+
+      assert {:ok, room} = RoomManager.get_room(data["code"])
+      assert room.config == %Config{name: nil, bot_difficulty: :smart, solo: true}
+    end
+
+    test "AE4: a named room with one bot seat reports name, difficulty and not solo", %{
+      conn: conn
+    } do
+      user = AccountsFixtures.user_fixture()
+
+      data =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> post(~p"/api/v1/rooms", %{
+          "name" => "Friday",
+          "seats" => %{"seat_2" => "ai"},
+          "bot_difficulty" => "smart"
+        })
+        |> json_response(201)
+        |> Map.fetch!("data")
+
+      expected = %{"name" => "Friday", "bot_difficulty" => "smart", "solo" => false}
+      assert data["room"]["config"] == expected
+      refute Map.has_key?(data["room"], "metadata")
+
+      # The room show endpoint reports the same object.
+      shown = conn |> get(~p"/api/v1/rooms/#{data["code"]}") |> json_response(200)
+      assert shown["data"]["room"]["config"] == expected
+
+      assert {:ok, room} = RoomManager.get_room(data["code"])
+      assert room.seats.east.occupant_type == :bot
+    end
+
+    test "a 61-character name is a 422 naming name, and no room is created", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      response =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> post(~p"/api/v1/rooms", %{"name" => String.duplicate("n", 61)})
+        |> json_response(422)
+
+      assert %{
+               "errors" => [
+                 %{
+                   "code" => "name",
+                   "title" => "Name",
+                   "detail" => "must be at most 60 characters"
+                 }
+               ]
+             } = response
+
+      refute Enum.any?(RoomManager.list_rooms(:all), &(&1.host_id == user.id))
+    end
+
+    test "create stays lenient in this unit: settings and an unknown difficulty still answer 201",
+         %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      data =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> post(~p"/api/v1/rooms", %{
+          "name" => "Legacy client",
+          "settings" => %{"min_games" => 1, "time_limit" => 0, "private" => false},
+          "bot_difficulty" => "expert"
+        })
+        |> json_response(201)
+        |> Map.fetch!("data")
+
+      assert data["room"]["config"] == %{
+               "name" => "Legacy client",
+               "bot_difficulty" => "basic",
+               "solo" => false
+             }
+
+      refute Map.has_key?(data["room"], "settings")
     end
 
     test "returns 503 ROOM_CODE_EXHAUSTED when no free room code can be allocated", %{
@@ -140,7 +240,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       public_host = AccountsFixtures.user_fixture()
 
       {:ok, solo_room} =
-        RoomManager.create_room(solo_host.id, %{name: "Solo", single_player: true})
+        RoomManager.create_room(solo_host.id, %{name: "Solo", solo: true})
 
       {:ok, public_room} = RoomManager.create_room(public_host.id, %{name: "Public"})
 
@@ -156,6 +256,36 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert public_room.code in codes
       refute solo_room.code in codes
       assert serialized_public_room["seats"]["north"]["username"] == public_host.username
+    end
+  end
+
+  describe "lobby/2" do
+    test "excludes solo rooms from every lobby category", %{conn: conn} do
+      solo_host = AccountsFixtures.user_fixture()
+      public_host = AccountsFixtures.user_fixture()
+      viewer = AccountsFixtures.user_fixture()
+
+      {:ok, solo_room} = RoomManager.create_room(solo_host.id, %{name: "Solo", solo: true})
+      {:ok, public_room} = RoomManager.create_room(public_host.id, %{name: "Public"})
+
+      lobby =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(viewer)}")
+        |> get(~p"/api/v1/lobby")
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      codes = lobby |> Map.values() |> List.flatten() |> Enum.map(& &1["code"])
+      open_table = Enum.find(lobby["open_tables"], &(&1["code"] == public_room.code))
+
+      assert public_room.code in codes
+      refute solo_room.code in codes
+
+      assert open_table["config"] == %{
+               "name" => "Public",
+               "bot_difficulty" => "basic",
+               "solo" => false
+             }
     end
   end
 

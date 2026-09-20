@@ -12,8 +12,7 @@ defmodule PidroServer.Games.Room.PositionsTest do
       status: :waiting,
       max_players: 4,
       created_at: DateTime.utc_now(),
-      last_activity: DateTime.utc_now(),
-      metadata: %{}
+      last_activity: DateTime.utc_now()
     }
   end
 

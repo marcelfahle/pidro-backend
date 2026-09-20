@@ -852,9 +852,11 @@ defmodule PidroServerWeb.API.RoomController do
     user = conn.assigns[:current_user]
     # Payload may be nested under "room" key or at top level
     room_params = params["room"] || params
-    metadata = parse_metadata(room_params)
 
-    with {:ok, room} <- RoomManager.create_room(user.id, metadata) do
+    # Lenient for now: only the recognised fields reach the config constructor,
+    # so an unknown body key is ignored. A recognised field the constructor
+    # rejects (an over-long name) answers 422 through the fallback controller.
+    with {:ok, room} <- RoomManager.create_room(user.id, config_attrs(room_params)) do
       start_bots_for_room(room, room_params)
 
       conn
@@ -1531,10 +1533,11 @@ defmodule PidroServerWeb.API.RoomController do
   # The host occupies the first position (:north). Remaining positions (:east, :south, :west)
   # correspond to seat_2, seat_3, seat_4. For each seat configured as "ai", a bot is started
   # via BotManager which joins the room and uses the shared runtime pacing config.
+  # The difficulty is the one stored on the room's config at creation.
   @spec start_bots_for_room(RoomManager.Room.t(), map()) :: :ok
   defp start_bots_for_room(room, room_params) do
     seats = room_params["seats"] || %{}
-    difficulty = parse_bot_difficulty(room_params["bot_difficulty"])
+    difficulty = room.config.bot_difficulty
 
     # Host gets :north (first auto-assigned position), remaining seats map to these positions
     seat_positions = %{"seat_2" => :east, "seat_3" => :south, "seat_4" => :west}
@@ -1562,22 +1565,21 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_bot_difficulty(_), do: :basic
 
   @doc false
-  # Parses room metadata from the request body
-  #
-  # Extracts relevant fields like name from the room parameters
-  # Returns an empty map if no metadata is provided
-  @spec parse_metadata(map() | nil) :: map()
-  defp parse_metadata(nil), do: %{}
-
-  defp parse_metadata(room_params) when is_map(room_params) do
-    %{}
-    |> maybe_put(:name, room_params["name"])
-    |> maybe_put(:single_player, single_player_room_params?(room_params))
+  # Builds the attributes for `Room.Config.new/1` from the request body: the
+  # name, the requested bot difficulty, and solo, which is derived here from an
+  # all-bot seat plan. Anything else in the body is ignored.
+  @spec config_attrs(term()) :: map()
+  defp config_attrs(room_params) when is_map(room_params) do
+    %{
+      name: room_params["name"],
+      bot_difficulty: parse_bot_difficulty(room_params["bot_difficulty"]),
+      solo: solo_room_params?(room_params)
+    }
   end
 
-  defp parse_metadata(_), do: %{}
+  defp config_attrs(_room_params), do: %{}
 
-  defp single_player_room_params?(room_params) when is_map(room_params) do
+  defp solo_room_params?(room_params) do
     case Map.get(room_params, "seats") do
       seats when is_map(seats) ->
         Enum.all?(~w(seat_2 seat_3 seat_4), fn key -> Map.get(seats, key) == "ai" end)
@@ -1586,8 +1588,4 @@ defmodule PidroServerWeb.API.RoomController do
         false
     end
   end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, false), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

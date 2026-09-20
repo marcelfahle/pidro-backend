@@ -367,6 +367,26 @@ defmodule PidroServerWeb.API.InviteControllerTest do
       assert Repo.get!(Invite, invite.id).redeem_count == 1
     end
 
+    test "the redeem response reuses the room serializer and carries the room config", %{
+      conn: conn
+    } do
+      {host, room} = host_and_room()
+      invite = mint!(room, host)
+      guest = AccountsFixtures.guest_fixture()
+
+      assert %{"room" => room_json} = conn |> redeem(guest, invite.code) |> data(200)
+
+      assert room_json["code"] == room.code
+
+      assert room_json["config"] == %{
+               "name" => "Invited",
+               "bot_difficulty" => "basic",
+               "solo" => false
+             }
+
+      refute Map.has_key?(room_json, "metadata")
+    end
+
     test "AE3: when the hinted seat is taken the next open seat is used with hint_honored false",
          %{conn: conn} do
       {host, room} = host_and_room()

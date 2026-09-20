@@ -171,14 +171,11 @@ defmodule PidroServerWeb.Dev.GameListLive do
     if String.trim(game_name) == "" do
       {:noreply, put_flash(socket, :error, "Game name cannot be empty")}
     else
-      # Create the room
-      metadata = %{
-        name: game_name,
-        bot_difficulty: bot_difficulty,
-        is_dev_room: true
-      }
+      # Create the room. The attributes go through the room config constructor,
+      # which rejects an unknown difficulty.
+      attrs = %{name: game_name, bot_difficulty: bot_difficulty}
 
-      case RoomManager.create_room(host_id, metadata) do
+      case RoomManager.create_room(host_id, attrs) do
         {:ok, room} ->
           # Start bots if requested
           # If we used a real user ID, that user occupies Seat 1 (North)
@@ -251,9 +248,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
   @impl true
   def handle_event("preset_empty_room", _params, socket) do
     name = "Dev #{random_suffix()}"
-    metadata = %{name: name, is_dev_room: true}
 
-    case RoomManager.create_room(name, metadata) do
+    case RoomManager.create_room(name, preset_attrs(name)) do
       {:ok, room} ->
         {:noreply,
          socket
@@ -268,9 +264,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
   @impl true
   def handle_event("preset_1h_3b", _params, socket) do
     name = "Dev #{random_suffix()}"
-    metadata = %{name: name, bot_difficulty: "random", is_dev_room: true}
 
-    case RoomManager.create_room(name, metadata) do
+    case RoomManager.create_room(name, preset_attrs(name)) do
       {:ok, room} ->
         case start_bots_if_needed(room.code, 3, "random") do
           {:error, reason} ->
@@ -296,9 +291,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
   @impl true
   def handle_event("preset_2h_2b", _params, socket) do
     name = "Dev #{random_suffix()}"
-    metadata = %{name: name, bot_difficulty: "random", is_dev_room: true}
 
-    case RoomManager.create_room(name, metadata) do
+    case RoomManager.create_room(name, preset_attrs(name)) do
       {:ok, room} ->
         # Host is at north. Place bots at east and west, leave south empty for a second human.
         case start_bots_at_positions(room.code, [:east, :west], :random) do
@@ -325,9 +319,8 @@ defmodule PidroServerWeb.Dev.GameListLive do
   @impl true
   def handle_event("preset_4_bots", _params, socket) do
     name = "Dev #{random_suffix()}"
-    metadata = %{name: name, bot_difficulty: "random", is_dev_room: true}
 
-    case RoomManager.create_room(name, metadata) do
+    case RoomManager.create_room(name, preset_attrs(name)) do
       {:ok, room} ->
         # Host was auto-assigned to north. Clear it so all 4 seats are available for bots.
         RoomManager.dev_set_position(room.code, :north, nil)
@@ -410,7 +403,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </span>
       </:actions>
 
-    <!-- Quick-Create Presets -->
+      <!-- Quick-Create Presets -->
       <div class="rounded-md border border-stone-300 bg-white shadow-sm">
         <div class="px-4 py-4">
           <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
@@ -536,7 +529,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </div>
       </div>
 
-    <!-- Create New Game Section -->
+      <!-- Create New Game Section -->
       <div class="rounded-md border border-stone-300 bg-white shadow-sm">
         <div class="px-4 py-4">
           <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
@@ -571,7 +564,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                   />
                 </div>
 
-    <!-- Host Selection -->
+                <!-- Host Selection -->
                 <div>
                   <label for="host_user_id" class="block text-sm font-medium text-zinc-700">
                     Host / Player 1
@@ -595,7 +588,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                   </p>
                 </div>
 
-    <!-- Bot Count Radio Buttons -->
+                <!-- Bot Count Radio Buttons -->
                 <div>
                   <label class="block text-sm font-medium text-zinc-700">Bot Count</label>
                   <div class="mt-2 flex flex-wrap gap-4">
@@ -664,7 +657,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </div>
       </div>
 
-    <!-- Statistics Cards -->
+      <!-- Statistics Cards -->
       <dl class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <.stat_card
           label="Total rooms"
@@ -690,7 +683,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         />
       </dl>
 
-    <!-- Filter and Sort Controls -->
+      <!-- Filter and Sort Controls -->
       <div class="rounded-md border border-stone-300 bg-white px-4 py-3 shadow-sm">
         <div class="flex flex-wrap items-center gap-4">
           <!-- Phase Filter -->
@@ -711,7 +704,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
             </select>
           </div>
 
-    <!-- Sort Toggle -->
+          <!-- Sort Toggle -->
           <button
             type="button"
             phx-click="toggle_sort"
@@ -724,7 +717,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
             <% end %>
           </button>
 
-    <!-- Game Count Badge -->
+          <!-- Game Count Badge -->
           <div class="ml-auto">
             <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
               Showing {@stats.filtered} of {@stats.total} games
@@ -733,7 +726,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </div>
       </div>
 
-    <!-- Rooms Table -->
+      <!-- Rooms Table -->
       <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
         <div class="px-4 py-3 flex justify-between items-center">
           <div>
@@ -829,7 +822,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap">
                       <div class="text-sm text-zinc-900">
-                        {room.metadata[:name] || "Game #{room.code}"}
+                        {room.config.name || "Game #{room.code}"}
                       </div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap">
@@ -892,7 +885,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </div>
       </div>
 
-    <!-- Auto-refresh indicator -->
+      <!-- Auto-refresh indicator -->
       <div class="mt-4 text-center text-sm text-zinc-500">
         <span class="inline-flex items-center">
           <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
@@ -900,7 +893,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </span>
       </div>
 
-    <!-- Confirmation Modal -->
+      <!-- Confirmation Modal -->
       <%= if @show_confirm_modal do %>
         <div
           class="fixed z-50 inset-0 overflow-y-auto"
@@ -1098,6 +1091,10 @@ defmodule PidroServerWeb.Dev.GameListLive do
   defp random_suffix do
     :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
   end
+
+  # Dev presets are named, start their bots at `random`, and are never solo:
+  # they stay visible in the lobby like any other table.
+  defp preset_attrs(name), do: %{name: name, bot_difficulty: :random, solo: false}
 
   defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
     alias PidroServer.Games.Room.Positions

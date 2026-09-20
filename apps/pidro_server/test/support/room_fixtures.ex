@@ -33,7 +33,7 @@ defmodule PidroServer.RoomFixtures do
     * `:seated` - total seated users including the host (default `1`)
     * `:host_id` - user id of the host (default `"host"`)
     * `:prefix` - id prefix for the joined users, numbered from 2 (default `"user"`)
-    * `:metadata` - room metadata passed to `RoomManager.create_room/2` (default `%{}`)
+    * `:config` - a `Room.Config` or its attributes, passed to `RoomManager.create_room/2` (default `%{}`)
 
   Returns `{room, user_ids}`: the latest room struct and the ids in seating
   order (host first, then the joined users). Everybody is auto-seated, so the
@@ -49,9 +49,9 @@ defmodule PidroServer.RoomFixtures do
 
     host_id = Keyword.get(opts, :host_id, "host")
     prefix = Keyword.get(opts, :prefix, "user")
-    metadata = Keyword.get(opts, :metadata, %{})
+    config = Keyword.get(opts, :config, %{})
 
-    {:ok, room} = RoomManager.create_room(host_id, metadata)
+    {:ok, room} = RoomManager.create_room(host_id, config)
     joiners = for n <- 2..seated//1, do: "#{prefix}#{n}"
 
     room =

@@ -16,7 +16,7 @@ defmodule PidroServer.Games.RoomManagerTest do
   import ExUnit.CaptureLog
 
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomCodes, RoomManager}
-  alias PidroServer.Games.Room.{Positions, Seat}
+  alias PidroServer.Games.Room.{Config, Positions, Seat}
   alias PidroServer.RoomFixtures
 
   # Note: async: false is required because RoomManager is a singleton GenServer
@@ -45,7 +45,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert Positions.player_ids(room) == ["user1"]
       assert room.status == :waiting
       assert room.max_players == 4
-      assert room.metadata.name == "Test Room"
+      assert room.config.name == "Test Room"
     end
 
     test "prevents creating room if already in another room" do
@@ -59,6 +59,54 @@ defmodule PidroServer.Games.RoomManagerTest do
       {:ok, room2} = RoomManager.create_room("user2", %{})
 
       assert room1.code != room2.code
+    end
+
+    test "create_room/1 stores the default config" do
+      {:ok, room} = RoomManager.create_room("user1")
+
+      assert room.config == %Config{name: nil, bot_difficulty: :basic, solo: false}
+      assert {:ok, %{config: %Config{name: nil}}} = RoomManager.get_room(room.code)
+    end
+
+    test "a bare name lands in the config with the default difficulty and not solo" do
+      {:ok, room} = RoomManager.create_room("user1", %{name: "Friday"})
+
+      assert room.config == %Config{name: "Friday", bot_difficulty: :basic, solo: false}
+    end
+
+    test "accepts a config struct and keyword attributes" do
+      {:ok, config} = Config.new(name: "Built", bot_difficulty: :smart)
+
+      assert {:ok, %{config: ^config}} = RoomManager.create_room("user1", config)
+
+      assert {:ok, %{config: %Config{bot_difficulty: :random, solo: true}}} =
+               RoomManager.create_room("user2", bot_difficulty: "random", solo: true)
+    end
+
+    test "rejects an unknown attribute and creates no room" do
+      assert {:error, {:invalid_room_params, [%{field: "is_dev_room", message: message}]}} =
+               RoomManager.create_room("user1", %{name: "Dev", is_dev_room: true})
+
+      assert message == "is not an accepted field"
+      assert RoomManager.list_rooms(:all) == []
+      assert {:error, :not_in_room} = RoomManager.leave_room("user1")
+    end
+
+    test "a rejected create does not evict the caller's held seat in another room" do
+      {room_a, [host, "user2"]} = RoomFixtures.waiting_room_fixture(seated: 2)
+      :ok = RoomManager.handle_player_disconnect(room_a.code, host)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      assert {:error, {:invalid_room_params, [%{field: "mode"}]}} =
+               RoomManager.create_room(host, %{mode: "competitive"})
+
+      # The stale-room eviction lives in the GenServer handler; a rejected
+      # request never reaches it, so the old room and its mapping survive.
+      assert {:ok, room_a_after} = RoomManager.get_room(room_a.code)
+      assert room_a_after.host_id == host
+      assert Positions.has_player?(room_a_after, host)
+      refute_receive {:room_closed, _code}, 100
+      assert length(RoomManager.list_rooms(:all)) == 1
     end
   end
 
@@ -91,7 +139,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, existing} = RoomManager.get_room("ZZZZ")
       assert existing.host_id == "user1"
       assert Enum.sort(Positions.player_ids(existing)) == ["user1", "user2"]
-      assert existing.metadata.name == "First"
+      assert existing.config.name == "First"
     end
 
     test "replies :room_code_exhausted after 10 collisions and keeps the colliding room intact" do
@@ -119,7 +167,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, existing} = RoomManager.get_room("ZZZZ")
       assert existing.host_id == "user1"
       assert Enum.sort(Positions.player_ids(existing)) == ["user1", "user2"]
-      assert existing.metadata.name == "First"
+      assert existing.config.name == "First"
       assert length(RoomManager.list_rooms(:all)) == 1
 
       # The failed host was never tracked, so a later attempt with a free code succeeds
@@ -233,7 +281,7 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
 
     test "closes a single-player table when the human leaves mid-game" do
-      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, room} = RoomManager.create_room("user1", %{solo: true})
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
@@ -327,7 +375,7 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
 
     test "single-player room stays alive with grace period when human disconnects during play" do
-      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, room} = RoomManager.create_room("user1", %{solo: true})
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
@@ -353,7 +401,7 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
 
     test "single-player room allows reconnection after disconnect" do
-      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, room} = RoomManager.create_room("user1", %{solo: true})
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
@@ -377,7 +425,7 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
 
     test "intentional leave still closes single-player room immediately" do
-      {:ok, room} = RoomManager.create_room("user1", %{single_player: true})
+      {:ok, room} = RoomManager.create_room("user1", %{solo: true})
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-west")
@@ -588,7 +636,7 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       assert fetched_room.code == room.code
       assert fetched_room.host_id == "user1"
-      assert fetched_room.metadata.name == "Test"
+      assert fetched_room.config.name == "Test"
     end
 
     test "returns error for non-existent room" do
@@ -849,7 +897,7 @@ defmodule PidroServer.Games.RoomManagerTest do
 
   describe "turn timers" do
     test "does not start turn timers for single-player rooms" do
-      room_code = create_playing_room(%{single_player: true})
+      room_code = create_playing_room(%{solo: true})
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
 
       _bidding_state = advance_room_to_bidding(room_code)
@@ -1854,8 +1902,8 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
   end
 
-  defp create_playing_room(metadata \\ %{}) do
-    {:ok, room} = RoomManager.create_room("user1", metadata)
+  defp create_playing_room(attrs \\ %{}) do
+    {:ok, room} = RoomManager.create_room("user1", attrs)
     room_code = room.code
 
     {:ok, _, _} = RoomManager.join_room(room_code, "user2")

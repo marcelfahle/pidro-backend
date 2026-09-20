@@ -43,7 +43,7 @@ defmodule PidroServerWeb.LobbyChannel do
 
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.PresenceAggregator
-  alias PidroServer.Games.Room.Seat
+  alias PidroServer.Games.Room.{Config, Seat}
   alias PidroServerWeb.Presence
   alias PidroServer.Accounts.Auth
   alias PidroServer.Accounts.User
@@ -187,7 +187,7 @@ defmodule PidroServerWeb.LobbyChannel do
       status: room.status,
       locked: room.locked,
       created_at: DateTime.to_iso8601(room.created_at),
-      metadata: room.metadata,
+      config: Config.serialize(room.config),
       seats: serialize_seats(room, user_map)
     }
   end
