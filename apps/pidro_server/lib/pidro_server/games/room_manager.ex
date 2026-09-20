@@ -159,7 +159,8 @@ defmodule PidroServer.Games.RoomManager do
             spectator_monitors: %{reference() => {String.t(), any(), pid()}},
             spectator_timers: %{{String.t(), any()} => reference()},
             game_snapshot_cursors: %{String.t() => {String.t(), non_neg_integer()}},
-            active_game_instances: %{String.t() => String.t()}
+            active_game_instances: %{String.t() => String.t()},
+            finished_absences: %{{String.t(), any()} => reference()}
           }
 
     defstruct rooms: %{},
@@ -171,7 +172,9 @@ defmodule PidroServer.Games.RoomManager do
               spectator_monitors: %{},
               spectator_timers: %{},
               game_snapshot_cursors: %{},
-              active_game_instances: %{}
+              active_game_instances: %{},
+              # One token per player absent from a finished room; see `note_finished_absence/3`.
+              finished_absences: %{}
   end
 
   ## Client API
@@ -2289,9 +2292,12 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_info({:finished_absence, room_code, user_id, game_number}, %State{} = state) do
-    with %Room{status: :finished, game_number: ^game_number} = room <-
-           Map.get(state.rooms, room_code),
+  def handle_info({:finished_absence, room_code, user_id, token}, %State{} = state) do
+    key = {room_code, user_id}
+
+    with ^token <- Map.get(state.finished_absences, key),
+         state = %State{state | finished_absences: Map.delete(state.finished_absences, key)},
+         %Room{status: :finished} = room <- Map.get(state.rooms, room_code),
          true <- Positions.has_player?(room, user_id),
          false <- channel_alive?(state, room_code, user_id) do
       Logger.info("Player #{user_id} did not return to finished room #{room_code}, leaving")
@@ -2577,8 +2583,9 @@ defmodule PidroServer.Games.RoomManager do
       {:ok, away} ->
         promote_departed_owner(%{room | seats: Map.put(room.seats, position, away)}, player_id)
 
+      # Already away (reconnecting, substituted): promotion needs no nudge.
       {:error, _reason} ->
-        room
+        promote_departed_owner(room, player_id)
     end
   end
 
@@ -3785,7 +3792,11 @@ defmodule PidroServer.Games.RoomManager do
               player_rooms: new_player_rooms,
               spectator_rooms: new_spectator_rooms,
               game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code),
-              active_game_instances: Map.delete(state.active_game_instances, room_code)
+              active_game_instances: Map.delete(state.active_game_instances, room_code),
+              finished_absences:
+                Map.reject(state.finished_absences, fn {{code, _user_id}, _token} ->
+                  code == room_code
+                end)
           }
 
         broadcast_room(room_code, nil)
@@ -4166,12 +4177,34 @@ defmodule PidroServer.Games.RoomManager do
         %Room{room | last_activity: DateTime.utc_now()}
         |> mark_disconnected(room_code, user_id)
 
-      updated_state = %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+      updated_state =
+        %State{state | rooms: Map.put(state.rooms, room_code, updated_room)}
+        |> note_finished_absence(updated_room, user_id)
+
       {:ok, updated_room, updated_state}
     else
       {:error, :player_not_in_room, state}
     end
   end
+
+  # Nothing is at stake in a finished room, so the seat is left alone. But the
+  # others may be waiting on this player for a rematch: if they are still gone
+  # after the hiccup window, treat it as having left. The token belongs to this
+  # absence: coming back drops it (`register_channel_pid/4`), so the timer of an
+  # earlier absence cannot cut a later one short.
+  defp note_finished_absence(%State{} = state, %Room{status: :finished, code: code}, user_id) do
+    token = make_ref()
+
+    Process.send_after(
+      self(),
+      {:finished_absence, code, user_id, token},
+      Lifecycle.config(:hiccup_timeout_ms)
+    )
+
+    %State{state | finished_absences: Map.put(state.finished_absences, {code, user_id}, token)}
+  end
+
+  defp note_finished_absence(%State{} = state, %Room{}, _user_id), do: state
 
   @doc false
   # The `:playing` cascade or the waiting-room hold, by room status; a
@@ -4182,19 +4215,6 @@ defmodule PidroServer.Games.RoomManager do
   defp mark_disconnected(%Room{status: status} = room, room_code, user_id)
        when status in [:waiting, :ready],
        do: hold_seat(room, room_code, user_id)
-
-  # Nothing is at stake in a finished room, so the seat is left alone. But the
-  # others may be waiting on this player for a rematch: if they are still gone
-  # after the hiccup window, treat it as having left.
-  defp mark_disconnected(%Room{status: :finished} = room, room_code, user_id) do
-    Process.send_after(
-      self(),
-      {:finished_absence, room_code, user_id, room.game_number},
-      Lifecycle.config(:hiccup_timeout_ms)
-    )
-
-    room
-  end
 
   defp mark_disconnected(%Room{} = room, _room_code, _user_id), do: room
 
@@ -4337,7 +4357,8 @@ defmodule PidroServer.Games.RoomManager do
       %State{
         state
         | channel_pids: Map.put(state.channel_pids, key, MapSet.put(existing, pid)),
-          channel_monitors: Map.put(state.channel_monitors, ref, {room_code, user_id, pid})
+          channel_monitors: Map.put(state.channel_monitors, ref, {room_code, user_id, pid}),
+          finished_absences: Map.delete(state.finished_absences, key)
       }
     end
   end

@@ -295,6 +295,38 @@ defmodule PidroServer.Games.RematchTest do
       refute absent in Map.values(reopened.positions)
     end
 
+    test "an earlier absence cannot cut a later one short" do
+      {room, [_host, flaky | _]} = four_player_game()
+      finish_game(room.code)
+      hiccup = Lifecycle.config(:hiccup_timeout_ms)
+
+      RoomManager.unregister_game_channel(room.code, flaky, self())
+      :ok = RoomManager.register_game_channel(room.code, flaky, self())
+      Process.sleep(div(hiccup, 2))
+      RoomManager.unregister_game_channel(room.code, flaky, self())
+
+      # The first absence's timer fires now; the second absence is half over.
+      Process.sleep(div(hiccup, 2) + 30)
+      assert {:ok, %{status: :finished}} = RoomManager.get_room(room.code)
+
+      Process.sleep(hiccup)
+      assert {:ok, %{status: :waiting}} = RoomManager.get_room(room.code)
+    end
+
+    test "a host who was already away when the game ended still hands the table on" do
+      {room, [host | _]} = four_player_game()
+      :ok = RoomManager.handle_player_disconnect(room.code, host)
+      finish_game(room.code)
+
+      assert :ok = RoomManager.leave_room(host)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      assert reopened.host_id in Map.values(reopened.positions)
+      refute reopened.host_id == host
+      assert Enum.count(reopened.seats, fn {_pos, seat} -> seat.is_owner end) == 1
+    end
+
     test "a player who drops and comes back in time keeps the seat and the vote" do
       {room, [_host, blip | _]} = four_player_game()
       finish_game(room.code)

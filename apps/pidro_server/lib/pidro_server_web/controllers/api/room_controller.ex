@@ -446,7 +446,7 @@ defmodule PidroServerWeb.API.RoomController do
       summary: "Seat a bot in an open seat",
       description: """
       Fills the vacant seat at `position` with a bot at the room's configured
-      `bot_difficulty`. Host only, waiting rooms only. This is how a table that
+      `bot_difficulty`. Host only, in a waiting or ready room. This is how a table that
       lost a player after a game carries on without leaving the room.
 
       A seat that is not vacant answers 422 `SEAT_NOT_VACANT`.
@@ -1502,23 +1502,50 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   # The bot seats itself through `RoomManager.join_bot/4`, which is where the
-  # seat is really claimed: a human may have taken it since the check above. A
-  # bot that did not get the seat is stopped again.
-  defp start_seated_bot(%Room{code: code} = room, position) do
-    # A bot that held this seat in an earlier game may have left a stale entry.
-    _ = BotManager.stop_bot(code, position)
+  # seat is really claimed: the vacancy check above is only a read, and a human
+  # or another request may have taken the seat since. This cannot be one
+  # RoomManager call: the bot joins from its own `init/1`, which would deadlock
+  # a RoomManager that was waiting for it. So cleanup is scoped to the bot this
+  # request started, never to whatever holds the slot.
+  defp start_seated_bot(%Room{code: code} = room, position, retry? \\ true) do
+    case BotManager.start_bot(code, position, room.config.bot_difficulty) do
+      {:ok, pid} ->
+        confirm_seated_bot(code, position, pid)
 
-    with {:ok, pid} <- BotManager.start_bot(code, position, room.config.bot_difficulty),
-         {:ok, %Room{} = seated} <- RoomManager.get_room(code),
+      {:error, :already_exists} ->
+        # The slot is registered to a bot. One that is gone (it held this seat
+        # in an earlier game) is cleared once; a live one means another request
+        # is seating a bot here, and that request owns the seat.
+        if retry? and stale_bot_slot?(code, position) do
+          _ = BotManager.stop_bot(code, position)
+          start_seated_bot(room, position, false)
+        else
+          {:error, :seat_not_vacant}
+        end
+
+      {:error, _reason} ->
+        {:error, :seat_not_vacant}
+    end
+  end
+
+  defp confirm_seated_bot(code, position, pid) do
+    with {:ok, %Room{} = seated} <- RoomManager.get_room(code),
          %{occupant_type: :bot, bot_pid: ^pid} <- Map.get(seated.seats, position) do
       {:ok, seated}
     else
-      {:error, reason} when reason in [:room_not_found] ->
-        {:error, reason}
+      {:error, :room_not_found} = gone ->
+        gone
 
       _ ->
-        _ = BotManager.stop_bot(code, position)
+        if BotManager.bot_pid(code, position) == pid, do: BotManager.stop_bot(code, position)
         {:error, :seat_not_vacant}
+    end
+  end
+
+  defp stale_bot_slot?(code, position) do
+    case BotManager.bot_pid(code, position) do
+      pid when is_pid(pid) -> not Process.alive?(pid)
+      nil -> false
     end
   end
 
