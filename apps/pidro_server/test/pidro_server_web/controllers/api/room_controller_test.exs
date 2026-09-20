@@ -863,6 +863,11 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       other = spawn(fn -> Process.sleep(:infinity) end)
       :ets.insert(:pidro_bots, {{room.code, :east}, other})
 
+      on_exit(fn ->
+        :ets.delete(:pidro_bots, {room.code, :east})
+        if Process.alive?(other), do: Process.exit(other, :kill)
+      end)
+
       assert %{"errors" => [%{"code" => "SEAT_NOT_VACANT"}]} =
                conn
                |> as_user(host)
@@ -871,7 +876,6 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       assert Process.alive?(other)
       assert BotManager.bot_pid(room.code, :east) == other
-      :ets.delete(:pidro_bots, {room.code, :east})
     end
 
     test "a non-host gets 403, a taken seat 422 SEAT_NOT_VACANT and a playing room 409", %{
