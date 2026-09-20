@@ -4,6 +4,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
   alias PidroServer.Accounts.Token
   alias PidroServer.AccountsFixtures
+  alias PidroServer.Games.Bots.{BotManager, BotSupervisor}
   alias PidroServer.Games.{RoomCodes, RoomManager}
   alias PidroServer.Games.Room.Config
 
@@ -75,7 +76,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "create/2" do
-    test "marks all-AI tables as single-player rooms", %{conn: conn} do
+    test "AE3: three ai seats answer 201 with a solo config, three bot seats, and no lobby listing",
+         %{conn: conn} do
       user = AccountsFixtures.user_fixture()
 
       conn =
@@ -109,6 +111,21 @@ defmodule PidroServerWeb.API.RoomControllerTest do
                "bot_difficulty" => "basic",
                "solo" => true
              }
+
+      for position <- [:east, :south, :west] do
+        assert room.seats[position].occupant_type == :bot
+      end
+
+      assert BotManager.list_bots(code) |> Map.keys() |> Enum.sort() == [:east, :south, :west]
+
+      listed =
+        build_conn()
+        |> get(~p"/api/v1/rooms")
+        |> json_response(200)
+        |> get_in(["data", "rooms"])
+        |> Enum.map(& &1["code"])
+
+      refute code in listed
     end
 
     test "an all-AI create with bot_difficulty smart stores :smart and solo on the room", %{
@@ -180,28 +197,235 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       refute Enum.any?(RoomManager.list_rooms(:all), &(&1.host_id == user.id))
     end
 
-    test "create stays lenient in this unit: settings and an unknown difficulty still answer 201",
+    test "AE1: a create with settings is a 422 naming settings, and the host is mapped to no room",
          %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      response =
+        conn
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms", %{
+          "name" => "Legacy client",
+          "settings" => %{"min_games" => 1, "time_limit" => 0, "private" => false}
+        })
+        |> json_response(422)
+
+      assert %{
+               "errors" => [
+                 %{"code" => "settings", "title" => "Settings", "detail" => detail} | _
+               ]
+             } = response
+
+      assert detail == "is not an accepted field"
+      assert_no_room_for(user)
+    end
+
+    test "AE2: bot_difficulty expert is a 422 naming bot_difficulty, and no bot process was started",
+         %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+      bots_before = bot_pids()
+
+      response =
+        conn
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms", %{
+          "seats" => %{"seat_2" => "ai"},
+          "bot_difficulty" => "expert"
+        })
+        |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "bot_difficulty"} | _]} = response
+      assert MapSet.subset?(bot_pids(), bots_before)
+      assert_no_room_for(user)
+    end
+
+    test "AE2: one ai seat and no difficulty answers 201 with a config difficulty of basic", %{
+      conn: conn
+    } do
       user = AccountsFixtures.user_fixture()
 
       data =
         conn
-        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms", %{"seats" => %{"seat_3" => "ai"}})
+        |> data(201)
+
+      assert data["room"]["config"]["bot_difficulty"] == "basic"
+      assert data["room"]["config"]["solo"] == false
+
+      # The bot sits where the seat plan says and runs the config's difficulty.
+      assert %{south: %{strategy: :basic}} = bots = BotManager.list_bots(data["code"])
+      assert Map.keys(bots) == [:south]
+    end
+
+    test "a create wrapped in room is a 422 naming room", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      response =
+        conn
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms", %{"room" => %{"name" => "Wrapped"}})
+        |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "room"}]} = response
+      assert_no_room_for(user)
+    end
+
+    test "a create with seats.seat_5 is a 422 naming seats.seat_5", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      response =
+        conn
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms", %{"seats" => %{"seat_2" => "ai", "seat_5" => "ai"}})
+        |> json_response(422)
+
+      assert %{
+               "errors" => [
+                 %{
+                   "code" => "seats.seat_5",
+                   "title" => "Seats seat 5",
+                   "detail" => "is not an accepted field"
+                 }
+               ]
+             } = response
+
+      assert_no_room_for(user)
+    end
+
+    test "settings and an unknown difficulty together are a 422 with two entries naming both", %{
+      conn: conn
+    } do
+      user = AccountsFixtures.user_fixture()
+
+      response =
+        conn
+        |> as_user(user)
         |> post(~p"/api/v1/rooms", %{
           "name" => "Legacy client",
           "settings" => %{"min_games" => 1, "time_limit" => 0, "private" => false},
           "bot_difficulty" => "expert"
         })
-        |> json_response(201)
-        |> Map.fetch!("data")
+        |> json_response(422)
 
-      assert data["room"]["config"] == %{
-               "name" => "Legacy client",
+      assert %{"errors" => [_first, _second] = errors} = response
+      assert errors |> Enum.map(& &1["code"]) |> Enum.sort() == ["bot_difficulty", "settings"]
+      assert_no_room_for(user)
+    end
+
+    test "an unknown query-string parameter beside a valid body answers 201", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      conn =
+        conn
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms?#{[ref: "campaign"]}", %{"name" => "From a link"})
+
+      assert data(conn, 201)["room"]["config"]["name"] == "From a link"
+
+      # The query-string key reaches the merged params but not the parsed body.
+      assert conn.params["ref"] == "campaign"
+      assert conn.body_params == %{"name" => "From a link"}
+    end
+
+    test "an empty body answers 201 with the default config", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+      conn = conn |> as_user(user) |> post(~p"/api/v1/rooms")
+
+      assert data(conn, 201)["room"]["config"] == %{
+               "name" => nil,
                "bot_difficulty" => "basic",
                "solo" => false
              }
 
-      refute Map.has_key?(data["room"], "settings")
+      assert conn.body_params == %{}
+    end
+
+    test "an empty application/json body answers 201 with the default config", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      conn =
+        conn
+        |> as_user(user)
+        |> put_req_header("content-type", "application/json")
+        |> post(~p"/api/v1/rooms", "")
+
+      assert data(conn, 201)["room"]["config"]["bot_difficulty"] == "basic"
+      assert conn.body_params == %{}
+    end
+
+    test "a raw JSON object body is parsed from string-keyed body_params", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      body =
+        Jason.encode!(%{
+          name: "Raw",
+          seats: %{seat_2: "ai", seat_4: "open"},
+          bot_difficulty: "random"
+        })
+
+      conn =
+        conn
+        |> as_user(user)
+        |> put_req_header("content-type", "application/json")
+        |> post(~p"/api/v1/rooms", body)
+
+      data = data(conn, 201)
+
+      assert conn.body_params == %{
+               "name" => "Raw",
+               "seats" => %{"seat_2" => "ai", "seat_4" => "open"},
+               "bot_difficulty" => "random"
+             }
+
+      assert data["room"]["config"] == %{
+               "name" => "Raw",
+               "bot_difficulty" => "random",
+               "solo" => false
+             }
+
+      assert %{east: %{strategy: :random}} = BotManager.list_bots(data["code"])
+    end
+
+    test "a non-object JSON body is a 422 naming body, not a 500", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      conn =
+        conn
+        |> as_user(user)
+        |> put_req_header("content-type", "application/json")
+        |> post(~p"/api/v1/rooms", ~s(["name", "settings"]))
+
+      assert %{"errors" => [%{"code" => "body", "detail" => "must be a JSON object"}]} =
+               json_response(conn, 422)
+
+      assert conn.body_params == %{"_json" => ["name", "settings"]}
+      assert_no_room_for(user)
+    end
+
+    test "a rejected create leaves the caller's existing room mapping untouched", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Held"})
+
+      # A held seat is what a valid create would evict (it closes the old room).
+      :ok = RoomManager.handle_player_disconnect(room.code, host.id)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      response =
+        conn
+        |> as_user(host)
+        |> post(~p"/api/v1/rooms", %{"name" => "Next", "settings" => %{"private" => true}})
+        |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "settings"}]} = response
+
+      assert {:ok, held} = RoomManager.get_room(room.code)
+      assert held.host_id == host.id
+      assert held.positions.north == host.id
+      assert mapped_room_code(host) == room.code
+      refute_receive {:room_closed, _code}, 100
+      assert [%{code: code}] = RoomManager.list_rooms(:all)
+      assert code == room.code
     end
 
     test "returns 503 ROOM_CODE_EXHAUSTED when no free room code can be allocated", %{
@@ -597,6 +821,24 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   defp data(conn, status), do: json_response(conn, status)["data"]
+
+  # The room code RoomManager tracks the user in, or nil.
+  defp mapped_room_code(user), do: :sys.get_state(RoomManager).player_rooms[user.id]
+
+  defp assert_no_room_for(user) do
+    assert mapped_room_code(user) == nil
+    assert {:error, :not_in_room} = RoomManager.leave_room(user.id)
+    refute Enum.any?(RoomManager.list_rooms(:all), &(&1.host_id == user.id))
+  end
+
+  # Every bot process alive under the bot supervisor, whatever room it serves.
+  defp bot_pids do
+    BotSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.map(fn {_id, pid, _type, _modules} -> pid end)
+    |> Enum.filter(&is_pid/1)
+    |> MapSet.new()
+  end
 
   defp create_invite(room, host) do
     PidroServer.Invites.create_invite(%{

@@ -39,6 +39,7 @@ defmodule PidroServerWeb.API.RoomController do
 
   alias OpenApiSpex.Operation
   alias PidroServer.Games.Bots.BotManager
+  alias PidroServer.Games.Room.Config
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
   alias PidroServer.Invites
@@ -802,10 +803,18 @@ defmodule PidroServerWeb.API.RoomController do
 
   ## Parameters
 
-    * `conn` - The Plug.Conn connection struct (must have :current_user assigned)
-    * `params` - Request parameters:
-      - `room` - Optional nested object with:
-        - `name` - Room name (optional)
+    * `conn` - The Plug.Conn connection struct (must have :current_user assigned).
+      The request body is parsed by `PidroServer.Games.Room.Config.parse_create_params/1`,
+      which documents the grammar. Every field is optional:
+      - `name` - Room name, at most 60 characters
+      - `seats` - `seat_2`, `seat_3` and `seat_4`, each `"ai"` or `"open"`
+      - `bot_difficulty` - `"random"`, `"basic"` or `"smart"`; defaults to `"basic"`
+    * `_params` - Unused. The merged params also carry query-string keys, which
+      must not count as unknown body fields.
+
+  Any other body key, including a `room` wrapper, and any invalid value answers
+  HTTP 422 with one error per problem and the field path as its `code`. A
+  rejected request creates no room and starts no bot.
 
   ## Headers Required
 
@@ -814,9 +823,9 @@ defmodule PidroServerWeb.API.RoomController do
   ## Request Body Example
 
       {
-        "room": {
-          "name": "Fun Game Night"
-        }
+        "name": "Fun Game Night",
+        "seats": {"seat_2": "ai", "seat_3": "open", "seat_4": "ai"},
+        "bot_difficulty": "smart"
       }
 
   ## Response Example (Success)
@@ -835,6 +844,18 @@ defmodule PidroServerWeb.API.RoomController do
         }
       }
 
+  ## Response Example (Error - Unknown field)
+
+      {
+        "errors": [
+          {
+            "code": "settings",
+            "title": "Settings",
+            "detail": "is not an accepted field"
+          }
+        ]
+      }
+
   ## Response Example (Error - Already in room)
 
       {
@@ -848,16 +869,16 @@ defmodule PidroServerWeb.API.RoomController do
       }
   """
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def create(conn, params) do
+  def create(conn, _params) do
     user = conn.assigns[:current_user]
-    # Payload may be nested under "room" key or at top level
-    room_params = params["room"] || params
 
-    # Lenient for now: only the recognised fields reach the config constructor,
-    # so an unknown body key is ignored. A recognised field the constructor
-    # rejects (an over-long name) answers 422 through the fallback controller.
-    with {:ok, room} <- RoomManager.create_room(user.id, config_attrs(room_params)) do
-      start_bots_for_room(room, room_params)
+    # The request body, not the merged params: a query-string key must not trip
+    # the unknown-field check. Parsing runs first, so a rejected request creates
+    # no room, starts no bot, and never reaches `create_room/2`'s stale-room
+    # eviction.
+    with {:ok, config, seat_plan} <- Config.parse_create_params(create_body(conn)),
+         {:ok, room} <- RoomManager.create_room(user.id, config) do
+      start_bots_for_room(room, seat_plan)
 
       conn
       |> put_status(:created)
@@ -1528,22 +1549,27 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_filter("ready"), do: :ready
   defp parse_filter(_), do: :all
 
-  # Starts bots for AI seats after room creation.
-  #
-  # The host occupies the first position (:north). Remaining positions (:east, :south, :west)
-  # correspond to seat_2, seat_3, seat_4. For each seat configured as "ai", a bot is started
-  # via BotManager which joins the room and uses the shared runtime pacing config.
-  # The difficulty is the one stored on the room's config at creation.
-  @spec start_bots_for_room(RoomManager.Room.t(), map()) :: :ok
-  defp start_bots_for_room(room, room_params) do
-    seats = room_params["seats"] || %{}
+  # The create-room request body as `Plug.Parsers` left it: a string-keyed map,
+  # empty when the request has no body. Plug wraps a non-object JSON body as
+  # `%{"_json" => value}`; it is unwrapped so the parser names `body`, not a
+  # `_json` key the caller never sent.
+  @spec create_body(Plug.Conn.t()) :: term()
+  defp create_body(%Plug.Conn{body_params: body}) do
+    case body do
+      %{"_json" => value} when map_size(body) == 1 -> value
+      _ -> body
+    end
+  end
+
+  # Starts a bot for every seat the parsed seat plan marks `:bot`, at the
+  # difficulty stored on the room's config. The host holds :north; the plan
+  # covers :east, :south and :west. A bot that fails to start is logged and the
+  # room stands.
+  @spec start_bots_for_room(Room.t(), Config.seat_plan()) :: :ok
+  defp start_bots_for_room(%Room{} = room, seat_plan) do
     difficulty = room.config.bot_difficulty
 
-    # Host gets :north (first auto-assigned position), remaining seats map to these positions
-    seat_positions = %{"seat_2" => :east, "seat_3" => :south, "seat_4" => :west}
-
-    for {seat_key, position} <- seat_positions,
-        Map.get(seats, seat_key) == "ai" do
+    for position <- [:east, :south, :west], seat_plan[position] == :bot do
       case BotManager.start_bot(room.code, position, difficulty) do
         {:ok, _pid} ->
           Logger.info("Started #{difficulty} bot at #{position} in room #{room.code}")
@@ -1556,36 +1582,5 @@ defmodule PidroServerWeb.API.RoomController do
     end
 
     :ok
-  end
-
-  @spec parse_bot_difficulty(String.t() | nil) :: :random | :basic | :smart
-  defp parse_bot_difficulty("random"), do: :random
-  defp parse_bot_difficulty("basic"), do: :basic
-  defp parse_bot_difficulty("smart"), do: :smart
-  defp parse_bot_difficulty(_), do: :basic
-
-  @doc false
-  # Builds the attributes for `Room.Config.new/1` from the request body: the
-  # name, the requested bot difficulty, and solo, which is derived here from an
-  # all-bot seat plan. Anything else in the body is ignored.
-  @spec config_attrs(term()) :: map()
-  defp config_attrs(room_params) when is_map(room_params) do
-    %{
-      name: room_params["name"],
-      bot_difficulty: parse_bot_difficulty(room_params["bot_difficulty"]),
-      solo: solo_room_params?(room_params)
-    }
-  end
-
-  defp config_attrs(_room_params), do: %{}
-
-  defp solo_room_params?(room_params) do
-    case Map.get(room_params, "seats") do
-      seats when is_map(seats) ->
-        Enum.all?(~w(seat_2 seat_3 seat_4), fn key -> Map.get(seats, key) == "ai" end)
-
-      _ ->
-        false
-    end
   end
 end

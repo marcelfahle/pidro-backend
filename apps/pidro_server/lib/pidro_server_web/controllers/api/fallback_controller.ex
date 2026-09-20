@@ -561,11 +561,12 @@ defmodule PidroServerWeb.API.FallbackController do
   end
 
   @doc false
-  # Convert field names from underscores to human-readable format
+  # Convert field names from underscores to human-readable format. A dotted
+  # field path reads as words too: "seats.seat_5" becomes "Seats seat 5".
   defp humanize_field(field) do
     field
     |> to_string()
-    |> String.replace("_", " ")
+    |> String.replace(["_", "."], " ")
     |> String.capitalize()
   end
 end
