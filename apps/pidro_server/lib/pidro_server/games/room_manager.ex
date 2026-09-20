@@ -2129,7 +2129,7 @@ defmodule PidroServer.Games.RoomManager do
 
   # Auto-close handler — fires after empty_room_ttl when zero humans remain.
   @impl true
-  def handle_info({:auto_close_empty_room, room_code}, %State{} = state) do
+  def handle_info({:auto_close_empty_room, room_code, game_number}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
         {:noreply, state}
@@ -2137,6 +2137,10 @@ defmodule PidroServer.Games.RoomManager do
       %Room{} = room ->
         cond do
           room.status != :finished ->
+            {:noreply, state}
+
+          # Scheduled by an earlier game in this room: not this game's timer.
+          room.game_number != game_number ->
             {:noreply, state}
 
           has_connected_human?(room) ->
@@ -2285,6 +2289,11 @@ defmodule PidroServer.Games.RoomManager do
   def handle_info({:game_over, room_code, winner, scores}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
+        {:noreply, state}
+
+      # Only a game being played can end. A repeat for a room already finished
+      # would clear the rematch votes cast since the first one.
+      %Room{status: status} when status != :playing ->
         {:noreply, state}
 
       %Room{} = room ->
@@ -3337,7 +3346,7 @@ defmodule PidroServer.Games.RoomManager do
 
       Logger.info("Zero connected humans in room #{room_code}, scheduling auto-close in #{ttl}ms")
 
-      Process.send_after(self(), {:auto_close_empty_room, room_code}, ttl)
+      Process.send_after(self(), {:auto_close_empty_room, room_code, room.game_number}, ttl)
     end
 
     :ok

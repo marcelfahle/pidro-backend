@@ -147,13 +147,15 @@ defmodule PidroServer.Games.RematchTest do
       end
     end
 
-    test "a repeated game over for the same game saves nothing new" do
-      {room, _user_ids} = four_player_game()
+    test "a repeated game over saves nothing new and leaves the rematch vote alone" do
+      {room, user_ids} = four_player_game()
 
       finish_game(room.code)
+      [vote] = ask_for_rematch(room, [hd(user_ids)])
       finish_game(room.code)
 
       assert Repo.aggregate(from(gs in GameStats, where: gs.room_code == ^room.code), :count) == 1
+      assert {:ok, ^vote} = RoomManager.readiness(room.code)
     end
   end
 
