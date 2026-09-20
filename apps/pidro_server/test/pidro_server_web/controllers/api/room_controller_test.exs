@@ -403,6 +403,24 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert_no_room_for(user)
     end
 
+    # Plug wraps only non-object JSON as `_json`, so a `_json` key holding an
+    # object is one the caller sent. It is an unknown field like any other.
+    test "a literal _json wrapper is rejected naming _json and creates no room", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      conn =
+        conn
+        |> as_user(user)
+        |> put_req_header("content-type", "application/json")
+        |> post(~p"/api/v1/rooms", ~s({"_json": {"name": "Friday"}}))
+
+      assert %{"errors" => [%{"code" => "_json", "detail" => "is not an accepted field"}]} =
+               json_response(conn, 422)
+
+      assert conn.body_params == %{"_json" => %{"name" => "Friday"}}
+      assert_no_room_for(user)
+    end
+
     test "a rejected create leaves the caller's existing room mapping untouched", %{conn: conn} do
       host = AccountsFixtures.user_fixture()
       {:ok, room} = RoomManager.create_room(host.id, %{name: "Held"})

@@ -220,6 +220,51 @@ defmodule PidroServer.Games.Room.ConfigTest do
       assert fields(result) == ["name"]
     end
 
+    # One grapheme can carry any number of combining marks, so the character
+    # cap alone does not bound the size of a name.
+    test "a one-character name of thousands of combining marks is rejected naming name" do
+      name = "a" <> String.duplicate("́", 5_000)
+
+      assert String.length(name) == 1
+      assert byte_size(name) == 10_001
+
+      assert fields(Config.parse_create_params(%{"name" => name})) == ["name"]
+      assert fields(Config.new(name: name)) == ["name"]
+      assert fields(Config.new(%{"name" => name})) == ["name"]
+    end
+
+    test "an oversized name gets the same message as a name with too many characters" do
+      {:error, {:invalid_room_params, [too_many_characters]}} =
+        Config.new(name: String.duplicate("a", 61))
+
+      {:error, {:invalid_room_params, [too_many_bytes]}} =
+        Config.new(name: "a" <> String.duplicate("́", 5_000))
+
+      assert too_many_bytes == too_many_characters
+    end
+
+    test "60 four-byte emoji are accepted" do
+      name = String.duplicate("😀", 60)
+
+      assert byte_size(name) == 240
+      assert {:ok, %Config{name: ^name}, _} = Config.parse_create_params(%{"name" => name})
+      assert {:ok, %Config{name: ^name}} = Config.new(name: name)
+    end
+
+    test "60 multi-codepoint emoji sequences are accepted" do
+      family = String.duplicate("👨‍👩‍👧‍👦", 60)
+      # The longest emoji sequence Unicode recommends: ten codepoints, 35 bytes.
+      kiss = String.duplicate("🧑🏻‍❤️‍💋‍🧑🏿", 60)
+
+      assert {String.length(family), byte_size(family)} == {60, 1500}
+      assert {String.length(kiss), byte_size(kiss)} == {60, 2100}
+
+      for name <- [family, kiss] do
+        assert {:ok, %Config{name: ^name}, _} = Config.parse_create_params(%{"name" => name})
+        assert {:ok, %Config{name: ^name}} = Config.new(name: name)
+      end
+    end
+
     test "a non-string name is rejected naming name" do
       assert fields(Config.parse_create_params(%{"name" => 42})) == ["name"]
       assert fields(Config.parse_create_params(%{"name" => %{"first" => "x"}})) == ["name"]
@@ -424,6 +469,73 @@ defmodule PidroServer.Games.Room.ConfigTest do
 
       assert Map.keys(body) -- Config.accepted_fields() == []
       assert {:ok, _, _} = Config.parse_create_params(body)
+    end
+  end
+
+  # The value constraints the OpenAPI spec is checked against. Each is tied to
+  # what the parser really does, so an accessor cannot drift from the parser.
+  describe "difficulties/0" do
+    test "lists the difficulty wire strings in declared order" do
+      assert Config.difficulties() == ["random", "basic", "smart"]
+    end
+
+    test "every listed difficulty parses to its atom and nothing else parses" do
+      for wire <- Config.difficulties() do
+        assert {:ok, %Config{bot_difficulty: difficulty}, _} =
+                 Config.parse_create_params(%{"bot_difficulty" => wire})
+
+        assert Atom.to_string(difficulty) == wire
+      end
+
+      assert fields(Config.parse_create_params(%{"bot_difficulty" => "expert"})) ==
+               ["bot_difficulty"]
+    end
+
+    test "the rejection message lists them" do
+      {:error, {:invalid_room_params, [%{message: message}]}} =
+        Config.parse_create_params(%{"bot_difficulty" => "expert"})
+
+      assert message == "must be one of: " <> Enum.join(Config.difficulties(), ", ")
+    end
+  end
+
+  describe "seat_keys/0 and seat_values/0" do
+    test "list the three non-host seats in seat order and the two seat values" do
+      assert Config.seat_keys() == ["seat_2", "seat_3", "seat_4"]
+      assert Config.seat_values() == ["ai", "open"]
+    end
+
+    test "every listed seat takes every listed value and nothing else" do
+      for key <- Config.seat_keys(), value <- Config.seat_values() do
+        assert {:ok, _, _} = Config.parse_create_params(%{"seats" => %{key => value}})
+      end
+
+      for key <- Config.seat_keys() do
+        assert fields(Config.parse_create_params(%{"seats" => %{key => "human"}})) ==
+                 ["seats." <> key]
+      end
+
+      assert fields(Config.parse_create_params(%{"seats" => %{"seat_5" => "ai"}})) ==
+               ["seats.seat_5"]
+    end
+
+    test "the rejection message lists the seat values" do
+      {:error, {:invalid_room_params, [%{message: message}]}} =
+        Config.parse_create_params(%{"seats" => %{"seat_2" => "human"}})
+
+      assert message == "must be one of: " <> Enum.join(Config.seat_values(), ", ")
+    end
+  end
+
+  describe "max_name_length/0" do
+    test "is the character cap the parser enforces" do
+      cap = Config.max_name_length()
+
+      assert cap == 60
+      assert {:ok, _, _} = Config.parse_create_params(%{"name" => String.duplicate("a", cap)})
+
+      assert fields(Config.parse_create_params(%{"name" => String.duplicate("a", cap + 1)})) ==
+               ["name"]
     end
   end
 end

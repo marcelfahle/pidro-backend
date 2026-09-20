@@ -8,6 +8,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   require OpenApiSpex
   alias OpenApiSpex.Schema
+  alias PidroServer.Games.Room.Config
 
   # ==================== Room Schemas ====================
 
@@ -102,13 +103,13 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         name: %Schema{
           type: :string,
           nullable: true,
-          maxLength: 60,
+          maxLength: Config.max_name_length(),
           description: "Room name, or null when none was given",
           example: "Fun Game Night"
         },
         bot_difficulty: %Schema{
           type: :string,
-          enum: ["random", "basic", "smart"],
+          enum: Config.difficulties(),
           description:
             "Bot difficulty requested at creation. Records the request, not what each seat's bot runs now",
           example: "basic"
@@ -140,16 +141,17 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       Any other key is rejected with a 422 that names it.
 
       The top-level properties must match `PidroServer.Games.Room.Config.accepted_fields/0`;
-      a spec test fails when the two drift apart.
+      a spec test fails when the two drift apart. The enums and the name cap are
+      read from that module, so they cannot.
       """,
       type: :object,
       additionalProperties: false,
       properties: %{
         name: %Schema{
           type: :string,
-          maxLength: 60,
+          maxLength: Config.max_name_length(),
           description:
-            "Room name. Trimmed; at most 60 characters after trimming. Missing or blank means no name",
+            "Room name. Trimmed; at most #{Config.max_name_length()} characters after trimming. Missing or blank means no name",
           example: "Fun Game Night"
         },
         seats: %Schema{
@@ -163,19 +165,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           properties: %{
             seat_2: %Schema{
               type: :string,
-              enum: ["ai", "open"],
+              enum: Config.seat_values(),
               default: "open",
               description: "East seat"
             },
             seat_3: %Schema{
               type: :string,
-              enum: ["ai", "open"],
+              enum: Config.seat_values(),
               default: "open",
               description: "South seat"
             },
             seat_4: %Schema{
               type: :string,
-              enum: ["ai", "open"],
+              enum: Config.seat_values(),
               default: "open",
               description: "West seat"
             }
@@ -183,7 +185,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         bot_difficulty: %Schema{
           type: :string,
-          enum: ["random", "basic", "smart"],
+          enum: Config.difficulties(),
           default: "basic",
           description: "Difficulty of the bots started for `ai` seats"
         }

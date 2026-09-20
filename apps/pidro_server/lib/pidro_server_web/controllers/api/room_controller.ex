@@ -1555,11 +1555,12 @@ defmodule PidroServerWeb.API.RoomController do
   # The create-room request body as `Plug.Parsers` left it: a string-keyed map,
   # empty when the request has no body. Plug wraps a non-object JSON body as
   # `%{"_json" => value}`; it is unwrapped so the parser names `body`, not a
-  # `_json` key the caller never sent.
+  # `_json` key the caller never sent. Plug never wraps an object, so a `_json`
+  # key holding a map was sent as written and stays for the parser to reject.
   @spec create_body(Plug.Conn.t()) :: term()
   defp create_body(%Plug.Conn{body_params: body}) do
     case body do
-      %{"_json" => value} when map_size(body) == 1 -> value
+      %{"_json" => value} when map_size(body) == 1 and not is_map(value) -> value
       _ -> body
     end
   end

@@ -20,6 +20,7 @@ defmodule PidroServer.Games.Room.Config do
 
       body            := { name?, seats?, bot_difficulty? }
       name            := string, trimmed, at most 60 chars; missing or blank -> none
+                         at most 4096 bytes as sent, whatever the char count
       seats           := { seat_2?, seat_3?, seat_4? }      any other key -> error "seats.<key>"
       seat            := "ai" | "open"                      missing -> "open"
       bot_difficulty  := "random" | "basic" | "smart"       missing -> "basic"
@@ -53,8 +54,16 @@ defmodule PidroServer.Games.Room.Config do
 
   @max_name_length 60
 
+  # A character is a grapheme, and one grapheme can carry any number of
+  # combining marks, so the character cap alone does not bound a name's size.
+  # The longest emoji sequence Unicode recommends is 35 bytes, which puts 60 of
+  # them at 2100 bytes; 4096 leaves every real name alone and is checked on the
+  # raw input, before anything walks the string.
+  @max_name_bytes 4096
+
   @difficulties [:random, :basic, :smart]
   @difficulty_by_wire %{"random" => :random, "basic" => :basic, "smart" => :smart}
+  @difficulty_wire_values Enum.map(@difficulties, &Atom.to_string/1)
 
   # Validation and error order for the config's own fields.
   @fields [:name, :bot_difficulty, :solo]
@@ -65,6 +74,10 @@ defmodule PidroServer.Games.Room.Config do
   # Seat order for the plan and for seat errors.
   @seats [{"seat_2", :east}, {"seat_3", :south}, {"seat_4", :west}]
   @seat_keys Enum.map(@seats, &elem(&1, 0))
+
+  # What a seat may be asked to hold, in the order the error message lists them.
+  @seat_occupants [{"ai", :bot}, {"open", :open}]
+  @seat_values Enum.map(@seat_occupants, &elem(&1, 0))
 
   # ---------------------------------------------------------------------------
   # Constructors
@@ -155,6 +168,28 @@ defmodule PidroServer.Games.Room.Config do
   @spec accepted_fields() :: [String.t()]
   def accepted_fields, do: @accepted_fields
 
+  @doc """
+  Returns the accepted `bot_difficulty` wire strings, in declared order.
+
+  Like the three functions below, this is a value constraint of the create
+  request. The OpenAPI room schemas take their enums and name cap from these
+  functions, and a spec test checks the published spec against them.
+  """
+  @spec difficulties() :: [String.t()]
+  def difficulties, do: @difficulty_wire_values
+
+  @doc "Returns the keys a create request's `seats` object may contain, in seat order."
+  @spec seat_keys() :: [String.t()]
+  def seat_keys, do: @seat_keys
+
+  @doc "Returns the values a create request may give a seat."
+  @spec seat_values() :: [String.t()]
+  def seat_values, do: @seat_values
+
+  @doc "Returns the most characters a room name may have after trimming."
+  @spec max_name_length() :: pos_integer()
+  def max_name_length, do: @max_name_length
+
   # ---------------------------------------------------------------------------
   # Serialization
   # ---------------------------------------------------------------------------
@@ -226,6 +261,9 @@ defmodule PidroServer.Games.Room.Config do
 
   defp validate(:name, nil), do: {:ok, nil}
 
+  defp validate(:name, name) when is_binary(name) and byte_size(name) > @max_name_bytes,
+    do: {:error, name_length_message()}
+
   defp validate(:name, name) when is_binary(name) do
     trimmed = String.trim(name)
 
@@ -245,7 +283,7 @@ defmodule PidroServer.Games.Room.Config do
     # An explicit lookup: caller input is never turned into an atom.
     case Map.fetch(@difficulty_by_wire, difficulty) do
       {:ok, known} -> {:ok, known}
-      :error -> {:error, "must be one of: #{Enum.join(@difficulties, ", ")}"}
+      :error -> {:error, "must be one of: #{Enum.join(@difficulty_wire_values, ", ")}"}
     end
   end
 
@@ -285,11 +323,12 @@ defmodule PidroServer.Games.Room.Config do
   end
 
   defp parse_seat(seats, key) do
-    case Map.fetch(seats, key) do
+    with {:ok, value} <- Map.fetch(seats, key),
+         {_wire, occupant} <- List.keyfind(@seat_occupants, value, 0) do
+      {:ok, occupant}
+    else
       :error -> {:ok, :open}
-      {:ok, "ai"} -> {:ok, :bot}
-      {:ok, "open"} -> {:ok, :open}
-      {:ok, _other} -> {:error, "must be one of: ai, open"}
+      nil -> {:error, "must be one of: #{Enum.join(@seat_values, ", ")}"}
     end
   end
 
