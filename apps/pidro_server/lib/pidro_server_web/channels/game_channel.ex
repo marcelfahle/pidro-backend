@@ -513,16 +513,19 @@ defmodule PidroServerWeb.GameChannel do
       ) do
     case extract_state_update(payload) do
       {:ok, snapshot} ->
-        if stale_snapshot?(socket, snapshot) do
-          {:noreply, socket}
-        else
-          push(
-            socket,
-            "game_state",
-            client_snapshot_payload(snapshot, socket.assigns[:position])
-          )
+        cond do
+          not stale_snapshot?(socket, snapshot) ->
+            {:noreply, push_game_state(socket, snapshot)}
 
-          {:noreply, assign_snapshot_cursor(socket, snapshot)}
+          live_game?(socket, snapshot) ->
+            Logger.info(
+              "Game channel #{room_code} adopts game instance #{snapshot.game_instance_id}"
+            )
+
+            {:noreply, push_game_state(socket, snapshot)}
+
+          true ->
+            {:noreply, socket}
         end
 
       :error ->
@@ -1024,6 +1027,21 @@ defmodule PidroServerWeb.GameChannel do
       (instance_id != accepted_instance_id or
          (is_integer(socket.assigns[:state_revision]) and
             revision <= socket.assigns.state_revision))
+  end
+
+  defp push_game_state(socket, snapshot) do
+    push(socket, "game_state", client_snapshot_payload(snapshot, socket.assigns[:position]))
+    assign_snapshot_cursor(socket, snapshot)
+  end
+
+  # A rematch replaces the game process, so its snapshots carry an instance this
+  # socket has not accepted yet. The registry says which game is live for the
+  # room: adopt that one, keep dropping anything from a game that is gone.
+  defp live_game?(socket, snapshot) do
+    instance_id = Map.get(snapshot, :game_instance_id)
+
+    is_binary(instance_id) and instance_id != socket.assigns[:game_instance_id] and
+      match?(%{game_instance_id: ^instance_id}, fetch_game_snapshot(socket.assigns.room_code))
   end
 
   defp assign_snapshot_cursor(socket, nil) do

@@ -290,6 +290,7 @@ defmodule PidroServer.Games.RematchTest do
       room: room,
       sockets: [first | rest] = sockets
     } do
+      {:ok, %{game_instance_id: first_instance}} = GameAdapter.get_snapshot(room.code)
       finish_game(room.code)
       assert_push "readiness_updated", %{status: :finished, ready_players: [], ready_epoch: epoch}
 
@@ -310,6 +311,17 @@ defmodule PidroServer.Games.RematchTest do
 
       assert_push "readiness_updated", %{status: :playing}
       assert {:ok, %{status: :playing, game_number: 2}} = RoomManager.get_room(room.code)
+
+      # Every socket accepted snapshots from the first game's instance. The
+      # rematch is a new instance and its state must still reach them.
+      {:ok, %{game_instance_id: second_instance}} = GameAdapter.get_snapshot(room.code)
+      refute second_instance == first_instance
+
+      for _socket <- sockets do
+        assert_push "game_state", %{game_instance_id: ^second_instance, state: state}
+        assert state.phase in [:dealer_selection, "dealer_selection"]
+      end
+
       assert length(sockets) == 4
     end
   end
