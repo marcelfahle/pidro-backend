@@ -89,6 +89,15 @@ defmodule PidroServer.Games.Bots.BotManager do
     GenServer.call(__MODULE__, {:start_bot, room_code, position, strategy, delay_ms})
   end
 
+  @doc "The pid registered for a bot slot, or `nil`. Reads the slot table directly."
+  @spec bot_pid(String.t(), atom()) :: pid() | nil
+  def bot_pid(room_code, position) do
+    case :ets.lookup(@table_name, {room_code, position}) do
+      [{_key, pid}] -> pid
+      [] -> nil
+    end
+  end
+
   @spec stop_bot(String.t(), atom()) :: :ok | {:error, :not_found}
   def stop_bot(room_code, position) when position in [:north, :east, :south, :west] do
     GenServer.call(__MODULE__, {:stop_bot, room_code, position})

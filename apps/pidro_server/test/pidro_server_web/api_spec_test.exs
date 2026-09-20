@@ -16,6 +16,7 @@ defmodule PidroServerWeb.ApiSpecTest do
     {"/api/v1/rooms/{code}/seat", ["post"]},
     {"/api/v1/rooms/{code}/lock", ["post"]},
     {"/api/v1/rooms/{code}/kick", ["post"]},
+    {"/api/v1/rooms/{code}/bot", ["post"]},
     {"/api/v1/auth/guest", ["post"]},
     {"/api/v1/auth/upgrade", ["post"]},
     {"/api/v1/auth/me", ["get", "delete"]}

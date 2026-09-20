@@ -820,6 +820,94 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     end
   end
 
+  describe "seat_bot/2" do
+    test "the host seats a bot in an open seat at the room's difficulty", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Bot seat", bot_difficulty: :smart})
+
+      assert %{"room" => %{"positions" => %{"east" => bot_id}}} =
+               conn
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/bot", %{"position" => "east"})
+               |> data(200)
+
+      assert bot_id == "bot_#{room.code}_east"
+      {:ok, seated} = RoomManager.get_room(room.code)
+      assert %{occupant_type: :bot, status: :connected, bot_pid: pid} = seated.seats.east
+      assert Process.alive?(pid)
+      assert %{east: %{strategy: :smart}} = BotManager.list_bots(room.code)
+    end
+
+    test "a slot left behind by a bot that is gone does not block the seat", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Bot seat"})
+      gone = spawn(fn -> :ok end)
+      ref = Process.monitor(gone)
+      assert_receive {:DOWN, ^ref, :process, ^gone, _}
+      :ets.insert(:pidro_bots, {{room.code, :east}, gone})
+
+      assert %{"room" => %{"positions" => %{"east" => "bot_" <> _}}} =
+               conn
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/bot", %{"position" => "east"})
+               |> data(200)
+
+      assert Process.alive?(BotManager.bot_pid(room.code, :east))
+    end
+
+    test "a slot held by a live bot is another request's seat, and that bot is left alone", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Bot seat"})
+      other = spawn(fn -> Process.sleep(:infinity) end)
+      :ets.insert(:pidro_bots, {{room.code, :east}, other})
+
+      on_exit(fn ->
+        :ets.delete(:pidro_bots, {room.code, :east})
+        if Process.alive?(other), do: Process.exit(other, :kill)
+      end)
+
+      assert %{"errors" => [%{"code" => "SEAT_NOT_VACANT"}]} =
+               conn
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/bot", %{"position" => "east"})
+               |> json_response(422)
+
+      assert Process.alive?(other)
+      assert BotManager.bot_pid(room.code, :east) == other
+    end
+
+    test "a non-host gets 403, a taken seat 422 SEAT_NOT_VACANT and a playing room 409", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      other = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Bot seat"})
+      {:ok, _room, :east} = RoomManager.join_room(room.code, other.id)
+
+      assert %{"errors" => [%{"code" => "NOT_OWNER"}]} =
+               conn
+               |> as_user(other)
+               |> post(~p"/api/v1/rooms/#{room.code}/bot", %{"position" => "south"})
+               |> json_response(403)
+
+      assert %{"errors" => [%{"code" => "SEAT_NOT_VACANT"}]} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/bot", %{"position" => "east"})
+               |> json_response(422)
+
+      :ok = RoomManager.update_room_status(room.code, :playing)
+
+      assert %{"errors" => [%{"code" => "ROOM_NOT_WAITING"}]} =
+               build_conn()
+               |> as_user(host)
+               |> post(~p"/api/v1/rooms/#{room.code}/bot", %{"position" => "south"})
+               |> json_response(409)
+    end
+  end
+
   describe "join/2 contract" do
     test "a taken explicit seat still answers 422 SEAT_TAKEN", %{conn: conn} do
       host = AccountsFixtures.user_fixture()
