@@ -662,7 +662,7 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
     end
   end
 
-  defp room_name(room), do: room.metadata[:name] || room.metadata["name"] || "Game #{room.code}"
+  defp room_name(room), do: room.config.name || "Game #{room.code}"
 
   defp room_status_class(:waiting),
     do: "rounded-md bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"

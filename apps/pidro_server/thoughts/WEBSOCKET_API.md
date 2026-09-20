@@ -1202,7 +1202,8 @@ const createRoomResponse = await fetch("http://localhost:4000/api/rooms", {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${token}`
   },
-  body: JSON.stringify({ metadata: { name: "Friday Night Game" } })
+  // A flat body: name, seats and bot_difficulty are the only accepted keys.
+  body: JSON.stringify({ name: "Friday Night Game" })
 });
 const { room } = await createRoomResponse.json();
 console.log("Created room:", room.code);
@@ -1318,7 +1319,15 @@ interface Room {
   max_players: number;
   max_spectators: number;
   created_at: string;
+  config: RoomConfig;
   seats: Record<string, Seat>;
+}
+
+// How the room was set up at creation. Set once; it does not change.
+interface RoomConfig {
+  name: string | null;                          // null when no name was given
+  bot_difficulty: "random" | "basic" | "smart"; // requested at creation
+  solo: boolean;                                // created with all three other seats as bots
 }
 
 interface Seat {
@@ -1340,6 +1349,13 @@ interface Seat {
 `locked` is `false` unless the host called `POST /api/v1/rooms/:code/lock`. It is present in every
 room serialization: the REST room responses, the lobby channel's room lists and the invite redeem
 response.
+
+`config` is present in the same serializations, in the same shape. It replaces the former
+`metadata` object: the room name is `config.name`. Example:
+
+```json
+{ "name": "Friday Night Game", "bot_difficulty": "basic", "solo": false }
+```
 
 REST room seats resolve `username` and `display_name` from the `users` table. Both are `"Bot"` for
 a bot seat and `null` for a vacant seat or for a human id that no longer resolves to an account.

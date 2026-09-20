@@ -48,6 +48,7 @@ defmodule PidroServer.Games.RoomManager do
   alias Pidro.Game.Engine
   alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
+  alias PidroServer.Games.Room.Config
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Stats
@@ -75,7 +76,7 @@ defmodule PidroServer.Games.RoomManager do
     - `:max_players` - Maximum number of players (default: 4)
     - `:max_spectators` - Maximum number of spectators (default: 10)
     - `:created_at` - DateTime when the room was created
-    - `:metadata` - Additional room metadata (e.g., room name)
+    - `:config` - The `Room.Config` set at creation: name, requested bot difficulty and whether the table is solo. Never changes for the life of the room
     - `:phase_timers` - Map of position to timer reference for the disconnect cascade (%{position => reference()})
 
     ## Derived Data
@@ -99,7 +100,7 @@ defmodule PidroServer.Games.RoomManager do
             max_players: integer(),
             max_spectators: integer(),
             created_at: DateTime.t(),
-            metadata: map(),
+            config: Config.t(),
             phase_timers: %{Positions.position() => reference()},
             seats: map(),
             last_activity: DateTime.t(),
@@ -119,8 +120,8 @@ defmodule PidroServer.Games.RoomManager do
       :status,
       :max_players,
       :created_at,
-      :metadata,
       :last_activity,
+      config: %Config{},
       locked: false,
       kicked_ids: [],
       invite_live_until: nil,
@@ -195,11 +196,18 @@ defmodule PidroServer.Games.RoomManager do
   ## Parameters
 
   - `host_id` - User ID of the room creator
-  - `metadata` - Optional metadata map (e.g., `%{name: "My Game"}`)
+  - `config_or_attrs` - A `Room.Config`, or the attributes `Room.Config.new/1`
+    accepts (`name`, `bot_difficulty`, `solo`) as a map or keyword list.
+    Defaults to no name, `:basic` difficulty, not solo.
+
+  The config is validated here, in the caller's process, before the GenServer
+  is reached: a rejected request never runs the stale-room eviction that room
+  creation performs first.
 
   ## Returns
 
   - `{:ok, room}` - Successfully created room
+  - `{:error, {:invalid_room_params, errors}}` - An attribute is unknown or invalid; no room is created
   - `{:error, :already_in_room}` - Host is already in another room
   - `{:error, :room_code_exhausted}` - No free code was found within the retry bound
 
@@ -209,10 +217,13 @@ defmodule PidroServer.Games.RoomManager do
       room.code #=> "A1B2"
       room.status #=> :waiting
   """
-  @spec create_room(String.t(), map()) ::
-          {:ok, Room.t()} | {:error, :already_in_room | :room_code_exhausted}
-  def create_room(host_id, metadata \\ %{}) do
-    GenServer.call(__MODULE__, {:create_room, host_id, metadata})
+  @spec create_room(String.t(), Config.t() | map() | keyword()) ::
+          {:ok, Room.t()}
+          | {:error, :already_in_room | :room_code_exhausted | Config.errors()}
+  def create_room(host_id, config_or_attrs \\ %{}) do
+    with {:ok, %Config{} = config} <- Config.new(config_or_attrs) do
+      GenServer.call(__MODULE__, {:create_room, host_id, config})
+    end
   end
 
   @doc """
@@ -339,12 +350,12 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc """
   Returns true when the room represents a single-player table.
+
+  Reads the solo fact stored on the room's config at creation. A room struct
+  built without one carries the default config, which is not solo.
   """
   @spec single_player_room?(Room.t()) :: boolean()
-  def single_player_room?(%Room{metadata: metadata}) when is_map(metadata) do
-    truthy_metadata?(metadata, :single_player)
-  end
-
+  def single_player_room?(%Room{config: %Config{solo: solo}}), do: solo
   def single_player_room?(%Room{}), do: false
 
   @doc """
@@ -1063,7 +1074,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:create_room, host_id, metadata}, _from, %State{} = state) do
+  def handle_call({:create_room, host_id, %Config{} = config}, _from, %State{} = state) do
     # If the player is stuck in a room from a previous disconnected session
     # (e.g. browser refresh followed by navigating away), clean it up first.
     # `state` is rebound here, so every error reply below carries the
@@ -1092,7 +1103,7 @@ defmodule PidroServer.Games.RoomManager do
         max_players: @max_players,
         created_at: now,
         last_activity: now,
-        metadata: metadata
+        config: config
       }
 
       # Auto-assign host to first available position
@@ -3715,14 +3726,6 @@ defmodule PidroServer.Games.RoomManager do
 
   defp filter_rooms(rooms, :available) do
     Enum.filter(rooms, &(&1.status in [:waiting, :ready, :playing]))
-  end
-
-  defp truthy_metadata?(metadata, key) when is_map(metadata) do
-    case Map.get(metadata, key) || Map.get(metadata, Atom.to_string(key)) do
-      true -> true
-      "true" -> true
-      _ -> false
-    end
   end
 
   defp single_player_human_player?(%Room{} = room, player_id) do

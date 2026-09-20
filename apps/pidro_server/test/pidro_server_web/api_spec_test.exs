@@ -3,6 +3,7 @@ defmodule PidroServerWeb.ApiSpecTest do
 
   import ExUnit.CaptureIO
 
+  alias PidroServer.Games.Room.Config
   alias PidroServerWeb.ApiSpec
   alias PidroServerWeb.Schemas.{ErrorSchemas, UserSchemas}
 
@@ -80,4 +81,101 @@ defmodule PidroServerWeb.ApiSpecTest do
 
     refute registered_email.nullable
   end
+
+  describe "the room config contract" do
+    # Drift guard (KTD12): the OpenAPI create-request schema and the boundary
+    # parser are two hand-written descriptions of one request. Adding a field to
+    # either without the other fails here. Every expectation below is read from
+    # `Room.Config`, never typed out, so a change to the parser's fields, enums
+    # or name cap that the spec does not follow fails too.
+    test "the create-room request accepts exactly the fields the parser accepts" do
+      schema = create_room_request_schema(ApiSpec.spec())
+
+      assert property_names(schema) == Enum.sort(Config.accepted_fields())
+      assert schema.additionalProperties == false
+    end
+
+    test "the create-room seats schema names exactly the three non-host seats" do
+      spec = ApiSpec.spec()
+
+      seats =
+        spec |> create_room_request_schema() |> Map.fetch!(:properties) |> Map.fetch!(:seats)
+
+      seats = resolve(seats, spec)
+
+      assert property_names(seats) == Enum.sort(Config.seat_keys())
+      assert seats.additionalProperties == false
+    end
+
+    test "every create-room seat takes exactly the values the parser accepts" do
+      spec = ApiSpec.spec()
+
+      seats =
+        spec |> create_room_request_schema() |> Map.fetch!(:properties) |> Map.fetch!(:seats)
+
+      seats = resolve(seats, spec)
+
+      for {seat, schema} <- seats.properties do
+        assert resolve(schema, spec).enum == Config.seat_values(), "seat #{seat}"
+      end
+    end
+
+    test "the request and the config list exactly the difficulties the parser accepts" do
+      spec = ApiSpec.spec()
+
+      for schema <- [create_room_request_schema(spec), room_config_schema(spec)] do
+        difficulty = resolve(schema.properties.bot_difficulty, spec)
+
+        assert difficulty.enum == Config.difficulties(), schema.title
+      end
+    end
+
+    test "the request and the config cap the name where the parser does" do
+      spec = ApiSpec.spec()
+
+      for schema <- [create_room_request_schema(spec), room_config_schema(spec)] do
+        name = resolve(schema.properties.name, spec)
+
+        assert name.maxLength == Config.max_name_length(), schema.title
+      end
+    end
+
+    test "the room schema carries the config and no metadata" do
+      spec = ApiSpec.spec()
+      room = Map.fetch!(spec.components.schemas, "Room")
+      names = property_names(room)
+
+      assert "config" in names
+      refute "metadata" in names
+
+      assert property_names(room_config_schema(spec)) == serialized_config_keys()
+    end
+  end
+
+  defp room_config_schema(spec) do
+    room = Map.fetch!(spec.components.schemas, "Room")
+    resolve(room.properties.config, spec)
+  end
+
+  # The keys `Config.serialize/1` really emits, so a field added to the
+  # serialized config without a schema property fails the guard.
+  defp serialized_config_keys do
+    %Config{} |> Config.serialize() |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
+  end
+
+  defp create_room_request_schema(spec) do
+    %OpenApiSpex.PathItem{post: %OpenApiSpex.Operation{requestBody: body}} =
+      Map.fetch!(spec.paths, "/api/v1/rooms")
+
+    %OpenApiSpex.MediaType{schema: schema} = Map.fetch!(body.content, "application/json")
+    resolve(schema, spec)
+  end
+
+  defp resolve(%OpenApiSpex.Reference{"$ref": "#/components/schemas/" <> name}, spec),
+    do: Map.fetch!(spec.components.schemas, name)
+
+  defp resolve(%OpenApiSpex.Schema{} = schema, _spec), do: schema
+
+  defp property_names(%OpenApiSpex.Schema{properties: properties}),
+    do: properties |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
 end

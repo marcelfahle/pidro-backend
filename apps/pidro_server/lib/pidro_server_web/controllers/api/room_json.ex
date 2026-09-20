@@ -8,7 +8,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   """
 
   alias PidroServer.Accounts.Auth
-  alias PidroServer.Games.Room.{Positions, Seat}
+  alias PidroServer.Games.Room.{Config, Positions, Seat}
   alias PidroServerWeb.Serializers.GameStateSerializer
 
   @doc """
@@ -114,6 +114,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   - max_players: Maximum number of players allowed
   - max_spectators: Maximum number of spectators allowed
   - created_at: Room creation timestamp in ISO8601 format
+  - config: The room config (name, bot_difficulty, solo), as `Room.Config.serialize/1` emits it
   """
   def room(%{room: room}), do: room(room)
 
@@ -150,9 +151,14 @@ defmodule PidroServerWeb.API.RoomJSON do
       max_players: room.max_players,
       max_spectators: room.max_spectators,
       created_at: DateTime.to_iso8601(room.created_at),
+      config: serialize_config(Map.get(room, :config)),
       seats: serialize_room_seats(Map.get(room, :seats, %{}), users)
     }
   end
+
+  # Room-shaped maps without a config (invite redeem, tests) serialize the default.
+  defp serialize_config(%Config{} = config), do: Config.serialize(config)
+  defp serialize_config(nil), do: Config.serialize(%Config{})
 
   defp serialize_rooms(rooms), do: serialize_rooms(rooms, users_for_rooms(rooms))
   defp serialize_rooms(rooms, users), do: Enum.map(rooms, &room(&1, users))

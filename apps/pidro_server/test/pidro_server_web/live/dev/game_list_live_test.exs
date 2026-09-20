@@ -4,6 +4,7 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   import Phoenix.LiveViewTest
 
   alias PidroServer.Games.{Lifecycle, RoomManager}
+  alias PidroServer.Games.Room.Config
 
   setup :register_and_log_in_admin
 
@@ -95,6 +96,37 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
 
     assert html =~ "Ownerless Table"
     assert html =~ "No owner"
+  end
+
+  describe "room creation passes the room config constructor" do
+    for preset <- ~w(preset_empty_room preset_1h_3b preset_2h_2b preset_4_bots) do
+      test "AE6: #{preset} creates a room with a valid config and no free-form key", %{
+        conn: conn
+      } do
+        {:ok, view, _html} = live(conn, ~p"/admin/games")
+
+        render_click(view, unquote(preset))
+
+        assert [room] = RoomManager.list_rooms(:all)
+        assert %Config{name: "Dev " <> _, bot_difficulty: :random, solo: false} = room.config
+        assert Config.new(room.config) == {:ok, room.config}
+        refute Map.has_key?(room, :metadata)
+      end
+    end
+
+    test "the create form stores the chosen name and difficulty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/games")
+
+      render_hook(view, "create_game", %{
+        "game_name" => "Form Table",
+        "bot_count" => "0",
+        "bot_difficulty" => "smart",
+        "host_user_id" => "dev_host"
+      })
+
+      assert [room] = RoomManager.list_rooms(:all)
+      assert room.config == %Config{name: "Form Table", bot_difficulty: :smart, solo: false}
+    end
   end
 
   defp set_room_owner(room_code, host_id) do

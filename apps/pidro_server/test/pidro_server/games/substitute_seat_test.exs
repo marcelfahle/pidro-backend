@@ -8,6 +8,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
 
   use PidroServer.DataCase, async: false
 
+  alias PidroServer.Games.Room.Config
   alias PidroServer.Games.RoomManager
   alias PidroServer.RoomManagerCase
 
@@ -30,8 +31,8 @@ defmodule PidroServer.Games.SubstituteSeatTest do
 
   # Creates a room with 4 players in :playing state.
   # Returns the room struct and a map of position => user_id.
-  defp create_playing_room do
-    {:ok, room} = RoomManager.create_room("user1", %{name: "Substitute Test"})
+  defp create_playing_room(attrs \\ %{name: "Substitute Test"}) do
+    {:ok, room} = RoomManager.create_room("user1", attrs)
     {:ok, _, _} = RoomManager.join_room(room.code, "user2")
     {:ok, _, _} = RoomManager.join_room(room.code, "user3")
     {:ok, _, _} = RoomManager.join_room(room.code, "user4")
@@ -216,6 +217,24 @@ defmodule PidroServer.Games.SubstituteSeatTest do
       assert seat.occupant_type == :human
       assert seat.status == :connected
       assert seat.user_id == "stranger1"
+    end
+
+    test "AE5: the room config is unchanged after a substitute seat is opened and reclaimed" do
+      {:ok, config} = Config.new(name: "Friday", bot_difficulty: :smart)
+      {room, _positions} = create_playing_room(config)
+      assert room.config == config
+
+      {room_with_bot, position} = make_seat_bot_substitute(room, "user2")
+      assert room_with_bot.seats[position].status == :bot_substitute
+      assert room_with_bot.config == config
+
+      {:ok, opened_room} = RoomManager.open_seat(room.code, position, "user1")
+      assert opened_room.config == config
+
+      {:ok, claimed_room, ^position} = RoomManager.join_as_substitute(room.code, "stranger1")
+      assert claimed_room.seats[position].user_id == "stranger1"
+      assert claimed_room.config == config
+      assert {:ok, %{config: ^config}} = RoomManager.get_room(room.code)
     end
 
     test "substitute is placed in the correct position in positions map" do

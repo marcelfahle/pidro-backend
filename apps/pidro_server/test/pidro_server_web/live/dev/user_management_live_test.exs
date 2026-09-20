@@ -5,6 +5,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
 
   alias PidroServer.Accounts.Auth
   alias PidroServer.AccountsFixtures
+  alias PidroServer.Games.RoomManager
   alias PidroServer.Profiles
   alias PidroServer.Stats
 
@@ -127,6 +128,23 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
     assert html =~ "Provisional"
     assert html =~ "No achievements earned yet"
     assert html =~ "Not enough data yet"
+  end
+
+  test "detail page names a live room from its config and falls back to the room code", %{
+    conn: conn
+  } do
+    on_exit(&PidroServer.RoomManagerCase.cleanup/0)
+    named_host = AccountsFixtures.user_fixture(%{username: "named_room_host"})
+    unnamed_host = AccountsFixtures.user_fixture(%{username: "unnamed_room_host"})
+
+    {:ok, _named} = RoomManager.create_room(named_host.id, %{name: "Friday Table"})
+    {:ok, unnamed} = RoomManager.create_room(unnamed_host.id)
+
+    {:ok, _view, named_html} = live(conn, ~p"/admin/users/#{named_host.id}")
+    assert named_html =~ "Friday Table"
+
+    {:ok, _view, unnamed_html} = live(conn, ~p"/admin/users/#{unnamed_host.id}")
+    assert unnamed_html =~ "Game #{unnamed.code}"
   end
 
   test "list shows level and skill tier cells", %{conn: conn} do
