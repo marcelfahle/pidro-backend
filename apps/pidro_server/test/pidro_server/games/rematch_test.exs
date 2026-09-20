@@ -51,6 +51,13 @@ defmodule PidroServer.Games.RematchTest do
     end)
   end
 
+  defp bot_processes do
+    for {_id, pid, _type, _modules} <-
+          DynamicSupervisor.which_children(PidroServer.Games.Bots.BotSupervisor),
+        is_pid(pid),
+        do: pid
+  end
+
   defp game_pid(room_code) do
     {:ok, pid} = GameSupervisor.get_game(room_code)
     pid
@@ -336,6 +343,35 @@ defmodule PidroServer.Games.RematchTest do
       {:ok, reopened} = RoomManager.get_room(room.code)
       assert reopened.status == :waiting
       refute away in Map.values(reopened.positions)
+    end
+
+    test "a player whose seat a substitute already took gets the same window" do
+      {room, [_host, away | _]} = four_player_game()
+      position = Enum.find_value(room.positions, fn {pos, id} -> id == away && pos end)
+
+      RoomManager.unregister_game_channel(room.code, away, self())
+      {:ok, hiccup} = RoomManager.get_room(room.code)
+
+      send(
+        RoomManager,
+        {:timeout, hiccup.phase_timers[position], {:phase2_start, room.code, position}}
+      )
+
+      {:ok, grace} = RoomManager.get_room(room.code)
+      assert %{status: :bot_substitute, reserved_for: ^away, user_id: nil} = grace.seats[position]
+
+      finish_game(room.code)
+      bots_before = bot_processes()
+      Process.sleep(Lifecycle.config(:hiccup_timeout_ms) + 100)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      refute away in Map.values(reopened.positions)
+      assert reopened.seats[position].occupant_type == :vacant
+
+      # Reviving substitutes for the next game must not start one for the seat
+      # that is being vacated: nothing would ever stop it.
+      assert bot_processes() -- bots_before == []
     end
 
     test "an earlier absence cannot cut a later one short" do

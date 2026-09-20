@@ -3698,11 +3698,13 @@ defmodule PidroServer.Games.RoomManager do
 
     # A finished room that loses a player reopens as a waiting table, so its
     # completed game goes: the next start must be a new game, not this one.
+    # Retiring revives substitute bots, so the leaver's seat is vacated first:
+    # a substitute started for it would be orphaned by the vacate.
     updated_room =
       room
-      |> retire_finished_game()
       |> Positions.remove(player_id)
       |> vacate_seat(player_position)
+      |> retire_finished_game()
       |> reset_readiness()
 
     if Positions.count(updated_room) == 0 do
@@ -4215,14 +4217,15 @@ defmodule PidroServer.Games.RoomManager do
   # A player who dropped during the game gets no disconnect in the finished
   # room to start their window, so it starts when the game ends.
   defp note_absences_at_game_over(%State{} = state, %Room{code: room_code} = room) do
+    # A seat the cascade already handed to a substitute keeps its player in
+    # `reserved_for`, not `user_id`; game over cancels the timer that would
+    # have released it.
     room.seats
-    |> Enum.filter(fn {_position, seat} ->
-      seat.occupant_type == :human and is_binary(seat.user_id) and
-        not channel_alive?(state, room_code, seat.user_id)
+    |> Enum.map(fn {_position, seat} ->
+      if seat.occupant_type == :human, do: seat.user_id, else: seat.reserved_for
     end)
-    |> Enum.reduce(state, fn {_position, seat}, acc ->
-      note_finished_absence(acc, room, seat.user_id)
-    end)
+    |> Enum.filter(&(is_binary(&1) and not channel_alive?(state, room_code, &1)))
+    |> Enum.reduce(state, &note_finished_absence(&2, room, &1))
   end
 
   @doc false
