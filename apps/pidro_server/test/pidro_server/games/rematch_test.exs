@@ -162,7 +162,7 @@ defmodule PidroServer.Games.RematchTest do
       {room, [user_id | _]} = four_player_game()
       {:ok, %{ready_epoch: epoch}} = RoomManager.readiness(room.code)
 
-      assert {:ok, _already_ready} =
+      assert {:error, :room_not_finished, _} =
                RoomManager.confirm_rematch(room.code, room.id, user_id, self(), epoch)
 
       {:ok, still_playing} = RoomManager.get_room(room.code)

@@ -2482,14 +2482,16 @@ defmodule PidroServer.Games.RoomManager do
       not full_table?(room) ->
         {:reply, {:error, :table_not_full, snapshot}, state}
 
+      # Before the repeat-vote reply: everybody is in the ready set of a game
+      # they are playing, which must not read as having agreed to a rematch.
+      intent == :rematch and room.status != :finished ->
+        {:reply, {:error, :room_not_finished, snapshot}, state}
+
       MapSet.member?(room.ready_player_ids, user_id) ->
         {:reply, {:ok, snapshot}, state}
 
       intent == :start and room.status not in [:waiting, :ready] ->
         {:reply, {:error, :room_not_waiting, snapshot}, state}
-
-      intent == :rematch and room.status != :finished ->
-        {:reply, {:error, :room_not_finished, snapshot}, state}
 
       true ->
         updated = %{
