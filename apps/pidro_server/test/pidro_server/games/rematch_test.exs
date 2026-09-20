@@ -295,6 +295,49 @@ defmodule PidroServer.Games.RematchTest do
       refute absent in Map.values(reopened.positions)
     end
 
+    test "the host leaves while the other player's socket is mid-reconnect: the table stays" do
+      host = AccountsFixtures.user_fixture(%{display_name: "Host"})
+      guest = AccountsFixtures.user_fixture(%{display_name: "Guest"})
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Two and two"})
+      {:ok, _room, _pos} = RoomManager.join_room(room.code, guest.id)
+      {:ok, seated} = RoomManager.get_room(room.code)
+
+      for position <- [:north, :east, :south, :west],
+          seated.seats[position].occupant_type == :vacant do
+        {:ok, _pid} = BotManager.start_bot(room.code, position, :basic, 5_000)
+      end
+
+      assert RoomFixtures.ready_room(room.code).status == :playing
+
+      # The guest's socket drops during play and is still down when the game
+      # ends and the host walks away.
+      RoomManager.unregister_game_channel(room.code, guest.id, self())
+      finish_game(room.code)
+      assert :ok = RoomManager.leave_room(host.id)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      assert guest.id in Map.values(reopened.positions)
+
+      # Back within the window: the seat is theirs and so is the table.
+      :ok = RoomManager.register_game_channel(room.code, guest.id, self())
+      {:ok, returned} = RoomManager.handle_player_reconnect(room.code, guest.id)
+      assert returned.host_id == guest.id
+      assert Enum.count(returned.seats, fn {_pos, seat} -> seat.is_owner end) == 1
+    end
+
+    test "a player already away when the game ends gets the window, then counts as gone" do
+      {room, [_host, away | _]} = four_player_game()
+      RoomManager.unregister_game_channel(room.code, away, self())
+      finish_game(room.code)
+
+      Process.sleep(Lifecycle.config(:hiccup_timeout_ms) + 100)
+
+      {:ok, reopened} = RoomManager.get_room(room.code)
+      assert reopened.status == :waiting
+      refute away in Map.values(reopened.positions)
+    end
+
     test "an earlier absence cannot cut a later one short" do
       {room, [_host, flaky | _]} = four_player_game()
       finish_game(room.code)

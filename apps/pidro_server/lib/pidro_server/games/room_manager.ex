@@ -2364,7 +2364,10 @@ defmodule PidroServer.Games.RoomManager do
             :ok
         end
 
-        updated_state = %{state | rooms: Map.put(state.rooms, room_code, finished_room)}
+        updated_state =
+          %{state | rooms: Map.put(state.rooms, room_code, finished_room)}
+          |> note_absences_at_game_over(finished_room)
+
         broadcast_room(room_code, finished_room)
         broadcast_lobby_event({:room_updated, finished_room})
         broadcast_seat_lifecycle(finished_room)
@@ -2555,10 +2558,13 @@ defmodule PidroServer.Games.RoomManager do
   # join or the host can seat a bot. A departing host hands the table on. With
   # no other human left to play there is no table to keep.
   defp leave_finished_room(%State{} = state, %Room{code: room_code} = room, player_id) do
+    # Anybody else who holds a seat counts, connected or not: a player whose
+    # socket is mid-reconnect is still at the table. One who is really gone is
+    # removed by their own absence timer, and the last removal closes the room.
     others? =
       Enum.any?(room.seats, fn {_position, seat} ->
-        Seat.connected_human?(seat) and seat.user_id != player_id and
-          channel_alive?(state, room_code, seat.user_id)
+        (seat.occupant_type == :human and seat.user_id != player_id) or
+          seat.reserved_for not in [nil, player_id]
       end)
 
     if others? do
@@ -4205,6 +4211,19 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp note_finished_absence(%State{} = state, %Room{}, _user_id), do: state
+
+  # A player who dropped during the game gets no disconnect in the finished
+  # room to start their window, so it starts when the game ends.
+  defp note_absences_at_game_over(%State{} = state, %Room{code: room_code} = room) do
+    room.seats
+    |> Enum.filter(fn {_position, seat} ->
+      seat.occupant_type == :human and is_binary(seat.user_id) and
+        not channel_alive?(state, room_code, seat.user_id)
+    end)
+    |> Enum.reduce(state, fn {_position, seat}, acc ->
+      note_finished_absence(acc, room, seat.user_id)
+    end)
+  end
 
   @doc false
   # The `:playing` cascade or the waiting-room hold, by room status; a
