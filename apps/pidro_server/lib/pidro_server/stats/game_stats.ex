@@ -11,6 +11,7 @@ defmodule PidroServer.Stats.GameStats do
 
   schema "game_stats" do
     field :room_code, :string
+    field :game_instance_id, :string
     field :winner, :string
     field :final_scores, :map
     field :bid_amount, :integer
@@ -31,6 +32,7 @@ defmodule PidroServer.Stats.GameStats do
     game_stats
     |> cast(attrs, [
       :room_code,
+      :game_instance_id,
       :winner,
       :final_scores,
       :bid_amount,
@@ -48,6 +50,7 @@ defmodule PidroServer.Stats.GameStats do
     |> validate_inclusion(:bid_team, ["north_south", "east_west"])
     |> validate_number(:bid_amount, greater_than_or_equal_to: 6, less_than_or_equal_to: 14)
     |> validate_number(:duration_seconds, greater_than: 0)
+    |> unique_constraint(:game_instance_id)
   end
 
   defp normalize_enum_fields(attrs) when is_map(attrs) do

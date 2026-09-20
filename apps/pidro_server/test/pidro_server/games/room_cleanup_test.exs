@@ -80,13 +80,33 @@ defmodule PidroServer.Games.RoomCleanupTest do
       {:ok, _} = RoomManager.get_room(room.code)
 
       # Manually send the auto-close message (bypasses TTL timer)
-      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room.code})
+      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room.code, 1})
 
       # Synchronize with GenServer
       _ = RoomManager.list_rooms()
 
       # Room should still exist because :playing rooms must be allowed to finish.
       assert {:ok, _} = RoomManager.get_room(room.code)
+    end
+
+    test "an empty-room close scheduled by an earlier game in the room does nothing" do
+      room = create_playing_room()
+
+      trigger_full_cascade(room.code, @user1)
+      trigger_full_cascade(room.code, @user2)
+      trigger_full_cascade(room.code, @user3)
+      trigger_full_cascade(room.code, @user4)
+
+      send(
+        GenServer.whereis(RoomManager),
+        {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
+      )
+
+      # This room is on game 1; a timer from "game 0" is not its timer.
+      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room.code, 0})
+      _ = RoomManager.list_rooms()
+
+      assert {:ok, %{status: :finished}} = RoomManager.get_room(room.code)
     end
 
     test "finished room closes after auto_close_empty_room fires with zero connected humans" do
@@ -102,7 +122,7 @@ defmodule PidroServer.Games.RoomCleanupTest do
         {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
       )
 
-      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room.code})
+      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room.code, 1})
 
       _ = RoomManager.list_rooms()
 
@@ -135,7 +155,7 @@ defmodule PidroServer.Games.RoomCleanupTest do
       trigger_full_cascade(room2.code, @user4)
 
       # user1 is still connected — auto_close should be a no-op
-      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room2.code})
+      send(GenServer.whereis(RoomManager), {:auto_close_empty_room, room2.code, 1})
 
       # Synchronize
       _ = RoomManager.list_rooms()

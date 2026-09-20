@@ -43,6 +43,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     {:ok, _, _} = RoomManager.join_room(room.code, user2)
     {:ok, _, _} = RoomManager.join_room(room.code, user3)
     {:ok, _, _} = RoomManager.join_room(room.code, user4)
+    # Only a game being played can end.
+    PidroServer.RoomFixtures.ready_room(room.code)
 
     game_over = {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
     send(GenServer.whereis(RoomManager), game_over)
@@ -70,6 +72,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     {:ok, _, _} = RoomManager.join_room(room.code, user2)
     {:ok, _, _} = RoomManager.join_room(room.code, user3)
     {:ok, _, _} = RoomManager.join_room(room.code, user4)
+    # Only a game being played can end.
+    PidroServer.RoomFixtures.ready_room(room.code)
 
     game_over = {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
     send(GenServer.whereis(RoomManager), game_over)
@@ -172,6 +176,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       {:ok, _, _} = RoomManager.join_room(room.code, e)
       {:ok, _, _} = RoomManager.join_room(room.code, s)
       {:ok, _, _} = RoomManager.join_room(room.code, w)
+      # Only a game being played can end.
+      PidroServer.RoomFixtures.ready_room(room.code)
 
       game_over = {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
       send(GenServer.whereis(RoomManager), game_over)
@@ -684,6 +690,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       {:ok, _, _} = RoomManager.join_room(room.code, e)
       {:ok, _, _} = RoomManager.join_room(room.code, s)
       {:ok, _, _} = RoomManager.join_room(room.code, w)
+      # Only a game being played can end.
+      PidroServer.RoomFixtures.ready_room(room.code)
 
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
 

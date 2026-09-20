@@ -110,7 +110,9 @@ defmodule PidroServer.Games.RoomManager do
             ready_epoch: non_neg_integer(),
             snapshot_revision: non_neg_integer(),
             ready_player_ids: MapSet.t(String.t()),
-            seat_lifecycle_revision: non_neg_integer()
+            seat_lifecycle_revision: non_neg_integer(),
+            game_number: non_neg_integer(),
+            game_started_at: DateTime.t() | nil
           }
 
     defstruct [
@@ -136,7 +138,10 @@ defmodule PidroServer.Games.RoomManager do
       ready_epoch: 0,
       snapshot_revision: 0,
       ready_player_ids: MapSet.new(),
-      seat_lifecycle_revision: 0
+      seat_lifecycle_revision: 0,
+      # Games started in this room. A rematch starts game 2, 3, ... in place.
+      game_number: 0,
+      game_started_at: nil
     ]
   end
 
@@ -1033,6 +1038,24 @@ defmodule PidroServer.Games.RoomManager do
         {:confirm_ready, String.upcase(room_code), room_id, user_id, pid, epoch}
       )
 
+  @doc """
+  Records that a seated player wants another game in this finished room.
+
+  A rematch is the ready check run on a `:finished` room: game over clears the
+  ready set and bumps `ready_epoch`, each human confirms against that epoch,
+  bots count as agreed, and the last confirmation starts a new game under the
+  same room code with the same seats. The client sends nothing about the next
+  game; it is derived from the room.
+  """
+  @spec confirm_rematch(String.t(), String.t(), any(), pid(), non_neg_integer()) ::
+          {:ok, map()} | {:error, atom(), map() | nil}
+  def confirm_rematch(room_code, room_id, user_id, pid, epoch),
+    do:
+      GenServer.call(
+        __MODULE__,
+        {:confirm_rematch, String.upcase(room_code), room_id, user_id, pid, epoch}
+      )
+
   @spec reset_consecutive_timeouts(String.t(), any()) :: :ok | {:error, :room_not_found}
   def reset_consecutive_timeouts(room_code, user_id) do
     GenServer.call(__MODULE__, {:reset_consecutive_timeouts, String.upcase(room_code), user_id})
@@ -1161,30 +1184,9 @@ defmodule PidroServer.Games.RoomManager do
   def handle_call({:join_bot, room_code, bot_id, bot_pid, position}, _from, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       %Room{} = room ->
-        with :ok <- ensure_room_open(room),
-             :ok <- ensure_not_in_other_room(state, bot_id, room_code),
-             {:ok, assigned_room, assigned_position} <- Positions.assign(room, bot_id, position) do
-          bot_seat = Seat.new_bot(assigned_position, bot_pid)
-
-          updated =
-            assigned_room
-            |> Map.put(:seats, Map.put(room.seats, assigned_position, bot_seat))
-            |> reset_readiness()
-            |> maybe_set_ready()
-            |> bump_seat_lifecycle_revision()
-            |> touch_last_activity()
-
-          next = put_room_and_player(state, updated, bot_id)
-          broadcast_room(room_code, updated)
-          broadcast_lobby_event({:room_updated, updated})
-          broadcast_readiness(updated)
-          broadcast_seat_lifecycle(updated)
-          next = maybe_start_game(updated, next)
-          {:reply, {:ok, Map.fetch!(next.rooms, room_code), assigned_position}, next}
-        else
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
-        end
+        if bot_holds_seat?(room, bot_id, position),
+          do: reattach_bot(state, room, bot_pid, position),
+          else: seat_new_bot(state, room, bot_id, bot_pid, position)
 
       nil ->
         {:reply, {:error, :room_not_found}, state}
@@ -1429,49 +1431,15 @@ defmodule PidroServer.Games.RoomManager do
         {:confirm_ready, room_code, room_id, user_id, pid, epoch},
         _from,
         %State{} = state
-      ) do
-    room = Map.get(state.rooms, room_code)
+      ),
+      do: confirm_roster(state, room_code, room_id, user_id, pid, epoch, :start)
 
-    snapshot = if room, do: readiness_snapshot(room), else: nil
-
-    registered? =
-      MapSet.member?(Map.get(state.channel_pids, {room_code, user_id}, MapSet.new()), pid) and
-        Process.alive?(pid)
-
-    cond do
-      is_nil(room) ->
-        {:reply, {:error, :room_not_found, snapshot}, state}
-
-      room_id != room.id or epoch != room.ready_epoch ->
-        {:reply, {:error, :stale_readiness, snapshot}, state}
-
-      not registered? or not human_connected_seat?(room, user_id) ->
-        {:reply, {:error, :stale_identity, snapshot}, state}
-
-      not full_table?(room) ->
-        {:reply, {:error, :table_not_full, snapshot}, state}
-
-      MapSet.member?(room.ready_player_ids, user_id) ->
-        {:reply, {:ok, snapshot}, state}
-
-      room.status not in [:waiting, :ready] ->
-        {:reply, {:error, :room_not_waiting, snapshot}, state}
-
-      true ->
-        updated = %{
-          room
-          | ready_player_ids: MapSet.put(room.ready_player_ids, user_id),
-            snapshot_revision: room.snapshot_revision + 1
-        }
-
-        updated = if all_players_ready?(updated), do: %{updated | status: :ready}, else: updated
-        next = put_room(state, updated)
-        broadcast_readiness(updated)
-        next = maybe_start_game(updated, next)
-        final = Map.get(next.rooms, room_code, updated)
-        {:reply, {:ok, readiness_snapshot(final)}, next}
-    end
-  end
+  def handle_call(
+        {:confirm_rematch, room_code, room_id, user_id, pid, epoch},
+        _from,
+        %State{} = state
+      ),
+      do: confirm_roster(state, room_code, room_id, user_id, pid, epoch, :rematch)
 
   @impl true
   def handle_call({:apply_player_action, room_code, user_id, position, action}, _from, state) do
@@ -2161,7 +2129,7 @@ defmodule PidroServer.Games.RoomManager do
 
   # Auto-close handler — fires after empty_room_ttl when zero humans remain.
   @impl true
-  def handle_info({:auto_close_empty_room, room_code}, %State{} = state) do
+  def handle_info({:auto_close_empty_room, room_code, game_number}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
         {:noreply, state}
@@ -2169,6 +2137,10 @@ defmodule PidroServer.Games.RoomManager do
       %Room{} = room ->
         cond do
           room.status != :finished ->
+            {:noreply, state}
+
+          # Scheduled by an earlier game in this room: not this game's timer.
+          room.game_number != game_number ->
             {:noreply, state}
 
           has_connected_human?(room) ->
@@ -2298,10 +2270,30 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  # A finished room nobody rematched closes after `finished_room_ttl_ms`. The
+  # game number pins the timer to the game that scheduled it, so it cannot close
+  # a rematch, or the room a rematch has since finished in.
+  @impl true
+  def handle_info({:close_finished_room, room_code, game_number}, %State{} = state) do
+    case Map.get(state.rooms, room_code) do
+      %Room{status: :finished, game_number: ^game_number} ->
+        Logger.info("Closing room #{room_code} after game completion")
+        {:noreply, remove_room(state, room_code)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   @impl true
   def handle_info({:game_over, room_code, winner, scores}, %State{} = state) do
     case Map.get(state.rooms, room_code) do
       nil ->
+        {:noreply, state}
+
+      # Only a game being played can end. A repeat for a room already finished
+      # would clear the rematch votes cast since the first one.
+      %Room{status: status} when status != :playing ->
         {:noreply, state}
 
       %Room{} = room ->
@@ -2313,18 +2305,19 @@ defmodule PidroServer.Games.RoomManager do
 
         # The game is over: no new controllers or abandonment transitions should
         # run. Preserve reservations so players can still return to the result.
+        # Substitutes stop with the game they were covering. The table's own bots
+        # stay seated, idle, so a rematch can start without them rejoining; they
+        # go when the room does.
         cancel_all_phase_timers(room)
-        terminate_room_bots(room)
 
+        # Clearing readiness turns the ready check into the rematch vote.
         finished_room =
           room
           |> maybe_cancel_turn_timer()
           |> Map.put(:status, :finished)
           |> Map.put(:phase_timers, %{})
-          |> Map.put(
-            :seats,
-            Map.new(room.seats, fn {pos, seat} -> {pos, %{seat | bot_pid: nil}} end)
-          )
+          |> stop_substitute_bots()
+          |> reset_readiness()
           |> bump_seat_lifecycle_revision()
           |> touch_last_activity()
 
@@ -2335,7 +2328,9 @@ defmodule PidroServer.Games.RoomManager do
         # Persistence is a secondary side effect of finishing a game: a stats /
         # profile write failure must never crash the RoomManager and drop live
         # rooms. Isolate it — log and carry on if it blows up.
-        case persist_completed_game(room_code, finished_room, winner, scores, game_state) do
+        game_instance_id = Map.get(state.active_game_instances, room_code)
+
+        case persist_completed_game(finished_room, winner, scores, game_state, game_instance_id) do
           {:ok, summaries} when is_map(summaries) and map_size(summaries) > 0 ->
             Phoenix.PubSub.broadcast(
               PidroServer.PubSub,
@@ -2351,7 +2346,9 @@ defmodule PidroServer.Games.RoomManager do
         broadcast_room(room_code, finished_room)
         broadcast_lobby_event({:room_updated, finished_room})
         broadcast_seat_lifecycle(finished_room)
+        broadcast_readiness(finished_room)
         maybe_schedule_empty_room_close(finished_room, room_code)
+        schedule_finished_room_close(finished_room)
 
         {:noreply, updated_state}
     end
@@ -2445,11 +2442,19 @@ defmodule PidroServer.Games.RoomManager do
 
   # Persist the completed game (game_stats row + profile/rating/XP/achievement
   # rollups) without letting a failure take down the RoomManager. Returns
-  # whatever `Stats.save_completed_game/4` returns on success, or `:error` if it
+  # whatever `Stats.save_completed_game/5` returns on success, or `:error` if it
   # raised/exited (e.g. a transient DB problem) — the game has already finished
   # for the players regardless.
-  defp persist_completed_game(room_code, finished_room, winner, scores, game_state) do
-    Stats.save_completed_game(finished_room, winner, scores, game_state)
+  defp persist_completed_game(
+         %Room{code: room_code} = finished_room,
+         winner,
+         scores,
+         game_state,
+         game_instance_id
+       ) do
+    Stats.save_completed_game(finished_room, winner, scores, game_state,
+      game_instance_id: game_instance_id
+    )
   rescue
     error ->
       Logger.error("Failed to persist completed game #{room_code}: #{Exception.message(error)}")
@@ -2460,6 +2465,103 @@ defmodule PidroServer.Games.RoomManager do
       Logger.error("Failed to persist completed game #{room_code}: #{inspect({kind, reason})}")
 
       :error
+  end
+
+  # One consensus, two moments: `:start` opens a waiting table's first game,
+  # `:rematch` opens the next game of a finished one.
+  defp confirm_roster(%State{} = state, room_code, room_id, user_id, pid, epoch, intent) do
+    room = Map.get(state.rooms, room_code)
+
+    snapshot = if room, do: readiness_snapshot(room), else: nil
+
+    registered? =
+      MapSet.member?(Map.get(state.channel_pids, {room_code, user_id}, MapSet.new()), pid) and
+        Process.alive?(pid)
+
+    cond do
+      is_nil(room) ->
+        {:reply, {:error, :room_not_found, snapshot}, state}
+
+      room_id != room.id or epoch != room.ready_epoch ->
+        {:reply, {:error, :stale_readiness, snapshot}, state}
+
+      not registered? or not human_connected_seat?(room, user_id) ->
+        {:reply, {:error, :stale_identity, snapshot}, state}
+
+      not full_table?(room) ->
+        {:reply, {:error, :table_not_full, snapshot}, state}
+
+      # Before the repeat-vote reply: everybody is in the ready set of a game
+      # they are playing, which must not read as having agreed to a rematch.
+      intent == :rematch and room.status != :finished ->
+        {:reply, {:error, :room_not_finished, snapshot}, state}
+
+      MapSet.member?(room.ready_player_ids, user_id) ->
+        {:reply, {:ok, snapshot}, state}
+
+      intent == :start and room.status not in [:waiting, :ready] ->
+        {:reply, {:error, :room_not_waiting, snapshot}, state}
+
+      true ->
+        updated = %{
+          room
+          | ready_player_ids: MapSet.put(room.ready_player_ids, user_id),
+            snapshot_revision: room.snapshot_revision + 1
+        }
+
+        updated =
+          if all_players_ready?(updated),
+            do: updated |> retire_finished_game() |> Map.put(:status, :ready),
+            else: updated
+
+        next = put_room(state, updated)
+        broadcast_readiness(updated)
+        next = maybe_start_game(updated, next)
+        final = Map.get(next.rooms, room_code, updated)
+        {:reply, {:ok, readiness_snapshot(final)}, next}
+    end
+  end
+
+  defp bot_holds_seat?(%Room{} = room, bot_id, position) do
+    Map.get(room.positions, position) == bot_id and
+      match?(%Seat{occupant_type: :bot, status: :connected}, Map.get(room.seats, position))
+  end
+
+  # A bot player restarted by its supervisor comes back for the seat it already
+  # holds. Hand the seat its new pid: the roster did not change, so readiness
+  # stands, and a rematch waiting on this bot can start.
+  defp reattach_bot(%State{} = state, %Room{code: room_code} = room, bot_pid, position) do
+    seat = Map.fetch!(room.seats, position)
+    updated = %{room | seats: Map.put(room.seats, position, %{seat | bot_pid: bot_pid})}
+    next = maybe_start_game(updated, put_room(state, updated))
+    {:reply, {:ok, Map.fetch!(next.rooms, room_code), position}, next}
+  end
+
+  defp seat_new_bot(%State{} = state, %Room{code: room_code} = room, bot_id, bot_pid, position) do
+    with :ok <- ensure_room_open(room),
+         :ok <- ensure_not_in_other_room(state, bot_id, room_code),
+         {:ok, assigned_room, assigned_position} <- Positions.assign(room, bot_id, position) do
+      bot_seat = Seat.new_bot(assigned_position, bot_pid)
+
+      updated =
+        assigned_room
+        |> Map.put(:seats, Map.put(room.seats, assigned_position, bot_seat))
+        |> reset_readiness()
+        |> maybe_set_ready()
+        |> bump_seat_lifecycle_revision()
+        |> touch_last_activity()
+
+      next = put_room_and_player(state, updated, bot_id)
+      broadcast_room(room_code, updated)
+      broadcast_lobby_event({:room_updated, updated})
+      broadcast_readiness(updated)
+      broadcast_seat_lifecycle(updated)
+      next = maybe_start_game(updated, next)
+      {:reply, {:ok, Map.fetch!(next.rooms, room_code), assigned_position}, next}
+    else
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   @doc false
@@ -3244,13 +3346,70 @@ defmodule PidroServer.Games.RoomManager do
 
       Logger.info("Zero connected humans in room #{room_code}, scheduling auto-close in #{ttl}ms")
 
-      Process.send_after(self(), {:auto_close_empty_room, room_code}, ttl)
+      Process.send_after(self(), {:auto_close_empty_room, room_code, room.game_number}, ttl)
     end
 
     :ok
   end
 
   defp maybe_schedule_empty_room_close(%Room{}, _room_code), do: :ok
+
+  defp schedule_finished_room_close(%Room{code: room_code, game_number: game_number}) do
+    Process.send_after(
+      self(),
+      {:close_finished_room, room_code, game_number},
+      Lifecycle.config(:finished_room_ttl_ms)
+    )
+
+    :ok
+  end
+
+  # The engine has no way out of `:complete`, so a rematch replaces the game
+  # process. Stopping it here lets `start_game_for_room/2` start a fresh one
+  # under the same room code. A no-op for a room that has not played yet.
+  defp retire_finished_game(%Room{status: :finished, code: room_code} = room) do
+    _ = GameSupervisor.stop_game(room_code)
+    revive_substitute_bots(room)
+  end
+
+  defp retire_finished_game(%Room{} = room), do: room
+
+  defp stop_substitute_bots(%Room{seats: seats} = room) do
+    seats =
+      Map.new(seats, fn
+        {position, %Seat{occupant_type: :bot, status: :bot_substitute, bot_pid: pid} = seat} ->
+          if is_pid(pid),
+            do: DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, pid)
+
+          {position, %{seat | bot_pid: nil}}
+
+        other ->
+          other
+      end)
+
+    %{room | seats: seats}
+  end
+
+  # Game over stopped the substitutes, so bring them back for the rematch.
+  defp revive_substitute_bots(%Room{code: room_code, seats: seats} = room) do
+    seats =
+      Map.new(seats, fn
+        {position, %Seat{occupant_type: :bot, status: :bot_substitute, bot_pid: pid} = seat} ->
+          if is_pid(pid) and Process.alive?(pid) do
+            {position, seat}
+          else
+            case start_substitute_bot(room_code, position) do
+              {:ok, new_pid} -> {position, %{seat | bot_pid: new_pid}}
+              {:error, _reason} -> {position, seat}
+            end
+          end
+
+        other ->
+          other
+      end)
+
+    %{room | seats: seats}
+  end
 
   @doc false
   # Terminates all substitute bot processes in a room's seats.
@@ -3837,7 +3996,9 @@ defmodule PidroServer.Games.RoomManager do
           snapshot_revision: room.snapshot_revision + 1,
           turn_timer: nil,
           consecutive_timeouts: %{},
-          last_hand_number: nil
+          last_hand_number: nil,
+          game_number: room.game_number + 1,
+          game_started_at: DateTime.utc_now()
       }
       |> bump_seat_lifecycle_revision()
 

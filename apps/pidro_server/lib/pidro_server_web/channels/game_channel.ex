@@ -18,6 +18,9 @@ defmodule PidroServerWeb.GameChannel do
   * `"select_dealer"` - Triggers the automatic dealer-selection cut ceremony
   * `"ready"` - Confirm current roster: `%{"room_id" => id, "ready_epoch" => epoch}`.
     Required for every human; success and stale errors include `readiness`.
+  * `"rematch"` - Ask for another game in a finished room, same payload and replies as
+    `"ready"`. Game over clears readiness and bumps `ready_epoch`; when every human has
+    asked, a new game starts in the same room with the same seats.
 
   ## Outgoing Events (to clients)
 
@@ -264,6 +267,7 @@ defmodule PidroServerWeb.GameChannel do
   - `"select_hand"` - Select cards to keep during dealer rob (players only)
   - `"select_dealer"` - Trigger automatic dealer selection (players only)
   - `"ready"` - Signal ready status (players only)
+  - `"rematch"` - Ask for another game once this one is over (players only)
 
   Spectators cannot perform game actions and will receive an error.
   """
@@ -388,6 +392,38 @@ defmodule PidroServerWeb.GameChannel do
   def handle_in("ready", _params, socket),
     do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
 
+  # A rematch is the ready check on a finished room, so the payload and replies
+  # match "ready". The client says only "again"; the server derives the next
+  # game from the room.
+  def handle_in("rematch", %{"room_id" => room_id, "ready_epoch" => epoch}, socket)
+      when is_integer(epoch) do
+    if socket.assigns[:role] == :spectator do
+      {:reply, {:error, %{reason: "spectators cannot ask for a rematch"}}, socket}
+    else
+      case RoomManager.confirm_rematch(
+             socket.assigns.room_code,
+             room_id,
+             socket.assigns.user_id,
+             self(),
+             epoch
+           ) do
+        {:ok, readiness} ->
+          {:reply, {:ok, %{readiness: RoomJSON.readiness(readiness)}}, socket}
+
+        {:error, :room_not_found, nil} ->
+          {:reply, {:error, %{reason: "room_not_found"}}, socket}
+
+        {:error, reason, readiness} ->
+          {:reply,
+           {:error, %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)}},
+           socket}
+      end
+    end
+  end
+
+  def handle_in("rematch", _params, socket),
+    do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
+
   def handle_in(event, %{"position" => position} = params, socket)
       when event in ["open_seat", "keep_bot"] do
     if socket.assigns[:role] == :spectator do
@@ -466,7 +502,6 @@ defmodule PidroServerWeb.GameChannel do
   Processes the following events:
   - `:state_update` - Game state changed
   - `:game_over` - Game completed
-  - `:close_room` - Scheduled room closure
   - `:after_join` - Presence tracking after join
   """
   @impl true
@@ -478,16 +513,19 @@ defmodule PidroServerWeb.GameChannel do
       ) do
     case extract_state_update(payload) do
       {:ok, snapshot} ->
-        if stale_snapshot?(socket, snapshot) do
-          {:noreply, socket}
-        else
-          push(
-            socket,
-            "game_state",
-            client_snapshot_payload(snapshot, socket.assigns[:position])
-          )
+        cond do
+          not stale_snapshot?(socket, snapshot) ->
+            {:noreply, push_game_state(socket, snapshot)}
 
-          {:noreply, assign_snapshot_cursor(socket, snapshot)}
+          live_game?(socket, snapshot) ->
+            Logger.info(
+              "Game channel #{room_code} adopts game instance #{snapshot.game_instance_id}"
+            )
+
+            {:noreply, push_game_state(socket, snapshot)}
+
+          true ->
+            {:noreply, socket}
         end
 
       :error ->
@@ -499,11 +537,8 @@ defmodule PidroServerWeb.GameChannel do
         {:game_over, room_code, winner, scores},
         %{assigns: %{room_code: room_code}} = socket
       ) do
-    # Broadcast game over to all players
+    # RoomManager owns what happens to the room next: a rematch, or closing it.
     push(socket, "game_over", %{winner: winner, scores: scores})
-
-    # Schedule room closure after 5 minutes
-    Process.send_after(self(), {:close_room, room_code}, :timer.minutes(5))
 
     {:noreply, socket}
   end
@@ -538,12 +573,6 @@ defmodule PidroServerWeb.GameChannel do
   def handle_info({:force_disconnect, :timeout_threshold}, socket) do
     push(socket, "force_disconnect", %{reason: "timeout_threshold"})
     {:stop, {:shutdown, :timeout_threshold}, socket}
-  end
-
-  def handle_info({:close_room, room_code}, socket) do
-    Logger.info("Closing room #{room_code} after game completion")
-    RoomManager.close_room(room_code)
-    {:noreply, socket}
   end
 
   # Disconnect cascade PubSub events — push to client for UI updates
@@ -998,6 +1027,21 @@ defmodule PidroServerWeb.GameChannel do
       (instance_id != accepted_instance_id or
          (is_integer(socket.assigns[:state_revision]) and
             revision <= socket.assigns.state_revision))
+  end
+
+  defp push_game_state(socket, snapshot) do
+    push(socket, "game_state", client_snapshot_payload(snapshot, socket.assigns[:position]))
+    assign_snapshot_cursor(socket, snapshot)
+  end
+
+  # A rematch replaces the game process, so its snapshots carry an instance this
+  # socket has not accepted yet. The registry says which game is live for the
+  # room: adopt that one, keep dropping anything from a game that is gone.
+  defp live_game?(socket, snapshot) do
+    instance_id = Map.get(snapshot, :game_instance_id)
+
+    is_binary(instance_id) and instance_id != socket.assigns[:game_instance_id] and
+      match?(%{game_instance_id: ^instance_id}, fetch_game_snapshot(socket.assigns.room_code))
   end
 
   defp assign_snapshot_cursor(socket, nil) do
