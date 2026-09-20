@@ -372,7 +372,15 @@ defmodule PidroServer.Stats do
   end
 
   @doc """
-  Persists the final game result exactly once for a finished room.
+  Persists the final game result exactly once per finished game.
+
+  A game is identified by `opts[:game_instance_id]`, the engine's id for the
+  game process. A room can host several games (rematch) and a room code is
+  reused once its room closes, so the room code does not identify a game.
+  Callers that pass no instance id keep the older room-code check.
+
+  `room.game_started_at`, when set, is the start of this game: it bounds the
+  duration and the abandonment events that count against this result.
 
   On a successful first save, returns `{:ok, summaries}` where `summaries` is the
   ephemeral `%{user_id => post_game_summary_map}` from
@@ -380,73 +388,98 @@ defmodule PidroServer.Stats do
   (already saved) or a rolled-back transaction, returns `:ok` — no summary is
   ever surfaced for a re-fire or a rollback.
   """
-  @spec save_completed_game(map(), atom(), map(), map() | nil) ::
+  @spec save_completed_game(map(), atom(), map(), map() | nil, keyword()) ::
           {:ok, %{optional(Ecto.UUID.t()) => map()}} | :ok
-  def save_completed_game(%{code: room_code} = room, winner, scores, game_state \\ nil) do
-    case Repo.get_by(GameStats, room_code: room_code) do
-      %GameStats{} ->
-        :ok
+  def save_completed_game(
+        %{code: room_code} = room,
+        winner,
+        scores,
+        game_state \\ nil,
+        opts \\ []
+      ) do
+    game_instance_id = Keyword.get(opts, :game_instance_id)
+    game_started_at = Map.get(room, :game_started_at) || room.created_at
 
-      nil ->
-        bid_info = extract_bid_info(game_state)
-        duration_seconds = max(1, DateTime.diff(DateTime.utc_now(), room.created_at, :second))
-        abandonment_events = list_abandonments_for_room(room_code)
-        player_results = build_player_results(room.seats, winner, abandonment_events)
-        player_results = reject_bot_results(player_results)
-        player_bidding = build_player_bidding(events_of(game_state), room.seats)
+    if game_saved?(room_code, game_instance_id) do
+      :ok
+    else
+      bid_info = extract_bid_info(game_state)
+      duration_seconds = max(1, DateTime.diff(DateTime.utc_now(), game_started_at, :second))
+      abandonment_events = list_abandonments_for_room(room_code, game_started_at)
+      player_results = build_player_results(room.seats, winner, abandonment_events)
+      player_results = reject_bot_results(player_results)
+      player_bidding = build_player_bidding(events_of(game_state), room.seats)
 
-        stats_attrs = %{
-          room_code: room_code,
-          winner: winner,
-          final_scores: scores,
-          bid_amount: bid_info.bid_amount,
-          bid_team: bid_info.bid_team,
-          duration_seconds: duration_seconds,
-          completed_at: DateTime.utc_now(),
-          player_ids: Map.keys(player_results),
-          player_results: player_results,
-          player_bidding: player_bidding
-        }
+      stats_attrs = %{
+        room_code: room_code,
+        game_instance_id: game_instance_id,
+        winner: winner,
+        final_scores: scores,
+        bid_amount: bid_info.bid_amount,
+        bid_team: bid_info.bid_team,
+        duration_seconds: duration_seconds,
+        completed_at: DateTime.utc_now(),
+        player_ids: Map.keys(player_results),
+        player_results: player_results,
+        player_bidding: player_bidding
+      }
 
-        result =
-          Repo.transaction(fn ->
-            case save_game_result(stats_attrs) do
-              {:ok, _stats} ->
-                # PID-52: apply_completed_game returns the per-user ephemeral
-                # post-game summaries; carry them out of the transaction so the
-                # caller can push them per-player after the commit.
-                {:ok, summaries} =
-                  Profiles.apply_completed_game(player_results, winner, scores, player_bidding)
+      result =
+        Repo.transaction(fn ->
+          case save_game_result(stats_attrs) do
+            {:ok, _stats} ->
+              # PID-52: apply_completed_game returns the per-user ephemeral
+              # post-game summaries; carry them out of the transaction so the
+              # caller can push them per-player after the commit.
+              {:ok, summaries} =
+                Profiles.apply_completed_game(player_results, winner, scores, player_bidding)
 
-                summaries
+              summaries
 
-              {:error, changeset} ->
-                Repo.rollback(changeset)
-            end
-          end)
+            {:error, changeset} ->
+              Repo.rollback(changeset)
+          end
+        end)
 
-        case result do
-          {:ok, summaries} ->
-            Logger.info("Saved game stats for room #{room_code}")
-            {:ok, summaries}
+      case result do
+        {:ok, summaries} ->
+          Logger.info("Saved game stats for room #{room_code}")
+          {:ok, summaries}
 
-          {:error, changeset} ->
-            Logger.error("Failed to save game stats for room #{room_code}: #{inspect(changeset)}")
-            :ok
-        end
+        {:error, changeset} ->
+          Logger.error("Failed to save game stats for room #{room_code}: #{inspect(changeset)}")
+          :ok
+      end
     end
   end
 
   @doc """
   Lists abandonment events for a completed room.
   """
-  @spec list_abandonments_for_room(String.t()) :: [AbandonmentEvent.t()]
-  def list_abandonments_for_room(room_code) do
+  @spec list_abandonments_for_room(String.t(), DateTime.t() | nil) :: [AbandonmentEvent.t()]
+  def list_abandonments_for_room(room_code, since \\ nil) do
     from(ae in AbandonmentEvent,
       where: ae.room_code == ^room_code,
       order_by: [asc: ae.inserted_at]
     )
+    |> abandoned_since(since)
     |> Repo.all()
+  end
+
+  # `inserted_at` has second precision, so compare against the truncated start.
+  defp abandoned_since(query, nil), do: query
+
+  defp abandoned_since(query, %DateTime{} = since) do
+    since = since |> DateTime.truncate(:second) |> DateTime.to_naive()
+    from(ae in query, where: ae.inserted_at >= ^since)
+  end
+
+  defp game_saved?(_room_code, game_instance_id) when is_binary(game_instance_id) do
+    Repo.exists?(from(gs in GameStats, where: gs.game_instance_id == ^game_instance_id))
+  end
+
+  defp game_saved?(room_code, nil) do
+    Repo.exists?(from(gs in GameStats, where: gs.room_code == ^room_code))
   end
 
   # Private helpers
