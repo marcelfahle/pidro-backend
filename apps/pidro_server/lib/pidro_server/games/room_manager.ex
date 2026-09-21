@@ -2458,8 +2458,39 @@ defmodule PidroServer.Games.RoomManager do
     {:noreply, state}
   end
 
+  # RoomManager also receives its own notifications. These describe mutations
+  # already applied here; they are not commands to apply them again.
   @impl true
-  def handle_info(_msg, %State{} = state) do
+  def handle_info({tag, _}, %State{} = state)
+      when tag in [
+             :turn_timer_started,
+             :turn_timer_cancelled,
+             :turn_auto_played,
+             :player_reconnecting,
+             :player_reconnected,
+             :player_reclaimed_seat,
+             :bot_substitute_active,
+             :seat_permanently_botted,
+             :owner_decision_available,
+             :owner_changed,
+             :substitute_available,
+             :substitute_seat_closed,
+             :substitute_joined,
+             :seat_lifecycle,
+             :readiness_updated,
+             :invite_redeemed,
+             :seat_moved,
+             :kicked
+           ],
+      do: {:noreply, state}
+
+  @impl true
+  def handle_info({:progression_summary, _room_code, _summaries}, %State{} = state),
+    do: {:noreply, state}
+
+  @impl true
+  def handle_info(message, %State{} = state) do
+    PidroServer.Games.UnexpectedMessage.report(__MODULE__, message)
     {:noreply, state}
   end
 

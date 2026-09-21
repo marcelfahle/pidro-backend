@@ -725,6 +725,11 @@ defmodule PidroServerWeb.GameChannel do
     {:noreply, socket}
   end
 
+  def handle_info(message, socket) do
+    PidroServer.Games.UnexpectedMessage.report(__MODULE__, message)
+    {:noreply, socket}
+  end
+
   @spec presence_meta(Phoenix.Socket.t()) :: map()
   defp presence_meta(socket) do
     meta = %{

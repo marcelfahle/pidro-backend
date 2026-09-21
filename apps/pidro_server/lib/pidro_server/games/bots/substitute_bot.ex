@@ -151,9 +151,16 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   @impl true
   def handle_info({:readiness_updated, _}, state), do: {:noreply, state}
 
+  @impl true
+  def handle_info({tag, _}, state) when tag in [:invite_redeemed, :seat_moved, :kicked],
+    do: {:noreply, state}
+
   # This is a shared topic, not a private bot protocol.
   @impl true
-  def handle_info(_message, state), do: {:noreply, state}
+  def handle_info(message, state) do
+    PidroServer.Games.UnexpectedMessage.report(__MODULE__, message)
+    {:noreply, state}
+  end
 
   @impl true
   def terminate(_reason, state) do
