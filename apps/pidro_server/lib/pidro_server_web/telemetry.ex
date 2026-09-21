@@ -21,6 +21,8 @@ defmodule PidroServerWeb.Telemetry do
 
   def metrics do
     [
+      counter("pidro_server.game_topic.unexpected_message.count", tags: [:subscriber]),
+
       # Phoenix Metrics
       summary("phoenix.endpoint.start.system_time",
         unit: {:native, :millisecond}

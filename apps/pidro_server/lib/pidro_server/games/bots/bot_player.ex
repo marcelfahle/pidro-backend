@@ -202,6 +202,12 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   end
 
   @impl true
+  def handle_info(message, state) do
+    PidroServer.Games.UnexpectedMessage.report(__MODULE__, message)
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_cast(:pause, state) do
     Logger.info("BotPlayer paused for room #{state.room_code}, position #{state.position}")
     {:noreply, %{state | paused?: true}}

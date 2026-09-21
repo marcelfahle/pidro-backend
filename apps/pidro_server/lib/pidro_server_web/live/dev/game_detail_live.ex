@@ -185,6 +185,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
+  def handle_info({:room_closed}, socket) do
+    {:noreply, redirect(socket, to: ~p"/admin/games")}
+  end
+
+  @impl true
   def handle_info({:auto_bid_complete, :success}, socket) do
     {:noreply, put_flash(socket, :info, "Auto-bidding completed successfully")}
   end
@@ -219,6 +224,42 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # This view uses room/state snapshots, not the player-facing notifications
+  # or Phoenix channel broadcasts on the same topic.
+  @impl true
+  def handle_info({tag, _}, socket)
+      when tag in [
+             :player_reconnecting,
+             :player_reconnected,
+             :player_reclaimed_seat,
+             :bot_substitute_active,
+             :seat_permanently_botted,
+             :owner_decision_available,
+             :owner_changed,
+             :substitute_available,
+             :substitute_seat_closed,
+             :substitute_joined,
+             :seat_lifecycle,
+             :readiness_updated,
+             :invite_redeemed,
+             :seat_moved,
+             :kicked
+           ],
+      do: {:noreply, socket}
+
+  @impl true
+  def handle_info({:progression_summary, _room_code, _summaries}, socket),
+    do: {:noreply, socket}
+
+  @impl true
+  def handle_info(%Phoenix.Socket.Broadcast{}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_info(message, socket) do
+    PidroServer.Games.UnexpectedMessage.report(__MODULE__, message)
+    {:noreply, socket}
   end
 
   defp extract_state_update(%{state: game_state}) when is_map(game_state), do: {:ok, game_state}
