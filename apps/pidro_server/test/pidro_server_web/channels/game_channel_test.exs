@@ -1024,6 +1024,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert length(private.pool) == 5
       assert length(private.kept) == 4
       assert private.discarded == [%{rank: 3, suit: :clubs}]
+
       assert public == %{
                dealer: dealer_reply.position,
                automatic: true,

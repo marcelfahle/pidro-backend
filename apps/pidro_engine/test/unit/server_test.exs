@@ -138,6 +138,7 @@ defmodule Pidro.ServerTest do
       assert snapshot.presentation.dealer_rob.automatic == false
       assert snapshot.presentation.dealer_rob.kept == selected
       assert snapshot.presentation.dealer_rob.discarded == [{3, :clubs}]
+
       assert Enum.sort(snapshot.presentation.dealer_rob.pool) ==
                Enum.sort(selected ++ [{3, :clubs}])
 
