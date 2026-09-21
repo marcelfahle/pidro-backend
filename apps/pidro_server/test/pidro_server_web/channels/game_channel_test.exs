@@ -979,19 +979,17 @@ defmodule PidroServerWeb.GameChannelTest do
       room_code: room_code,
       sockets: sockets
     } do
-      {:ok, dealer_reply, _dealer_socket} =
+      {:ok, dealer_reply, dealer_socket} =
         subscribe_and_join(sockets[dealer_user.id], GameChannel, "game:#{room_code}", %{})
 
-      {:ok, _other_reply, _other_socket} =
+      {:ok, _other_reply, other_socket} =
         subscribe_and_join(sockets[other_user.id], GameChannel, "game:#{room_code}", %{})
 
       {:ok, state} = GameAdapter.get_state(room_code)
       kept = [{14, :diamonds}, {5, :diamonds}, {5, :hearts}, {13, :diamonds}]
       discarded = [{3, :clubs}]
 
-      Phoenix.PubSub.broadcast(
-        PidroServer.PubSub,
-        "game:#{room_code}",
+      update =
         {:state_update, room_code,
          %{
            state: state,
@@ -1012,18 +1010,18 @@ defmodule PidroServerWeb.GameChannelTest do
              }
            }
          }}
-      )
 
-      assert_push "game_state", first, 1000
-      assert_push "game_state", second, 1000
+      send(dealer_socket.channel_pid, update)
 
-      presentations = [first.presentation.dealer_rob, second.presentation.dealer_rob]
-      private = Enum.find(presentations, &Map.has_key?(&1, :pool))
-      public = Enum.find(presentations, &(not Map.has_key?(&1, :pool)))
+      assert_push "game_state", %{presentation: %{dealer_rob: private}}, 1000
 
       assert length(private.pool) == 5
       assert length(private.kept) == 4
       assert private.discarded == [%{rank: 3, suit: :clubs}]
+
+      send(other_socket.channel_pid, update)
+
+      assert_push "game_state", %{presentation: %{dealer_rob: public}}, 1000
 
       assert public == %{
                dealer: dealer_reply.position,
