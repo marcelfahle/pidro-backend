@@ -75,7 +75,10 @@ defmodule Pidro.ServerTest do
 
       Process.sleep(50)
 
-      assert %{state: %{phase: :bidding}, presentation: %{dealer_selection: nil}} =
+      assert %{
+               state: %{phase: :bidding},
+               presentation: %{dealer_selection: nil, dealer_rob: nil}
+             } =
                Server.get_snapshot(pid)
     end
 
@@ -92,6 +95,57 @@ defmodule Pidro.ServerTest do
       assert snapshot.state.phase == :dealer_selection
       assert snapshot.state.dealer_selection_cuts == nil
       assert snapshot.presentation.dealer_selection == nil
+    end
+
+    test "briefly exposes the authoritative dealer pool after a manual rob" do
+      base = GameState.new()
+      dealer_hand = [{14, :diamonds}, {5, :hearts}, {4, :diamonds}]
+      stock = [{5, :diamonds}, {13, :diamonds}, {12, :diamonds}, {3, :clubs}]
+      dealer = %{base.players.north | hand: dealer_hand}
+
+      initial_state = %GameStateType{
+        base
+        | phase: :second_deal,
+          current_dealer: :north,
+          current_turn: :north,
+          trump_suit: :diamonds,
+          highest_bid: {:north, 10},
+          players: Map.put(base.players, :north, dealer),
+          deck: stock
+      }
+
+      selected = [
+        {14, :diamonds},
+        {5, :hearts},
+        {5, :diamonds},
+        {13, :diamonds},
+        {12, :diamonds},
+        {4, :diamonds}
+      ]
+
+      {:ok, pid} =
+        Server.start_link(
+          initial_state: initial_state,
+          dealer_rob_presentation_ms: 40,
+          telemetry: false
+        )
+
+      assert {:ok, _old_state, snapshot} =
+               Server.apply_action_with_snapshot(pid, :north, {:select_hand, selected})
+
+      assert snapshot.state.phase == :playing
+      assert snapshot.presentation.dealer_rob.dealer == :north
+      assert snapshot.presentation.dealer_rob.automatic == false
+      assert snapshot.presentation.dealer_rob.kept == selected
+      assert snapshot.presentation.dealer_rob.discarded == [{3, :clubs}]
+
+      assert Enum.sort(snapshot.presentation.dealer_rob.pool) ==
+               Enum.sort(selected ++ [{3, :clubs}])
+
+      Process.sleep(60)
+      cleared = Server.get_snapshot(pid)
+      assert cleared.presentation.dealer_rob == nil
+      assert cleared.state_revision == snapshot.state_revision + 1
     end
   end
 

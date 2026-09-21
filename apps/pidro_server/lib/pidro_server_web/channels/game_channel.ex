@@ -1016,10 +1016,37 @@ defmodule PidroServerWeb.GameChannel do
       Map.take(snapshot, [
         :game_instance_id,
         :state_revision,
-        :server_time_ms,
-        :presentation
+        :server_time_ms
       ])
     )
+    |> Map.put(:presentation, client_presentation(Map.get(snapshot, :presentation), position))
+  end
+
+  defp client_presentation(nil, _position), do: nil
+
+  defp client_presentation(presentation, position) do
+    dealer_rob = Map.get(presentation, :dealer_rob)
+
+    %{
+      dealer_selection: Map.get(presentation, :dealer_selection),
+      dealer_rob: client_dealer_rob_presentation(dealer_rob, position)
+    }
+  end
+
+  defp client_dealer_rob_presentation(nil, _position), do: nil
+
+  defp client_dealer_rob_presentation(presentation, position) do
+    public = Map.take(presentation, [:dealer, :automatic, :started_at_ms, :ends_at_ms])
+
+    if position == presentation.dealer do
+      Map.merge(public, %{
+        pool: GameStateSerializer.serialize_cards(presentation.pool),
+        kept: GameStateSerializer.serialize_cards(presentation.kept),
+        discarded: GameStateSerializer.serialize_cards(presentation.discarded)
+      })
+    else
+      public
+    end
   end
 
   defp stale_snapshot?(socket, snapshot) do

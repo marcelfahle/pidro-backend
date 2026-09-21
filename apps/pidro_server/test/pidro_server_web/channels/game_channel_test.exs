@@ -974,6 +974,63 @@ defmodule PidroServerWeb.GameChannelTest do
       assert is_list(legal_actions)
     end
 
+    test "sends dealer rob cards only to the dealer", %{
+      users: [dealer_user, other_user | _],
+      room_code: room_code,
+      sockets: sockets
+    } do
+      {:ok, dealer_reply, dealer_socket} =
+        subscribe_and_join(sockets[dealer_user.id], GameChannel, "game:#{room_code}", %{})
+
+      {:ok, _other_reply, other_socket} =
+        subscribe_and_join(sockets[other_user.id], GameChannel, "game:#{room_code}", %{})
+
+      {:ok, state} = GameAdapter.get_state(room_code)
+      kept = [{14, :diamonds}, {5, :diamonds}, {5, :hearts}, {13, :diamonds}]
+      discarded = [{3, :clubs}]
+
+      update =
+        {:state_update, room_code,
+         %{
+           state: state,
+           transition_delay_ms: 0,
+           game_instance_id: dealer_reply.game_instance_id,
+           state_revision: dealer_reply.state_revision + 1,
+           server_time_ms: 2,
+           presentation: %{
+             dealer_selection: nil,
+             dealer_rob: %{
+               dealer: dealer_reply.position,
+               automatic: true,
+               pool: kept ++ discarded,
+               kept: kept,
+               discarded: discarded,
+               started_at_ms: 1,
+               ends_at_ms: 2_601
+             }
+           }
+         }}
+
+      send(dealer_socket.channel_pid, update)
+
+      assert_push "game_state", %{presentation: %{dealer_rob: private}}, 1000
+
+      assert length(private.pool) == 5
+      assert length(private.kept) == 4
+      assert private.discarded == [%{rank: 3, suit: :clubs}]
+
+      send(other_socket.channel_pid, update)
+
+      assert_push "game_state", %{presentation: %{dealer_rob: public}}, 1000
+
+      assert public == %{
+               dealer: dealer_reply.position,
+               automatic: true,
+               started_at_ms: 1,
+               ends_at_ms: 2_601
+             }
+    end
+
     test "drops an older snapshot after a newer revision", %{
       user1: user,
       room_code: room_code,
