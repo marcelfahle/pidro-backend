@@ -302,6 +302,7 @@ defmodule Pidro.Server do
     initial_state = Keyword.get(opts, :initial_state, GS.new())
 
     dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
+    dealer_rob_presentation_ms = Keyword.get(opts, :dealer_rob_presentation_ms, 1_800)
     pubsub = Keyword.get(opts, :pubsub)
 
     state =
@@ -315,7 +316,11 @@ defmodule Pidro.Server do
         state_revision: 0,
         dealer_selection_presentation: nil,
         dealer_selection_timer_ref: nil,
-        dealer_selection_token: nil
+        dealer_selection_token: nil,
+        dealer_rob_presentation_ms: dealer_rob_presentation_ms,
+        dealer_rob_presentation: nil,
+        dealer_rob_timer_ref: nil,
+        dealer_rob_token: nil
       }
       |> maybe_schedule_dealer_selection_advance()
 
@@ -410,6 +415,7 @@ defmodule Pidro.Server do
           state
           |> Map.put(:game_state, new_game_state)
           |> Map.update!(:state_revision, &(&1 + 1))
+          |> maybe_schedule_dealer_rob_presentation(game_state, new_game_state, action)
           |> maybe_schedule_dealer_selection_advance()
 
         reply =
@@ -462,6 +468,19 @@ defmodule Pidro.Server do
 
   def handle_info({:advance_from_dealer_selection, _stale_token}, state), do: {:noreply, state}
 
+  def handle_info({:clear_dealer_rob_presentation, token}, %{dealer_rob_token: token} = state)
+      when not is_nil(token) do
+    new_state =
+      state
+      |> clear_dealer_rob_presentation()
+      |> Map.update!(:state_revision, &(&1 + 1))
+
+    broadcast_state_change(new_state)
+    {:noreply, new_state}
+  end
+
+  def handle_info({:clear_dealer_rob_presentation, _stale_token}, state), do: {:noreply, state}
+
   # Private Helpers
 
   defp maybe_schedule_dealer_selection_advance(
@@ -489,6 +508,48 @@ defmodule Pidro.Server do
 
   defp maybe_schedule_dealer_selection_advance(state), do: state
 
+  defp maybe_schedule_dealer_rob_presentation(state, old_game_state, new_game_state, action) do
+    new_events = Enum.drop(new_game_state.events, length(old_game_state.events))
+
+    case Enum.find(new_events, &match?({:dealer_robbed_pack, _, _, _}, &1)) do
+      {:dealer_robbed_pack, dealer, _, _} ->
+        ordinary_discards =
+          Enum.flat_map(new_events, fn
+            {:cards_discarded, _, cards} -> cards
+            _ -> []
+          end)
+
+        newly_discarded = new_game_state.discarded_cards -- old_game_state.discarded_cards
+        robbed_discards = newly_discarded -- ordinary_discards
+        kept = new_game_state.players[dealer].hand
+        pool = kept ++ robbed_discards
+        delay_ms = state.dealer_rob_presentation_ms
+        started_at_ms = System.system_time(:millisecond)
+        token = make_ref()
+
+        state = clear_dealer_rob_presentation(state)
+
+        %{
+          state
+          | dealer_rob_presentation: %{
+              dealer: dealer,
+              automatic: not match?({:select_hand, _}, action),
+              pool: pool,
+              kept: kept,
+              discarded: robbed_discards,
+              started_at_ms: started_at_ms,
+              ends_at_ms: started_at_ms + delay_ms
+            },
+            dealer_rob_timer_ref:
+              Process.send_after(self(), {:clear_dealer_rob_presentation, token}, delay_ms),
+            dealer_rob_token: token
+        }
+
+      nil ->
+        state
+    end
+  end
+
   defp broadcast_state_change(%{pubsub: nil}), do: :ok
 
   defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id} = state) do
@@ -505,13 +566,17 @@ defmodule Pidro.Server do
       state_revision: state.state_revision,
       server_time_ms: System.system_time(:millisecond),
       state: state.game_state,
-      presentation: %{dealer_selection: state.dealer_selection_presentation}
+      presentation: %{
+        dealer_selection: state.dealer_selection_presentation,
+        dealer_rob: state.dealer_rob_presentation
+      }
     }
   end
 
   defp replace_game_state(state, game_state) do
     state
     |> clear_dealer_selection_presentation()
+    |> clear_dealer_rob_presentation()
     |> Map.put(:game_state, game_state)
     |> Map.update!(:state_revision, &(&1 + 1))
     |> maybe_schedule_dealer_selection_advance()
@@ -527,6 +592,19 @@ defmodule Pidro.Server do
       | dealer_selection_presentation: nil,
         dealer_selection_timer_ref: nil,
         dealer_selection_token: nil
+    }
+  end
+
+  defp clear_dealer_rob_presentation(state) do
+    if state.dealer_rob_timer_ref do
+      Process.cancel_timer(state.dealer_rob_timer_ref)
+    end
+
+    %{
+      state
+      | dealer_rob_presentation: nil,
+        dealer_rob_timer_ref: nil,
+        dealer_rob_token: nil
     }
   end
 
