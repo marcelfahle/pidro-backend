@@ -623,9 +623,10 @@ defmodule PidroServer.Games.RoomManager do
   @doc """
   Handles a player disconnect and starts the reconnection grace period.
 
-  When a player disconnects during a :playing game, the seat-based disconnect
-  cascade is started (hiccup -> grace -> permanent bot). The player can
-  reconnect during the hiccup or grace phases to reclaim their seat.
+  When a player disconnects during a multiplayer :playing game, the seat-based
+  disconnect cascade is started (hiccup -> grace -> permanent bot). The player
+  can reconnect during the hiccup or grace phases to reclaim their seat. A
+  solo game's only human seat is held without a deadline until they reconnect.
 
   In a `:waiting` or `:ready` room the seat is held instead: it becomes
   `:reconnecting` with no timer and no bot, the room cannot start until the
@@ -1736,14 +1737,16 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :room_not_found}, state}
 
       %Room{} = room ->
-        # All rooms (including single-player) get the hiccup → grace → gone
-        # disconnect cascade. This allows reconnection after browser refresh or
-        # network hiccup. Intentional leaves via leave_room/1 still close
-        # single-player rooms immediately.
+        # Playing multiplayer rooms get the hiccup → grace → gone disconnect
+        # cascade. Solo rooms hold their only human seat until they reconnect;
+        # intentional leaves via leave_room/1 still close them immediately.
         case disconnect_player(state, room, room_code, user_id) do
           {:ok, updated_room, updated_state} ->
+            reconnect_policy =
+              if single_player_room?(updated_room), do: "seat held", else: "grace period started"
+
             Logger.info(
-              "Player #{user_id} disconnected from room #{room_code}, grace period started"
+              "Player #{user_id} disconnected from room #{room_code}, #{reconnect_policy}"
             )
 
             broadcast_room(room_code, updated_room)
@@ -3251,55 +3254,64 @@ defmodule PidroServer.Games.RoomManager do
         end
 
       :bot_substitute when seat.reserved_for == user_id ->
-        # Phase 2: Terminate bot, cancel timer, reclaim seat
-        room = cancel_phase_timer(room, position)
+        if reconnect_deadline_expired?(room, seat) do
+          # The deadline is authoritative even if the Phase 3 timer message is
+          # waiting in this GenServer's mailbox behind the reconnect call.
+          {:reply, {:error, :grace_period_expired}, state}
+        else
+          # Phase 2: Terminate bot, cancel timer, reclaim seat
+          room = cancel_phase_timer(room, position)
 
-        # Terminate the substitute bot process
-        if seat.bot_pid && Process.alive?(seat.bot_pid) do
-          DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, seat.bot_pid)
-        end
+          # Terminate the substitute bot process
+          if seat.bot_pid && Process.alive?(seat.bot_pid) do
+            DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, seat.bot_pid)
+          end
 
-        case Seat.reclaim(seat, user_id) do
-          {:ok, reclaimed} ->
-            reclaimed_room =
-              %{
-                room
-                | seats: Map.put(room.seats, position, reclaimed),
-                  last_activity: DateTime.utc_now()
+          case Seat.reclaim(seat, user_id) do
+            {:ok, reclaimed} ->
+              reclaimed_room =
+                %{
+                  room
+                  | seats: Map.put(room.seats, position, reclaimed),
+                    last_activity: DateTime.utc_now()
+                }
+                |> reset_timeout_counter(position)
+                |> restore_owner(position)
+                |> bump_seat_lifecycle_revision()
+
+              updated_state = %State{
+                state
+                | rooms: Map.put(state.rooms, room_code, reclaimed_room)
               }
-              |> reset_timeout_counter(position)
-              |> restore_owner(position)
-              |> bump_seat_lifecycle_revision()
 
-            updated_state = %State{state | rooms: Map.put(state.rooms, room_code, reclaimed_room)}
+              {updated_room, updated_state} =
+                reconcile_turn_timer_for_current_state(reclaimed_room, room_code, updated_state)
 
-            {updated_room, updated_state} =
-              reconcile_turn_timer_for_current_state(reclaimed_room, room_code, updated_state)
+              updated_state = %State{
+                updated_state
+                | rooms: Map.put(updated_state.rooms, room_code, updated_room)
+              }
 
-            updated_state = %State{
-              updated_state
-              | rooms: Map.put(updated_state.rooms, room_code, updated_room)
-            }
+              Logger.info(
+                "Player #{user_id} reclaimed seat from bot during Phase 2 (grace) at #{position} in room #{room_code}"
+              )
 
-            Logger.info(
-              "Player #{user_id} reclaimed seat from bot during Phase 2 (grace) at #{position} in room #{room_code}"
-            )
+              Phoenix.PubSub.broadcast(
+                PidroServer.PubSub,
+                "game:#{room_code}",
+                {:player_reclaimed_seat, %{user_id: user_id, position: position}}
+              )
 
-            Phoenix.PubSub.broadcast(
-              PidroServer.PubSub,
-              "game:#{room_code}",
-              {:player_reclaimed_seat, %{user_id: user_id, position: position}}
-            )
+              broadcast_seat_lifecycle(updated_room)
 
-            broadcast_seat_lifecycle(updated_room)
+              broadcast_room(room_code, updated_room)
+              broadcast_lobby_event({:room_updated, updated_room})
 
-            broadcast_room(room_code, updated_room)
-            broadcast_lobby_event({:room_updated, updated_room})
+              {:reply, {:ok, updated_room}, updated_state}
 
-            {:reply, {:ok, updated_room}, updated_state}
-
-          {:error, reason} ->
-            {:reply, {:error, reason}, state}
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
         end
 
       :bot_substitute ->
@@ -3314,6 +3326,13 @@ defmodule PidroServer.Games.RoomManager do
         {:reply, {:error, :player_not_disconnected}, state}
     end
   end
+
+  defp reconnect_deadline_expired?(%Room{status: :playing, config: %Config{solo: false}}, %Seat{
+         grace_expires_at: %DateTime{} = deadline
+       }),
+       do: DateTime.compare(DateTime.utc_now(), deadline) != :lt
+
+  defp reconnect_deadline_expired?(%Room{}, %Seat{}), do: false
 
   # Explicit departure surrenders a live seat immediately, without a reclaim window.
   # Start the replacement before releasing membership so startup failure is retryable.
@@ -4265,8 +4284,16 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc false
-  # The `:playing` cascade or the waiting-room hold, by room status; a
+  # Multiplayer games use the disconnect cascade. A solo game holds its only
+  # human seat without a deadline so switching apps cannot surrender it. A
   # `:finished` room only records the activity.
+  defp mark_disconnected(
+         %Room{status: :playing, config: %Config{solo: true}} = room,
+         room_code,
+         user_id
+       ),
+       do: hold_seat(room, room_code, user_id)
+
   defp mark_disconnected(%Room{status: :playing} = room, room_code, user_id),
     do: start_hiccup_cascade(room, room_code, user_id)
 
@@ -4278,10 +4305,10 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc false
   # Holds the seat of a player whose last game channel closed in a waiting
-  # room (R18): the seat becomes `:reconnecting` with no phase timer, so no
-  # bot ever takes it and the table cannot start until the reclaim
-  # (`handle_seat_reconnection/6`). A seat that is not `:connected` is left as
-  # it is.
+  # room (R18), or the human seat in a solo game: the seat becomes
+  # `:reconnecting` with no phase timer, so no bot ever takes it until the
+  # reclaim (`handle_seat_reconnection/6`). A seat that is not `:connected` is
+  # left as it is.
   defp hold_seat(%Room{} = room, room_code, user_id) do
     position = Positions.get_position(room, user_id)
     seat = Map.get(room.seats, position)

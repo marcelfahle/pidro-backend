@@ -374,7 +374,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert Seat.connected_human?(updated_room.seats[:south])
     end
 
-    test "single-player room stays alive with grace period when human disconnects during play" do
+    test "single-player room holds the human seat without an expiry timer" do
       {:ok, room} = RoomManager.create_room("user1", %{solo: true})
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-east")
       {:ok, _, _} = RoomManager.join_room(room.code, "bot-south")
@@ -390,14 +390,30 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       :ok = RoomManager.handle_player_disconnect(room.code, "user1")
 
-      # Room stays alive — disconnect cascade starts instead of immediate removal
+      # Room stays alive and holds the human seat instead of surrendering it.
       {:ok, updated_room} = RoomManager.get_room(room.code)
       assert updated_room.status == :playing
 
-      # Player's seat is in :reconnecting phase (hiccup window)
       position = Positions.get_position(updated_room, "user1")
       seat = Map.get(updated_room.seats, position)
       assert seat.status == :reconnecting
+      assert seat.occupant_type == :human
+      assert seat.user_id == "user1"
+      assert seat.grace_expires_at == nil
+      assert updated_room.phase_timers[position] == nil
+
+      # Stale cascade messages cannot replace a held solo seat.
+      stale_ref = make_ref()
+      send(RoomManager, {:timeout, stale_ref, {:phase2_start, room.code, position}})
+      send(RoomManager, {:timeout, stale_ref, {:phase3_gone, room.code, position}})
+
+      {:ok, still_held} = RoomManager.get_room(room.code)
+      assert still_held.seats[position].status == :reconnecting
+      assert still_held.seats[position].occupant_type == :human
+
+      {:ok, reconnected} = RoomManager.handle_player_reconnect(room.code, "user1")
+      assert reconnected.seats[position].status == :connected
+      assert reconnected.seats[position].occupant_type == :human
     end
 
     test "single-player room allows reconnection after disconnect" do
