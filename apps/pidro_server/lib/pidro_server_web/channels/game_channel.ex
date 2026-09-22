@@ -205,10 +205,13 @@ defmodule PidroServerWeb.GameChannel do
              do: RoomManager.register_game_channel(room_code, user_id, self()),
              else: RoomManager.register_spectator_channel(room_code, user_id, self())
            ),
-         {:ok, turn_timer} <- RoomManager.get_turn_timer(room_code) do
-      # Try to get current game state (may not exist if game hasn't started)
-      game_snapshot = fetch_game_snapshot(room_code)
-
+         {:ok, turn_timer} <- RoomManager.get_turn_timer(room_code),
+         game_snapshot = fetch_game_snapshot(room_code),
+         # A departure can race the snapshot fetch. A queued disconnect cannot
+         # retract a join reply, so recheck authority before revealing the hand.
+         {:ok, current_room} <- RoomManager.get_room(room_code),
+         true <- current_room.id == room.id and user_authorized?(user_id, current_room, role),
+         true <- role == :spectator or get_player_position(current_room, user_id) == position do
       socket =
         socket
         |> assign(:room_code, room_code)
@@ -1008,7 +1011,7 @@ defmodule PidroServerWeb.GameChannel do
 
   defp client_snapshot_payload(snapshot, position) do
     %{
-      state: GameStateSerializer.serialize(snapshot.state),
+      state: GameStateSerializer.serialize(snapshot.state, position),
       legal_actions: legal_actions_for_state(snapshot.state, position),
       transition_delay_ms: Map.get(snapshot, :transition_delay_ms, 0)
     }

@@ -14,12 +14,15 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
   """
   @spec serialize_public(map()) :: map()
   def serialize_public(state) when is_map(state) do
-    result = serialize(state)
-    %{result | players: serialize_players_public(Map.get(state, :players, %{}))}
+    serialize(state)
   end
 
   @doc """
-  Serializes a Pidro game state struct into a JSON-safe map.
+  Serializes a game state for a viewer at an authorized seat, or publicly by default.
+
+  Only the viewer's hand contains card identities. All players have an
+  authoritative card_count; hidden hands are nil. The position must come from
+  the server's room membership, never from client input.
 
   Converts complex Elixir structs and tuples (cards, bids, tricks) into
   JSON-compatible formats (maps, lists, strings).
@@ -29,15 +32,15 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       iex> serialize(game_state)
       %{phase: :bidding, players: %{...}, ...}
   """
-  @spec serialize(map()) :: map()
-  def serialize(state) when is_map(state) do
+  @spec serialize(map(), atom() | nil) :: map()
+  def serialize(state, position \\ nil) when is_map(state) do
     %{
       phase: state.phase,
       hand_number: Map.get(state, :hand_number),
       variant: Map.get(state, :variant),
       current_turn: Map.get(state, :current_turn),
       current_dealer: Map.get(state, :current_dealer),
-      players: serialize_players(Map.get(state, :players, %{})),
+      players: serialize_players(Map.get(state, :players, %{}), position),
       bids: serialize_bids(Map.get(state, :bids, [])),
       highest_bid: serialize_highest_bid(Map.get(state, :highest_bid)),
       bidding_team: Map.get(state, :bidding_team),
@@ -54,38 +57,20 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
     }
   end
 
-  @doc """
-  Serializes a map of players keyed by position.
-  """
-  @spec serialize_players(map()) :: map()
-  def serialize_players(players) when is_map(players) do
-    players
-    |> Enum.map(fn {position, player} ->
-      {position, serialize_player(player)}
+  defp serialize_players(players, viewer_position) do
+    Map.new(players, fn {position, player} ->
+      {position, serialize_player(player, position == viewer_position and viewer_position != nil)}
     end)
-    |> Enum.into(%{})
   end
 
-  @doc false
-  defp serialize_players_public(players) when is_map(players) do
-    players
-    |> Enum.map(fn {position, player} ->
-      base = serialize_player(player)
-      hand = Map.get(player, :hand, [])
-      {position, %{base | hand: nil} |> Map.put(:card_count, length(hand))}
-    end)
-    |> Enum.into(%{})
-  end
+  defp serialize_player(player, visible?) do
+    hand = Map.get(player, :hand, [])
 
-  @doc """
-  Serializes a single player struct.
-  """
-  @spec serialize_player(map()) :: map()
-  def serialize_player(player) when is_map(player) do
     %{
       position: Map.get(player, :position),
       team: Map.get(player, :team),
-      hand: serialize_cards(Map.get(player, :hand, [])),
+      hand: if(visible?, do: serialize_cards(hand), else: nil),
+      card_count: length(hand),
       tricks_won: Map.get(player, :tricks_won, 0),
       eliminated: Map.get(player, :eliminated?, false)
     }

@@ -6,6 +6,7 @@ defmodule PidroServerWeb.ReadinessChannelTest do
   alias PidroServerWeb.GameChannel
 
   setup do
+    Process.flag(:trap_exit, true)
     RoomManager.reset_for_test()
     on_exit(&PidroServer.RoomManagerCase.cleanup/0)
     users = Enum.map(1..4, &AccountsFixtures.user_fixture(%{display_name: "Ready Player #{&1}"}))
@@ -83,10 +84,12 @@ defmodule PidroServerWeb.ReadinessChannelTest do
 
   test "late player joins at the authoritative snapshot position after a seat move", %{
     room: room,
-    channels: [{host, _, _}, {second, _, _} | _],
+    channels: [{host, _, _}, {second, _, departed} | _],
     last_user: last_user
   } do
     assert :ok = RoomManager.leave_room(second.id)
+    departed_pid = departed.channel_pid
+    assert_receive {:EXIT, ^departed_pid, {:shutdown, :left}}
     assert {:ok, _} = RoomManager.move_seat(room.code, host.id, last_user.id, :east)
     {:ok, socket} = create_socket(last_user)
     assert {:ok, reply, joined} = subscribe_and_join(socket, GameChannel, "game:#{room.code}")
@@ -112,11 +115,13 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     room: room,
     channels: channels
   } do
-    [{host, %{readiness: initial}, socket}, {second, _, _} | _] = channels
+    [{host, %{readiness: initial}, socket}, {second, _, departed} | _] = channels
     params = %{"room_id" => room.id, "ready_epoch" => initial.ready_epoch}
     ref = push(socket, "ready", params)
     assert_reply ref, :ok, %{}
     assert :ok = RoomManager.leave_room(second.id)
+    departed_pid = departed.channel_pid
+    assert_receive {:EXIT, ^departed_pid, {:shutdown, :left}}
     replacement = AccountsFixtures.user_fixture(%{display_name: "Replacement"})
     {:ok, _, :east} = RoomManager.join_room(room.code, replacement.id)
 
