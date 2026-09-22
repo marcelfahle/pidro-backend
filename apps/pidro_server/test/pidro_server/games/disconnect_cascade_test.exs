@@ -1155,6 +1155,30 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert result == {:error, :seat_permanently_filled}
     end
 
+    test "reconnect at an expired grace deadline is rejected before Phase 3 runs" do
+      {room, _positions} = create_playing_room()
+      user_id = "user2"
+      {phase2_room, position} = trigger_phase2(room.code, user_id)
+      seat = phase2_room.seats[position]
+      bot_pid = seat.bot_pid
+
+      expired_seat = %{seat | grace_expires_at: DateTime.add(DateTime.utc_now(), -1, :second)}
+      expired_room = %{phase2_room | seats: Map.put(phase2_room.seats, position, expired_seat)}
+
+      :sys.replace_state(RoomManager, fn state ->
+        %{state | rooms: Map.put(state.rooms, room.code, expired_room)}
+      end)
+
+      assert {:error, :grace_period_expired} =
+               RoomManager.handle_player_reconnect(room.code, user_id)
+
+      {:ok, unchanged} = RoomManager.get_room(room.code)
+      assert unchanged.seats[position].bot_pid == bot_pid
+      assert unchanged.seats[position].reserved_for == user_id
+      assert unchanged.phase_timers[position] == phase2_room.phase_timers[position]
+      assert Process.alive?(bot_pid)
+    end
+
     test "Phase 3 does nothing if player already reclaimed (Phase 2)" do
       {room, _positions} = create_playing_room()
       user_id = "user2"
