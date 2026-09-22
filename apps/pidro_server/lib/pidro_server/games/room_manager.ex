@@ -1356,6 +1356,7 @@ defmodule PidroServer.Games.RoomManager do
             case remove_player(state, room, player_id) do
               {:ok, _final_room, new_state} ->
                 Logger.info("Player #{player_id} left room #{room_code}")
+                notify_user_channels(new_state, room_code, player_id, {:force_disconnect, :left})
                 {:reply, :ok, new_state}
 
               {:closed, new_state} ->
@@ -2602,8 +2603,12 @@ defmodule PidroServer.Games.RoomManager do
       room = hand_on_host(room, player_id)
 
       case remove_player(state, room, player_id) do
-        {:ok, _room, new_state} -> new_state
-        {:closed, new_state} -> new_state
+        {:ok, _room, new_state} ->
+          notify_user_channels(new_state, room_code, player_id, {:force_disconnect, :left})
+          new_state
+
+        {:closed, new_state} ->
+          new_state
       end
     else
       Logger.info("Last player #{player_id} left finished room #{room_code}, closing room")

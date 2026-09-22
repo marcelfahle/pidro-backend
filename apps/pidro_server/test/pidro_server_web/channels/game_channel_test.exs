@@ -473,7 +473,7 @@ defmodule PidroServerWeb.GameChannelTest do
       refute Process.alive?(bot)
       assert_push "player_reclaimed_seat", %{user_id: ^user_id, position: ^position}
       {:ok, game} = GameAdapter.get_state(room_code)
-      assert reply.state == GameStateSerializer.serialize(game)
+      assert reply.state == GameStateSerializer.serialize(game, position)
     end
 
     test "owner removal and restoration are delivered with nullable ownership", context do
@@ -539,7 +539,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert_push "game_state", %{state: %{current_turn: ^human_position} = delivered}, 2_000
       assert {:ok, advanced} = GameAdapter.get_state(room.code)
       assert length(advanced.events) > length(before_departures.events)
-      assert delivered == GameStateSerializer.serialize(advanced)
+      assert delivered == GameStateSerializer.serialize(advanced, human_position)
       assert is_binary(Jason.encode!(delivered))
       assert Process.alive?(socket.channel_pid)
     end
@@ -945,6 +945,182 @@ defmodule PidroServerWeb.GameChannelTest do
     end
   end
 
+  describe "PID-110 hand privacy" do
+    @describetag :stable_turn_timer
+
+    setup %{room_code: room_code} do
+      {:ok, state} = GameAdapter.get_state(room_code)
+
+      hands = %{
+        north: [{14, :hearts}, {10, :hearts}],
+        east: [{13, :hearts}],
+        south: [{12, :hearts}, {11, :hearts}, {9, :hearts}],
+        west: []
+      }
+
+      state = %{
+        state
+        | phase: :playing,
+          current_turn: :north,
+          current_dealer: :west,
+          trump_suit: :hearts,
+          highest_bid: {:north, 6},
+          bidding_team: :north_south,
+          players:
+            Map.new(state.players, fn {position, player} ->
+              {position, %{player | hand: hands[position]}}
+            end)
+      }
+
+      {:ok, pid} = PidroServer.Games.GameRegistry.lookup(room_code)
+      :ok = GenServer.call(pid, {:set_state, state})
+      watcher = PidroServer.AccountsFixtures.guest_fixture()
+      {:ok, _} = RoomManager.join_spectator_room(room_code, watcher.id)
+      {:ok, watcher_socket} = create_socket(watcher)
+
+      %{private_state: state, watcher_socket: watcher_socket}
+    end
+
+    test "joins and pushes reveal only the authenticated seat, never a requested seat", ctx do
+      for user <- ctx.users do
+        {:ok, reply, socket} =
+          subscribe_and_join(ctx.sockets[user.id], GameChannel, "game:#{ctx.room_code}", %{
+            "position" => "south"
+          })
+
+        assert ctx.room.positions[reply.position] == user.id
+        assert_private_hands(reply.state, ctx.private_state, reply.position)
+        send(socket.channel_pid, {:state_update, ctx.room_code, ctx.private_state})
+        assert_push "game_state", %{state: state}
+        assert_private_hands(state, ctx.private_state, reply.position)
+      end
+
+      {:ok, reply, socket} =
+        subscribe_and_join(ctx.watcher_socket, GameChannel, "game:#{ctx.room_code}", %{
+          "position" => "north",
+          "role" => "player"
+        })
+
+      assert reply.role == :spectator
+      assert reply.legal_actions == []
+      assert_private_hands(reply.state, ctx.private_state, nil)
+      send(socket.channel_pid, {:state_update, ctx.room_code, ctx.private_state})
+      assert_push "game_state", %{state: state, legal_actions: []}
+      assert_private_hands(state, ctx.private_state, nil)
+    end
+
+    test "reconnect catches up privately and the owner can play a received card", ctx do
+      {:ok, _, socket} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}", %{})
+
+      close(socket)
+
+      {:ok, reply, returned} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}", %{})
+
+      assert reply.reconnected
+      assert_private_hands(reply.state, ctx.private_state, :north)
+      assert %{type: "play_card", card: %{rank: 14, suit: :hearts}} in reply.legal_actions
+      [card | _] = reply.state.players.north.hand
+
+      ref =
+        push(returned, "play_card", %{
+          "card" => %{"rank" => card.rank, "suit" => to_string(card.suit)}
+        })
+
+      assert_reply ref, :ok, %{}
+      assert_push "game_state", %{state: played}
+      assert played.players.north.hand == [%{rank: 10, suit: :hearts}]
+      assert played.players.north.card_count == 1
+      assert [%{card: %{rank: 14, suit: :hearts}}] = played.current_trick
+
+      {:ok, watcher_reply, _} =
+        subscribe_and_join(ctx.watcher_socket, GameChannel, "game:#{ctx.room_code}", %{})
+
+      {:ok, state} = GameAdapter.get_state(ctx.room_code)
+      assert_private_hands(watcher_reply.state, state, nil)
+      assert [%{card: %{rank: 14, suit: :hearts}}] = watcher_reply.state.current_trick
+    end
+
+    test "a join whose seat is replaced during the snapshot fetch returns no private reply",
+         ctx do
+      # Hold the engine reply after join has read the roster. Keeping a game in
+      # a waiting room lets the test replace the seat without starting a bot.
+      :ok = RoomManager.update_room_status(ctx.room_code, :waiting)
+      {:ok, pid} = PidroServer.Games.GameRegistry.lookup(ctx.room_code)
+      :ok = :sys.suspend(pid)
+
+      joining =
+        Task.async(fn ->
+          GameChannel.join("game:#{ctx.room_code}", %{}, ctx.sockets[ctx.user2.id])
+        end)
+
+      try do
+        assert_eventually(fn ->
+          {:messages, messages} = Process.info(pid, :messages)
+          Enum.any?(messages, &match?({:"$gen_call", _, :get_snapshot}, &1))
+        end)
+
+        assert :ok = RoomManager.leave_room(ctx.user2.id)
+        replacement = PidroServer.AccountsFixtures.guest_fixture()
+        assert {:ok, _, :east} = RoomManager.join_room(ctx.room_code, replacement.id)
+
+        :sys.replace_state(pid, fn state ->
+          put_in(state.game_state.players.east.hand, [{8, :hearts}])
+        end)
+      after
+        :sys.resume(pid)
+      end
+
+      assert {:error, %{reason: "Not authorized for this room"}} = Task.await(joining)
+    end
+
+    test "REST and default serialization stay public even for a seated player", ctx do
+      import Phoenix.ConnTest, only: [build_conn: 0, get: 2, json_response: 2]
+
+      assert_private_hands(
+        GameStateSerializer.serialize(ctx.private_state),
+        ctx.private_state,
+        nil
+      )
+
+      assert_private_hands(
+        GameStateSerializer.serialize_public(ctx.private_state),
+        ctx.private_state,
+        nil
+      )
+
+      response =
+        build_conn()
+        |> Plug.Conn.put_req_header("authorization", "Bearer #{create_token(ctx.user1)}")
+        |> get("/api/v1/rooms/#{ctx.room_code}/state")
+        |> json_response(200)
+
+      for {position, player} <- ctx.private_state.players do
+        view = response["data"]["state"]["players"][to_string(position)]
+        assert view["hand"] == nil
+        assert view["card_count"] == length(player.hand)
+      end
+    end
+  end
+
+  defp assert_private_hands(payload, source, viewer) do
+    for {position, player} <- source.players do
+      assert payload.players[position].card_count == length(player.hand)
+
+      if position == viewer do
+        assert payload.players[position].hand ==
+                 Enum.map(player.hand, fn {rank, suit} -> %{rank: rank, suit: suit} end)
+      else
+        assert payload.players[position].hand == nil
+      end
+    end
+
+    refute Map.has_key?(payload, :deck)
+    refute Map.has_key?(payload, :discarded_cards)
+    refute Map.has_key?(payload, :events)
+  end
+
   describe "state updates" do
     test "pushes transition delay metadata with serialized game state", %{
       user1: user,
@@ -953,7 +1129,7 @@ defmodule PidroServerWeb.GameChannelTest do
     } do
       socket = sockets[user.id]
 
-      {:ok, _reply, _socket} =
+      {:ok, reply, _socket} =
         subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
       assert_push "presence_state", _presence_state, 1000
@@ -970,7 +1146,7 @@ defmodule PidroServerWeb.GameChannelTest do
                   %{state: pushed_state, legal_actions: legal_actions, transition_delay_ms: 40},
                   1000
 
-      assert pushed_state == GameStateSerializer.serialize(state)
+      assert pushed_state == GameStateSerializer.serialize(state, reply.position)
       assert is_list(legal_actions)
     end
 
@@ -985,9 +1161,17 @@ defmodule PidroServerWeb.GameChannelTest do
       {:ok, _other_reply, other_socket} =
         subscribe_and_join(sockets[other_user.id], GameChannel, "game:#{room_code}", %{})
 
+      watcher = PidroServer.AccountsFixtures.guest_fixture()
+      {:ok, _} = RoomManager.join_spectator_room(room_code, watcher.id)
+      {:ok, watcher_socket} = create_socket(watcher)
+
+      {:ok, _, watcher_socket} =
+        subscribe_and_join(watcher_socket, GameChannel, "game:#{room_code}", %{})
+
       {:ok, state} = GameAdapter.get_state(room_code)
       kept = [{14, :diamonds}, {5, :diamonds}, {5, :hearts}, {13, :diamonds}]
       discarded = [{3, :clubs}]
+      state = put_in(state.players[dealer_reply.position].hand, kept)
 
       update =
         {:state_update, room_code,
@@ -1013,22 +1197,29 @@ defmodule PidroServerWeb.GameChannelTest do
 
       send(dealer_socket.channel_pid, update)
 
-      assert_push "game_state", %{presentation: %{dealer_rob: private}}, 1000
+      assert_push "game_state", %{state: dealer_state, presentation: %{dealer_rob: private}}, 1000
 
+      assert_private_hands(dealer_state, state, dealer_reply.position)
       assert length(private.pool) == 5
       assert length(private.kept) == 4
       assert private.discarded == [%{rank: 3, suit: :clubs}]
 
-      send(other_socket.channel_pid, update)
+      for socket <- [other_socket, watcher_socket] do
+        send(socket.channel_pid, update)
 
-      assert_push "game_state", %{presentation: %{dealer_rob: public}}, 1000
+        assert_push "game_state",
+                    %{state: public_state, presentation: %{dealer_rob: public}},
+                    1000
 
-      assert public == %{
-               dealer: dealer_reply.position,
-               automatic: true,
-               started_at_ms: 1,
-               ends_at_ms: 2_601
-             }
+        assert_private_hands(public_state, state, socket.assigns.position)
+
+        assert public == %{
+                 dealer: dealer_reply.position,
+                 automatic: true,
+                 started_at_ms: 1,
+                 ends_at_ms: 2_601
+               }
+      end
     end
 
     test "drops an older snapshot after a newer revision", %{
@@ -1719,6 +1910,45 @@ defmodule PidroServerWeb.GameChannelTest do
       {:ok, table, :east} = RoomManager.join_room(table.code, ben.id)
 
       %{host: host, ben: ben, carl: carl, table: table}
+    end
+
+    for status <- [:waiting, :finished] do
+      @tag departure_status: status
+      test "leaving a #{status} room closes every old socket before a replacement receives cards",
+           %{
+             host: host,
+             ben: ben,
+             carl: carl,
+             table: table,
+             departure_status: status
+           } do
+        slow_turn_timers()
+        old_sockets = [join_table(ben, table.code), join_table(ben, table.code)]
+        :ok = RoomManager.update_room_status(table.code, status)
+        assert :ok = RoomManager.leave_room(ben.id)
+
+        for socket <- old_sockets do
+          pid = socket.channel_pid
+          assert_receive {:EXIT, ^pid, {:shutdown, :left}}, 1000
+          refute Process.alive?(pid)
+        end
+
+        assert {:ok, _, :east} = RoomManager.join_room(table.code, carl.id)
+
+        for _ <- 1..2 do
+          user = AccountsFixtures.guest_fixture()
+          assert {:ok, _, _} = RoomManager.join_room(table.code, user.id)
+        end
+
+        PidroServer.RoomFixtures.ready_room(table.code)
+        advance_game_to_bidding(table.code)
+        {:ok, socket} = create_socket(carl)
+        {:ok, reply, _} = subscribe_and_join(socket, GameChannel, "game:#{table.code}", %{})
+        assert reply.position == :east
+        assert [_ | _] = reply.state.players.east.hand
+        assert reply.state.players.north.hand == nil
+        assert Process.alive?(join_table(host, table.code).channel_pid)
+      end
     end
 
     test "pushes invite_redeemed with the guest's account names after a claim (AE2)", %{
