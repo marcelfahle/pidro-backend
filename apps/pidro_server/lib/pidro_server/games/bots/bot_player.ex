@@ -17,10 +17,10 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   use GenServer
   require Logger
   alias PidroServer.Games.Bots.BotBrain
-  alias PidroServer.Games.Bots.Strategies.RandomStrategy
+  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
   alias PidroServer.Games.GameAdapter
 
-  @default_strategy RandomStrategy
+  @default_strategy RulebookStrategy
 
   ## Public API
 
@@ -265,8 +265,10 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state, 0}
   defp extract_state_update(_payload), do: :error
 
-  defp resolve_strategy(:random), do: RandomStrategy
-  defp resolve_strategy(:basic), do: RandomStrategy
-  defp resolve_strategy(:smart), do: RandomStrategy
+  # Every bot seat plays the same rulebook bot; the wire names select it
+  # without differing until difficulty levels exist (PID-101).
+  defp resolve_strategy(:random), do: RulebookStrategy
+  defp resolve_strategy(:basic), do: RulebookStrategy
+  defp resolve_strategy(:smart), do: RulebookStrategy
   defp resolve_strategy(module) when is_atom(module), do: module
 end
