@@ -45,6 +45,7 @@ defmodule PidroServer.Games.RoomManager do
   use GenServer
   require Logger
 
+  alias Pidro.Core.SeatView
   alias Pidro.Game.Engine
   alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
@@ -4749,7 +4750,8 @@ defmodule PidroServer.Games.RoomManager do
                current_action_window(cleared_room, game_state),
              {:ok, legal_actions} <- GameAdapter.get_legal_actions(room_code, actor_position),
              true <- legal_actions != [],
-             {:ok, action, _reasoning} <- TimeoutStrategy.pick_action(legal_actions, game_state),
+             view = SeatView.for_seat(game_state, actor_position),
+             {:ok, action, _reasoning} <- TimeoutStrategy.pick_action(legal_actions, view),
              resolved_action <- BotBrain.resolve_action(action, game_state, actor_position),
              {:ok, _new_state} <-
                GameAdapter.apply_action(room_code, actor_position, resolved_action) do
