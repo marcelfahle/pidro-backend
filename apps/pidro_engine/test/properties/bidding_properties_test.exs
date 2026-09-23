@@ -50,14 +50,14 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
   describe "Property: bidding completion invariants" do
     property "bidding is never complete with no bids" do
       check all(_irrelevant <- integer()) do
-        state = %{GameState.new() | bids: [], highest_bid: nil}
+        state = %{GameState.new(seed: 1) | bids: [], highest_bid: nil}
         refute Bidding.bidding_complete?(state)
       end
     end
 
     property "bidding is always complete when highest bid is 14" do
       check all(bids <- bid_sequence_gen()) do
-        state = %{GameState.new() | bids: bids, highest_bid: {:north, 14}}
+        state = %{GameState.new(seed: 1) | bids: bids, highest_bid: {:north, 14}}
         assert Bidding.bidding_complete?(state)
       end
     end
@@ -80,7 +80,7 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
             nil
           end
 
-        state = %{GameState.new() | bids: bids, highest_bid: highest_bid}
+        state = %{GameState.new(seed: 1) | bids: bids, highest_bid: highest_bid}
 
         # With exactly 4 bids, bidding should always be complete
         assert Bidding.bidding_complete?(state),
@@ -110,7 +110,7 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
           end)
 
         highest = {:north, bid_amount}
-        state = %{GameState.new() | bids: bids, highest_bid: highest}
+        state = %{GameState.new(seed: 1) | bids: bids, highest_bid: highest}
 
         refute Bidding.bidding_complete?(state),
                "Should not be complete with only #{bid_count} bids (need 4)"
@@ -129,7 +129,7 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
           bid_gen(:west, :pass, 1003)
         ]
 
-        state = %{GameState.new() | bids: bids, highest_bid: {:north, bid_amount}}
+        state = %{GameState.new(seed: 1) | bids: bids, highest_bid: {:north, bid_amount}}
 
         assert Bidding.bidding_complete?(state),
                "Should be complete with 3 consecutive passes"
@@ -154,7 +154,7 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
           bid_gen(:west, :pass, ts4)
         ]
 
-        state = %{GameState.new() | bids: bids, highest_bid: {:north, bid_amount}}
+        state = %{GameState.new(seed: 1) | bids: bids, highest_bid: {:north, bid_amount}}
 
         # Should be complete regardless of timestamp values
         assert Bidding.bidding_complete?(state),
@@ -174,7 +174,7 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
               max_runs: 20
             ) do
         state = %{
-          GameState.new()
+          GameState.new(seed: 1)
           | phase: :bidding,
             current_turn: position,
             bids: [],
@@ -199,7 +199,7 @@ defmodule Pidro.Properties.BiddingPropertiesTest do
             ) do
         # Build state with one bid and advance through 3 passes
         initial_state = %{
-          GameState.new()
+          GameState.new(seed: 1)
           | phase: :bidding,
             current_dealer: :west,
             bids: []

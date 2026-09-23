@@ -11,7 +11,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
   describe "legal_actions/2 - dealer must bid rule" do
     test "dealer when all others passed cannot pass" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           bids: [
@@ -33,7 +33,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
 
     test "dealer when someone bid can pass" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           highest_bid: {:east, 6},
@@ -54,7 +54,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
 
     test "non-dealer can always pass" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           bids: [
@@ -73,7 +73,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
   describe "legal_actions/2 - bid validation" do
     test "returns bids from min to 14" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           bids: []
       }
@@ -91,7 +91,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
 
     test "returns bids higher than current bid" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           highest_bid: {:east, 10},
           bids: [
@@ -112,7 +112,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
 
     test "returns empty when player already acted" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           highest_bid: {:north, 6},
           bids: [
@@ -128,7 +128,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
 
     test "returns empty when player already passed" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           bids: [
             %Types.Bid{position: :north, amount: :pass, timestamp: 1000}
@@ -145,7 +145,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
   describe "legal_actions/2 - property: all returned actions succeed" do
     test "every legal action can be successfully applied" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           bids: []
@@ -169,7 +169,7 @@ defmodule Pidro.Game.BiddingLegalActionsTest do
 
     test "dealer-must-bid scenario: all returned actions succeed" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           bids: [

@@ -42,14 +42,14 @@ defmodule Pidro.Bot.RulebookTest do
   end
 
   test "dealer selection returns :select_dealer" do
-    state = GameState.new()
+    state = GameState.new(seed: 1)
 
     assert {:select_dealer, _} =
              Rulebook.decide(SeatView.for_seat(state, :north), [:select_dealer])
   end
 
   test "a manual rob returns the hand-selection marker for the caller to resolve" do
-    base = GameState.new()
+    base = GameState.new(seed: 1)
 
     state = %{
       base

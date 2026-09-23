@@ -20,9 +20,12 @@ defmodule Pidro.Test.GameTrace do
   """
   @spec states(integer(), keyword()) :: [Pidro.Core.Types.GameState.t()]
   def states(seed, opts \\ []) do
+    # Seeds this process's RNG for the bidding/play policy in `choose/3` only.
+    # The engine draws from the chance stream in the state below and is
+    # unaffected by this line.
     :rand.seed(:exsss, {seed, seed + 1, seed + 2})
 
-    base = GameState.new()
+    base = GameState.new(seed: seed)
     rob? = Keyword.get(opts, :auto_dealer_rob, true)
     initial = %{base | config: Map.put(base.config, :auto_dealer_rob, rob?)}
 

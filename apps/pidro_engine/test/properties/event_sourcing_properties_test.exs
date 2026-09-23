@@ -116,7 +116,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
                 StreamData.bind(StreamData.integer(0..100), fn ew_score ->
                   StreamData.bind(StreamData.integer(1..10), fn hand_num ->
                     StreamData.bind(StreamData.integer(0..6), fn trick_num ->
-                      state = GS.new()
+                      state = GS.new(seed: 1)
 
                       updated = %{
                         state
@@ -150,12 +150,12 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
     check all(events <- event_sequence(), max_runs: 100) do
       # Apply events sequentially
       sequential_state =
-        Enum.reduce(events, GS.new(), fn event, state ->
+        Enum.reduce(events, GS.new(seed: 1), fn event, state ->
           Events.apply_event(state, event)
         end)
 
       # Replay events using Events.replay_events
-      replayed_state = Events.replay_events(GS.new(), events)
+      replayed_state = Events.replay_events(GS.new(seed: 1), events)
 
       # The states should be identical in all fields except the events list
       # (since replay_events doesn't add events to history)
@@ -171,7 +171,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "replaying empty event list returns initial state" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      initial = GS.new()
+      initial = GS.new(seed: 1)
       replayed = Events.replay_events(initial, [])
 
       assert replayed == initial
@@ -180,7 +180,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "replaying single event is equivalent to applying it once" do
     check all(event <- simple_event(), max_runs: 100) do
-      initial = GS.new()
+      initial = GS.new(seed: 1)
 
       direct_application = Events.apply_event(initial, event)
       replayed = Events.replay_events(initial, [event])
@@ -278,7 +278,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "encoding is deterministic for initial state" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      initial = GS.new()
+      initial = GS.new(seed: 1)
 
       # Encode multiple times
       encoding1 = Notation.encode(initial)
@@ -297,7 +297,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "applying event does not modify original state" do
     check all(event <- simple_event(), max_runs: 100) do
-      original = GS.new()
+      original = GS.new(seed: 1)
 
       # Capture original values
       original_phase = original.phase
@@ -320,7 +320,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "applying event produces a different state (unless no-op event)" do
     check all(event <- simple_event(), max_runs: 100) do
-      original = GS.new()
+      original = GS.new(seed: 1)
       new_state = Events.apply_event(original, event)
 
       # At least one field should be different
@@ -343,7 +343,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
             event2 <- simple_event(),
             max_runs: 100
           ) do
-      initial = GS.new()
+      initial = GS.new(seed: 1)
 
       # Apply events in order 1, 2
       state_1_2 =
@@ -386,7 +386,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
   property "undo removes the last event from history" do
     check all(events <- event_sequence(), max_runs: 100) do
       # Build a state with events in history
-      state = %{GS.new() | events: events}
+      state = %{GS.new(seed: 1) | events: events}
 
       # Undo
       case Replay.undo(state) do
@@ -403,7 +403,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "cannot undo initial state with no history" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      initial = GS.new()
+      initial = GS.new(seed: 1)
 
       # Should return error
       assert {:error, :no_history} = Replay.undo(initial)
@@ -415,7 +415,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
       # Skip if less than 2 events (need something to undo)
       if length(events) >= 2 do
         # Build state by replaying events and storing them in history
-        final_state = %{Events.replay_events(GS.new(), events) | events: events}
+        final_state = %{Events.replay_events(GS.new(seed: 1), events) | events: events}
 
         # Undo the last event
         {:ok, undone_state} = Replay.undo(final_state)
@@ -424,7 +424,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
         events_without_last = Enum.drop(events, -1)
 
         replayed_state = %{
-          Events.replay_events(GS.new(), events_without_last)
+          Events.replay_events(GS.new(seed: 1), events_without_last)
           | events: events_without_last
         }
 
@@ -443,7 +443,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
       # Skip if empty (nothing to undo)
       if length(events) > 0 do
         # Build a state with events
-        original_state = %{Events.replay_events(GS.new(), events) | events: events}
+        original_state = %{Events.replay_events(GS.new(seed: 1), events) | events: events}
         last_event = List.last(events)
 
         # Undo
@@ -470,7 +470,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "replaying events is idempotent when applied to same initial state" do
     check all(events <- event_sequence(), max_runs: 100) do
-      initial = GS.new()
+      initial = GS.new(seed: 1)
 
       # Replay twice
       result1 = Events.replay_events(initial, events)
@@ -488,7 +488,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
   property "event history length grows linearly with events applied" do
     check all(events <- event_sequence(), max_runs: 100) do
       # Build state with events in history
-      state_with_history = %{GS.new() | events: events}
+      state_with_history = %{GS.new(seed: 1) | events: events}
 
       # History length should match events length
       assert Replay.history_length(state_with_history) == length(events)
@@ -498,12 +498,12 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
   property "last_event returns the most recent event" do
     check all(events <- event_sequence(), max_runs: 100) do
       if length(events) > 0 do
-        state = %{GS.new() | events: events}
+        state = %{GS.new(seed: 1) | events: events}
         last = Replay.last_event(state)
 
         assert last == List.last(events)
       else
-        state = GS.new()
+        state = GS.new(seed: 1)
         assert Replay.last_event(state) == nil
       end
     end
@@ -511,7 +511,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
   property "events_since returns events after timestamp" do
     check all(events <- event_sequence(), max_runs: 100) do
-      state = %{GS.new() | events: events}
+      state = %{GS.new(seed: 1) | events: events}
 
       # Using timestamp 0 should return all events (since extract_timestamp returns 0)
       all_events = Replay.events_since(state, -1)
@@ -559,7 +559,7 @@ defmodule Pidro.Properties.EventSourcingPropertiesTest do
 
       # The data field should be the original event tuple
       # which can be used directly with apply_event
-      initial = GS.new()
+      initial = GS.new(seed: 1)
       new_state = Events.apply_event(initial, structured.data)
 
       # Should successfully apply

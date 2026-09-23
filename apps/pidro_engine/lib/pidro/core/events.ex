@@ -51,7 +51,7 @@ defmodule Pidro.Core.Events do
       ...>   %Event{type: :dealer_selected, data: {:north, {14, :hearts}}, hand_number: 1},
       ...>   %Event{type: :cards_dealt, data: %{north: [...], ...}, hand_number: 1}
       ...> ]
-      iex> final_state = Enum.reduce(events, GameState.new(), &Events.apply_event/2)
+      iex> final_state = Enum.reduce(events, GameState.new(seed: 7), &Events.apply_event/2)
 
   ## Immutability
 
@@ -154,13 +154,13 @@ defmodule Pidro.Core.Events do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> event = {:dealer_selected, :north, {14, :hearts}}
       iex> state = Events.apply_event(state, event)
       iex> state.current_dealer
       :north
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> event = {:trump_declared, :hearts}
       iex> state = Events.apply_event(state, event)
       iex> state.trump_suit
@@ -377,7 +377,7 @@ defmodule Pidro.Core.Events do
 
   ## Parameters
 
-  - `initial_state` - Starting GameState (typically `GameState.new()`)
+  - `initial_state` - Starting GameState (typically `GameState.new(seed: 7)`)
   - `events` - List of event tuples to apply in order
 
   ## Returns
@@ -390,7 +390,7 @@ defmodule Pidro.Core.Events do
       ...>   {:dealer_selected, :north, {14, :hearts}},
       ...>   {:trump_declared, :hearts}
       ...> ]
-      iex> state = Events.replay_events(GameState.new(), events)
+      iex> state = Events.replay_events(GameState.new(seed: 7), events)
       iex> state.current_dealer
       :north
       iex> state.trump_suit

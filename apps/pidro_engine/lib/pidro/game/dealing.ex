@@ -14,7 +14,9 @@ defmodule Pidro.Game.Dealing do
   ### Dealer Selection (First Hand Only)
   - Players cut the deck to determine the first dealer
   - Highest card cut wins dealer position
-  - In case of ties, re-cut among tied players
+  - Ties fall to the seat nearest the front of
+    `[:north, :east, :south, :west]`; no re-cut is implemented
+    (see `select_dealer/1`)
 
   ### Card Distribution
   - 9 cards dealt initially to each player
@@ -30,26 +32,26 @@ defmodule Pidro.Game.Dealing do
   ## Examples
 
       # Select initial dealer by cutting
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> {:ok, state} = Dealing.select_dealer(state)
       iex> state.current_dealer in [:north, :east, :south, :west]
       true
 
       # Deal initial cards
-      iex> state = GameState.new() |> Map.put(:current_dealer, :north)
+      iex> state = GameState.new(seed: 7) |> Map.put(:current_dealer, :north)
       iex> state = Map.put(state, :deck, Pidro.Core.Deck.new().cards)
       iex> {:ok, state} = Dealing.deal_initial(state)
       iex> Enum.all?(state.players, fn {_pos, player} -> length(player.hand) == 9 end)
       true
 
       # Rotate dealer for next hand
-      iex> state = %{GameState.new() | current_dealer: :north}
+      iex> state = %{GameState.new(seed: 7) | current_dealer: :north}
       iex> {:ok, state} = Dealing.rotate_dealer(state)
       iex> state.current_dealer
       :east
   """
 
-  alias Pidro.Core.{Types, GameState}
+  alias Pidro.Core.{Chance, Deck, GameState, Types}
 
   @type game_state :: Types.GameState.t()
   @type position :: Types.position()
@@ -63,11 +65,13 @@ defmodule Pidro.Game.Dealing do
   @doc """
   Selects the initial dealer by simulating a deck cut.
 
-  Each player "cuts" the deck by drawing a random card. The player with the
-  highest card becomes the dealer. In case of ties, tied players re-cut.
+  Each player "cuts" the deck by drawing a card. The player with the highest
+  card becomes the dealer, and the same call shuffles the deck the first hand
+  is dealt from.
 
-  This function uses randomization to determine the dealer, simulating the
-  traditional card-cutting ceremony.
+  Both the cuts and the shuffle are drawn from `state.chance`, the explicit
+  chance stream carried in the game state, and the advanced stream is stored
+  back. The calling process's `:rand` dictionary is not read.
 
   ## Parameters
   - `state` - Current game state (should be in `:dealer_selection` phase)
@@ -78,12 +82,24 @@ defmodule Pidro.Game.Dealing do
 
   ## State Changes
   - Sets `current_dealer` to the selected position
+  - Sets `dealer_selection_cuts` and `deck`
+  - Advances `chance`
   - Adds `{:dealer_selected, position, card}` event to history
   - Phase remains `:dealer_selection` (caller should transition to `:dealing`)
 
+  ## Ceremony details
+
+  The cuts are four independently generated `{rank, suit}` pairs rather than
+  draws from a deck, so two seats can cut the same rank or the identical card.
+  Ties are resolved by `Enum.max_by/2`, which returns the first maximal
+  element, so a tie falls to whichever seat comes first in
+  `[:north, :east, :south, :west]`. There is no re-cut. This is long-standing
+  behaviour and is preserved here deliberately; it is documented rather than
+  changed because altering it would change the distribution of who deals.
+
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> {:ok, state} = Dealing.select_dealer(state)
       iex> state.current_dealer in [:north, :east, :south, :west]
       true
@@ -93,27 +109,22 @@ defmodule Pidro.Game.Dealing do
   """
   @spec select_dealer(game_state()) :: {:ok, game_state()} | error()
   def select_dealer(%Types.GameState{} = state) do
-    cuts =
-      [:north, :east, :south, :west]
-      |> Enum.map(fn pos ->
-        rank = Enum.random(2..14)
-        suit = Enum.random([:hearts, :diamonds, :clubs, :spades])
-        {pos, {rank, suit}}
-      end)
+    {cuts, chance} = Chance.cut_cards([:north, :east, :south, :west], state.chance)
 
     cuts_map = Map.new(cuts)
 
     {winner_pos, winner_card} =
       Enum.max_by(cuts, fn {_pos, {rank, _suit}} -> rank end)
 
-    deck = Pidro.Core.Deck.new()
+    {deck, chance} = Chance.shuffle(Deck.ordered(), chance)
     event = {:dealer_selected, winner_pos, winner_card}
 
     updated_state =
       state
       |> GameState.update(:dealer_selection_cuts, cuts_map)
       |> GameState.update(:current_dealer, winner_pos)
-      |> GameState.update(:deck, deck.cards)
+      |> GameState.update(:deck, deck)
+      |> GameState.update(:chance, chance)
       |> GameState.update(:events, state.events ++ [event])
 
     {:ok, updated_state}
@@ -144,12 +155,12 @@ defmodule Pidro.Game.Dealing do
 
   ## Examples
 
-      iex> state = %{GameState.new() | current_dealer: :north}
+      iex> state = %{GameState.new(seed: 7) | current_dealer: :north}
       iex> {:ok, state} = Dealing.rotate_dealer(state)
       iex> state.current_dealer
       :east
 
-      iex> state = %{GameState.new() | current_dealer: :west}
+      iex> state = %{GameState.new(seed: 7) | current_dealer: :west}
       iex> {:ok, state} = Dealing.rotate_dealer(state)
       iex> state.current_dealer
       :north
@@ -202,7 +213,7 @@ defmodule Pidro.Game.Dealing do
   ## Examples
 
       # Deal with deck as card list
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state = Map.put(state, :current_dealer, :north)
       iex> state = Map.put(state, :deck, Pidro.Core.Deck.new().cards)
       iex> {:ok, state} = Dealing.deal_initial(state)
@@ -212,7 +223,7 @@ defmodule Pidro.Game.Dealing do
       :east
 
       # Error when no dealer set
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state = Map.put(state, :deck, Pidro.Core.Deck.new().cards)
       iex> Dealing.deal_initial(state)
       {:error, :no_dealer, "Cannot deal cards without a dealer"}

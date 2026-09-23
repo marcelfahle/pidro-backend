@@ -90,7 +90,7 @@ defmodule Pidro.Core.SeatView do
 
   ## Examples
 
-      iex> view = Pidro.Core.SeatView.for_seat(Pidro.Core.GameState.new(), :north)
+      iex> view = Pidro.Core.SeatView.for_seat(Pidro.Core.GameState.new(seed: 7), :north)
       iex> {view.position, view.hand, view.players.east.hand_count}
       {:north, [], 0}
   """
@@ -142,7 +142,7 @@ defmodule Pidro.Core.SeatView do
 
   ## Examples
 
-      iex> Pidro.Core.SeatView.killed_cards(Pidro.Core.GameState.new())
+      iex> Pidro.Core.SeatView.killed_cards(Pidro.Core.GameState.new(seed: 7))
       %{}
   """
   @spec killed_cards(GameState.t()) :: %{Types.position() => [Types.card()]}

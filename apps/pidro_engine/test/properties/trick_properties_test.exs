@@ -211,7 +211,7 @@ defmodule Pidro.Properties.TrickPropertiesTest do
   # =============================================================================
 
   defp build_playing_phase_state(trump_suit, dealer, num_tricks) do
-    state = GameState.new()
+    state = GameState.new(seed: 1)
 
     # Set up basic game state
     state =
@@ -323,7 +323,7 @@ defmodule Pidro.Properties.TrickPropertiesTest do
   end
 
   defp build_state_with_cold_player(trump_suit, cold_pos, revealed_non_trumps) do
-    state = GameState.new()
+    state = GameState.new(seed: 1)
 
     # Set up basic game state
     state =
@@ -376,7 +376,7 @@ defmodule Pidro.Properties.TrickPropertiesTest do
   end
 
   defp build_state_with_multiple_cold_players(trump_suit, num_cold) do
-    state = GameState.new()
+    state = GameState.new(seed: 1)
 
     # Set up basic game state
     state =

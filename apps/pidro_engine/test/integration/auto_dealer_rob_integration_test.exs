@@ -36,7 +36,7 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
     setup do
       # Create game state with auto_dealer_rob enabled
       state =
-        GameState.new()
+        GameState.new(seed: 1)
         |> put_in([Access.key(:config), :auto_dealer_rob], true)
         |> put_in([Access.key(:phase)], :declaring)
         |> put_in([Access.key(:current_dealer)], :east)
@@ -251,7 +251,7 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
     test "player with 7 trump cards keeps all 7 and triggers kill rule", _context do
       # Create state where one player has 7 trump cards
       state =
-        GameState.new()
+        GameState.new(seed: 1)
         |> put_in([Access.key(:config), :auto_dealer_rob], true)
         |> put_in([Access.key(:phase)], :declaring)
         |> put_in([Access.key(:current_dealer)], :east)
@@ -387,7 +387,7 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
       # Rare scenario: All players happen to have exactly 6 trump cards after discard
       # Deck is empty, so no dealing or robbing needed
       state =
-        GameState.new()
+        GameState.new(seed: 1)
         |> put_in([Access.key(:config), :auto_dealer_rob], true)
         |> put_in([Access.key(:phase)], :declaring)
         |> put_in([Access.key(:current_dealer)], :east)
@@ -502,7 +502,7 @@ defmodule Pidro.Integration.AutoDealerRobIntegrationTest do
   describe "manual mode: auto_dealer_rob: false" do
     test "waits for dealer to manually rob the pack", _context do
       state =
-        GameState.new()
+        GameState.new(seed: 1)
         # Manual mode
         |> put_in([Access.key(:config), :auto_dealer_rob], false)
         |> put_in([Access.key(:phase)], :declaring)

@@ -89,6 +89,22 @@ defmodule Pidro.Server do
   - `:name` - Optional registration name (supports {:via, module, term} tuples)
   - `:telemetry` - Whether to emit telemetry events (default: true)
   - `:initial_state` - Optional initial game state (default: new game)
+  - `:seed` - Optional seed for the game's chance stream. Omit it and the
+    server generates fresh entropy, which is what a live game wants. Supply it
+    and the game is reproducible, including across `reset/1`.
+
+  ## Randomness
+
+  This server is the engine's entropy boundary: it is the only production
+  expression that generates randomness for a game. The engine itself draws
+  exclusively from the chance value carried in `%GameState{}`.
+
+      no :seed, no :initial_state   -> fresh entropy from :crypto
+      :seed s                       -> a game reproducible from s
+      :initial_state gs             -> gs.chance is preserved exactly
+
+  `reset/1` follows the same rule: a server started with a `:seed` restarts
+  into the identical game, an unseeded one into a fresh one.
 
   ## Examples
 
@@ -299,7 +315,16 @@ defmodule Pidro.Server do
   def init(opts) do
     game_id = Keyword.get(opts, :game_id)
     telemetry_enabled? = Keyword.get(opts, :telemetry, true)
-    initial_state = Keyword.get(opts, :initial_state, GS.new())
+    seed = Keyword.get(opts, :seed)
+
+    # A supplied state already carries its own chance value; constructing one
+    # here is the only place a game's randomness is chosen. `get_lazy/3` keeps
+    # `fresh_seed/0` unevaluated when a seed was supplied.
+    initial_state =
+      case Keyword.fetch(opts, :initial_state) do
+        {:ok, game_state} -> game_state
+        :error -> GS.new(seed: Keyword.get_lazy(opts, :seed, &fresh_seed/0))
+      end
 
     dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
     dealer_rob_presentation_ms = Keyword.get(opts, :dealer_rob_presentation_ms, 1_800)
@@ -309,6 +334,7 @@ defmodule Pidro.Server do
       %{
         game_state: initial_state,
         game_id: game_id,
+        seed: seed,
         telemetry_enabled?: telemetry_enabled?,
         dealer_selection_delay_ms: dealer_selection_delay_ms,
         pubsub: pubsub,
@@ -372,7 +398,7 @@ defmodule Pidro.Server do
 
   @impl true
   def handle_call(:reset, _from, state) do
-    new_state = replace_game_state(state, GS.new())
+    new_state = replace_game_state(state, GS.new(seed: reset_seed(state)))
     {:reply, :ok, new_state}
   end
 
@@ -572,6 +598,23 @@ defmodule Pidro.Server do
       }
     }
   end
+
+  # The engine's only source of entropy in the production path. Everything the
+  # game draws afterwards is derived from this, deterministically, inside
+  # `%GameState{}`.
+  #
+  # A cryptographic seed makes the starting point unpredictable; it does not
+  # turn `:exsss` into a cryptographic generator. This matches the randomness
+  # standard the engine had before chance became explicit.
+  defp fresh_seed do
+    <<a::64, b::64, c::64>> = :crypto.strong_rand_bytes(24)
+    {a, b, c}
+  end
+
+  # A server started with an explicit seed restarts into the identical game;
+  # an unseeded one gets a fresh one, matching what `init/1` did.
+  defp reset_seed(%{seed: nil}), do: fresh_seed()
+  defp reset_seed(%{seed: seed}), do: seed
 
   defp replace_game_state(state, game_state) do
     state

@@ -45,13 +45,13 @@ defmodule Pidro.Perf do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> hash = Perf.hash_state(state)
       iex> is_integer(hash)
       true
 
-      iex> state1 = GameState.new()
-      iex> state2 = GameState.new()
+      iex> state1 = GameState.new(seed: 7)
+      iex> state2 = GameState.new(seed: 7)
       iex> Perf.hash_state(state1) == Perf.hash_state(state2)
       true
   """
@@ -102,12 +102,12 @@ defmodule Pidro.Perf do
 
   ## Examples
 
-      iex> state1 = GameState.new()
-      iex> state2 = GameState.new()
+      iex> state1 = GameState.new(seed: 7)
+      iex> state2 = GameState.new(seed: 7)
       iex> Perf.states_equal?(state1, state2)
       true
 
-      iex> state1 = GameState.new()
+      iex> state1 = GameState.new(seed: 7)
       iex> state2 = GameState.update(state1, :phase, :dealing)
       iex> Perf.states_equal?(state1, state2)
       false
@@ -148,7 +148,7 @@ defmodule Pidro.Perf do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> key = Perf.cache_key_for_moves(state, :north)
       iex> is_tuple(key)
       true
@@ -203,7 +203,7 @@ defmodule Pidro.Perf do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> hash = Perf.hash_position_state(state, :north)
       iex> is_integer(hash)
       true
@@ -230,7 +230,7 @@ defmodule Pidro.Perf do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> size = Perf.estimate_size(state)
       iex> size > 0
       true
@@ -318,7 +318,7 @@ defmodule Pidro.Perf do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> hash = Perf.phase_specific_hash(state)
       iex> is_integer(hash)
       true

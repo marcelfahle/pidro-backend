@@ -24,7 +24,7 @@ defmodule Pidro.Core.SeatViewTest do
       west: [{5, :diamonds}, {2, :hearts}, {7, :clubs}, {6, :clubs}, {4, :clubs}, {3, :clubs}]
     }
 
-    base = GameState.new()
+    base = GameState.new(seed: 1)
 
     %{
       base
@@ -185,7 +185,7 @@ defmodule Pidro.Core.SeatViewTest do
 
     test "only the dealer sees the rob pool, and only under manual rob" do
       deck = [{14, :hearts}, {3, :spades}, {9, :hearts}]
-      base = GameState.new()
+      base = GameState.new(seed: 1)
 
       state = %{
         base
@@ -209,7 +209,7 @@ defmodule Pidro.Core.SeatViewTest do
     end
 
     test "carries the position during dealer selection when nobody has the turn" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       assert state.current_turn == nil
       assert SeatView.for_seat(state, :west).position == :west
     end
@@ -227,7 +227,7 @@ defmodule Pidro.Core.SeatViewTest do
         {:cards_killed, %{south: [{3, :hearts}], north: [{4, :hearts}]}}
       ]
 
-      assert SeatView.killed_cards(%{GameState.new() | events: events}) ==
+      assert SeatView.killed_cards(%{GameState.new(seed: 1) | events: events}) ==
                %{south: [{7, :hearts}], north: [{4, :hearts}]}
     end
   end

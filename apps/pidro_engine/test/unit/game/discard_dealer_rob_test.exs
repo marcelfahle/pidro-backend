@@ -40,7 +40,7 @@ defmodule Pidro.Game.DiscardDealerRobTest do
         {9, :hearts}
       ])
 
-    state = GameState.new()
+    state = GameState.new(seed: 1)
     dealer_player = %{Map.get(state.players, dealer) | hand: dealer_hand}
     updated_players = Map.put(state.players, dealer, dealer_player)
 

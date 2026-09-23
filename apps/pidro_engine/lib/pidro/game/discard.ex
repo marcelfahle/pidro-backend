@@ -32,7 +32,7 @@ defmodule Pidro.Game.Discard do
   ## Examples
 
       # Discard all non-trumps for all players
-      iex> state = %{GameState.new() | phase: :discarding, trump_suit: :hearts}
+      iex> state = %{GameState.new(seed: 7) | phase: :discarding, trump_suit: :hearts}
       iex> {:ok, state} = Discard.discard_non_trumps(state)
       iex> state.phase
       :second_deal
@@ -43,7 +43,7 @@ defmodule Pidro.Game.Discard do
       :ok
 
       # Second deal to bring players to 6 cards
-      iex> state = %{GameState.new() | phase: :second_deal, current_dealer: :north}
+      iex> state = %{GameState.new(seed: 7) | phase: :second_deal, current_dealer: :north}
       iex> {:ok, state} = Discard.second_deal(state)
 
       # Dealer robs the pack
@@ -90,7 +90,7 @@ defmodule Pidro.Game.Discard do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :discarding, trump_suit: :hearts}
+      iex> state = %{GameState.new(seed: 7) | phase: :discarding, trump_suit: :hearts}
       iex> state = put_in(state.players[:north].hand, [{14, :hearts}, {10, :clubs}, {7, :hearts}])
       iex> {:ok, state} = Discard.discard_non_trumps(state)
       iex> state.players[:north].hand
@@ -98,7 +98,7 @@ defmodule Pidro.Game.Discard do
       iex> state.phase
       :second_deal
 
-      iex> state = %{GameState.new() | phase: :bidding, trump_suit: :hearts}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, trump_suit: :hearts}
       iex> Discard.discard_non_trumps(state)
       {:error, {:invalid_phase, :discarding, :bidding}}
   """
@@ -229,7 +229,7 @@ defmodule Pidro.Game.Discard do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :second_deal, current_dealer: :north}
+      iex> state = %{GameState.new(seed: 7) | phase: :second_deal, current_dealer: :north}
       iex> state = put_in(state.players[:east].hand, [{14, :hearts}, {13, :hearts}])
       iex> state = put_in(state.deck, [{10, :hearts}, {9, :hearts}, {8, :hearts}, {7, :hearts}])
       iex> {:ok, state} = Discard.second_deal(state)
@@ -344,7 +344,7 @@ defmodule Pidro.Game.Discard do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :second_deal, current_dealer: :north, current_turn: :north}
+      iex> state = %{GameState.new(seed: 7) | phase: :second_deal, current_dealer: :north, current_turn: :north}
       iex> state = put_in(state.players[:north].hand, [{14, :hearts}, {13, :hearts}, {12, :hearts}])
       iex> state = put_in(state.deck, [{11, :hearts}, {10, :hearts}, {9, :hearts}, {8, :hearts}])
       iex> # Dealer takes remaining cards and selects 6 to keep

@@ -18,8 +18,17 @@ defmodule Pidro.Core.Binary do
   Binary encoding is particularly useful for:
   - Fast state hashing for caching
   - Network transmission
-  - State snapshots and persistence
   - Comparing states for equality
+
+  ## Not a resume format
+
+  This format is lossy by design: it carries phase, hand number, seats, hands,
+  deck, trump, bid and scores, and nothing else. It does not carry the event
+  log, the dealer-selection cuts, the config, or the chance stream. A state
+  from `from_binary/1` therefore has `chance: nil` and cannot cross a
+  transition that draws — it is a compact fingerprint of a position, not a
+  saved game. To save and resume a game, use `:erlang.term_to_binary/1` on
+  the `%GameState{}` itself, which preserves chance.
 
   ## Usage
 
@@ -172,7 +181,7 @@ defmodule Pidro.Core.Binary do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> binary = Binary.to_binary(state)
       iex> {:ok, decoded_state} = Binary.from_binary(binary)
       iex> decoded_state.phase == state.phase
@@ -216,7 +225,12 @@ defmodule Pidro.Core.Binary do
   end
 
   @doc """
-  Decodes a binary back into a complete game state.
+  Decodes a binary back into a partial game state.
+
+  The result carries only what `to_binary/1` encodes; every other field takes
+  its struct default, including `chance: nil`. See "Not a resume format" in
+  the module documentation — a decoded state cannot be played across a
+  transition that draws.
 
   ## Parameters
 
@@ -229,7 +243,7 @@ defmodule Pidro.Core.Binary do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> binary = Binary.to_binary(state)
       iex> {:ok, decoded_state} = Binary.from_binary(binary)
       iex> decoded_state.phase

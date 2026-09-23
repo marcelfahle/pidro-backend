@@ -79,13 +79,46 @@ defmodule Pidro.Core.Deck do
   """
   @spec new() :: t()
   def new do
-    cards = create_standard_deck()
-    shuffled_cards = Enum.shuffle(cards)
+    shuffled_cards = Enum.shuffle(ordered())
 
     %__MODULE__{
       cards: shuffled_cards,
       shuffled?: true
     }
+  end
+
+  @doc """
+  Returns the 52 cards in a fixed generation order, as a bare list.
+
+  Order: Hearts (2-A), Diamonds (2-A), Clubs (2-A), Spades (2-A).
+
+  This is the canonical unshuffled deck. It is the input the engine hands to
+  `Pidro.Core.Chance.shuffle/2` to produce a deal, and the definition fixtures
+  should build from rather than writing a 52-card literal.
+
+  ## Examples
+
+      iex> alias Pidro.Core.Deck
+      iex> length(Deck.ordered())
+      52
+
+      iex> alias Pidro.Core.Deck
+      iex> Deck.ordered() |> Enum.take(3)
+      [{2, :hearts}, {3, :hearts}, {4, :hearts}]
+
+      iex> alias Pidro.Core.Deck
+      iex> Deck.ordered() == Deck.ordered()
+      true
+  """
+  @spec ordered() :: [card()]
+  def ordered do
+    suits = [:hearts, :diamonds, :clubs, :spades]
+    ranks = 2..14
+
+    for suit <- suits,
+        rank <- ranks do
+      {rank, suit}
+    end
   end
 
   # =============================================================================
@@ -254,17 +287,4 @@ defmodule Pidro.Core.Deck do
   # =============================================================================
   # Private Helper Functions
   # =============================================================================
-
-  # Creates a standard 52-card deck in a deterministic order
-  # Order: Hearts (2-A), Diamonds (2-A), Clubs (2-A), Spades (2-A)
-  @spec create_standard_deck() :: [card()]
-  defp create_standard_deck do
-    suits = [:hearts, :diamonds, :clubs, :spades]
-    ranks = 2..14
-
-    for suit <- suits,
-        rank <- ranks do
-      {rank, suit}
-    end
-  end
 end

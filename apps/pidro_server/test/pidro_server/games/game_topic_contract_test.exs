@@ -176,7 +176,7 @@ defmodule PidroServer.Games.GameTopicContractTest do
   # One vocabulary of raw application messages. Phoenix broadcast structs use
   # the channel's handle_out path and are covered by the integration test above.
   defp messages(code, user_id, readiness, lifecycle) do
-    state = %{Pidro.Core.GameState.new() | phase: :complete}
+    state = %{Pidro.Core.GameState.new(seed: 1) | phase: :complete}
 
     [
       {:state_update, code, %{state: state, transition_delay_ms: 0}},

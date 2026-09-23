@@ -7,7 +7,7 @@ defmodule Pidro.Core.GameState do
 
   ## Usage
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state.phase
       :dealer_selection
       iex> state = GameState.update(state, :phase, :dealing)
@@ -24,6 +24,7 @@ defmodule Pidro.Core.GameState do
   - Time-travel debugging
   """
 
+  alias Pidro.Core.Chance
   alias Pidro.Core.Types.{GameState, Player}
 
   @doc """
@@ -35,18 +36,36 @@ defmodule Pidro.Core.GameState do
   - North/South partnership (`:north_south` team)
   - East/West partnership (`:east_west` team)
 
+  ## Options
+
+  - `:seed` — **required**. The seed for this game's explicit chance stream,
+    either an integer or a `{a, b, c}` triple. It is converted once, here, via
+    `Pidro.Core.Chance.from_seed/1`, and every random draw the engine makes
+    for this game derives from it.
+
+  There is no default and no `new/0`: a game's randomness is an input, and the
+  caller has to say where it comes from. `Pidro.Server` generates fresh
+  entropy for live games; tests, simulations and CLI tooling pass a fixed seed.
+  Restoring a saved game does **not** go through this function — a restored
+  state already carries its chance value.
+
   ## Returns
 
   A new `GameState.t()` struct with:
   - Phase set to `:dealer_selection`
   - 4 players initialized in their positions with correct team assignments
   - Empty hands for all players
+  - A chance stream derived from `:seed`
   - Default configuration (min_bid: 6, max_bid: 14, winning_score: 62)
   - All score fields initialized to 0
 
+  ## Raises
+
+  `KeyError` if `:seed` is missing.
+
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state.phase
       :dealer_selection
       iex> map_size(state.players)
@@ -55,9 +74,14 @@ defmodule Pidro.Core.GameState do
       :north_south
       iex> state.players[:east].team
       :east_west
+
+      iex> GameState.new(seed: 7) == GameState.new(seed: 7)
+      true
   """
-  @spec new() :: GameState.t()
-  def new do
+  @spec new(keyword()) :: GameState.t()
+  def new(opts) when is_list(opts) do
+    chance = opts |> Keyword.fetch!(:seed) |> Chance.from_seed()
+
     %GameState{
       phase: :dealer_selection,
       hand_number: 1,
@@ -119,6 +143,7 @@ defmodule Pidro.Core.GameState do
         final_hand_size: 6,
         allow_negative_scores: true
       },
+      chance: chance,
       cache: %{}
     }
   end
@@ -141,17 +166,17 @@ defmodule Pidro.Core.GameState do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state = GameState.update(state, :phase, :dealing)
       iex> state.phase
       :dealing
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state = GameState.update(state, :current_dealer, :north)
       iex> state.current_dealer
       :north
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> state = GameState.update(state, :trump_suit, :hearts)
       iex> state.trump_suit
       :hearts
@@ -161,7 +186,7 @@ defmodule Pidro.Core.GameState do
   For updating nested structures like players or scores, you may need to
   construct the new nested value before passing it to this function:
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> updated_players = Map.put(state.players, :north, updated_north_player)
       iex> state = GameState.update(state, :players, updated_players)
   """

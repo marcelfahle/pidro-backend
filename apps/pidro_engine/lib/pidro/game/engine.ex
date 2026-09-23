@@ -24,7 +24,7 @@ defmodule Pidro.Game.Engine do
   ## Usage
 
       # Create initial game state
-      state = GameState.new()
+      state = GameState.new(seed: 7)
 
       # Apply an action
       {:ok, new_state} = Engine.apply_action(state, :north, {:bid, 10})

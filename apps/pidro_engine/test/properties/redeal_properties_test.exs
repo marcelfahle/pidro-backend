@@ -29,7 +29,7 @@ defmodule Pidro.Properties.RedealPropertiesTest do
           dealer_pos <- member_of(@positions)
         ) do
       # Create initial state
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Set up dealer and trump
       state =

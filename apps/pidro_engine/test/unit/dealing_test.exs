@@ -20,7 +20,7 @@ defmodule Pidro.Game.DealingTest do
   # =============================================================================
 
   defp new_game_with_deck do
-    state = GameState.new()
+    state = GameState.new(seed: 1)
     deck = Deck.new()
     Map.put(state, :deck, deck.cards)
   end
@@ -36,7 +36,7 @@ defmodule Pidro.Game.DealingTest do
 
   describe "select_dealer/1" do
     test "selects a dealer from available positions" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       {:ok, updated_state} = Dealing.select_dealer(state)
 
@@ -44,7 +44,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "records dealer_selected event" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       {:ok, updated_state} = Dealing.select_dealer(state)
 
@@ -62,7 +62,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "selected dealer matches the position in the event" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       {:ok, updated_state} = Dealing.select_dealer(state)
 
@@ -78,7 +78,7 @@ defmodule Pidro.Game.DealingTest do
 
   describe "rotate_dealer/1" do
     test "rotates dealer clockwise from north to east" do
-      state = %{GameState.new() | current_dealer: :north}
+      state = %{GameState.new(seed: 1) | current_dealer: :north}
 
       {:ok, updated_state} = Dealing.rotate_dealer(state)
 
@@ -86,7 +86,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "rotates dealer clockwise from east to south" do
-      state = %{GameState.new() | current_dealer: :east}
+      state = %{GameState.new(seed: 1) | current_dealer: :east}
 
       {:ok, updated_state} = Dealing.rotate_dealer(state)
 
@@ -94,7 +94,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "rotates dealer clockwise from south to west" do
-      state = %{GameState.new() | current_dealer: :south}
+      state = %{GameState.new(seed: 1) | current_dealer: :south}
 
       {:ok, updated_state} = Dealing.rotate_dealer(state)
 
@@ -102,7 +102,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "rotates dealer clockwise from west back to north" do
-      state = %{GameState.new() | current_dealer: :west}
+      state = %{GameState.new(seed: 1) | current_dealer: :west}
 
       {:ok, updated_state} = Dealing.rotate_dealer(state)
 
@@ -110,7 +110,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "increments hand number when rotating dealer" do
-      state = %{GameState.new() | current_dealer: :north, hand_number: 1}
+      state = %{GameState.new(seed: 1) | current_dealer: :north, hand_number: 1}
 
       {:ok, updated_state} = Dealing.rotate_dealer(state)
 
@@ -118,7 +118,7 @@ defmodule Pidro.Game.DealingTest do
     end
 
     test "returns error when no dealer is set" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       {:error, :no_dealer, message} = Dealing.rotate_dealer(state)
 
