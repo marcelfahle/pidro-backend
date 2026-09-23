@@ -149,6 +149,20 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
       assert html =~ "(Bot) chose"
     end
 
+    test "undo removes the reason for the undone move and keeps earlier ones",
+         %{conn: conn, room: room} do
+      {:ok, view, _html} = live(conn, ~p"/admin/games/#{room.code}")
+
+      first = bot_move(room.code)
+      second = bot_move(room.code)
+      assert render(view) =~ "#{position_name(second)} (Bot) chose"
+
+      html = view |> element("button[phx-click=undo_last_action]") |> render_click()
+
+      assert html =~ "#{position_name(first)} (Bot) chose"
+      refute html =~ "#{position_name(second)} (Bot) chose"
+    end
+
     test "a page opened mid-game renders without earlier reasons", %{conn: conn, room: room} do
       bot_move(room.code)
       {:ok, view, html} = live(conn, ~p"/admin/games/#{room.code}")

@@ -118,12 +118,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         legal_actions =
           get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
 
-        # A shorter event log means a new game; its reasons no longer apply.
-        socket =
-          if length(new_state.events) < length(game_events(socket)),
-            do: assign(socket, :bot_reasons, []),
-            else: socket
-
+        socket = reconcile_reasons(socket, new_state.events)
         events = process_events(new_state.events, socket.assigns)
 
         {:noreply,
@@ -285,6 +280,22 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   defp game_events(%{assigns: %{game_state: %{events: events}}}), do: events
   defp game_events(_socket), do: []
+
+  # Keeps the reasons whose move is still in the event log. A reason's move
+  # produced the event right after `event_index`, so an undo that removed that
+  # event removes the reason too, and earlier reasons stay. A log that starts
+  # differently belongs to a new game, whose reasons start over.
+  defp reconcile_reasons(socket, new_events) do
+    reasons =
+      if new_game?(game_events(socket), new_events),
+        do: [],
+        else: Enum.filter(socket.assigns.bot_reasons, &(&1.event_index < length(new_events)))
+
+    assign(socket, :bot_reasons, reasons)
+  end
+
+  defp new_game?([first | _], [other | _]), do: first != other
+  defp new_game?(_old_events, _new_events), do: false
 
   defp extract_state_update(%{state: game_state}) when is_map(game_state), do: {:ok, game_state}
   defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state}
@@ -762,11 +773,13 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:ok, previous_state} ->
         # Refetch legal actions
         legal_actions = get_legal_actions(room_code, socket.assigns.selected_position)
+        socket = reconcile_reasons(socket, previous_state.events)
 
         {:noreply,
          socket
          |> assign(:game_state, previous_state)
          |> assign(:legal_actions, legal_actions)
+         |> assign(:events, process_events(previous_state.events, socket.assigns))
          |> put_flash(:info, "Action undone successfully")}
 
       {:error, :no_history} ->
