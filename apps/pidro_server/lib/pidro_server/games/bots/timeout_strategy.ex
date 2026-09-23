@@ -16,7 +16,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
   @spec pick_action([term()], SeatView.t()) :: {:ok, term(), String.t()}
   def pick_action(legal_actions, %SeatView{} = view) do
     action =
-      case view.state.phase do
+      case view.phase do
         :bidding ->
           pick_bid_action(legal_actions)
 
@@ -24,7 +24,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
           pick_declared_trump(legal_actions, view)
 
         :playing ->
-          pick_lowest_legal_trump(legal_actions, view.state.trump_suit)
+          pick_lowest_legal_trump(legal_actions, view.trump_suit)
 
         :second_deal ->
           {:select_hand, :choose_6_cards}
@@ -51,9 +51,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
   end
 
   @spec pick_declared_trump([term()], SeatView.t()) :: term()
-  defp pick_declared_trump(legal_actions, %SeatView{position: position, state: state}) do
-    hand = state.players[position].hand
-
+  defp pick_declared_trump(legal_actions, %SeatView{hand: hand}) do
     legal_actions
     |> Enum.filter(&match?({:declare_trump, _}, &1))
     |> Enum.max_by(fn {:declare_trump, suit} ->

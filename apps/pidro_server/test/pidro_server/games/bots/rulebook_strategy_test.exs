@@ -121,7 +121,7 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
   end
 
   describe "BotBrain.execute_move/3" do
-    test "hands the strategy a seat view whose other hands are empty" do
+    test "hands the strategy a seat view with only counts for the other hands" do
       {room, game} = bidding_room()
       position = game.current_turn
 
@@ -133,13 +133,13 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
 
       assert_received {:picked, legal, %SeatView{position: ^position} = view}
       assert legal != []
-      assert view.state.players[position].hand == game.players[position].hand
-      assert view.state.events == []
-      assert view.state.deck == []
+      assert view.hand == game.players[position].hand
+      refute Map.has_key?(view, :events)
+      refute Map.has_key?(view, :deck)
 
-      for {pos, player} <- view.state.players, pos != position do
-        assert player.hand == []
-        assert view.hand_counts[pos] == 9
+      for {pos, player} <- view.players, pos != position do
+        refute Map.has_key?(player, :hand)
+        assert player.hand_count == 9
       end
 
       {:ok, after_move} = GameAdapter.get_state(room.code)
