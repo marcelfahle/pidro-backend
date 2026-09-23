@@ -1,26 +1,30 @@
 defmodule PidroServer.Games.Bots.TimeoutStrategy do
   @moduledoc """
   Deterministic timeout auto-play strategy for connected human turn expirations.
+
+  It decides from the timed-out seat's `Pidro.Core.SeatView`, like every
+  strategy, and plays passively on purpose: a connected human who goes AFK
+  should not have their hand played well for them.
   """
 
   @behaviour PidroServer.Games.Bots.Strategy
 
-  alias Pidro.Core.Card
+  alias Pidro.Core.{Card, SeatView}
   alias Pidro.Core.Types
 
   @impl true
-  @spec pick_action([term()], map()) :: {:ok, term(), String.t()}
-  def pick_action(legal_actions, game_state) do
+  @spec pick_action([term()], SeatView.t()) :: {:ok, term(), String.t()}
+  def pick_action(legal_actions, %SeatView{} = view) do
     action =
-      case Map.get(game_state, :phase) do
+      case view.phase do
         :bidding ->
           pick_bid_action(legal_actions)
 
         :declaring ->
-          pick_declared_trump(legal_actions, game_state)
+          pick_declared_trump(legal_actions, view)
 
         :playing ->
-          pick_lowest_legal_trump(legal_actions, game_state)
+          pick_lowest_legal_trump(legal_actions, view.trump_suit)
 
         :second_deal ->
           {:select_hand, :choose_6_cards}
@@ -46,11 +50,8 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
     end
   end
 
-  @spec pick_declared_trump([term()], map()) :: term()
-  defp pick_declared_trump(legal_actions, game_state) do
-    player = Map.get(game_state.players, Map.get(game_state, :current_turn), %{})
-    hand = Map.get(player, :hand, [])
-
+  @spec pick_declared_trump([term()], SeatView.t()) :: term()
+  defp pick_declared_trump(legal_actions, %SeatView{hand: hand}) do
     legal_actions
     |> Enum.filter(&match?({:declare_trump, _}, &1))
     |> Enum.max_by(fn {:declare_trump, suit} ->
@@ -58,10 +59,8 @@ defmodule PidroServer.Games.Bots.TimeoutStrategy do
     end)
   end
 
-  @spec pick_lowest_legal_trump([term()], map()) :: term()
-  defp pick_lowest_legal_trump(legal_actions, game_state) do
-    trump_suit = Map.fetch!(game_state, :trump_suit)
-
+  @spec pick_lowest_legal_trump([term()], Types.suit()) :: term()
+  defp pick_lowest_legal_trump(legal_actions, trump_suit) do
     legal_actions
     |> Enum.filter(&match?({:play_card, _}, &1))
     |> Enum.map(fn {:play_card, card} -> card end)

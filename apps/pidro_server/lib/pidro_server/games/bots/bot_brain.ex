@@ -9,6 +9,9 @@ defmodule PidroServer.Games.Bots.BotBrain do
 
   require Logger
 
+  alias Pidro.Bot.Rulebook
+  alias Pidro.Core.SeatView
+  alias Pidro.Core.Types.GameState
   alias Pidro.Game.DealerRob
   alias PidroServer.Games.{GameAdapter, Lifecycle}
 
@@ -76,8 +79,17 @@ defmodule PidroServer.Games.Bots.BotBrain do
   end
 
   @doc """
-  Executes a bot move: fetches legal actions, picks one via the strategy,
-  resolves it, and applies it through the GameAdapter.
+  Executes a bot move: fetches legal actions, builds the bot's seat view,
+  picks an action via the strategy, resolves it, and applies it.
+
+  The strategy only ever sees the seat view (`Pidro.Core.SeatView`), never the
+  full game state. The full state is used for one thing: resolving the dealer's
+  `{:select_hand, :choose_6_cards}` marker, which is the engine's own choice
+  from the pool the dealer legitimately sees.
+
+  A strategy that raises or chooses an illegal action does not stop the turn:
+  the move falls back to the rulebook's safest legal action and the failure
+  is logged.
 
   `bot_label` is used for log messages (e.g., "BotPlayer" or "SubstituteBot").
   SubstituteBot supplies RoomManager's PID-checked action function; BotPlayer
@@ -86,56 +98,87 @@ defmodule PidroServer.Games.Bots.BotBrain do
   @spec execute_move(map(), String.t()) :: :ok
   @spec execute_move(map(), String.t(), (String.t(), atom(), term() -> term())) :: :ok
   def execute_move(state, bot_label, apply_action \\ &GameAdapter.apply_action/3) do
-    case GameAdapter.get_legal_actions(state.room_code, state.position) do
-      {:ok, legal_actions} when legal_actions != [] ->
-        game_state = get_game_state(state.room_code)
+    label = "#{bot_label} (#{state.room_code}/#{state.position})"
 
-        case state.strategy.pick_action(legal_actions, game_state) do
-          {:ok, action, reasoning} ->
-            action = resolve_action(action, game_state, state.position)
+    with {:ok, [_ | _] = legal_actions} <-
+           GameAdapter.get_legal_actions(state.room_code, state.position),
+         {:ok, %GameState{} = game_state} <- GameAdapter.get_state(state.room_code) do
+      view = SeatView.for_seat(game_state, state.position)
+      {action, reasoning} = choose(state.strategy, legal_actions, view, label)
+      action = resolve_action(action, game_state, state.position)
 
-            Logger.debug(
-              "#{bot_label} (#{state.room_code}/#{state.position}) executing: #{inspect(action)} - #{reasoning}"
-            )
+      Logger.debug("#{label} executing: #{inspect(action)} - #{reasoning}")
 
-            case apply_action.(state.room_code, state.position, action) do
-              {:ok, _new_state} ->
-                :ok
+      case apply_action.(state.room_code, state.position, action) do
+        {:ok, _new_state} ->
+          publish_reasoning(state.room_code, %{
+            position: state.position,
+            action: action,
+            reason: reasoning,
+            event_index: length(game_state.events)
+          })
 
-              {:error, reason} ->
-                Logger.warning(
-                  "#{bot_label} (#{state.room_code}/#{state.position}) action failed: #{inspect(reason)}"
-                )
-            end
-
-          action ->
-            action = resolve_action(action, game_state, state.position)
-
-            Logger.debug(
-              "#{bot_label} (#{state.room_code}/#{state.position}) executing: #{inspect(action)} (legacy)"
-            )
-
-            case apply_action.(state.room_code, state.position, action) do
-              {:ok, _new_state} ->
-                :ok
-
-              {:error, reason} ->
-                Logger.warning(
-                  "#{bot_label} (#{state.room_code}/#{state.position}) action failed: #{inspect(reason)}"
-                )
-            end
-        end
-
+        {:error, reason} ->
+          Logger.warning("#{label} action failed: #{inspect(reason)} (#{inspect(action)})")
+      end
+    else
       {:ok, []} ->
-        Logger.debug("#{bot_label} (#{state.room_code}/#{state.position}) has no legal actions")
+        Logger.debug("#{label} has no legal actions")
 
       {:error, :not_found} ->
-        Logger.warning("#{bot_label} (#{state.room_code}/#{state.position}) - game not found")
+        Logger.warning("#{label} - game not found")
 
-      {:error, reason} ->
-        Logger.warning(
-          "#{bot_label} (#{state.room_code}/#{state.position}) error: #{inspect(reason)}"
-        )
+      other ->
+        Logger.warning("#{label} error: #{inspect(other)}")
+    end
+  end
+
+  @doc """
+  Returns the per-room PubSub topic that carries each bot move's reason.
+
+  It is separate from `game:<code>` so the players' channels and the bots
+  never receive it; the admin game page subscribes to it. Each message is
+  `{:bot_reasoning, room_code, %{position, action, reason, event_index}}`,
+  where `event_index` is the engine event count when the bot decided, so a
+  reason sorts just before the events its move produced.
+  """
+  @spec reasoning_topic(String.t()) :: String.t()
+  def reasoning_topic(room_code), do: "bot_reasoning:#{room_code}"
+
+  defp publish_reasoning(room_code, payload) do
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      reasoning_topic(room_code),
+      {:bot_reasoning, room_code, payload}
+    )
+  end
+
+  # Strategies predating the {:ok, action, reasoning} contract return a bare
+  # action; both shapes are accepted.
+  defp choose(strategy, legal_actions, view, label) do
+    case strategy.pick_action(legal_actions, view) do
+      {:ok, action, reasoning} -> ensure_legal(action, reasoning, legal_actions, view, label)
+      action -> ensure_legal(action, "legacy strategy", legal_actions, view, label)
+    end
+  rescue
+    error ->
+      Logger.error(
+        "#{label} strategy #{inspect(strategy)} raised, using the rulebook fallback: " <>
+          Exception.format(:error, error, __STACKTRACE__)
+      )
+
+      Rulebook.fallback(view, legal_actions)
+  end
+
+  defp ensure_legal(action, reasoning, legal_actions, view, label) do
+    if action in legal_actions do
+      {action, reasoning}
+    else
+      Logger.warning(
+        "#{label} strategy chose #{inspect(action)}, which is not legal; using the rulebook fallback"
+      )
+
+      Rulebook.fallback(view, legal_actions)
     end
   end
 
@@ -157,16 +200,4 @@ defmodule PidroServer.Games.Bots.BotBrain do
   end
 
   def resolve_action(action, _game_state, _position), do: action
-
-  @doc """
-  Fetches the current game state from the GameAdapter.
-  Returns an empty map if the game is not found.
-  """
-  @spec get_game_state(String.t()) :: map()
-  def get_game_state(room_code) do
-    case GameAdapter.get_state(room_code) do
-      {:ok, state} -> state
-      {:error, _} -> %{}
-    end
-  end
 end

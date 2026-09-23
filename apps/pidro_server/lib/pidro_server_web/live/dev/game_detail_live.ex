@@ -18,7 +18,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   require Logger
   alias PidroServer.Accounts.Auth
   alias PidroServer.Dev.{Event, ReplayController}
-  alias PidroServer.Games.Bots.{BotManager, GameHelpers}
+  alias PidroServer.Games.Bots.{BotBrain, BotManager, GameHelpers}
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.CardComponents
 
@@ -31,6 +31,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
           Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
           # Subscribe to room updates (for seat assignments, player joins/leaves)
           Phoenix.PubSub.subscribe(PidroServer.PubSub, "room:#{room_code}")
+          # Each bot move's reason, on its own topic (see BotBrain.reasoning_topic/1)
+          Phoenix.PubSub.subscribe(PidroServer.PubSub, BotBrain.reasoning_topic(room_code))
         end
 
         # Get initial game state
@@ -75,6 +77,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:event_filter_type, nil)
          |> assign(:event_filter_player, nil)
          |> assign(:show_bot_reasoning, true)
+         |> assign(:bot_reasons, [])
          |> assign(:show_event_export, false)
          |> assign(:replay_mode, false)
          |> assign(:replay_index, event_count - 1)
@@ -115,7 +118,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         legal_actions =
           get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
 
-        events = process_events(new_state.events)
+        socket = reconcile_reasons(socket, new_state.events)
+        events = process_events(new_state.events, socket.assigns)
 
         {:noreply,
          socket
@@ -126,6 +130,18 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       :error ->
         {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_info(
+        {:bot_reasoning, room_code, reasoning},
+        %{assigns: %{room_code: room_code}} = socket
+      ) do
+    socket =
+      assign(socket, :bot_reasons, Enum.take(socket.assigns.bot_reasons ++ [reasoning], -200))
+
+    events = process_events(game_events(socket), socket.assigns)
+    {:noreply, assign(socket, :events, events)}
   end
 
   @impl true
@@ -261,6 +277,25 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     PidroServer.Games.UnexpectedMessage.report(__MODULE__, message)
     {:noreply, socket}
   end
+
+  defp game_events(%{assigns: %{game_state: %{events: events}}}), do: events
+  defp game_events(_socket), do: []
+
+  # Keeps the reasons whose move is still in the event log. A reason's move
+  # produced the event right after `event_index`, so an undo that removed that
+  # event removes the reason too, and earlier reasons stay. A log that starts
+  # differently belongs to a new game, whose reasons start over.
+  defp reconcile_reasons(socket, new_events) do
+    reasons =
+      if new_game?(game_events(socket), new_events),
+        do: [],
+        else: Enum.filter(socket.assigns.bot_reasons, &(&1.event_index < length(new_events)))
+
+    assign(socket, :bot_reasons, reasons)
+  end
+
+  defp new_game?([first | _], [other | _]), do: first != other
+  defp new_game?(_old_events, _new_events), do: false
 
   defp extract_state_update(%{state: game_state}) when is_map(game_state), do: {:ok, game_state}
   defp extract_state_update(game_state) when is_map(game_state), do: {:ok, game_state}
@@ -738,11 +773,13 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {:ok, previous_state} ->
         # Refetch legal actions
         legal_actions = get_legal_actions(room_code, socket.assigns.selected_position)
+        socket = reconcile_reasons(socket, previous_state.events)
 
         {:noreply,
          socket
          |> assign(:game_state, previous_state)
          |> assign(:legal_actions, legal_actions)
+         |> assign(:events, process_events(previous_state.events, socket.assigns))
          |> put_flash(:info, "Action undone successfully")}
 
       {:error, :no_history} ->
@@ -777,6 +814,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
              socket
              |> assign(:game_state, game_state)
              |> assign(:legal_actions, legal_actions)
+             |> assign(:bot_reasons, [])
              |> assign(:events, events)
              |> put_flash(:info, "Game restarted! Good luck.")}
 
@@ -2473,10 +2511,17 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     filter_player = Map.get(assigns, :event_filter_player, nil)
     show_bot = Map.get(assigns, :show_bot_reasoning, true)
 
-    raw_events
-    |> Enum.with_index(1)
-    |> Enum.map(fn {raw, idx} -> Event.from_raw(raw, idx) end)
-    |> Enum.reject(&is_nil/1)
+    engine_events =
+      raw_events
+      |> Enum.with_index(1)
+      |> Enum.map(fn {raw, idx} -> Event.from_raw(raw, idx) end)
+      |> Enum.reject(&is_nil/1)
+
+    reasons = assigns |> Map.get(:bot_reasons, []) |> Enum.map(&Event.from_bot_reasoning/1)
+
+    # A reason sorts just before the first event its move produced.
+    (engine_events ++ reasons)
+    |> Enum.sort_by(&{&1.metadata[:index], if(&1.type == :bot_reasoning, do: 0, else: 1)})
     |> filter_by_type(filter_type)
     |> filter_by_player(filter_player)
     |> filter_bot_reasoning(show_bot)

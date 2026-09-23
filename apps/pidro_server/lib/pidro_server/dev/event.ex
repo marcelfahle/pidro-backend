@@ -129,6 +129,23 @@ defmodule PidroServer.Dev.Event do
   end
 
   @doc """
+  Builds a `:bot_reasoning` event from a message on a room's bot-reasoning
+  topic (see `PidroServer.Games.Bots.BotBrain.reasoning_topic/1`).
+
+  The index is the engine event the move produced, so the reason lists right
+  before it.
+  """
+  @spec from_bot_reasoning(map()) :: t()
+  def from_bot_reasoning(%{
+        position: position,
+        action: action,
+        reason: reason,
+        event_index: count
+      }) do
+    new(:bot_reasoning, position, %{action: action, reasoning: reason, index: count + 1})
+  end
+
+  @doc """
   Formats an event as a human-readable string for display in the UI.
 
   ## Examples

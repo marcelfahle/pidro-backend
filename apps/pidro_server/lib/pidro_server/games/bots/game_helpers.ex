@@ -8,6 +8,7 @@ defmodule PidroServer.Games.Bots.GameHelpers do
   """
 
   require Logger
+  alias Pidro.Core.SeatView
   alias PidroServer.Games.Bots.BotManager
   alias PidroServer.Games.Bots.Strategies.RandomStrategy
   alias PidroServer.Games.GameAdapter
@@ -94,8 +95,8 @@ defmodule PidroServer.Games.Bots.GameHelpers do
 
             case GameAdapter.get_legal_actions(room_code, current_turn) do
               {:ok, legal_actions} ->
-                # Fix: destructure the {:ok, action, reasoning} return
-                {:ok, action, _reasoning} = RandomStrategy.pick_action(legal_actions, state)
+                view = SeatView.for_seat(state, current_turn)
+                {:ok, action, _reasoning} = RandomStrategy.pick_action(legal_actions, view)
 
                 case GameAdapter.apply_action(room_code, current_turn, action) do
                   {:ok, _new_state} ->

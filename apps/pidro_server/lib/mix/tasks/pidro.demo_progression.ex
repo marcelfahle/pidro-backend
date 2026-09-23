@@ -234,7 +234,8 @@ defmodule Mix.Tasks.Pidro.DemoProgression do
       {:ok, state} ->
         case next_actionable_seat(room_code) do
           {:ok, position, legal_actions} ->
-            {:ok, action, _reasoning} = RandomStrategy.pick_action(legal_actions, state)
+            view = Pidro.Core.SeatView.for_seat(state, position)
+            {:ok, action, _reasoning} = RandomStrategy.pick_action(legal_actions, view)
 
             case GameAdapter.apply_action(room_code, position, action) do
               {:ok, _new_state} ->

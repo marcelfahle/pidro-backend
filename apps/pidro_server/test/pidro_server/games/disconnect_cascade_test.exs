@@ -715,7 +715,8 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
     {:ok, actions} = GameAdapter.get_legal_actions(room_code, position)
 
     if actions != [] do
-      {:ok, action, _} = PidroServer.Games.Bots.TimeoutStrategy.pick_action(actions, game)
+      view = Pidro.Core.SeatView.for_seat(game, position)
+      {:ok, action, _} = PidroServer.Games.Bots.TimeoutStrategy.pick_action(actions, view)
       resolved = PidroServer.Games.Bots.BotBrain.resolve_action(action, game, position)
       assert {:ok, _} = RoomManager.apply_player_action(room_code, user_id, position, resolved)
     end

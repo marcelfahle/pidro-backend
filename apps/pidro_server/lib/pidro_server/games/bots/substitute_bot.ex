@@ -5,7 +5,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   Unlike `BotPlayer`, a SubstituteBot does NOT join the room — it takes over
   an existing seat that was vacated by a disconnected human. It subscribes to
   game PubSub updates, detects when it's the bot's turn, and plays moves
-  using the random strategy.
+  with the rulebook strategy, the same bot every seated bot uses.
 
   RoomManager starts and monitors these temporary children under BotSupervisor.
   The seat's bot_pid is the sole action authority; only RoomManager replaces it
@@ -23,7 +23,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   require Logger
 
   alias PidroServer.Games.Bots.BotBrain
-  alias PidroServer.Games.Bots.Strategies.RandomStrategy
+  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
   alias PidroServer.Games.GameAdapter
 
   ## Public API
@@ -60,7 +60,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
     state = %{
       room_code: room_code,
       position: position,
-      strategy: RandomStrategy,
+      strategy: RulebookStrategy,
       move_scheduled?: false
     }
 
