@@ -15,6 +15,14 @@ defmodule Pidro.Bot.Rulebook do
   The dealer's rob and the kill stay with the engine's own selection, so in
   `:second_deal` the `{:select_hand, :choose_6_cards}` marker is returned
   unchanged for the caller to resolve.
+
+  ## Supported variant
+
+  Finnish Pidro only, the one rule set the engine implements. The bot takes
+  ranking, trump membership and scoring from the engine and keeps only
+  tactical preferences and bidding estimates of its own (see
+  `Pidro.Bot.Knowledge`). A second rule set needs its own policy, not a
+  branch in the server.
   """
 
   alias Pidro.Bot.{Bidding, Play}
@@ -32,7 +40,7 @@ defmodule Pidro.Bot.Rulebook do
   """
   @spec decide(SeatView.t(), [Types.action(), ...]) :: decision()
   def decide(%SeatView{} = view, [_ | _] = legal) do
-    phase = view.state.phase
+    phase = view.phase
 
     if Enum.all?(legal, &expected_shape?(phase, &1)) do
       view |> dispatch(phase, legal) |> ensure_legal(view, legal)
@@ -47,8 +55,10 @@ defmodule Pidro.Bot.Rulebook do
 
   @doc """
   Returns the safest legal move: pass if allowed, otherwise the lowest
-  non-point card, the minimum bid, or the first move offered.
+  well-formed non-point card, the minimum bid, or the first move offered.
 
+  Card payloads are checked before any card is ranked, so a malformed action
+  can never make the fallback raise; the last resort touches no card helper.
   Used when no rule applies, and by callers whose own strategy failed.
   """
   @spec fallback(SeatView.t(), [Types.action(), ...]) :: decision()
@@ -57,15 +67,15 @@ defmodule Pidro.Bot.Rulebook do
   end
 
   defp fallback(view, legal, why) do
-    cards = for {:play_card, card} <- legal, do: card
+    cards = for {:play_card, card} <- legal, card?(card), do: card
     bids = for {:bid, amount} <- legal, is_integer(amount), do: amount
 
     cond do
       :pass in legal ->
         {:pass, "#{why}, so I pass."}
 
-      cards != [] and view.state.trump_suit != nil ->
-        card = cards |> Play.discard_order(view.state.trump_suit) |> hd()
+      cards != [] and view.trump_suit != nil ->
+        card = cards |> Play.discard_order(view.trump_suit) |> hd()
 
         {{:play_card, card},
          "#{why}, so I play my lowest card, the #{Types.card_to_string(card)}."}
@@ -103,8 +113,10 @@ defmodule Pidro.Bot.Rulebook do
   defp expected_shape?(:declaring, {:declare_trump, suit}), do: suit in Types.all_suits()
   defp expected_shape?(:second_deal, {:select_hand, :choose_6_cards}), do: true
 
-  defp expected_shape?(:playing, {:play_card, {rank, suit}}),
-    do: rank in 2..14 and suit in Types.all_suits()
+  defp expected_shape?(:playing, {:play_card, card}), do: card?(card)
 
   defp expected_shape?(_phase, _action), do: false
+
+  defp card?({rank, suit}), do: rank in 2..14 and suit in Types.all_suits()
+  defp card?(_other), do: false
 end

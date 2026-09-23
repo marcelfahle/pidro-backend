@@ -10,6 +10,9 @@ defmodule Pidro.Bot.Bidding do
   minimum. Declaring trump recomputes the best suit from the current hand, so
   a substitute that inherits an undeclared bid names its own best suit.
 
+  Finnish Pidro only; see `Pidro.Bot.Rulebook` for the supported-variant
+  contract.
+
   Bidding is conservative on purpose: overbidding is the most-reported
   complaint about computer partners, and a set costs the partner the hand.
   """
@@ -72,7 +75,7 @@ defmodule Pidro.Bot.Bidding do
   """
   @spec decide_bid(SeatView.t(), [Types.action()]) :: decision()
   def decide_bid(%SeatView{} = view, legal) do
-    dealer? = view.state.current_dealer == view.position
+    dealer? = view.current_dealer == view.position
     {suit, est} = best_suit(own_hand(view), dealer?)
     bids = for {:bid, amount} <- legal, do: amount
     worth = "#{suit_name(suit)} are worth about #{trunc(est)} points"
@@ -113,7 +116,7 @@ defmodule Pidro.Bot.Bidding do
   """
   @spec decide_trump(SeatView.t(), [Types.action()]) :: decision()
   def decide_trump(%SeatView{} = view, legal) do
-    dealer? = view.state.current_dealer == view.position
+    dealer? = view.current_dealer == view.position
     {suit, est} = best_suit(own_hand(view), dealer?)
 
     if {:declare_trump, suit} in legal do
@@ -130,7 +133,7 @@ defmodule Pidro.Bot.Bidding do
   end
 
   defp partner_standing_bid(%SeatView{} = view) do
-    case view.state.highest_bid do
+    case view.highest_bid do
       {pos, amount} -> if pos == Types.partner_position(view.position), do: amount
       nil -> nil
     end
@@ -172,7 +175,7 @@ defmodule Pidro.Bot.Bidding do
     if protected?, do: t(:five_protected), else: t(:five_unprotected)
   end
 
-  defp own_hand(%SeatView{position: position, state: state}), do: state.players[position].hand
+  defp own_hand(%SeatView{hand: hand}), do: hand
 
   defp suit_name(suit), do: Types.suit_to_name(suit)
 

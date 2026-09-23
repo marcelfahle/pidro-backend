@@ -7,6 +7,9 @@ defmodule Pidro.Bot.Thresholds do
   the top trumps, and a bonus for the dealer. The bot bids the estimate
   rounded down.
 
+  Finnish Pidro only; see `Pidro.Bot.Rulebook` for the supported-variant
+  contract.
+
   No quantified Pidro bidding thresholds exist in writing. The starting values
   were adapted from Cinch and Setback conventions, then calibrated in
   self-play (`mix pidro.selfplay`) with four rulebook seats. Two changed: a

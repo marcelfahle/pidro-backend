@@ -135,7 +135,7 @@ defmodule Pidro.Bot.KnowledgeTest do
         )
         |> Scenario.view()
 
-      assert view.state.hand_points == %{north_south: 0, east_west: 2}
+      assert view.hand_points == %{north_south: 0, east_west: 2}
       assert Knowledge.side_points(view) == %{north_south: 1, east_west: 1}
     end
 
