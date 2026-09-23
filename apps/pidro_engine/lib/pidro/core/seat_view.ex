@@ -2,14 +2,18 @@ defmodule Pidro.Core.SeatView do
   @moduledoc """
   What one seat is allowed to know about a game.
 
-  A seat view is the only input a bot strategy may decide from. It holds the
-  viewer's position, a redacted `GameState`, how many cards each seat holds,
-  and the cards killed this hand.
+  A seat view is the only input a bot strategy may decide from. It is its own
+  data shape, not a `GameState`: the viewer's hand, a public record for every
+  seat, and the public table fields. Hidden information is absent rather than
+  blanked, so another seat's hand is a count (`players[pos].hand_count`), never
+  an empty list that could be mistaken for "holds nothing". `GameState` stays
+  reserved for authoritative transitions; a view cannot be fed to the engine.
 
-  The redacted state keeps the `GameState` shape so engine helpers such as
-  `Pidro.Game.Play.determine_trick_winner/2` and `Pidro.Finnish.Scorer` run on
-  it unchanged. It is built from an allow-list of public fields, so a field
-  added to `GameState` later stays hidden until it is added here on purpose.
+  The view is built from an allow-list of public fields, so a field added to
+  `GameState` later stays hidden until it is added here on purpose. Trick and
+  scoring helpers such as `Pidro.Game.Play.determine_trick_winner/2` and
+  `Pidro.Finnish.Scorer` take tricks and trump suits, so they run on a view's
+  fields directly.
 
   ## What a seat can see
 
@@ -30,13 +34,44 @@ defmodule Pidro.Core.SeatView do
   use TypedStruct
 
   alias Pidro.Core.Types
-  alias Pidro.Core.Types.{GameState, Player}
+  alias Pidro.Core.Types.{Bid, GameState, Trick}
+
+  typedstruct module: PublicPlayer do
+    @moduledoc """
+    What every seat can see about one player.
+    """
+    field(:position, Pidro.Core.Types.position(), enforce: true)
+    field(:team, Pidro.Core.Types.team(), enforce: true)
+    field(:hand_count, non_neg_integer(), enforce: true)
+    field(:eliminated?, boolean(), default: false)
+    field(:revealed_cards, [Pidro.Core.Types.card()], default: [])
+    field(:tricks_won, non_neg_integer(), default: 0)
+  end
 
   typedstruct do
     field(:position, Types.position(), enforce: true)
-    field(:state, GameState.t(), enforce: true)
-    field(:hand_counts, %{Types.position() => non_neg_integer()}, enforce: true)
-    field(:killed_cards, %{Types.position() => [Types.card()]}, enforce: true)
+    field(:hand, [Types.card()], enforce: true)
+    field(:players, %{Types.position() => PublicPlayer.t()}, enforce: true)
+    field(:phase, Types.phase(), enforce: true)
+    field(:hand_number, non_neg_integer(), enforce: true)
+    field(:variant, atom(), enforce: true)
+    field(:config, map(), enforce: true)
+    field(:current_dealer, Types.position() | nil)
+    field(:current_turn, Types.position() | nil)
+    field(:dealer_selection_cuts, %{Types.position() => Types.card()} | nil)
+    field(:bids, [Bid.t()], default: [])
+    field(:highest_bid, {Types.position(), Types.bid_amount()} | nil)
+    field(:bidding_team, Types.team() | nil)
+    field(:trump_suit, Types.suit() | nil)
+    field(:cards_requested, %{Types.position() => non_neg_integer()}, default: %{})
+    field(:killed_cards, %{Types.position() => [Types.card()]}, default: %{})
+    field(:tricks, [Trick.t()], default: [])
+    field(:current_trick, Trick.t() | nil)
+    field(:trick_number, non_neg_integer(), default: 0)
+    field(:hand_points, %{Types.team() => non_neg_integer()}, default: %{})
+    field(:cumulative_scores, %{Types.team() => integer()}, default: %{})
+    field(:winner, Types.team() | nil)
+    field(:rob_pool, [Types.card()], default: [])
   end
 
   @doc """
@@ -49,60 +84,43 @@ defmodule Pidro.Core.SeatView do
 
   ## Returns
 
-  A `SeatView` whose `state` holds only public fields and the viewer's own
-  hand. The redacted state's `killed_cards` holds the kills of the current
-  hand (see `killed_cards/1`).
+  A `SeatView` holding the viewer's hand, a `PublicPlayer` per seat, the
+  public table fields, the kills of the current hand (see `killed_cards/1`),
+  and, for the dealer during a manual rob, the rob pool.
 
   ## Examples
 
-      iex> state = Pidro.Core.GameState.new()
-      iex> view = Pidro.Core.SeatView.for_seat(state, :north)
-      iex> view.position
-      :north
-      iex> view.state.events
-      []
+      iex> view = Pidro.Core.SeatView.for_seat(Pidro.Core.GameState.new(), :north)
+      iex> {view.position, view.hand, view.players.east.hand_count}
+      {:north, [], 0}
   """
   @spec for_seat(GameState.t(), Types.position()) :: t()
   def for_seat(%GameState{} = state, position)
       when position in [:north, :east, :south, :west] do
-    killed = killed_cards(state)
-
-    redacted = %GameState{
+    %__MODULE__{
+      position: position,
+      hand: state.players[position].hand,
+      players: Map.new(state.players, fn {pos, player} -> {pos, public_player(player)} end),
       phase: state.phase,
       hand_number: state.hand_number,
       variant: state.variant,
-      players:
-        Map.new(state.players, fn {pos, player} ->
-          {pos, redact_player(player, pos == position)}
-        end),
+      config: state.config,
       current_dealer: state.current_dealer,
       current_turn: state.current_turn,
       dealer_selection_cuts: state.dealer_selection_cuts,
-      deck: visible_deck(state, position),
-      discarded_cards: [],
       bids: state.bids,
       highest_bid: state.highest_bid,
       bidding_team: state.bidding_team,
       trump_suit: state.trump_suit,
       cards_requested: state.cards_requested,
-      dealer_pool_size: nil,
-      killed_cards: killed,
+      killed_cards: killed_cards(state),
       tricks: state.tricks,
       current_trick: state.current_trick,
       trick_number: state.trick_number,
       hand_points: state.hand_points,
       cumulative_scores: state.cumulative_scores,
       winner: state.winner,
-      events: [],
-      config: state.config,
-      cache: %{}
-    }
-
-    %__MODULE__{
-      position: position,
-      state: redacted,
-      hand_counts: Map.new(state.players, fn {pos, player} -> {pos, length(player.hand)} end),
-      killed_cards: killed
+      rob_pool: rob_pool(state, position)
     }
   end
 
@@ -152,11 +170,11 @@ defmodule Pidro.Core.SeatView do
     |> Enum.reverse()
   end
 
-  defp redact_player(%Player{} = player, own_seat?) do
-    %Player{
+  defp public_player(player) do
+    %PublicPlayer{
       position: player.position,
       team: player.team,
-      hand: if(own_seat?, do: player.hand, else: []),
+      hand_count: length(player.hand),
       eliminated?: player.eliminated?,
       revealed_cards: player.revealed_cards,
       tricks_won: player.tricks_won
@@ -165,9 +183,9 @@ defmodule Pidro.Core.SeatView do
 
   # Under manual rob the dealer picks six cards from their hand plus the deck,
   # so the dealer sees the deck while choosing. Nobody else ever does.
-  defp visible_deck(%GameState{phase: :second_deal, current_dealer: dealer} = state, dealer) do
+  defp rob_pool(%GameState{phase: :second_deal, current_dealer: dealer} = state, dealer) do
     if Map.get(state.config, :auto_dealer_rob, true), do: [], else: state.deck
   end
 
-  defp visible_deck(_state, _position), do: []
+  defp rob_pool(_state, _position), do: []
 end

@@ -7,6 +7,9 @@ defmodule Pidro.Bot.Play do
   The rules look at the partner only as a seat, so the bot plays the same
   conventions with a human or a bot partner.
 
+  Finnish Pidro only; see `Pidro.Bot.Rulebook` for the supported-variant
+  contract.
+
   ## Following
 
   1. Only one legal card: play it.
@@ -58,7 +61,7 @@ defmodule Pidro.Bot.Play do
   """
   @spec decide(SeatView.t(), [Types.action()]) :: decision()
   def decide(%SeatView{} = view, legal) do
-    trump = view.state.trump_suit
+    trump = view.trump_suit
 
     cards =
       for {:play_card, card} <- legal do
@@ -101,7 +104,7 @@ defmodule Pidro.Bot.Play do
     if Knowledge.safe_trick?(view) do
       {_pos, winning} = Knowledge.current_winner(view)
 
-      case five_to_feed(cards, view.state.trump_suit) do
+      case five_to_feed(cards, view.trump_suit) do
         nil ->
           low = lowest(cards, view)
 
@@ -182,7 +185,7 @@ defmodule Pidro.Bot.Play do
   # --- Leading ----------------------------------------------------------------
 
   defp apply_rule(:only_fives, view, cards) do
-    trump = view.state.trump_suit
+    trump = view.trump_suit
 
     if Enum.all?(cards, &Knowledge.five?(&1, trump)) do
       [five | _] = discard_order(cards, trump)
@@ -192,7 +195,7 @@ defmodule Pidro.Bot.Play do
 
   defp apply_rule(:lead_top, view, cards) do
     top = List.last(cards)
-    trump = view.state.trump_suit
+    trump = view.trump_suit
 
     cond do
       not Knowledge.bidding_side?(view) -> nil
@@ -220,7 +223,7 @@ defmodule Pidro.Bot.Play do
   # known mistake.
   defp ace_too_short?(view, cards, {14, _suit}) do
     Knowledge.opening_trick?(view) and length(cards) < 4 and
-      {13, view.state.trump_suit} not in cards
+      {13, view.trump_suit} not in cards
   end
 
   defp ace_too_short?(_view, _cards, _top), do: false
@@ -229,7 +232,7 @@ defmodule Pidro.Bot.Play do
     Enum.find([{5, Card.same_color_suit(trump)}, {5, trump}], &(&1 in cards))
   end
 
-  defp lowest(cards, view), do: cards |> discard_order(view.state.trump_suit) |> hd()
+  defp lowest(cards, view), do: cards |> discard_order(view.trump_suit) |> hd()
 
   defp name(card), do: Types.card_to_string(card)
 end

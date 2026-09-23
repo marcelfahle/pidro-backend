@@ -56,9 +56,7 @@ defmodule Pidro.Properties.SeatViewPropertiesTest do
   # Dealer-selection cuts are drawn independently of the deck, so they can
   # equal a hidden card by coincidence. They are public and are left out.
   defp visible_cards(%SeatView{} = view) do
-    view
-    |> Map.update!(:state, &%{&1 | dealer_selection_cuts: nil})
-    |> collect_cards(MapSet.new())
+    collect_cards(%{view | dealer_selection_cuts: nil}, MapSet.new())
   end
 
   defp collect_cards({rank, suit} = card, acc)

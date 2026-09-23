@@ -55,32 +55,41 @@ defmodule Pidro.Core.SeatViewTest do
   end
 
   describe "for_seat/2" do
-    test "keeps the viewer's hand and shows other hands empty with their counts" do
+    test "keeps the viewer's hand and gives every seat a count, not a hand" do
       state = mid_hand_state()
       view = SeatView.for_seat(state, :north)
 
       assert view.position == :north
-      assert view.state.players.north.hand == state.players.north.hand
+      assert view.hand == state.players.north.hand
 
-      for pos <- [:east, :south, :west] do
-        assert view.state.players[pos].hand == []
-        assert view.hand_counts[pos] == length(state.players[pos].hand)
+      for {pos, player} <- view.players do
+        assert %SeatView.PublicPlayer{} = player
+        refute Map.has_key?(player, :hand)
+        assert player.hand_count == length(state.players[pos].hand)
       end
-
-      assert view.hand_counts.north == length(state.players.north.hand)
     end
 
-    test "hides the deck, discards, events and dealer pool size during play" do
-      for state <- GameTrace.states(11),
-          state.phase == :playing,
-          pos <- [:north, :east, :south, :west] do
-        view = SeatView.for_seat(state, pos)
+    test "is not a game state and cannot be fed to the engine" do
+      state = mid_hand_state()
+      view = SeatView.for_seat(state, state.current_turn)
+      [action | _] = Pidro.Game.Engine.legal_actions(state, state.current_turn)
 
-        assert view.state.deck == []
-        assert view.state.discarded_cards == []
-        assert view.state.events == []
-        assert view.state.dealer_pool_size == nil
-        assert view.state.cache == %{}
+      refute is_struct(view, Pidro.Core.Types.GameState)
+
+      assert_raise FunctionClauseError, fn ->
+        apply(Pidro.Game.Engine, :apply_action, [view, state.current_turn, action])
+      end
+    end
+
+    test "has no field for the deck, discards, events, dealer pool size or cache" do
+      view = SeatView.for_seat(mid_hand_state(), :east)
+
+      for field <- [:deck, :discarded_cards, :events, :dealer_pool_size, :cache, :state] do
+        refute Map.has_key?(view, field), "#{field} is exposed"
+      end
+
+      for state <- GameTrace.states(11), state.phase == :playing, pos <- [:north, :east] do
+        assert SeatView.for_seat(state, pos).rob_pool == []
       end
     end
 
@@ -111,15 +120,15 @@ defmodule Pidro.Core.SeatViewTest do
             :hand_number,
             :config
           ] do
-        assert Map.fetch!(view.state, field) == Map.fetch!(state, field), "#{field} changed"
+        assert Map.fetch!(view, field) == Map.fetch!(state, field), "#{field} changed"
       end
 
-      assert view.state.players.west.revealed_cards == [{9, :spades}]
+      assert view.players.west.revealed_cards == [{9, :spades}]
 
       for {pos, player} <- state.players do
-        assert view.state.players[pos].eliminated? == player.eliminated?
-        assert view.state.players[pos].tricks_won == player.tricks_won
-        assert view.state.players[pos].team == player.team
+        assert view.players[pos].eliminated? == player.eliminated?
+        assert view.players[pos].tricks_won == player.tricks_won
+        assert view.players[pos].team == player.team
       end
     end
 
@@ -147,7 +156,6 @@ defmodule Pidro.Core.SeatViewTest do
       for pos <- [:north, :east, :south, :west] do
         view = SeatView.for_seat(state, pos)
         assert view.killed_cards == %{north: [{13, :hearts}]}
-        assert view.state.killed_cards == view.killed_cards
       end
     end
 
@@ -190,14 +198,14 @@ defmodule Pidro.Core.SeatViewTest do
           config: Map.put(base.config, :auto_dealer_rob, false)
       }
 
-      assert SeatView.for_seat(state, :north).state.deck == deck
+      assert SeatView.for_seat(state, :north).rob_pool == deck
 
       for pos <- [:east, :south, :west] do
-        assert SeatView.for_seat(state, pos).state.deck == []
+        assert SeatView.for_seat(state, pos).rob_pool == []
       end
 
       auto = %{state | config: Map.put(state.config, :auto_dealer_rob, true)}
-      assert SeatView.for_seat(auto, :north).state.deck == []
+      assert SeatView.for_seat(auto, :north).rob_pool == []
     end
 
     test "carries the position during dealer selection when nobody has the turn" do

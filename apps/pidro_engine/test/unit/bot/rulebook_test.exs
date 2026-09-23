@@ -94,6 +94,30 @@ defmodule Pidro.Bot.RulebookTest do
     assert reason =~ "A rule failed"
   end
 
+  describe "fallback with malformed card actions" do
+    setup do
+      state = Scenario.playing(me: :east, hands: %{east: [14, 9, 3]}, trick: [north: 7])
+      %{view: Scenario.view(state)}
+    end
+
+    test "plays the lowest well-formed card when others are malformed", %{view: view} do
+      legal = [{:play_card, {3, :hearts}}, {:play_card, :garbage}, {:play_card, {14, :hearts}}]
+
+      assert {{:play_card, {3, :hearts}}, reason} = Rulebook.decide(view, legal)
+      assert reason =~ "did not recognise"
+    end
+
+    test "takes the first move offered when no card is well formed", %{view: view} do
+      assert {{:play_card, :garbage}, reason} = Rulebook.decide(view, [{:play_card, :garbage}])
+      assert reason =~ "first move offered"
+
+      assert {{:mystery, 1}, _} = Rulebook.decide(view, [{:mystery, 1}, {:mystery, 2}])
+
+      assert Rulebook.fallback(view, [{:play_card, {99, :moons}}]) |> elem(0) ==
+               {:play_card, {99, :moons}}
+    end
+  end
+
   test "a view deciding 100 times gives one result" do
     state =
       Scenario.playing(me: :south, hands: %{south: [14, 9, 5, 3]}, trick: [north: 12, east: 10])
