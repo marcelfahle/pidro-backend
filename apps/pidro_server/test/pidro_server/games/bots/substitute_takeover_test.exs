@@ -216,12 +216,14 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
         assert done.winner in [:north_south, :east_west]
       end)
 
-    # Every bot may try to cut for dealer at once; only the first cut counts.
+    # Every seat-filler may try to cut for dealer at once. Only the first cut
+    # counts; the others fail as invalid or, once bidding has begun, as not
+    # their turn. Any other failed action is a real failure.
     failures =
       log
       |> String.split("\n")
       |> Enum.filter(&(&1 =~ "action failed"))
-      |> Enum.reject(&(&1 =~ ":select_dealer"))
+      |> Enum.reject(&String.ends_with?(&1, "(:select_dealer)"))
 
     assert failures == []
     refute log =~ "raised"

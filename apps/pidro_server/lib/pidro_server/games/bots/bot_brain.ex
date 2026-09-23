@@ -119,7 +119,7 @@ defmodule PidroServer.Games.Bots.BotBrain do
           })
 
         {:error, reason} ->
-          Logger.warning("#{label} action failed: #{inspect(reason)}")
+          Logger.warning("#{label} action failed: #{inspect(reason)} (#{inspect(action)})")
       end
     else
       {:ok, []} ->
