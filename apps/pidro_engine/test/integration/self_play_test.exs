@@ -42,7 +42,9 @@ defmodule Pidro.Integration.SelfPlayTest do
     second = SelfPlay.run(games: 40, seed: 5, max_concurrency: 1)
 
     assert Map.delete(first, :timing) == Map.delete(second, :timing)
-    assert first != SelfPlay.run(games: 40, seed: 6)
+
+    other = SelfPlay.run(games: 40, seed: 6)
+    assert Map.drop(first, [:timing, :seed]) != Map.drop(other, [:timing, :seed])
   end
 
   test "a policy that plays illegal moves fails every game at once instead of looping" do
