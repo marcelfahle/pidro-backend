@@ -398,21 +398,32 @@ training_data =
 # Analyze bid success rate
 games = Database.load_all_games()
 
+# A game's log spans every hand it played, and the event tuples carry no hand
+# number, so the pairing has to come from the order: a `:bidding_complete`
+# opens a hand, and that hand closes on the bidding team's `:hand_scored`.
+# `Enum.find/2` would pair hand 1's bid with hand 1's score and discard the
+# rest of the game.
 bid_analysis =
-  Enum.map(games, fn game ->
+  Enum.flat_map(games, fn game ->
     {:ok, events} = Database.load_events(game.id)
 
-    {:bidding_complete, bidder, amount} =
-      Enum.find(events, &match?({:bidding_complete, _, _}, &1))
+    {hands, _open_bid} =
+      Enum.reduce(events, {[], nil}, fn
+        {:bidding_complete, bidder, amount}, {hands, _open_bid} ->
+          {hands, {position_to_team(bidder), amount}}
 
-    bidder_team = position_to_team(bidder)
+        # One `:hand_scored` event per team, carrying that team's score delta.
+        # A failed bid scores the bidding team negatively. The repeated `team`
+        # matches only the bidding team's event; the defending team's falls
+        # through untouched.
+        {:hand_scored, team, delta}, {hands, {team, amount}} ->
+          {[%{bid_amount: amount, made: delta >= amount} | hands], nil}
 
-    # One `:hand_scored` event per team, carrying that team's score delta.
-    # A failed bid scores the bidding team negatively.
-    {:hand_scored, ^bidder_team, delta} =
-      Enum.find(events, &match?({:hand_scored, ^bidder_team, _}, &1))
+        _event, acc ->
+          acc
+      end)
 
-    %{bid_amount: amount, made: delta >= amount}
+    Enum.reverse(hands)
   end)
 
 # Calculate stats
@@ -513,11 +524,23 @@ notation came from. See `test/properties/event_sourcing_properties_test.exs`.
 
 ```elixir
 property "replaying events produces identical state to sequential application" do
-  check all events <- list_of(event_generator()) do
-    {:ok, replayed} = Replay.replay(events)
-    folded = Enum.reduce(events, initial_state(), &Events.apply_event(&2, &1))
+  check all events <- event_sequence() do
+    # Both sides start from the same seeded state, so the comparison is about
+    # the events and nothing else.
+    folded =
+      Enum.reduce(events, GameState.new(seed: 1), fn event, state ->
+        Events.apply_event(state, event)
+      end)
 
-    assert replayed == folded
+    replayed = Events.replay_events(GameState.new(seed: 1), events)
+
+    # Field by field, not `==` on the struct: `replay_events/2` applies events
+    # without appending them to `state.events`, so the event lists differ by
+    # construction and a whole-struct assertion would always fail.
+    assert folded.phase == replayed.phase
+    assert folded.current_dealer == replayed.current_dealer
+    assert folded.trump_suit == replayed.trump_suit
+    assert folded.highest_bid == replayed.highest_bid
   end
 end
 

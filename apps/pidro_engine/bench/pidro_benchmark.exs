@@ -21,7 +21,7 @@ alias Pidro.{Perf, MoveCache}
 
 defmodule BenchmarkHelpers do
   def create_initial_state do
-    state = GameState.new()
+    state = GameState.new(seed: 7)
     {:ok, state} = Dealing.select_dealer(state)
     state
   end
@@ -69,9 +69,9 @@ IO.puts("\n=== Pidro Engine Performance Benchmarks ===\n")
 Benchee.run(
   %{
     # Core Operations
-    "GameState.new/0" => fn -> GameState.new() end,
+    "GameState.new/1" => fn -> GameState.new(seed: 7) end,
     "Dealing.select_dealer/1" => fn ->
-      state = GameState.new()
+      state = GameState.new(seed: 7)
       Dealing.select_dealer(state)
     end,
 
@@ -165,7 +165,7 @@ IO.puts("\n=== Full Hand Simulation ===\n")
 Benchee.run(
   %{
     "Complete hand (dealer selection through bidding)" => fn ->
-      state = GameState.new()
+      state = GameState.new(seed: 7)
       {:ok, state} = Dealing.select_dealer(state)
       state = Map.put(state, :phase, :bidding)
       state = Map.put(state, :current_turn, :north)

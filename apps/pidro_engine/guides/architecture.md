@@ -6,14 +6,22 @@ This guide explains the architecture of the Pidro game engine and the rationale 
 
 ### 1. Pure Functional Core
 
-The game engine core is **purely functional**. `lib/pidro/core/`,
-`lib/pidro/game/` and `lib/pidro/finnish/` read nothing outside their
-arguments — no clock, no process dictionary, no ETS table, no application
-config:
+The game engine core is **purely functional**. Every function reachable from
+`Engine.apply_action/3` in `lib/pidro/core/`, `lib/pidro/game/` and
+`lib/pidro/finnish/` reads nothing outside its arguments — no clock, no
+process dictionary, no ETS table, no application config:
 
-- All functions in those layers are pure (no side effects)
+- Every function on a transition path is pure (no side effects)
 - Game state is immutable; every update returns a new structure
 - Randomness is an explicit input, carried in `GameState.chance`
+
+One exported helper in those layers is **not** pure, and the qualifier above
+exists for it: `Pidro.Core.Events.create_event/2` stamps `DateTime.utc_now()`
+into an `%Event{}`. No engine transition calls it — the transition path builds
+plain event tuples and appends them to `state.events` — so it does not weaken
+the determinism guarantee below. It is a legacy helper for the richer
+`%Event{}` struct, kept for callers that want a timestamped record, and it is
+the one place in these three directories that reads the clock.
 
 **The determinism guarantee:**
 

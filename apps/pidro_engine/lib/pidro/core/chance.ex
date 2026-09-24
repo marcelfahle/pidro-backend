@@ -21,6 +21,14 @@ defmodule Pidro.Core.Chance do
   `:erlang.term_to_binary/1` and can be restored in another process, which is
   what makes a saved `%GameState{}` resumable.
 
+  Every drawing function guards on that two-element shape and raises
+  `FunctionClauseError` on anything else. The guard is not decoration:
+  `:rand.seed_s/1` also accepts a bare algorithm name, so an unguarded
+  `Chance.shuffle(deck, :exsss)` would quietly build a default-seeded stream
+  and draw nondeterministically. A malformed chance value — a bare atom, or
+  the `nil` a `Pidro.Core.Binary`-decoded state carries — must fail loudly at
+  this boundary rather than on whatever `:rand` makes of it internally.
+
   ## The contract
 
   Every function that draws returns the advanced chance state alongside the
@@ -64,6 +72,17 @@ defmodule Pidro.Core.Chance do
   # twice across OTP releases.
   @algorithm :exsss
 
+  # The `{algorithm, algorithm_state}` shape of an exported `:rand` state.
+  #
+  # Every drawing function guards on this, because `:rand.seed_s/1` also
+  # accepts a bare algorithm name: handed `:exsss` it would quietly build a
+  # default-seeded stream and draw nondeterministically. A malformed chance
+  # value — a bare atom, or the `nil` a binary-decoded state carries — has to
+  # fail loudly instead, and it has to fail on this shape rather than on
+  # whatever `:rand` happens to make of it internally.
+  defguardp is_chance(chance)
+            when is_tuple(chance) and tuple_size(chance) == 2 and is_atom(elem(chance, 0))
+
   @doc """
   Builds a chance value from a seed.
 
@@ -101,7 +120,7 @@ defmodule Pidro.Core.Chance do
       false
   """
   @spec shuffle([term()], t()) :: {[term()], t()}
-  def shuffle(items, chance) when is_list(items) do
+  def shuffle(items, chance) when is_list(items) and is_chance(chance) do
     {shuffled, advanced} = :rand.shuffle_s(items, :rand.seed_s(chance))
     {shuffled, :rand.export_seed_s(advanced)}
   end
@@ -117,7 +136,7 @@ defmodule Pidro.Core.Chance do
       true
   """
   @spec uniform(pos_integer(), t()) :: {pos_integer(), t()}
-  def uniform(n, chance) when is_integer(n) and n > 0 do
+  def uniform(n, chance) when is_integer(n) and n > 0 and is_chance(chance) do
     {value, advanced} = :rand.uniform_s(n, :rand.seed_s(chance))
     {value, :rand.export_seed_s(advanced)}
   end
@@ -145,7 +164,7 @@ defmodule Pidro.Core.Chance do
       true
   """
   @spec cut_cards([Types.position()], t()) :: {[{Types.position(), Types.card()}], t()}
-  def cut_cards(positions, chance) when is_list(positions) do
+  def cut_cards(positions, chance) when is_list(positions) and is_chance(chance) do
     suits = Types.all_suits()
 
     Enum.map_reduce(positions, chance, fn position, acc ->

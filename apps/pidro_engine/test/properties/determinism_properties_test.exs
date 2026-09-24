@@ -166,4 +166,46 @@ defmodule Pidro.Properties.DeterminismPropertiesTest do
       refute advanced == Chance.from_seed(seed)
     end
   end
+
+  # =============================================================================
+  # Property: a malformed chance value fails loudly instead of self-seeding
+  # =============================================================================
+
+  # `:rand.seed_s/1` accepts a bare algorithm name as well as an exported
+  # state. Without a shape guard, `Chance.shuffle(deck, :exsss)` would build a
+  # default-seeded stream and draw *nondeterministically* — the exact failure
+  # this whole change exists to remove — instead of raising. `nil` is the other
+  # value that reaches here in practice: `Pidro.Core.Binary.from_binary/1`
+  # documents decoded states as carrying it.
+  describe "a malformed chance value" do
+    setup do
+      %{bad: [:exsss, :exro928ss, nil, {}, {:exsss}, "chance", 42, {:exsss, [1 | 2], :extra}]}
+    end
+
+    test "is rejected by shuffle/2", %{bad: bad} do
+      for value <- bad do
+        assert_raise FunctionClauseError, fn -> Chance.shuffle([1, 2, 3], value) end
+      end
+    end
+
+    test "is rejected by uniform/2", %{bad: bad} do
+      for value <- bad do
+        assert_raise FunctionClauseError, fn -> Chance.uniform(6, value) end
+      end
+    end
+
+    test "is rejected by cut_cards/2", %{bad: bad} do
+      for value <- bad do
+        assert_raise FunctionClauseError, fn -> Chance.cut_cards([:north], value) end
+      end
+    end
+
+    test "a well-formed value is still accepted", %{bad: _} do
+      chance = Chance.from_seed(7)
+
+      assert {_shuffled, _advanced} = Chance.shuffle([1, 2, 3], chance)
+      assert {_value, _advanced} = Chance.uniform(6, chance)
+      assert {_cuts, _advanced} = Chance.cut_cards([:north], chance)
+    end
+  end
 end
