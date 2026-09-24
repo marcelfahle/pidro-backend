@@ -140,7 +140,7 @@ lib/pidro/
 ├── core/                    # Core data structures (Phase 0-1)
 │   ├── types.ex            # Type definitions and helper functions
 │   ├── card.ex             # Card operations (trump logic, ranking)
-│   ├── deck.ex             # Deck operations (shuffle, deal)
+│   ├── deck.ex             # The 52 cards in a fixed generation order
 │   ├── player.ex           # Player state
 │   ├── trick.ex            # Trick-taking logic
 │   └── gamestate.ex        # Game state container
@@ -738,12 +738,12 @@ card = Pidro.Core.Card.new(14, :hearts)
 Pidro.Core.Card.is_trump?(card, :hearts)
 
 # Shuffle a deck from an explicit chance value (the engine draws from
-# `state.chance`; there is no process-RNG deck constructor)
-{cards, _chance} = Pidro.Core.Chance.shuffle(Pidro.Core.Deck.ordered(), Pidro.Core.Chance.from_seed(1))
-deck = %Pidro.Core.Deck{cards: cards, shuffled?: true}
+# `state.chance`; there is no process-RNG deck constructor). A deck is just a
+# list of cards.
+{deck, _chance} = Pidro.Core.Chance.shuffle(Pidro.Core.Deck.ordered(), Pidro.Core.Chance.from_seed(1))
 
-# Deal cards
-{cards, remaining_deck} = Pidro.Core.Deck.deal_batch(deck, 9)
+# Deal cards off the top
+{cards, remaining_deck} = Enum.split(deck, 9)
 
 # Create a player
 player = Pidro.Core.Player.new(:north, :north_south)

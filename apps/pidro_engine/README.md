@@ -128,7 +128,7 @@ A > K > Q > J > 10 > 9 > 8 > 7 > 6 > Right-5 > Wrong-5 > 4 > 3 > 2
 
 - **Pidro.Core.Types** - Type definitions and GameState struct
 - **Pidro.Core.Card** - Card operations, trump ranking, point values
-- **Pidro.Core.Deck** - Deck shuffling and dealing
+- **Pidro.Core.Deck** - The 52 cards in a fixed generation order
 - **Pidro.Core.Player** - Player state management
 - **Pidro.Core.Trick** - Trick resolution and scoring
 - **Pidro.Core.Events** - Event sourcing and replay
