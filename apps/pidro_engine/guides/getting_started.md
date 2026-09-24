@@ -119,10 +119,16 @@ For programmatic use without the IEx helpers:
 
 ```elixir
 alias Pidro.Game.Engine
-alias Pidro.Core.Types
+alias Pidro.Core.{GameState, Types}
 
-# Create a new game
-{:ok, state} = Engine.new_game()
+# Create a new game. `:seed` is required — it is the game's chance stream,
+# and every card the game deals follows from it. `Pidro.Server` generates one
+# per live game; pass your own to get a reproducible game.
+state = GameState.new(seed: 1)
+
+# Run the dealer-cut ceremony and deal the first hand
+{:ok, state} = Engine.apply_action(state, :north, :select_dealer)
+{:ok, state} = Engine.advance_from_dealer_selection(state)
 
 # Get legal actions
 actions = Engine.legal_actions(state, :north)
@@ -147,8 +153,11 @@ For production use with GenServer:
 # Start the supervisor (automatically started in applications)
 {:ok, _pid} = Pidro.Supervisor.start_link([])
 
-# Start a game
-{:ok, game_pid} = Pidro.Supervisor.start_game("game-123")
+# Start a game. With no `:seed`, the server generates fresh entropy from
+# `:crypto.strong_rand_bytes/1` — this is the only place in the production
+# path that does. Pass `seed: 7` instead and the game, and every `reset/1` of
+# it, deals the identical cards.
+{:ok, game_pid} = Pidro.Supervisor.start_game(game_id: "game-123", register: true)
 
 # Apply actions
 {:ok, state} = Pidro.Server.apply_action(game_pid, :north, {:bid, 8})
@@ -169,7 +178,7 @@ end
 history = Pidro.Server.get_history(game_pid)
 
 # Stop the game
-Pidro.Supervisor.stop_game("game-123")
+Pidro.Supervisor.stop_game(game_pid)
 ```
 
 ## Understanding Game Flow

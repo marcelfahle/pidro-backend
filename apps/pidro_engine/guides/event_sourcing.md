@@ -28,12 +28,56 @@ Can replay to any point in time
 
 ## Benefits
 
-1. **Complete Audit Trail** - Every change is recorded
-2. **Time Travel** - Reconstruct state at any point
-3. **Undo/Redo** - Trivial to implement
-4. **Replay** - Reproduce bugs, test different strategies
-5. **Synchronization** - Easy to sync clients (just send events)
-6. **Analytics** - Rich data for analysis
+1. **Complete Audit Trail** - Every action is recorded
+2. **Undo/Redo** - Trivial to implement
+3. **Synchronization** - Easy to sync clients (just send events)
+4. **Analytics** - Rich data for analysis
+
+## What replay restores, and what it does not
+
+Read this before treating the event log as a saved game. **It is not one.**
+
+The authoritative value is the `%GameState{}`. The event log is a projection of
+it, and three things never enter that projection:
+
+| Not in any event | Consequence |
+|---|---|
+| The **deck's order** (dealt and undealt alike) | A replayed state cannot say what the next card off the deck would be |
+| The **four dealer-selection cuts** | `{:dealer_selected, position, card}` records the winner only |
+| The **chance stream** (`state.chance`) | A replayed state cannot reproduce the original game's next shuffle |
+
+So `Replay.replay/1` faithfully reconstructs everything the events *do* record —
+hands as dealt, bids, trump, plays, tricks, scores — and it is itself
+deterministic: the same events always fold to the same state. What it does not
+produce is a state equal to the one the events came from, and it does not
+produce a state that plays on like the original game. `replay/1` folds onto a
+documented placeholder seed for exactly that reason, and deliberately takes no
+seed argument: offering one would suggest replay can reproduce a specific
+game's future, which it cannot.
+
+```elixir
+# This does NOT hold, and is not meant to:
+Replay.replay(state.events) == {:ok, state}
+
+# What does hold — replay is deterministic:
+Replay.replay(state.events) == Replay.replay(state.events)
+```
+
+**To save and resume a game, serialize the state, not the log.** A
+`%GameState{}` is plain data — no PIDs, refs, funs or timestamps — and it
+carries its own chance stream, so it round-trips through
+`:erlang.term_to_binary/1` and continues identically in another process:
+
+```elixir
+saved = :erlang.term_to_binary(state)
+restored = :erlang.binary_to_term(saved)
+# `restored` deals the next hand exactly as `state` would have
+```
+
+`test/properties/continuation_properties_test.exs` is the proof of that, and
+`Pidro.Core.Binary` is *not* an alternative — it is a compact fingerprint of a
+position that drops the bid and trick history, the event log and the chance
+stream. Its moduledoc says so.
 
 ## Event Types
 
@@ -167,10 +211,11 @@ alias Pidro.Game.Replay
 
 # Replay to specific point
 {:ok, partial_state} = Replay.replay(Enum.take(events, 10))
-
-# Verify replay matches current state
-assert Replay.replay(state.events) == {:ok, state}
 ```
+
+A replayed state is not equal to the state the events came from — the deck
+order, the dealer cuts and the chance stream are in no event. See
+[What replay restores, and what it does not](#what-replay-restores-and-what-it-does-not).
 
 ### Undo Last Action
 
@@ -246,10 +291,13 @@ pgn = Notation.encode(state)
 
 # Import game from string
 {:ok, imported_state} = Notation.decode(pgn)
-
-# Roundtrip should preserve state
-assert Notation.decode(Notation.encode(state)) == {:ok, state}
 ```
+
+Notation is a **summary**, not a snapshot: it round-trips nine fields (phase,
+dealer, turn, trump, highest bid, scores, hand number, trick count, redeal
+state) and nothing else. Hands, the deck, the event log and the chance stream
+are not represented, so a decoded state has a placeholder chance value for the
+same reason `Replay.replay/1` does.
 
 ### PGN Format
 
@@ -274,19 +322,22 @@ assert Notation.decode(Notation.encode(state)) == {:ok, state}
 
 ### 1. Game Replay
 
+Store the event log if you want to walk a game; store the state if you want to
+continue one. They answer different questions.
+
 ```elixir
-# Save game to database
+# Save what you need for each purpose
 game_id = "game-123"
-pgn = Notation.encode(state)
-Database.save_game(game_id, pgn)
+Database.save_events(game_id, state.events)                  # to walk the game
+Database.save_snapshot(game_id, :erlang.term_to_binary(state))  # to continue it
 
-# Later: Load and replay
-{:ok, pgn} = Database.load_game(game_id)
-{:ok, state} = Notation.decode(pgn)
-
-# Replay to specific point
-events = state.events
+# Walk: reconstruct the position at any point in the log
+{:ok, events} = Database.load_events(game_id)
 {:ok, halfway_state} = Replay.replay(Enum.take(events, div(length(events), 2)))
+
+# Continue: the snapshot carries its chance stream, so play goes on identically
+{:ok, binary} = Database.load_snapshot(game_id)
+resumed = :erlang.binary_to_term(binary)
 ```
 
 ### 2. Undo/Redo in UI
@@ -327,10 +378,11 @@ expert_games = Database.load_expert_games()
 
 training_data =
   Enum.flat_map(expert_games, fn game ->
-    {:ok, state} = Notation.decode(game.pgn)
+    {:ok, events} = Database.load_events(game.id)
+    {:ok, state} = Replay.replay(events)
 
     # Extract (state, action) pairs
-    Enum.map(state.events, fn event ->
+    Enum.map(events, fn event ->
       %{
         state_before: replay_to_event(state, event),
         action: event_to_action(event),
@@ -348,18 +400,19 @@ games = Database.load_all_games()
 
 bid_analysis =
   Enum.map(games, fn game ->
-    {:ok, state} = Notation.decode(game.pgn)
+    {:ok, events} = Database.load_events(game.id)
 
-    bid_event = Enum.find(state.events, &match?({:bidding_complete, _, _}, &1.data))
-    {:bidding_complete, bidder, amount} = bid_event.data
-
-    scoring_event = Enum.find(state.events, &match?({:hand_scored, _, _}, &1.data))
-    {:hand_scored, points_taken, _cumulative} = scoring_event.data
+    {:bidding_complete, bidder, amount} =
+      Enum.find(events, &match?({:bidding_complete, _, _}, &1))
 
     bidder_team = position_to_team(bidder)
-    made_bid? = points_taken[bidder_team] >= amount
 
-    %{bid_amount: amount, made: made_bid?}
+    # One `:hand_scored` event per team, carrying that team's score delta.
+    # A failed bid scores the bidding team negatively.
+    {:hand_scored, ^bidder_team, delta} =
+      Enum.find(events, &match?({:hand_scored, ^bidder_team, _}, &1))
+
+    %{bid_amount: amount, made: delta >= amount}
   end)
 
 # Calculate stats
@@ -453,24 +506,28 @@ This ensures events can be sent to all clients without revealing hidden informat
 
 ## Testing Event Sourcing
 
-Property tests ensure event sourcing works:
+Property tests ensure event sourcing works. Note what they assert: replay
+matches *sequential application of the same events*, and PGN round-trips *the
+fields it encodes* — neither claims equality with the state the events or the
+notation came from. See `test/properties/event_sourcing_properties_test.exs`.
 
 ```elixir
-property "replay from events produces identical state" do
-  check all state <- complete_game_generator() do
-    {:ok, replayed} = Replay.replay(state.events)
+property "replaying events produces identical state to sequential application" do
+  check all events <- list_of(event_generator()) do
+    {:ok, replayed} = Replay.replay(events)
+    folded = Enum.reduce(events, initial_state(), &Events.apply_event(&2, &1))
 
-    # Replayed state should match original
-    assert states_equal?(state, replayed)
+    assert replayed == folded
   end
 end
 
-property "PGN roundtrip preserves state" do
+property "PGN encode/decode round-trip preserves serialized fields" do
   check all state <- game_state_generator() do
-    pgn = Notation.encode(state)
-    {:ok, decoded} = Notation.decode(pgn)
+    {:ok, decoded} = state |> Notation.encode() |> Notation.decode()
 
-    assert states_equal?(state, decoded)
+    assert decoded.phase == state.phase
+    assert decoded.current_dealer == state.current_dealer
+    assert decoded.cumulative_scores == state.cumulative_scores
   end
 end
 ```
