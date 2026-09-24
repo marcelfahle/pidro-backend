@@ -4,8 +4,8 @@ A pure functional Finnish Pidro card game engine built with Elixir, featuring ev
 
 ## Features
 
-- **Pure Functional Core** - Immutable game state, deterministic logic
-- **Event Sourcing** - Complete game replay, undo/redo support, PGN-like notation
+- **Pure Functional Core** - Immutable game state; randomness is an explicit input, so the same state and action give the same result
+- **Event Sourcing** - Full event log, undo/redo support, PGN-like notation
 - **Finnish Variant** - Full implementation of Finnish Pidro rules including redeal mechanics
 - **Property-Based Testing** - 157 properties ensuring correctness across all game phases
 - **Interactive Development** - Rich IEx helpers for playing games in the console
@@ -63,8 +63,11 @@ demo_game()
 alias Pidro.Game.Engine
 alias Pidro.Core.GameState
 
-# Create a new game
-{:ok, state} = Engine.new_game()
+# Create a new game. The seed is the game's chance stream and is required —
+# there is no default. `Pidro.Server` generates one for live games.
+state = GameState.new(seed: 1)
+{:ok, state} = Engine.apply_action(state, :north, :select_dealer)
+{:ok, state} = Engine.advance_from_dealer_selection(state)
 
 # Get legal actions for a position
 actions = Engine.legal_actions(state, :north)
@@ -79,8 +82,9 @@ state.phase  # :bidding, :playing, :scoring, etc.
 ### Use the OTP Server
 
 ```elixir
-# Start a supervised game
-{:ok, pid} = Pidro.Supervisor.start_game("game-123")
+# Start a supervised game. Omit `:seed` and the server generates fresh
+# entropy; pass one to get a reproducible game.
+{:ok, pid} = Pidro.Supervisor.start_game(game_id: "game-123", register: true)
 
 # Apply actions through the server
 {:ok, state} = Pidro.Server.apply_action(pid, :north, {:bid, 8})
@@ -128,7 +132,8 @@ A > K > Q > J > 10 > 9 > 8 > 7 > 6 > Right-5 > Wrong-5 > 4 > 3 > 2
 
 - **Pidro.Core.Types** - Type definitions and GameState struct
 - **Pidro.Core.Card** - Card operations, trump ranking, point values
-- **Pidro.Core.Deck** - Deck shuffling and dealing
+- **Pidro.Core.Chance** - The explicit chance stream; the only module in the domain that touches `:rand`
+- **Pidro.Core.Deck** - The 52 cards in a fixed generation order
 - **Pidro.Core.Player** - Player state management
 - **Pidro.Core.Trick** - Trick resolution and scoring
 - **Pidro.Core.Events** - Event sourcing and replay
@@ -261,6 +266,16 @@ pgn = Pidro.Notation.encode(state)
 
 # Import from PGN
 {:ok, imported_state} = Pidro.Notation.decode(pgn)
+```
+
+Replay and notation are both lossy: no event records the deck order, the
+dealer-selection cuts, or the chance stream, so neither reconstructs a state a
+game can be *continued* from. To save and resume a game, serialize the
+`%GameState{}` itself — it is plain data and carries its own chance stream:
+
+```elixir
+saved = :erlang.term_to_binary(state)
+resumed = :erlang.binary_to_term(saved)
 ```
 
 See [guides/event_sourcing.md](guides/event_sourcing.md) for details.

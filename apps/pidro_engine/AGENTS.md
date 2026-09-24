@@ -140,7 +140,7 @@ lib/pidro/
 ├── core/                    # Core data structures (Phase 0-1)
 │   ├── types.ex            # Type definitions and helper functions
 │   ├── card.ex             # Card operations (trump logic, ranking)
-│   ├── deck.ex             # Deck operations (shuffle, deal)
+│   ├── deck.ex             # The 52 cards in a fixed generation order
 │   ├── player.ex           # Player state
 │   ├── trick.ex            # Trick-taking logic
 │   └── gamestate.ex        # Game state container
@@ -737,11 +737,13 @@ card = Pidro.Core.Card.new(14, :hearts)
 # Check if card is trump
 Pidro.Core.Card.is_trump?(card, :hearts)
 
-# Create and shuffle a deck
-deck = Pidro.Core.Deck.new() |> Pidro.Core.Deck.shuffle()
+# Shuffle a deck from an explicit chance value (the engine draws from
+# `state.chance`; there is no process-RNG deck constructor). A deck is just a
+# list of cards.
+{deck, _chance} = Pidro.Core.Chance.shuffle(Pidro.Core.Deck.ordered(), Pidro.Core.Chance.from_seed(1))
 
-# Deal cards
-{cards, remaining_deck} = Pidro.Core.Deck.deal_batch(deck, 9)
+# Deal cards off the top
+{cards, remaining_deck} = Enum.split(deck, 9)
 
 # Create a player
 player = Pidro.Core.Player.new(:north, :north_south)
@@ -749,9 +751,10 @@ player = Pidro.Core.Player.new(:north, :north_south)
 # Add cards to player's hand
 player = Pidro.Core.Player.add_cards(player, cards)
 
-# Use the engine directly
+# Use the engine directly. `new/1` requires a seed: it is the game's chance
+# stream, and there is no default. Live games get theirs from `Pidro.Server`.
 alias Pidro.Game.Engine
-state = Pidro.Core.GameState.new()
+state = Pidro.Core.GameState.new(seed: 1)
 {:ok, state} = Pidro.Game.Dealing.select_dealer(state)
 {:ok, state} = Engine.apply_action(state, :north, {:bid, 10})
 ```
@@ -960,18 +963,32 @@ mix coveralls  # Coverage maintained/improved
 
 ### Pure Functional Core
 - All game logic is pure functions
-- No side effects in core modules
-- Deterministic behavior (same input = same output)
+- No side effects in `core/`, `game/` or `finnish/` — no clock, no process
+  dictionary, no ETS, no config reads
+- Randomness is an explicit input: every draw comes from `GameState.chance`
+  via `Pidro.Core.Chance`, never from the calling process's `:rand`
+- Deterministic behavior, stated with its qualifiers: *the same complete
+  authoritative state and action, on the same engine version and the OTP
+  version pinned in `.tool-versions`, produce equal next state and domain
+  events, independently of the caller's RNG state*
+- `Pidro.Server` is the effectful boundary and the only production expression
+  that generates entropy (`fresh_seed/0`)
+- Guarded by `test/unit/core/chance_containment_test.exs` (nothing else in the
+  domain reaches `:rand`) and `test/unit/core/chance_vector_test.exs` (one
+  seed's exact output, so drift is a loud failure)
 
 ### Immutable State
 - Game state never mutates
 - All operations return new state
-- Enables undo/replay (planned Phase 8)
+- `%GameState{}` is plain data and carries its chance stream, so it
+  round-trips through `:erlang.term_to_binary/1` and resumes in another process
 
 ### Event Sourcing
 - Every action produces an event
-- State can be rebuilt from event history
-- Enables time travel debugging
+- Bids, plays, tricks and scores can be rebuilt from the event history; the
+  deck order, the dealer cuts and the chance stream are in no event, so a
+  replayed state is not one a game continues from — see
+  `guides/event_sourcing.md`
 
 ### Separation of Concerns
 - Core logic (lib/pidro/core/) - data structures only

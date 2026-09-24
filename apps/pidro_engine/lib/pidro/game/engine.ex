@@ -24,7 +24,7 @@ defmodule Pidro.Game.Engine do
   ## Usage
 
       # Create initial game state
-      state = GameState.new()
+      state = GameState.new(seed: 7)
 
       # Apply an action
       {:ok, new_state} = Engine.apply_action(state, :north, {:bid, 10})
@@ -58,7 +58,7 @@ defmodule Pidro.Game.Engine do
 
   alias Pidro.Core.Types
   alias Pidro.Core.Types.Player
-  alias Pidro.Core.GameState
+  alias Pidro.Core.{Chance, Deck, GameState}
   alias Pidro.Game.{Errors, StateMachine}
 
   # Phase-specific modules
@@ -679,13 +679,16 @@ defmodule Pidro.Game.Engine do
     # Rotate dealer and prepare for next hand
     case Dealing.rotate_dealer(state) do
       {:ok, new_state} ->
-        # Create new shuffled deck for the new hand
-        new_deck = Pidro.Core.Deck.new()
+        # Shuffle the next hand's deck from this game's chance stream. The
+        # dealer-cut ceremony runs once per game, so for hands 2..N this is the
+        # deck that is actually dealt.
+        {new_deck, chance} = Chance.shuffle(Deck.ordered(), new_state.chance)
 
         # Reset hand-specific state for new hand
         reset_state =
           new_state
-          |> GameState.update(:deck, new_deck.cards)
+          |> GameState.update(:deck, new_deck)
+          |> GameState.update(:chance, chance)
           |> GameState.update(:highest_bid, nil)
           |> GameState.update(:bidding_team, nil)
           |> GameState.update(:trump_suit, nil)

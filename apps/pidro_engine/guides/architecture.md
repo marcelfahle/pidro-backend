@@ -6,27 +6,84 @@ This guide explains the architecture of the Pidro game engine and the rationale 
 
 ### 1. Pure Functional Core
 
-The game engine core is **purely functional**:
-- All functions are pure (no side effects)
-- Game state is immutable
-- State updates return new state structures
-- Deterministic behavior (same input = same output)
+The game engine core is **purely functional**. Every function reachable from
+`Engine.apply_action/3` in `lib/pidro/core/`, `lib/pidro/game/` and
+`lib/pidro/finnish/` reads nothing outside its arguments — no clock, no
+process dictionary, no ETS table, no application config:
+
+- Every function on a transition path is pure (no side effects)
+- Game state is immutable; every update returns a new structure
+- Randomness is an explicit input, carried in `GameState.chance`
+
+One exported helper in those layers is **not** pure, and the qualifier above
+exists for it: `Pidro.Core.Events.create_event/2` stamps `DateTime.utc_now()`
+into an `%Event{}`. No engine transition calls it — the transition path builds
+plain event tuples and appends them to `state.events` — so it does not weaken
+the determinism guarantee below. It is a legacy helper for the richer
+`%Event{}` struct, kept for callers that want a timestamped record, and it is
+the one place in these three directories that reads the clock.
+
+**The determinism guarantee:**
+
+> Given the same complete authoritative state and action, the same engine
+> version on the supported OTP version produces equal next state and domain
+> events, independently of the calling process's RNG state.
+
+The qualifiers are load-bearing. The guarantee holds per engine version on the
+OTP version pinned in `.tool-versions`; a rule change, a change to
+`Pidro.Core.Chance`, or an OTP change to `:rand` may each legitimately alter
+the cards a given seed deals. `test/unit/core/chance_vector_test.exs` records
+one seed's exact cuts and deck so that such a change fails loudly instead of
+drifting unnoticed.
+
+**Where chance comes from:**
+
+`Pidro.Core.Chance` is the only module in the domain permitted to touch
+`:rand`. It uses the explicit-state API exclusively and is itself pure — it
+generates no entropy. Every draw returns the advanced stream alongside the
+value, so a caller cannot obtain a random value without also receiving the
+stream it has to store back:
+
+```elixir
+{cuts, chance} = Chance.cut_cards([:north, :east, :south, :west], state.chance)
+{deck, chance} = Chance.shuffle(Deck.ordered(), chance)
+
+state
+|> GameState.update(:deck, deck)
+|> GameState.update(:chance, chance)
+```
+
+Entropy is generated in exactly one production expression, `fresh_seed/0` in
+`Pidro.Server` — the effectful boundary described in Layer 4.
+`test/unit/core/chance_containment_test.exs` is the guard that keeps the
+domain free of any other path back to the process RNG.
+
+One claim to keep modest: a cryptographic seed does not make a
+simulation-quality generator cryptographic. Seeding `:exsss` from
+`:crypto.strong_rand_bytes/1` makes a live game's starting point
+unpredictable; it does not make the generator itself resistant to prediction.
+That is the same standard the engine had before chance became explicit —
+making chance explicit neither weakened nor strengthened it.
 
 **Benefits:**
-- Easy to test (no mocking needed)
+- Easy to test (no mocking needed, no process seeding)
 - Easy to reason about
-- Perfect for event replay
+- A saved `%GameState{}` can be resumed or branched in another process
 - Thread-safe by default
-- Time-travel debugging possible
 
 ### 2. Event Sourcing
 
-Every state change produces events:
-- Events are the source of truth
-- Current state can be reconstructed from events
+Every state change appends an event to `state.events`:
+- Complete audit trail of what a game did
 - Enables undo/redo
-- Complete audit trail
 - Network synchronization friendly
+
+The authoritative value is the `%GameState{}`, not the log. No event carries
+the deck's order, the four dealer-selection cuts, or the chance stream, so
+`Replay.replay/1` rebuilds hands as they were dealt but does not produce a
+state a game can be continued from. See
+[Event Sourcing](event_sourcing.md) for exactly what replay restores and what
+it does not.
 
 ### 3. Property-Based Testing
 
@@ -54,7 +111,8 @@ Foundation types and basic operations:
 ```
 Pidro.Core.Types          - Type definitions (@type, @typedoc)
 Pidro.Core.Card           - Card operations (is_trump?, point_value, compare)
-Pidro.Core.Deck           - Deck operations (shuffle, deal)
+Pidro.Core.Chance         - The explicit chance stream (the only :rand caller)
+Pidro.Core.Deck           - The 52 cards in a fixed order (ordered/0)
 Pidro.Core.Player         - Player state (hand, position, team)
 Pidro.Core.Trick          - Trick resolution (winner, points)
 Pidro.Core.GameState      - Game state struct (immutable)
@@ -119,6 +177,28 @@ Pidro.MoveCache           - ETS cache (performance)
 - Server delegates to `Engine` for all game logic
 - Supervisor manages game lifecycle
 - Cache is optional (can be disabled)
+
+**`Pidro.Server` is the engine's effectful boundary.** It owns every concern
+the layers below refuse: wall-clock and monotonic time (snapshots, telemetry,
+presentation windows), `make_ref/0` stale-timer tokens, `Process.send_after/3`
+pacing, the `game_instance_id`, and the **only entropy generation in the
+production path** — `fresh_seed/0`, which seeds a new game's chance stream
+from `:crypto.strong_rand_bytes/1`. Three entry points construct or replace a
+game, and each has a stated rule:
+
+| Entry point | Rule |
+|---|---|
+| `init/1`, no `:seed` | fresh entropy |
+| `init/1`, `seed: s` | `GameState.new(seed: s)` — reproducible |
+| `init/1`, `initial_state: gs` | preserve `gs.chance` exactly |
+| `reset/1` | reuse the `:seed` given at `init/1` if there was one, else fresh entropy |
+| `{:set_state, gs}` | preserve `gs.chance` exactly |
+
+Tests and simulations supply their own seed instead: `GameState.new(seed: 1)`
+for fixtures, `Pidro.Bot.SelfPlay` and `Pidro.Test.GameTrace` for whole games.
+Those two still seed the *calling process* as well, but only because
+`Pidro.Bot.RandomPolicy` draws from it — that seeding is no longer
+load-bearing for the engine.
 
 ### Layer 5: Utilities
 
@@ -377,6 +457,22 @@ end
 - Multiple phases in sequence
 - Real scenarios (dealer rob, kill rule, etc.)
 
+### Determinism Tests
+
+Four files carry the guarantee stated under [Design Principles](#1-pure-functional-core):
+
+- `test/properties/determinism_properties_test.exs` — the same state and action
+  produce the same result while the *test* process deliberately draws from
+  `:rand` in between
+- `test/properties/continuation_properties_test.exs` — a state saved with
+  `:erlang.term_to_binary/1` and restored in another process plays on
+  identically, across the next hand's shuffle
+- `test/unit/core/chance_containment_test.exs` — the source guard: nothing in
+  `core/`, `game/` or `finnish/` but `Pidro.Core.Chance` reaches `:rand`
+- `test/unit/core/chance_vector_test.exs` — one seed's exact cuts and deck,
+  recorded so that an OTP or `Chance` change is a loud failure rather than
+  silent drift
+
 ### Doctests
 
 - Examples in `@doc` blocks
@@ -438,11 +534,14 @@ end
 - Write properties before implementation
 - Keep functions pure (no IO, no side effects)
 - Update state via `GameState.update/3`
+- Draw randomness through `Pidro.Core.Chance`, and store the advanced stream back
 
 ### DON'T ❌
 
 - Mutate state in-place
 - Skip event emission
+- Call `Enum.shuffle/1`, `Enum.random/1` or `:rand` inside `core/`, `game/` or `finnish/`
+- Read the clock, the process dictionary, or config from a phase module
 - Put business logic in OTP layer (keep Server thin)
 - Hardcode magic numbers (use config or constants)
 - Forget to update tests when adding features

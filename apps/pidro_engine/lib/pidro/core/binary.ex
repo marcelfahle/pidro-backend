@@ -18,8 +18,18 @@ defmodule Pidro.Core.Binary do
   Binary encoding is particularly useful for:
   - Fast state hashing for caching
   - Network transmission
-  - State snapshots and persistence
   - Comparing states for equality
+
+  ## Not a resume format
+
+  This format is lossy by design: it carries phase, hand number, seats, hands,
+  deck, trump, bid and scores, and nothing else. It does not carry the bid or
+  trick history, the event log, the dealer-selection cuts, the game's config,
+  or the chance stream. A state from `from_binary/1` therefore has
+  `chance: nil` and cannot cross a transition that draws — it is a compact
+  fingerprint of a position, not a saved game. To save and resume a game, use
+  `:erlang.term_to_binary/1` on the `%GameState{}` itself, which preserves
+  chance.
 
   ## Usage
 
@@ -29,9 +39,9 @@ defmodule Pidro.Core.Binary do
       # Encode a hand
       hand_binary = Binary.encode_hand([{14, :hearts}, {13, :hearts}])
 
-      # Encode full state
+      # Encode full state (see `from_binary/1` for what decoding does and
+      # does not currently do)
       state_binary = Binary.to_binary(state)
-      {:ok, state} = Binary.from_binary(state_binary)
   """
 
   alias Pidro.Core.Types
@@ -172,11 +182,13 @@ defmodule Pidro.Core.Binary do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> binary = Binary.to_binary(state)
-      iex> {:ok, decoded_state} = Binary.from_binary(binary)
-      iex> decoded_state.phase == state.phase
+      iex> is_bitstring(binary)
       true
+
+  Note the output is a bitstring, not necessarily byte-aligned, and that
+  `from_binary/1` does not currently decode it — see its documentation.
   """
   @spec to_binary(GameState.t()) :: binary()
   def to_binary(%GameState{} = state) do
@@ -216,7 +228,13 @@ defmodule Pidro.Core.Binary do
   end
 
   @doc """
-  Decodes a binary back into a complete game state.
+  Decodes a binary back into a partial game state.
+
+  The result carries only what `to_binary/1` encodes. Everything else is
+  reset: no bids, no tricks, no hand points, no event log, no
+  dealer-selection cuts, the default config in place of the original's, and
+  `chance: nil`. See "Not a resume format" in the module documentation — a
+  decoded state cannot be played across a transition that draws.
 
   ## Parameters
 
@@ -227,13 +245,18 @@ defmodule Pidro.Core.Binary do
   - `{:ok, game_state}` if decoding succeeds
   - `{:error, reason}` if the binary is invalid
 
-  ## Examples
+  ## Known limitation
 
-      iex> state = GameState.new()
-      iex> binary = Binary.to_binary(state)
-      iex> {:ok, decoded_state} = Binary.from_binary(binary)
-      iex> decoded_state.phase
-      :dealer_selection
+  This decoder does not currently accept `to_binary/1`'s own output: the
+  round trip returns `{:error, :invalid_binary}` for every state tried. The
+  defect predates the explicit chance stream — the format has no tests and no
+  production caller — and completing the format is separate, tracked work.
+  Until then nothing can be restored through it, which is another way of
+  saying it is not a resume format.
+
+  Whoever fixes the format has one decision to make about chance: either keep
+  leaving it `nil` and keep saying so here, or carry the stream explicitly.
+  It must not invent one.
   """
   @spec from_binary(bitstring()) :: {:ok, GameState.t()} | {:error, atom()}
   def from_binary(

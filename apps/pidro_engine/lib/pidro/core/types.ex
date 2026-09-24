@@ -57,6 +57,16 @@ defmodule Pidro.Core.Types do
   """
   @type card :: {rank(), suit()}
 
+  @typedoc """
+  The engine's explicit chance stream — an exported `:rand` state.
+
+  Carried in `GameState.chance` and advanced by `Pidro.Core.Chance`, which is
+  the only module in the game domain permitted to touch `:rand`. The value is
+  plain data (`{algorithm, algorithm_state}`), so it round-trips through
+  `:erlang.term_to_binary/1` and can be continued in another process.
+  """
+  @type chance :: :rand.export_state()
+
   # =============================================================================
   # Player and Team Types
   # =============================================================================
@@ -329,6 +339,15 @@ defmodule Pidro.Core.Types do
         auto_dealer_rob: true
       }
     )
+
+    # Explicit chance stream — every random draw the engine makes is derived
+    # from this value, never from the calling process's `:rand` dictionary.
+    # Built by `Pidro.Core.GameState.new/1` from a seed and advanced in place by
+    # `Pidro.Core.Chance`. `nil` means the state did not come from `new/1` —
+    # either a hand-assembled test fixture, or a decoder whose format does not
+    # carry chance (`Pidro.Core.Binary.from_binary/1`). Such a state cannot
+    # cross a transition that draws, and will fail loudly if it tries.
+    field(:chance, Pidro.Core.Types.chance() | nil, default: nil)
 
     # Performance cache (optional, not serialized)
     field(:cache, map(), default: %{})

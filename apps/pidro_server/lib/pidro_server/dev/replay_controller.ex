@@ -339,7 +339,10 @@ defmodule PidroServer.Dev.ReplayController do
   # Find the index of the first event in a given phase
   defp find_phase_start(events, target_phase) do
     # Replay events and track when we enter target phase
-    initial_state = Pidro.Core.GameState.new()
+    # Only the phase of this state is read, and it is compared against states
+    # produced by `Replay.replay/1`, which folds onto the same fixed
+    # placeholder seed. See the caveat on `Pidro.Game.Replay.replay/1`.
+    initial_state = Pidro.Core.GameState.new(seed: 0)
 
     events
     |> Enum.with_index()

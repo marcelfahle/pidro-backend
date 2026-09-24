@@ -31,7 +31,7 @@ defmodule Pidro.Game.Trump do
   ## Examples
 
       # Declare trump suit
-      iex> state = %{GameState.new() | phase: :declaring, current_turn: :north}
+      iex> state = %{GameState.new(seed: 7) | phase: :declaring, current_turn: :north}
       iex> {:ok, state} = Trump.declare_trump(state, :hearts)
       iex> state.trump_suit
       :hearts
@@ -85,14 +85,14 @@ defmodule Pidro.Game.Trump do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :declaring, current_turn: :north}
+      iex> state = %{GameState.new(seed: 7) | phase: :declaring, current_turn: :north}
       iex> {:ok, state} = Trump.declare_trump(state, :hearts)
       iex> state.trump_suit
       :hearts
       iex> state.phase
       :discarding
 
-      iex> state = %{GameState.new() | phase: :bidding}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding}
       iex> Trump.declare_trump(state, :hearts)
       {:error, {:invalid_phase, :declaring, :bidding}}
   """

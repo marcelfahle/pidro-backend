@@ -147,7 +147,7 @@ defmodule Pidro.Notation do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> Pidro.Notation.encode(state)
       "ds/-/-/-/-/NS:0:EW:0/h1/t0/-"
 
@@ -189,6 +189,11 @@ defmodule Pidro.Notation do
   Parses a PGN string and reconstructs a GameState struct with the
   serialized fields populated. Fields not included in PGN (like player
   hands, deck, events) are initialized to default values.
+
+  That includes the chance stream: PGN is a nine-field phase summary, not a
+  resume format, so a decoded state carries a fixed placeholder chance value
+  rather than the encoded game's. Decoding is reproducible, but play continued
+  from a decoded state is a different game.
 
   ## Parameters
   - `pgn` - The PGN string to decode
@@ -259,7 +264,10 @@ defmodule Pidro.Notation do
          {:ok, hand_val} <- decode_hand_number(hand),
          {:ok, tricks_val} <- decode_trick_number(tricks),
          {:ok, {cards_req, pool_size, killed}} <- decode_redeal(redeal) do
-      state = GS.new()
+      # PGN records no deck, no cuts and no chance value, so a decoded state
+      # folds onto the same fixed placeholder seed `Pidro.Game.Replay.replay/1`
+      # uses. See the `decode/1` caveat.
+      state = GS.new(seed: 0)
 
       updated_state = %{
         state

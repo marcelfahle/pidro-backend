@@ -18,7 +18,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
     test "bidding completes after dealer's turn (all 4 players acted)" do
       # Dealer is west, so order is: north, east, south, west (dealer last)
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :north,
@@ -51,7 +51,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "player cannot bid twice (one round only)" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :north,
@@ -68,7 +68,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "player cannot pass twice (one round only)" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :north,
@@ -84,7 +84,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "player who bid cannot pass later (one action per player)" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :north,
@@ -103,7 +103,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
   describe "Dealer must bid 6 rule" do
     test "if all 3 players pass, dealer cannot pass" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :west,
@@ -121,7 +121,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "dealer can pass if someone else bid" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :west,
@@ -141,7 +141,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "if all pass, dealer is forced to bid 6" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :west,
           current_turn: :west,
@@ -162,7 +162,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
   describe "Full one-round scenarios" do
     test "scenario: first player bids, others pass, dealer passes" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :south,
           current_turn: :west,
@@ -180,7 +180,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "scenario: bidding war, highest bidder wins after dealer's turn" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           current_turn: :east,
@@ -198,7 +198,7 @@ defmodule Pidro.Game.BiddingOneRoundTest do
 
     test "scenario: all pass, dealer forced to bid 6" do
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           current_dealer: :north,
           current_turn: :east,

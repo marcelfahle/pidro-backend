@@ -35,22 +35,22 @@ defmodule Pidro.Game.Bidding do
   ## Examples
 
       # Validate a bid
-      iex> state = %{GameState.new() | phase: :bidding, highest_bid: nil}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, highest_bid: nil}
       iex> Bidding.validate_bid(state, :north, 6)
       :ok
 
-      iex> state = %{GameState.new() | phase: :bidding, highest_bid: {:east, 8}}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, highest_bid: {:east, 8}}
       iex> Bidding.validate_bid(state, :south, 7)
       {:error, {:bid_too_low, 9}}
 
       # Apply a bid
-      iex> state = %{GameState.new() | phase: :bidding, current_turn: :north}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, current_turn: :north}
       iex> {:ok, state} = Bidding.apply_bid(state, :north, 6)
       iex> state.highest_bid
       {:north, 6}
 
       # Check if bidding is complete
-      iex> state = %{GameState.new() | highest_bid: {:north, 14}}
+      iex> state = %{GameState.new(seed: 7) | highest_bid: {:north, 14}}
       iex> Bidding.bidding_complete?(state)
       true
   """
@@ -86,19 +86,19 @@ defmodule Pidro.Game.Bidding do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :bidding, highest_bid: nil, bids: []}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, highest_bid: nil, bids: []}
       iex> Bidding.validate_bid(state, :north, 6)
       :ok
 
-      iex> state = %{GameState.new() | phase: :bidding, highest_bid: {:east, 10}, bids: []}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, highest_bid: {:east, 10}, bids: []}
       iex> Bidding.validate_bid(state, :south, 11)
       :ok
 
-      iex> state = %{GameState.new() | phase: :bidding, highest_bid: {:east, 10}, bids: []}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, highest_bid: {:east, 10}, bids: []}
       iex> Bidding.validate_bid(state, :south, 10)
       {:error, {:bid_too_low, 11}}
 
-      iex> state = %{GameState.new() | phase: :bidding, highest_bid: nil, bids: [%Types.Bid{position: :north, amount: 6}]}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, highest_bid: nil, bids: [%Types.Bid{position: :north, amount: 6}]}
       iex> Bidding.validate_bid(state, :north, 7)
       {:error, {:already_acted, :north}}
   """
@@ -194,7 +194,7 @@ defmodule Pidro.Game.Bidding do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :bidding, current_turn: :north, highest_bid: nil, bids: []}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, current_turn: :north, highest_bid: nil, bids: []}
       iex> {:ok, state} = Bidding.apply_bid(state, :north, 6)
       iex> state.highest_bid
       {:north, 6}
@@ -267,7 +267,7 @@ defmodule Pidro.Game.Bidding do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :bidding, current_turn: :north, bids: []}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, current_turn: :north, bids: []}
       iex> {:ok, state} = Bidding.apply_pass(state, :north)
       iex> length(state.bids)
       1
@@ -321,12 +321,12 @@ defmodule Pidro.Game.Bidding do
 
   ## Examples
 
-      iex> state = %{GameState.new() | phase: :bidding, bids: [], highest_bid: nil}
+      iex> state = %{GameState.new(seed: 7) | phase: :bidding, bids: [], highest_bid: nil}
       iex> Bidding.legal_actions(state, :north)
       [{:bid, 6}, {:bid, 7}, ..., {:bid, 14}, :pass]
 
       # Dealer when all others passed - cannot pass
-      iex> state = %{GameState.new() |
+      iex> state = %{GameState.new(seed: 7) |
       ...>   phase: :bidding,
       ...>   current_dealer: :north,
       ...>   bids: [
@@ -395,7 +395,7 @@ defmodule Pidro.Game.Bidding do
 
   ## Examples
 
-      iex> state = %{GameState.new() | bids: [
+      iex> state = %{GameState.new(seed: 7) | bids: [
       ...>   %Types.Bid{position: :east, amount: :pass},
       ...>   %Types.Bid{position: :south, amount: :pass},
       ...>   %Types.Bid{position: :west, amount: :pass},
@@ -404,7 +404,7 @@ defmodule Pidro.Game.Bidding do
       iex> Bidding.all_passed?(state)
       true
 
-      iex> state = %{GameState.new() | bids: [
+      iex> state = %{GameState.new(seed: 7) | bids: [
       ...>   %Types.Bid{position: :east, amount: :pass},
       ...>   %Types.Bid{position: :south, amount: 6}
       ...> ]}
@@ -445,7 +445,7 @@ defmodule Pidro.Game.Bidding do
   ## Examples
 
       # Bidding complete: all 4 players acted
-      iex> state = %{GameState.new() |
+      iex> state = %{GameState.new(seed: 7) |
       ...>   highest_bid: {:north, 6},
       ...>   bids: [
       ...>     %Types.Bid{position: :north, amount: 6},
@@ -458,7 +458,7 @@ defmodule Pidro.Game.Bidding do
       true
 
       # Bidding not complete: only 3 players acted
-      iex> state = %{GameState.new() |
+      iex> state = %{GameState.new(seed: 7) |
       ...>   highest_bid: {:north, 6},
       ...>   bids: [
       ...>     %Types.Bid{position: :north, amount: 6},

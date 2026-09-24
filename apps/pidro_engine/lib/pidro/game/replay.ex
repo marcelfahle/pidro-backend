@@ -101,11 +101,29 @@ defmodule Pidro.Game.Replay do
   - Events must be in chronological order
   - All events are stored in the resulting state's `events` field
   - If any event fails, the entire replay fails
-  - State starts fresh with `GameState.new/0`
+
+  ## Caveat: the chance value of a replayed state is not the original game's
+
+  No event records the deck order, the undealt remainder, or the four dealer
+  cuts, so a replay cannot reconstruct the chance stream that produced them.
+  `replay/1` therefore folds onto a fixed placeholder seed. The resulting state
+  is a faithful reconstruction of everything the events *do* record, and it is
+  itself reproducible — replaying the same events always gives the same state —
+  but its `chance` field is a placeholder, and continuing play from it will not
+  reproduce the original game's next shuffle.
+
+  Resuming a game exactly is done from a saved `%GameState{}`, which carries its
+  own chance value, not from an event log.
   """
   @spec replay([Types.event()]) :: {:ok, Types.GameState.t()}
   def replay(events) when is_list(events) do
-    initial_state = GameState.new()
+    # A replayed state's chance value cannot be the original game's (see the
+    # caveat above), so it folds onto this fixed, documented placeholder. It is
+    # deliberately not a parameter: offering a seed here would suggest replay
+    # can reproduce a specific game's future, which it cannot.
+    placeholder_seed = 0
+
+    initial_state = GameState.new(seed: placeholder_seed)
     replay_events(initial_state, events)
   end
 
@@ -141,7 +159,7 @@ defmodule Pidro.Game.Replay do
       # => 2
 
       # Cannot undo with no history
-      fresh_state = GameState.new()
+      fresh_state = GameState.new(seed: 7)
       {:error, :no_history} = undo(fresh_state)
 
   ## Performance
@@ -234,7 +252,7 @@ defmodule Pidro.Game.Replay do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> history_length(state)
       0
 
@@ -272,7 +290,7 @@ defmodule Pidro.Game.Replay do
 
   ## Examples
 
-      iex> state = GameState.new()
+      iex> state = GameState.new(seed: 7)
       iex> last_event(state)
       nil
 

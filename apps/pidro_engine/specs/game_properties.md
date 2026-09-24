@@ -679,8 +679,11 @@ def card_generator do
 end
 
 def deck_generator do
-  # Generate valid 52-card deck
-  constant(Deck.new())
+  # Generate a valid 52-card deck, shuffled from an explicit chance value
+  gen all seed <- integer(1..1_000_000) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
+    cards
+  end
 end
 
 def game_generator do

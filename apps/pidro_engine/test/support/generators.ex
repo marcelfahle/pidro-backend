@@ -245,7 +245,7 @@ defmodule Pidro.Generators do
     remaining_deck = generate_mixed_deck(16)
 
     # Build game state
-    GameState.new()
+    GameState.new(seed: 1)
     |> GameState.update(:phase, :second_deal)
     |> GameState.update(:current_dealer, dealer)
     |> GameState.update(:trump_suit, trump)
@@ -370,7 +370,7 @@ defmodule Pidro.Generators do
     killed_cards = if length(killed) > 0, do: %{pos => killed}, else: %{}
 
     state =
-      GameState.new()
+      GameState.new(seed: 1)
       |> GameState.update(:phase, :playing)
       |> GameState.update(:trump_suit, trump)
       |> GameState.update(:players, players)

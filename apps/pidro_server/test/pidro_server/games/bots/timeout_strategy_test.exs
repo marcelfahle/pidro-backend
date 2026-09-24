@@ -8,7 +8,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategyTest do
 
   # A seat view for the seat on turn, built from just the fields a test sets.
   defp view(fields) do
-    base = GameState.new()
+    base = GameState.new(seed: 1)
     position = Map.get(fields, :current_turn) || :north
     hands = Map.get(fields, :players, %{})
 
@@ -100,7 +100,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategyTest do
     end
 
     test "only accepts a seat view, never the full game state" do
-      raw_state = %{GameState.new() | phase: :bidding}
+      raw_state = %{GameState.new(seed: 1) | phase: :bidding}
 
       assert_raise FunctionClauseError, fn ->
         apply(TimeoutStrategy, :pick_action, [[:pass], raw_state])
@@ -110,7 +110,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategyTest do
 
   # Pins the move the turn timer makes in each phase, on real engine states.
   describe "timer moves on real game states" do
-    defp at(overrides), do: Map.merge(GameState.new(), overrides)
+    defp at(overrides), do: Map.merge(GameState.new(seed: 1), overrides)
 
     defp with_hand(state, position, hand),
       do: %{state | players: Map.update!(state.players, position, &%{&1 | hand: hand})}
@@ -181,7 +181,7 @@ defmodule PidroServer.Games.Bots.TimeoutStrategyTest do
     end
 
     test "a manual rob returns the hand-selection marker" do
-      base = GameState.new()
+      base = GameState.new(seed: 1)
 
       state =
         at(%{

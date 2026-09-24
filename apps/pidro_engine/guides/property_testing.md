@@ -129,9 +129,9 @@ end
 
 ```elixir
 property "deck always contains exactly 52 cards" do
-  check all seed <- integer() do
-    deck = Deck.new(seed)
-    assert length(deck.cards) == 52
+  check all seed <- integer(1..1_000_000) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
+    assert length(cards) == 52
   end
 end
 ```
@@ -140,11 +140,11 @@ end
 
 ```elixir
 property "each suit contains exactly 13 cards" do
-  check all seed <- integer() do
-    deck = Deck.new(seed)
+  check all seed <- integer(1..1_000_000) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
 
     Enum.each([:hearts, :diamonds, :clubs, :spades], fn suit ->
-      count = Enum.count(deck.cards, fn {_rank, s} -> s == suit end)
+      count = Enum.count(cards, fn {_rank, s} -> s == suit end)
       assert count == 13
     end)
   end
@@ -330,6 +330,40 @@ property "total points in hand equals 14 (minus killed)" do
   end
 end
 ```
+
+### Determinism Properties
+
+These are unusual in that the generated input is a **seed** rather than a
+state: the engine's randomness is an explicit field on `%GameState{}`, so a
+seed names a whole game. They also do something no other property here does —
+they deliberately draw from the *test* process's `:rand` dictionary between two
+otherwise identical engine calls, to assert it changes nothing.
+
+**Property: transitions ignore the caller's RNG**
+
+```elixir
+property "the dealer-cut transition ignores the caller's RNG" do
+  check all seed <- integer(1..1_000_000), max_runs: 100 do
+    state = GameState.new(seed: seed)
+
+    {:ok, first} = Engine.apply_action(state, :north, :select_dealer)
+
+    _ = Enum.shuffle(1..100)
+    _ = :rand.uniform(1_000_000)
+
+    {:ok, second} = Engine.apply_action(state, :north, :select_dealer)
+
+    assert first == second
+  end
+end
+```
+
+See `test/properties/determinism_properties_test.exs` and
+`test/properties/continuation_properties_test.exs`. Two example-based tests sit
+alongside them because they cannot be expressed as properties:
+`test/unit/core/chance_containment_test.exs` scans the domain's sources for any
+path back to the process RNG, and `test/unit/core/chance_vector_test.exs`
+records one seed's exact output so an OTP or `Chance` change is a loud failure.
 
 ## Writing Custom Generators
 

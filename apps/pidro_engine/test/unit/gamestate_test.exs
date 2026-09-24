@@ -7,27 +7,27 @@ defmodule Pidro.Core.GameStateTest do
 
   @dialyzer :no_match
 
-  describe "new/0" do
+  describe "new/1" do
     test "creates initial state in :dealer_selection phase" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.phase == :dealer_selection
     end
 
     test "creates state with hand_number set to 1" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.hand_number == 1
     end
 
     test "creates state with :finnish variant" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.variant == :finnish
     end
 
     test "creates 4 players" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert map_size(state.players) == 4
       assert Map.has_key?(state.players, :north)
@@ -37,7 +37,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "creates players with correct positions" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.players[:north].position == :north
       assert state.players[:east].position == :east
@@ -46,7 +46,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "creates players with correct team assignments" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # North/South partnership
       assert state.players[:north].team == :north_south
@@ -58,7 +58,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "creates players with empty hands" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.players[:north].hand == []
       assert state.players[:east].hand == []
@@ -67,7 +67,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "creates players as active (not eliminated)" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.players[:north].eliminated? == false
       assert state.players[:east].eliminated? == false
@@ -76,7 +76,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "creates players with no revealed cards" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.players[:north].revealed_cards == []
       assert state.players[:east].revealed_cards == []
@@ -85,7 +85,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "creates players with zero tricks won" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.players[:north].tricks_won == 0
       assert state.players[:east].tricks_won == 0
@@ -94,73 +94,73 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "initializes current_dealer as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.current_dealer == nil
     end
 
     test "initializes current_turn as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.current_turn == nil
     end
 
     test "initializes deck as empty list" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.deck == []
     end
 
     test "initializes discarded_cards as empty list" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.discarded_cards == []
     end
 
     test "initializes bids as empty list" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.bids == []
     end
 
     test "initializes highest_bid as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.highest_bid == nil
     end
 
     test "initializes bidding_team as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.bidding_team == nil
     end
 
     test "initializes trump_suit as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.trump_suit == nil
     end
 
     test "initializes tricks as empty list" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.tricks == []
     end
 
     test "initializes current_trick as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.current_trick == nil
     end
 
     test "initializes trick_number to 0" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.trick_number == 0
     end
 
     test "initializes hand_points with both teams at 0" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.hand_points == %{north_south: 0, east_west: 0}
       assert state.hand_points[:north_south] == 0
@@ -168,7 +168,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "initializes cumulative_scores with both teams at 0" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.cumulative_scores == %{north_south: 0, east_west: 0}
       assert state.cumulative_scores[:north_south] == 0
@@ -176,19 +176,19 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "initializes winner as nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.winner == nil
     end
 
     test "initializes events as empty list" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.events == []
     end
 
     test "initializes config with default values" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.config.min_bid == 6
       assert state.config.max_bid == 14
@@ -199,19 +199,19 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "initializes cache as empty map" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.cache == %{}
     end
 
     test "creates valid GameState struct" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert %GameStateStruct{} = state
     end
 
     test "all players have valid Player structs" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert %Player{} = state.players[:north]
       assert %Player{} = state.players[:east]
@@ -220,9 +220,43 @@ defmodule Pidro.Core.GameStateTest do
     end
   end
 
+  describe "new/1 chance stream" do
+    test "builds a chance value from the seed" do
+      assert {:exsss, _algorithm_state} = GameState.new(seed: 1).chance
+    end
+
+    test "the same seed gives the same state" do
+      assert GameState.new(seed: 42) == GameState.new(seed: 42)
+    end
+
+    test "different seeds give different chance values" do
+      refute GameState.new(seed: 42).chance == GameState.new(seed: 43).chance
+    end
+
+    test "accepts a seed triple" do
+      assert GameState.new(seed: {1, 2, 3}) == GameState.new(seed: {1, 2, 3})
+      refute GameState.new(seed: {1, 2, 3}).chance == GameState.new(seed: {1, 2, 4}).chance
+    end
+
+    test "raises without a seed rather than choosing one" do
+      assert_raise KeyError, fn -> GameState.new([]) end
+    end
+
+    test "there is no zero-arity constructor" do
+      assert Code.ensure_loaded?(GameState)
+      refute function_exported?(GameState, :new, 0)
+    end
+
+    test "the chance value is plain data that survives a binary round trip" do
+      state = GameState.new(seed: 1)
+
+      assert state |> :erlang.term_to_binary() |> :erlang.binary_to_term() == state
+    end
+  end
+
   describe "update/3" do
     test "updates phase field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :dealing)
 
@@ -230,7 +264,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates phase through all game phases" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       assert state.phase == :dealer_selection
 
       state = GameState.update(state, :phase, :dealing)
@@ -259,7 +293,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates current_dealer field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :current_dealer, :north)
 
@@ -267,7 +301,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates current_dealer to all valid positions" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :current_dealer, :north)
       assert state.current_dealer == :north
@@ -283,7 +317,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates current_turn field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :current_turn, :east)
 
@@ -291,7 +325,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates trump_suit field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :trump_suit, :hearts)
 
@@ -299,7 +333,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates trump_suit to all valid suits" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :trump_suit, :hearts)
       assert state.trump_suit == :hearts
@@ -315,7 +349,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates hand_number field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :hand_number, 2)
 
@@ -323,7 +357,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates trick_number field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :trick_number, 3)
 
@@ -331,7 +365,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates bidding_team field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :bidding_team, :north_south)
 
@@ -339,7 +373,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates highest_bid field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :highest_bid, {:north, 10})
 
@@ -347,7 +381,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates winner field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :winner, :east_west)
 
@@ -355,7 +389,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates deck field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       cards = [{14, :hearts}, {13, :hearts}]
 
       state = GameState.update(state, :deck, cards)
@@ -364,7 +398,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates discarded_cards field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       cards = [{7, :clubs}, {8, :spades}]
 
       state = GameState.update(state, :discarded_cards, cards)
@@ -373,7 +407,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates bids field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       bids = [%{position: :north, amount: 8}, %{position: :east, amount: 10}]
 
       state = GameState.update(state, :bids, bids)
@@ -382,7 +416,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates tricks field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       tricks = [%{number: 1, leader: :north, plays: [], winner: nil, points: 0}]
 
       state = GameState.update(state, :tricks, tricks)
@@ -391,7 +425,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates current_trick field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       trick = %{number: 1, leader: :north, plays: [], winner: nil, points: 0}
 
       state = GameState.update(state, :current_trick, trick)
@@ -400,7 +434,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates hand_points field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       points = %{north_south: 10, east_west: 4}
 
       state = GameState.update(state, :hand_points, points)
@@ -411,7 +445,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates cumulative_scores field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       scores = %{north_south: 35, east_west: 27}
 
       state = GameState.update(state, :cumulative_scores, scores)
@@ -422,7 +456,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates events field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       events = [{:dealer_selected, :north, {14, :hearts}}]
 
       state = GameState.update(state, :events, events)
@@ -431,7 +465,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates config field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       new_config = %{min_bid: 7, max_bid: 14, winning_score: 52}
 
       state = GameState.update(state, :config, new_config)
@@ -440,7 +474,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates cache field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       cache_data = %{some_key: "some_value"}
 
       state = GameState.update(state, :cache, cache_data)
@@ -449,7 +483,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updates players field with modified player map" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       updated_players = Map.put(state.players, :north, %{state.players[:north] | tricks_won: 2})
 
       state = GameState.update(state, :players, updated_players)
@@ -458,7 +492,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "returns new GameState struct (immutability)" do
-      original = GameState.new()
+      original = GameState.new(seed: 1)
       updated = GameState.update(original, :phase, :dealing)
 
       assert original.phase == :dealer_selection
@@ -467,7 +501,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "preserves other fields when updating one field" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       original_hand_number = state.hand_number
       original_players = state.players
 
@@ -479,7 +513,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can chain multiple updates" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state =
         state
@@ -493,7 +527,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update same field multiple times" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :trick_number, 1)
       assert state.trick_number == 1
@@ -506,7 +540,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update field to nil" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       state = GameState.update(state, :current_dealer, :north)
 
       state = GameState.update(state, :current_dealer, nil)
@@ -515,7 +549,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update field back to original value" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       state = GameState.update(state, :phase, :dealing)
 
       state = GameState.update(state, :phase, :dealer_selection)
@@ -526,7 +560,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "update/3 edge cases" do
     test "can update to empty lists" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       state = GameState.update(state, :events, [{:dealer_selected, :north, {14, :hearts}}])
 
       state = GameState.update(state, :events, [])
@@ -535,7 +569,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update to empty maps" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       state = GameState.update(state, :cache, %{key: "value"})
 
       state = GameState.update(state, :cache, %{})
@@ -544,7 +578,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update scores to negative values (when allowed)" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :cumulative_scores, %{north_south: -5, east_west: 10})
 
@@ -553,7 +587,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update hand_number to higher values" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :hand_number, 15)
 
@@ -561,7 +595,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update trick_number through all possible tricks (0-6)" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       for trick_num <- 0..6 do
         state = GameState.update(state, :trick_number, trick_num)
@@ -570,7 +604,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "preserves struct type after update" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :dealing)
 
@@ -578,7 +612,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "update with atom key works correctly" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :bidding)
 
@@ -588,7 +622,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "update/3 with nested player updates" do
     test "can update individual player in players map" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       north_player = state.players[:north]
       updated_north = %{north_player | tricks_won: 3}
       updated_players = Map.put(state.players, :north, updated_north)
@@ -600,7 +634,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update player hand through players map" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       north_player = state.players[:north]
       cards = [{14, :hearts}, {13, :hearts}]
       updated_north = %{north_player | hand: cards}
@@ -613,7 +647,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can eliminate player through players map" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       north_player = state.players[:north]
       updated_north = %{north_player | eliminated?: true}
       updated_players = Map.put(state.players, :north, updated_north)
@@ -625,7 +659,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "multiple player updates preserve independence" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Update north player
       north_player = state.players[:north]
@@ -648,7 +682,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "update/3 invalid updates" do
     test "raises FunctionClauseError when key is not an atom" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert_raise FunctionClauseError, fn ->
         GameState.update(state, "phase", :dealing)
@@ -674,8 +708,8 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "GameState immutability" do
     test "new/0 returns structs with equal values" do
-      state1 = GameState.new()
-      state2 = GameState.new()
+      state1 = GameState.new(seed: 1)
+      state2 = GameState.new(seed: 1)
 
       # They have equal values
       assert state1.phase == state2.phase
@@ -683,7 +717,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "update returns new struct, original unchanged" do
-      original = GameState.new()
+      original = GameState.new(seed: 1)
       updated = GameState.update(original, :phase, :dealing)
 
       assert original.phase == :dealer_selection
@@ -691,7 +725,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "multiple updates create new structs each time" do
-      state1 = GameState.new()
+      state1 = GameState.new(seed: 1)
       state2 = GameState.update(state1, :phase, :dealing)
       state3 = GameState.update(state2, :current_dealer, :north)
 
@@ -710,7 +744,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "updating nested players doesn't affect original" do
-      original = GameState.new()
+      original = GameState.new(seed: 1)
       north_player = original.players[:north]
       updated_north = %{north_player | tricks_won: 5}
       updated_players = Map.put(original.players, :north, updated_north)
@@ -723,7 +757,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "typical game flow with GameState" do
     test "can progress through dealer selection to dealing" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       assert state.phase == :dealer_selection
 
       # Select dealer
@@ -735,7 +769,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can progress through bidding phase" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Move to bidding
       state = GameState.update(state, :phase, :bidding)
@@ -751,7 +785,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can declare trump and move to discarding" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :declaring)
       state = GameState.update(state, :trump_suit, :hearts)
@@ -762,7 +796,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can progress to playing phase" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :playing)
       state = GameState.update(state, :trick_number, 1)
@@ -774,7 +808,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can track hand points during play" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :playing)
       state = GameState.update(state, :hand_points, %{north_south: 8, east_west: 6})
@@ -784,7 +818,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can complete game with winner" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :phase, :scoring)
       state = GameState.update(state, :cumulative_scores, %{north_south: 62, east_west: 45})
@@ -797,7 +831,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can simulate multiple hands" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       assert state.hand_number == 1
 
       # Complete first hand
@@ -817,7 +851,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "Finnish Pidro specific scenarios" do
     test "can track player going cold" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       north_player = state.players[:north]
       revealed = [{7, :clubs}, {8, :spades}]
       updated_north = %{north_player | eliminated?: true, revealed_cards: revealed}
@@ -830,7 +864,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "supports all trump suits for Finnish variant" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Hearts trump
       state = GameState.update(state, :trump_suit, :hearts)
@@ -850,7 +884,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can handle negative scores when allowed" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       assert state.config.allow_negative_scores == true
 
       # Team fails to make bid
@@ -861,7 +895,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "config has Finnish Pidro default values" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert state.config.initial_deal_count == 9
       assert state.config.final_hand_size == 6
@@ -873,7 +907,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "event sourcing support" do
     test "can record dealer selection event" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       event = {:dealer_selected, :north, {14, :hearts}}
 
       state = GameState.update(state, :events, [event])
@@ -882,7 +916,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can accumulate multiple events" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       event1 = {:dealer_selected, :north, {14, :hearts}}
       event2 = {:cards_dealt, %{north: [{13, :hearts}], east: [{12, :hearts}]}}
       event3 = {:bid_made, :north, 10}
@@ -898,7 +932,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "events list maintains order" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       event1 = {:dealer_selected, :north, {14, :hearts}}
       event2 = {:bid_made, :north, 10}
       event3 = {:trump_declared, :hearts}
@@ -911,7 +945,7 @@ defmodule Pidro.Core.GameStateTest do
 
   describe "cache field usage" do
     test "can store computed values in cache" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       state = GameState.update(state, :cache, %{active_players: [:north, :east, :south, :west]})
 
@@ -919,7 +953,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "can update cache with multiple keys" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       cache = %{
         active_players: [:north, :south],
@@ -935,7 +969,7 @@ defmodule Pidro.Core.GameStateTest do
     end
 
     test "cache can be cleared" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       state = GameState.update(state, :cache, %{key: "value"})
 
       state = GameState.update(state, :cache, %{})

@@ -18,7 +18,7 @@ defmodule Pidro.ServerTest do
     end
 
     test "starts server with initial state" do
-      initial_state = %GameStateType{GameState.new() | hand_number: 5}
+      initial_state = %GameStateType{GameState.new(seed: 1) | hand_number: 5}
       assert {:ok, pid} = Server.start_link(initial_state: initial_state)
       state = Server.get_state(pid)
       assert state.hand_number == 5
@@ -98,7 +98,7 @@ defmodule Pidro.ServerTest do
     end
 
     test "briefly exposes the authoritative dealer pool after a manual rob" do
-      base = GameState.new()
+      base = GameState.new(seed: 1)
       dealer_hand = [{14, :diamonds}, {5, :hearts}, {4, :diamonds}]
       stock = [{5, :diamonds}, {13, :diamonds}, {12, :diamonds}, {3, :clubs}]
       dealer = %{base.players.north | hand: dealer_hand}
@@ -247,7 +247,12 @@ defmodule Pidro.ServerTest do
       {:ok, pid} = Server.start_link()
 
       # Fast-forward to complete state
-      complete_state = %GameStateType{GameState.new() | phase: :complete, winner: :north_south}
+      complete_state = %GameStateType{
+        GameState.new(seed: 1)
+        | phase: :complete,
+          winner: :north_south
+      }
+
       :sys.replace_state(pid, fn state -> %{state | game_state: complete_state} end)
 
       assert Server.game_over?(pid)
@@ -264,7 +269,12 @@ defmodule Pidro.ServerTest do
       {:ok, pid} = Server.start_link()
 
       # Set to complete state with winner
-      complete_state = %GameStateType{GameState.new() | phase: :complete, winner: :north_south}
+      complete_state = %GameStateType{
+        GameState.new(seed: 1)
+        | phase: :complete,
+          winner: :north_south
+      }
+
       :sys.replace_state(pid, fn state -> %{state | game_state: complete_state} end)
 
       assert {:ok, :north_south} = Server.winner(pid)
@@ -332,6 +342,63 @@ defmodule Pidro.ServerTest do
     end
   end
 
+  describe "chance boundary" do
+    test "two fresh servers deal different first hands" do
+      assert first_hands(start_and_deal()) != first_hands(start_and_deal())
+    end
+
+    test "a seeded server deals the same first hand every time" do
+      assert first_hands(start_and_deal(seed: 7)) == first_hands(start_and_deal(seed: 7))
+    end
+
+    test "a seed does not leak into an explicitly supplied state" do
+      supplied = GameState.new(seed: 99)
+
+      {:ok, pid} = Server.start_link(initial_state: supplied, seed: 7)
+
+      assert Server.get_state(pid).chance == supplied.chance
+    end
+
+    test "reset reproduces the game on a seeded server" do
+      {:ok, pid} = Server.start_link(seed: 7)
+
+      {:ok, _} = Server.apply_action(pid, :north, :select_dealer)
+      before_reset = Server.get_state(pid)
+
+      :ok = Server.reset(pid)
+      {:ok, _} = Server.apply_action(pid, :north, :select_dealer)
+
+      assert Server.get_state(pid).deck == before_reset.deck
+      assert Server.get_state(pid).dealer_selection_cuts == before_reset.dealer_selection_cuts
+    end
+
+    test "reset starts a different game on an unseeded server" do
+      {:ok, pid} = Server.start_link()
+
+      {:ok, _} = Server.apply_action(pid, :north, :select_dealer)
+      before_reset = Server.get_state(pid)
+
+      :ok = Server.reset(pid)
+      {:ok, _} = Server.apply_action(pid, :north, :select_dealer)
+
+      assert Server.get_state(pid).deck != before_reset.deck
+    end
+
+    test "the engine ignores what the calling process has drawn from :rand" do
+      :rand.seed(:exsss, {1, 2, 3})
+      {:ok, pid} = Server.start_link(seed: 7)
+      {:ok, _} = Server.apply_action(pid, :north, :select_dealer)
+      seeded_caller = Server.get_state(pid).deck
+
+      :rand.seed(:exsss, {9, 9, 9})
+      _ = Enum.shuffle(1..100)
+      {:ok, other_pid} = Server.start_link(seed: 7)
+      {:ok, _} = Server.apply_action(other_pid, :north, :select_dealer)
+
+      assert Server.get_state(other_pid).deck == seeded_caller
+    end
+  end
+
   describe "process isolation" do
     test "multiple servers maintain independent state" do
       {:ok, pid1} = Server.start_link(game_id: "game1")
@@ -378,5 +445,21 @@ defmodule Pidro.ServerTest do
       state = Server.get_state(pid2)
       assert %GameStateType{} = state
     end
+  end
+
+  # Starts a server, runs the cut ceremony, and waits out the presentation
+  # window so the first hand is actually dealt.
+  defp start_and_deal(opts \\ []) do
+    {:ok, pid} = Server.start_link(Keyword.put_new(opts, :dealer_selection_delay_ms, 20))
+    {:ok, _cut_state} = Server.apply_action(pid, :north, :select_dealer)
+    Process.sleep(80)
+
+    state = Server.get_state(pid)
+    assert state.phase == :bidding, "expected the dealer-selection window to have elapsed"
+    state
+  end
+
+  defp first_hands(state) do
+    Map.new(state.players, fn {position, player} -> {position, player.hand} end)
   end
 end

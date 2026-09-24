@@ -30,12 +30,12 @@ defmodule Pidro.IEx do
   - `show_event_log/1` - Display chronological event log
   - `show_legal_actions/2` - Display available actions for a position
   - `step/3` - Apply an action and pretty print result
-  - `new_game/0` - Create a new game with dealer selection complete
+  - `new_game/0,1` - Create a new game with dealer selection complete
   - `demo_game/0` - Run a partial game demonstration
   - `full_demo_game/0` - Play complete game to 62 points
   """
 
-  alias Pidro.Core.{Types, Card, GameState, Deck}
+  alias Pidro.Core.{Card, GameState, Types}
   alias Pidro.Game.{Engine, Dealing}
 
   import IO.ANSI
@@ -49,6 +49,12 @@ defmodule Pidro.IEx do
 
   This is the recommended starting point for interactive play, as it skips
   the automatic dealer selection step and puts you right into a ready-to-play state.
+
+  ## Parameters
+
+  - `seed` - Seed for the game's chance stream. Defaults to a fresh one, so
+    successive calls give different games; pass a fixed integer to get the
+    same deal every time.
 
   ## Returns
 
@@ -65,18 +71,15 @@ defmodule Pidro.IEx do
       true
       iex> state.phase
       :bidding
+
+      iex> Pidro.IEx.new_game(42) == Pidro.IEx.new_game(42)
+      true
   """
-  @spec new_game() :: Types.GameState.t()
-  def new_game do
-    state = GameState.new()
+  @spec new_game(Pidro.Core.Chance.seed()) :: Types.GameState.t()
+  def new_game(seed \\ :erlang.unique_integer([:positive])) do
+    state = GameState.new(seed: seed)
 
-    # Create a shuffled deck
-    deck = Deck.new()
-
-    # Set the deck in state
-    state = GameState.update(state, :deck, deck.cards)
-
-    # Select dealer
+    # Select dealer; this also shuffles the deck from the state's chance stream
     {:ok, state} = Dealing.select_dealer(state)
 
     # Transition to dealing phase

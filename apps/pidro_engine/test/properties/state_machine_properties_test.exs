@@ -35,7 +35,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
   def game_state_with_phase(phase_value) do
     StreamData.constant(phase_value)
     |> StreamData.map(fn phase ->
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       %{state | phase: phase}
     end)
   end
@@ -46,7 +46,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
   def game_state_with_scores do
     StreamData.tuple({StreamData.integer(0..70), StreamData.integer(0..70)})
     |> StreamData.map(fn {ns_score, ew_score} ->
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       %{state | cumulative_scores: %{north_south: ns_score, east_west: ew_score}, phase: :scoring}
     end)
   end
@@ -180,7 +180,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "next_phase returns correct phase for standard progression" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Test standard linear progression
       assert StateMachine.next_phase(:dealer_selection, state) == :dealing
@@ -203,7 +203,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
       winning_score = 62
 
       state = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | cumulative_scores: %{north_south: ns_score, east_west: ew_score},
           phase: :scoring
       }
@@ -222,7 +222,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "complete phase has no next phase" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = %{GameState.new() | phase: :complete}
+      state = %{GameState.new(seed: 1) | phase: :complete}
 
       result = StateMachine.next_phase(:complete, state)
 
@@ -260,14 +260,14 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
   property "bidding phase requires completion before moving to declaring" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       # State with no bids
-      state_no_bids = %{GameState.new() | phase: :bidding, highest_bid: nil, bids: []}
+      state_no_bids = %{GameState.new(seed: 1) | phase: :bidding, highest_bid: nil, bids: []}
 
       refute StateMachine.can_transition_from_bidding?(state_no_bids),
              "Cannot transition from bidding when no bids made"
 
       # State with bids but no highest_bid
       state_incomplete = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           highest_bid: nil,
           bids: [%Types.Bid{position: :north, amount: 10}]
@@ -278,7 +278,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
       # State with complete bidding
       state_complete = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :bidding,
           highest_bid: {:north, 10},
           bids: [%Types.Bid{position: :north, amount: 10}]
@@ -344,7 +344,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
         end)
         |> Enum.into(%{})
 
-      state = %{GameState.new() | players: players, phase: :second_deal}
+      state = %{GameState.new(seed: 1) | players: players, phase: :second_deal}
 
       result = StateMachine.can_transition_from_second_deal?(state)
 
@@ -380,7 +380,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
         end)
         |> Enum.into(%{})
 
-      state = %{GameState.new() | players: players, phase: :playing}
+      state = %{GameState.new(seed: 1) | players: players, phase: :playing}
 
       result = StateMachine.can_transition_from_playing?(state)
 
@@ -398,10 +398,10 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
   # Property: Game State is Immutable - Operations Return New State
   # =============================================================================
 
-  property "GameState.new() always creates independent state instances" do
+  property "GameState.new(seed: 1) always creates independent state instances" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state1 = GameState.new()
-      state2 = GameState.new()
+      state1 = GameState.new(seed: 1)
+      state2 = GameState.new(seed: 1)
 
       # States should be equal in value
       assert state1.phase == state2.phase
@@ -425,7 +425,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
             phase <- phase(),
             max_runs: 100
           ) do
-      original_state = GameState.new()
+      original_state = GameState.new(seed: 1)
       original_phase = original_state.phase
 
       updated_state = GameState.update(original_state, :phase, phase)
@@ -451,7 +451,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
             pos <- position(),
             max_runs: 100
           ) do
-      original_state = GameState.new()
+      original_state = GameState.new(seed: 1)
       original_player = original_state.players[pos]
       original_hand = original_player.hand
 
@@ -472,7 +472,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "state updates are composable and maintain immutability" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state0 = GameState.new()
+      state0 = GameState.new(seed: 1)
 
       # Chain multiple updates
       state1 = GameState.update(state0, :phase, :dealing)
@@ -504,7 +504,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "every game state has exactly 4 players" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       assert map_size(state.players) == 4,
              "Game should have exactly 4 players, got #{map_size(state.players)}"
@@ -519,7 +519,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "player positions match their keys in the map" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       for {position, player} <- state.players do
         assert player.position == position,
@@ -530,7 +530,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "no player position can be nil or missing" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       for position <- Types.all_positions() do
         assert state.players[position] != nil,
@@ -548,7 +548,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "players are organized into exactly two teams" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       teams =
         state.players
@@ -564,7 +564,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "each team has exactly 2 players" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       north_south_players =
         state.players
@@ -586,7 +586,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "team assignments match expected positions" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # North/South team
       assert state.players[:north].team == :north_south,
@@ -609,7 +609,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
             pos <- position(),
             max_runs: 100
           ) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       expected_team = Types.position_to_team(pos)
       actual_team = state.players[pos].team
@@ -646,7 +646,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
             pos <- position(),
             max_runs: 100
           ) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       partner_pos = Types.partner_position(pos)
 
@@ -673,7 +673,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
   property "positions alternate between teams clockwise" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Going clockwise: North -> East -> South -> West -> North
       # Teams alternate: NS -> EW -> NS -> EW -> NS
@@ -721,7 +721,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
   property "phase transition guards are consistent with valid transitions" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       # If a guard says we can transition, the transition should be valid
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       # Test dealer_selection guard
       state_with_dealer = GameState.update(state, :current_dealer, :north)
@@ -736,13 +736,13 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
   property "declaring phase requires trump declaration" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       # State without trump
-      state_no_trump = %{GameState.new() | phase: :declaring, trump_suit: nil}
+      state_no_trump = %{GameState.new(seed: 1) | phase: :declaring, trump_suit: nil}
 
       refute StateMachine.can_transition_from_declaring?(state_no_trump),
              "Cannot transition from declaring without trump suit"
 
       # State with trump
-      state_with_trump = %{GameState.new() | phase: :declaring, trump_suit: :hearts}
+      state_with_trump = %{GameState.new(seed: 1) | phase: :declaring, trump_suit: :hearts}
 
       assert StateMachine.can_transition_from_declaring?(state_with_trump),
              "Can transition from declaring with trump suit set"
@@ -753,7 +753,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
       # State with no hand points
       state_no_points = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :scoring,
           hand_points: %{north_south: 0, east_west: 0}
       }
@@ -763,7 +763,7 @@ defmodule Pidro.Properties.StateMachinePropertiesTest do
 
       # State with hand points
       state_with_points = %{
-        GameState.new()
+        GameState.new(seed: 1)
         | phase: :scoring,
           hand_points: %{north_south: 8, east_west: 6}
       }

@@ -87,9 +87,13 @@ defmodule Pidro.Bot.SelfPlay do
   def play_game(policies, opts \\ []) do
     seed = Keyword.get(opts, :seed, 0)
     max_actions = Keyword.get(opts, :max_actions, @default_max_actions)
+    # Seeds the *policy* RNG only: `RandomPolicy` draws from the process
+    # dictionary, and it does so outside `apply_action/3`. The engine takes its
+    # randomness from `GameState.new(seed: ...)` below and nothing it does
+    # depends on this line.
     :rand.seed(:exsss, {seed, 0x5EED, 0xB07})
 
-    {:ok, cut} = Dealing.select_dealer(GameState.new())
+    {:ok, cut} = Dealing.select_dealer(GameState.new(seed: seed))
     {:ok, state} = Engine.advance_from_dealer_selection(cut)
 
     acc = %{actions: 0, decision_us: %{north_south: [], east_west: []}}

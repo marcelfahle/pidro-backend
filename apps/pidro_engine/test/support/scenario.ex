@@ -102,7 +102,7 @@ defmodule Pidro.Test.Scenario do
         [{leader, _} | _] -> %Trick{number: length(completed) + 1, leader: leader, plays: trick}
       end
 
-    base = GameState.new()
+    base = GameState.new(seed: 1)
 
     players =
       Map.new(base.players, fn {pos, player} ->
@@ -162,7 +162,7 @@ defmodule Pidro.Test.Scenario do
       |> List.last()
 
     state = %{
-      with_hand(GameState.new(), me, Keyword.fetch!(opts, :hand))
+      with_hand(GameState.new(seed: 1), me, Keyword.fetch!(opts, :hand))
       | phase: :bidding,
         current_dealer: dealer,
         current_turn: me,
@@ -184,7 +184,7 @@ defmodule Pidro.Test.Scenario do
     amount = Keyword.get(opts, :amount, 8)
 
     %{
-      with_hand(GameState.new(), me, Keyword.fetch!(opts, :hand))
+      with_hand(GameState.new(seed: 1), me, Keyword.fetch!(opts, :hand))
       | phase: :declaring,
         current_dealer: Keyword.get(opts, :dealer, previous(me)),
         current_turn: me,

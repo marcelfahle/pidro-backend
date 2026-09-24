@@ -72,7 +72,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
                   :complete
                 ])
             ) do
-        state = %{GameState.new() | phase: phase}
+        state = %{GameState.new(seed: 1) | phase: phase}
         binary = Binary.to_binary(state)
         assert {:ok, decoded_state} = Binary.from_binary(binary)
         assert decoded_state.phase == state.phase
@@ -114,7 +114,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
                   :bidding
                 ])
             ) do
-        state = %{GameState.new() | phase: phase}
+        state = %{GameState.new(seed: 1) | phase: phase}
         hash1 = Perf.hash_state(state)
         hash2 = Perf.hash_state(state)
         assert hash1 == hash2
@@ -123,14 +123,14 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
     end
 
     property "equal states produce equal hashes" do
-      state1 = GameState.new()
-      state2 = GameState.new()
+      state1 = GameState.new(seed: 1)
+      state2 = GameState.new(seed: 1)
       assert Perf.hash_state(state1) == Perf.hash_state(state2)
     end
 
     property "different phases produce different hashes" do
-      state1 = %{GameState.new() | phase: :dealer_selection}
-      state2 = %{GameState.new() | phase: :bidding}
+      state1 = %{GameState.new(seed: 1) | phase: :dealer_selection}
+      state2 = %{GameState.new(seed: 1) | phase: :bidding}
       # Not guaranteed to be different, but very likely
       # This tests that phase affects the hash
       assert Perf.hash_state(state1) != Perf.hash_state(state2)
@@ -145,28 +145,47 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
                   :bidding
                 ])
             ) do
-        state = %{GameState.new() | phase: phase}
+        state = %{GameState.new(seed: 1) | phase: phase}
         assert Perf.states_equal?(state, state)
       end
     end
 
     property "states_equal? is symmetric" do
-      state1 = GameState.new()
-      state2 = GameState.new()
+      state1 = GameState.new(seed: 1)
+      state2 = GameState.new(seed: 1)
       assert Perf.states_equal?(state1, state2) == Perf.states_equal?(state2, state1)
     end
 
     property "cache_key_for_moves is deterministic" do
       check all(position <- member_of([:north, :east, :south, :west])) do
-        state = GameState.new()
+        state = GameState.new(seed: 1)
         key1 = Perf.cache_key_for_moves(state, position)
         key2 = Perf.cache_key_for_moves(state, position)
         assert key1 == key2
       end
     end
 
+    property "the chance stream is outside the hashed position" do
+      # `hash_state/1` and `cache_key_for_moves/2` are allow-lists over the
+      # fields that make a position, and the chance stream is not one of them:
+      # two states that differ only in what they will deal next are the same
+      # position to a cache. Asserted rather than assumed, because a cache that
+      # keyed on chance would quietly stop hitting.
+      state = GameState.new(seed: 1)
+      restreamed = %{state | chance: GameState.new(seed: 2).chance}
+
+      refute state.chance == restreamed.chance
+      assert Perf.hash_state(state) == Perf.hash_state(restreamed)
+      assert Perf.states_equal?(state, restreamed)
+
+      for position <- [:north, :east, :south, :west] do
+        assert Perf.cache_key_for_moves(state, position) ==
+                 Perf.cache_key_for_moves(restreamed, position)
+      end
+    end
+
     property "estimate_size returns positive value" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       size = Perf.estimate_size(state)
       assert size > 0
       assert is_integer(size)
@@ -204,7 +223,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
     end
 
     test "hashing a state completes quickly" do
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       {time_us, _result} =
         :timer.tc(fn ->
@@ -216,8 +235,8 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
     end
 
     test "comparing states for equality completes quickly" do
-      state1 = GameState.new()
-      state2 = GameState.new()
+      state1 = GameState.new(seed: 1)
+      state2 = GameState.new(seed: 1)
 
       {time_us, _result} =
         :timer.tc(fn ->
@@ -231,7 +250,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
     @tag :skip
     test "full state binary encoding completes quickly" do
       # TODO: Skipped pending full state encoding/decoding fix
-      state = GameState.new()
+      state = GameState.new(seed: 1)
 
       {time_us, _result} =
         :timer.tc(fn ->
@@ -245,7 +264,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
     @tag :skip
     test "full state binary decoding completes quickly" do
       # TODO: Skipped pending full state encoding/decoding fix
-      state = GameState.new()
+      state = GameState.new(seed: 1)
       binary = Binary.to_binary(state)
 
       {time_us, _result} =
@@ -343,7 +362,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
   # =============================================================================
 
   defp create_test_state do
-    state = GameState.new()
+    state = GameState.new(seed: 1)
     {:ok, state} = Dealing.select_dealer(state)
     state = %{state | phase: :bidding, current_turn: :north}
     state
