@@ -1,6 +1,7 @@
 defmodule Pidro.Game.PlayTrickLeaderTest do
   use ExUnit.Case, async: true
-  alias Pidro.Core.Types.{Player, Trick, GameState}
+  alias Pidro.Core.GameState
+  alias Pidro.Core.Types.{Player, Trick}
   alias Pidro.Game.Play
 
   describe "setting next trick leader" do
@@ -40,17 +41,18 @@ defmodule Pidro.Game.PlayTrickLeaderTest do
         ]
       }
 
-      state = %GameState{
-        phase: :playing,
-        trump_suit: trump,
-        # irrelevant for this test, will be updated
-        current_turn: :west,
-        players: players,
-        current_trick: trick,
-        trick_number: 1,
-        tricks: [],
-        hand_points: %{north_south: 0, east_west: 0},
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | phase: :playing,
+          trump_suit: trump,
+          # irrelevant for this test, will be updated
+          current_turn: :west,
+          players: players,
+          current_trick: trick,
+          trick_number: 1,
+          tricks: [],
+          hand_points: %{north_south: 0, east_west: 0},
+          events: []
       }
 
       # Calling complete_trick triggers set_next_trick_leader

@@ -737,8 +737,10 @@ card = Pidro.Core.Card.new(14, :hearts)
 # Check if card is trump
 Pidro.Core.Card.is_trump?(card, :hearts)
 
-# Create and shuffle a deck
-deck = Pidro.Core.Deck.new() |> Pidro.Core.Deck.shuffle()
+# Shuffle a deck from an explicit chance value (the engine draws from
+# `state.chance`; there is no process-RNG deck constructor)
+{cards, _chance} = Pidro.Core.Chance.shuffle(Pidro.Core.Deck.ordered(), Pidro.Core.Chance.from_seed(1))
+deck = %Pidro.Core.Deck{cards: cards, shuffled?: true}
 
 # Deal cards
 {cards, remaining_deck} = Pidro.Core.Deck.deal_batch(deck, 9)

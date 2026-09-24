@@ -4,7 +4,7 @@ defmodule Pidro.Properties.DeckPropertiesTest do
 
   These tests verify fundamental invariants of deck operations:
   - Deck composition (52 unique cards)
-  - Shuffling preserves all cards
+  - Shuffling through the chance stream preserves all cards
   - Dealing operations maintain deck integrity
   - Immutability of deck operations
   - Edge cases with empty/partial decks
@@ -13,7 +13,7 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Pidro.Core.Deck
+  alias Pidro.Core.{Chance, Deck}
 
   # =============================================================================
   # Generators
@@ -33,20 +33,35 @@ defmodule Pidro.Properties.DeckPropertiesTest do
     StreamData.integer(0..20)
   end
 
+  @doc """
+  Generates a seed for the chance stream a deck is shuffled from.
+  """
+  def seed do
+    StreamData.integer(1..1_000_000)
+  end
+
+  # A deck as the engine builds one: `Deck.ordered/0` permuted by an explicit
+  # chance value. Varying the seed varies the order, without touching the
+  # calling process's RNG.
+  defp shuffled_deck(seed) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
+    %Deck{cards: cards, shuffled?: true}
+  end
+
   # =============================================================================
-  # Property: New Deck Always Has 52 Unique Cards
+  # Property: A Shuffled Deck Always Has 52 Unique Cards
   # =============================================================================
 
-  property "new deck always contains exactly 52 cards" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+  property "a shuffled deck always contains exactly 52 cards" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       assert Deck.remaining(deck) == 52
     end
   end
 
-  property "new deck always contains 52 unique cards" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+  property "a shuffled deck always contains 52 unique cards" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       cards = deck.cards
 
       # All cards should be unique
@@ -56,9 +71,9 @@ defmodule Pidro.Properties.DeckPropertiesTest do
     end
   end
 
-  property "new deck contains all 4 suits with 13 cards each" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+  property "a shuffled deck contains all 4 suits with 13 cards each" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       for suit <- [:hearts, :diamonds, :clubs, :spades] do
         cards_in_suit = Enum.filter(deck.cards, fn {_rank, s} -> s == suit end)
@@ -69,9 +84,9 @@ defmodule Pidro.Properties.DeckPropertiesTest do
     end
   end
 
-  property "new deck contains all ranks 2-14 in each suit" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+  property "a shuffled deck contains all ranks 2-14 in each suit" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       for suit <- [:hearts, :diamonds, :clubs, :spades],
           rank <- 2..14 do
@@ -81,84 +96,71 @@ defmodule Pidro.Properties.DeckPropertiesTest do
     end
   end
 
-  property "new deck is marked as shuffled" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
-      assert deck.shuffled? == true
+  property "a shuffled deck is a permutation of the ordered deck" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
+      assert Enum.sort(deck.cards) == Enum.sort(Deck.ordered())
+    end
+  end
+
+  property "the same seed always produces the same deck" do
+    check all(seed <- seed(), max_runs: 100) do
+      assert shuffled_deck(seed).cards == shuffled_deck(seed).cards
     end
   end
 
   # =============================================================================
-  # Property: Shuffled Deck Contains Same Cards as Original
+  # Property: Shuffling Through the Chance Stream Preserves the Cards
   # =============================================================================
 
-  property "shuffled deck contains same cards as original (order may differ)" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
-      original_cards = Enum.sort(deck.cards)
+  property "a shuffle contains the same cards as its input (order may differ)" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
-      shuffled = Deck.shuffle(deck)
-      shuffled_cards = Enum.sort(shuffled.cards)
+      {cards, _chance} = Chance.shuffle(deck.cards, Chance.from_seed(seed + 1))
 
-      assert original_cards == shuffled_cards,
-             "Shuffled deck should contain same cards as original"
+      assert Enum.sort(cards) == Enum.sort(deck.cards),
+             "A shuffle should contain the same cards as its input"
     end
   end
 
   property "shuffling preserves card count" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
-      original_count = Deck.remaining(deck)
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
-      shuffled = Deck.shuffle(deck)
+      {cards, _chance} = Chance.shuffle(deck.cards, Chance.from_seed(seed + 1))
 
-      assert Deck.remaining(shuffled) == original_count,
-             "Shuffled deck should have same count as original"
+      assert length(cards) == Deck.remaining(deck),
+             "A shuffle should have the same count as its input"
     end
   end
 
-  property "shuffling partial deck preserves remaining cards" do
-    check all(deal_amount <- small_deal_count(), max_runs: 100) do
-      deck = Deck.new()
+  property "shuffling a partial deck preserves the remaining cards" do
+    check all(seed <- seed(), deal_amount <- small_deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       {_dealt, remaining} = Deck.deal_batch(deck, deal_amount)
 
-      original_remaining_cards = Enum.sort(remaining.cards)
-      remaining_count = Deck.remaining(remaining)
+      {cards, _chance} = Chance.shuffle(remaining.cards, Chance.from_seed(seed + 1))
 
-      shuffled = Deck.shuffle(remaining)
-      shuffled_cards = Enum.sort(shuffled.cards)
-
-      assert Deck.remaining(shuffled) == remaining_count
-      assert shuffled_cards == original_remaining_cards
-    end
-  end
-
-  property "shuffling marks deck as shuffled" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
-      shuffled = Deck.shuffle(deck)
-
-      assert shuffled.shuffled? == true
+      assert length(cards) == Deck.remaining(remaining)
+      assert Enum.sort(cards) == Enum.sort(remaining.cards)
     end
   end
 
   property "multiple shuffles preserve all cards" do
-    check all(shuffle_count <- StreamData.integer(1..10), max_runs: 100) do
-      deck = Deck.new()
-      original_cards = Enum.sort(deck.cards)
+    check all(seed <- seed(), shuffle_count <- StreamData.integer(1..10), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
-      # Shuffle multiple times
-      final_deck =
-        Enum.reduce(1..shuffle_count, deck, fn _i, d ->
-          Deck.shuffle(d)
+      {final_cards, _chance} =
+        Enum.reduce(1..shuffle_count, {deck.cards, Chance.from_seed(seed + 1)}, fn _i,
+                                                                                   {cards, chance} ->
+          Chance.shuffle(cards, chance)
         end)
 
-      final_cards = Enum.sort(final_deck.cards)
-
-      assert final_cards == original_cards,
+      assert Enum.sort(final_cards) == Enum.sort(deck.cards),
              "After #{shuffle_count} shuffles, all cards should still be present"
 
-      assert Deck.remaining(final_deck) == 52
+      assert length(final_cards) == 52
     end
   end
 
@@ -167,8 +169,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   # =============================================================================
 
   property "dealing N cards reduces deck size by exactly N (when N <= remaining)" do
-    check all(deal_amount <- deal_count(), max_runs: 200) do
-      deck = Deck.new()
+    check all(seed <- seed(), deal_amount <- deal_count(), max_runs: 200) do
+      deck = shuffled_deck(seed)
       initial_count = Deck.remaining(deck)
 
       {dealt, remaining} = Deck.deal_batch(deck, deal_amount)
@@ -185,8 +187,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "dealt cards plus remaining cards equals original deck" do
-    check all(deal_amount <- small_deal_count(), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), deal_amount <- small_deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       original_cards = Enum.sort(deck.cards)
 
       {dealt, remaining} = Deck.deal_batch(deck, deal_amount)
@@ -198,8 +200,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "dealing 0 cards returns empty list and unchanged deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       {dealt, remaining} = Deck.deal_batch(deck, 0)
 
@@ -210,8 +212,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "dealing all 52 cards empties the deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       {dealt, remaining} = Deck.deal_batch(deck, 52)
 
@@ -223,10 +225,11 @@ defmodule Pidro.Properties.DeckPropertiesTest do
 
   property "sequential dealing maintains card uniqueness" do
     check all(
+            seed <- seed(),
             deal_counts <- StreamData.list_of(small_deal_count(), min_length: 2, max_length: 6),
             max_runs: 100
           ) do
-      deck = Deck.new()
+      deck = shuffled_deck(seed)
 
       # Deal multiple batches
       {all_dealt, _final_deck} =
@@ -245,11 +248,12 @@ defmodule Pidro.Properties.DeckPropertiesTest do
 
   property "dealing from deck never duplicates cards" do
     check all(
+            seed <- seed(),
             first_deal <- small_deal_count(),
             second_deal <- small_deal_count(),
             max_runs: 100
           ) do
-      deck = Deck.new()
+      deck = shuffled_deck(seed)
 
       {first_batch, deck2} = Deck.deal_batch(deck, first_deal)
       {second_batch, _deck3} = Deck.deal_batch(deck2, second_deal)
@@ -272,11 +276,12 @@ defmodule Pidro.Properties.DeckPropertiesTest do
 
   property "dealing more cards than available returns only available cards" do
     check all(
+            seed <- seed(),
             initial_deal <- StreamData.integer(0..52),
             excessive_deal <- StreamData.integer(1..100),
             max_runs: 100
           ) do
-      deck = Deck.new()
+      deck = shuffled_deck(seed)
       {_first, remaining} = Deck.deal_batch(deck, initial_deal)
 
       available = Deck.remaining(remaining)
@@ -293,8 +298,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "dealing from empty deck returns empty list" do
-    check all(excessive_count <- deal_count(), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), excessive_count <- deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       {_all_cards, empty_deck} = Deck.deal_batch(deck, 52)
 
       assert Deck.remaining(empty_deck) == 0
@@ -307,8 +312,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "cannot deal negative number of cards (guard clause)" do
-    check all(negative_count <- StreamData.integer(-100..-1), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), negative_count <- StreamData.integer(-100..-1), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       assert_raise FunctionClauseError, fn ->
         Deck.deal_batch(deck, negative_count)
@@ -321,8 +326,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   # =============================================================================
 
   property "dealing from a deck does not mutate the original deck" do
-    check all(deal_amount <- small_deal_count(), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), deal_amount <- small_deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       original_cards = deck.cards
       original_count = Deck.remaining(deck)
 
@@ -337,12 +342,12 @@ defmodule Pidro.Properties.DeckPropertiesTest do
     end
   end
 
-  property "shuffling a deck does not mutate the original deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+  property "shuffling does not mutate the list it was given" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       original_cards = deck.cards
 
-      _shuffled = Deck.shuffle(deck)
+      {_shuffled, _chance} = Chance.shuffle(deck.cards, Chance.from_seed(seed + 1))
 
       # Original deck should be unchanged
       assert deck.cards == original_cards,
@@ -352,17 +357,18 @@ defmodule Pidro.Properties.DeckPropertiesTest do
 
   property "multiple operations on same deck do not interfere" do
     check all(
+            seed <- seed(),
             deal1 <- small_deal_count(),
             deal2 <- small_deal_count(),
             max_runs: 100
           ) do
-      deck = Deck.new()
+      deck = shuffled_deck(seed)
       original_cards = deck.cards
 
       # Perform multiple operations from the same deck
       {dealt1, remaining1} = Deck.deal_batch(deck, deal1)
       {dealt2, remaining2} = Deck.deal_batch(deck, deal2)
-      shuffled = Deck.shuffle(deck)
+      {shuffled, _chance} = Chance.shuffle(deck.cards, Chance.from_seed(seed + 1))
 
       # Original deck should be unchanged
       assert deck.cards == original_cards
@@ -370,7 +376,7 @@ defmodule Pidro.Properties.DeckPropertiesTest do
       # Each operation should have same starting point
       assert length(dealt1) == min(deal1, 52)
       assert length(dealt2) == min(deal2, 52)
-      assert Deck.remaining(shuffled) == 52
+      assert length(shuffled) == 52
 
       # Operations from same starting point should be independent
       assert Deck.remaining(remaining1) == max(0, 52 - deal1)
@@ -380,10 +386,11 @@ defmodule Pidro.Properties.DeckPropertiesTest do
 
   property "chaining operations creates new deck at each step" do
     check all(
+            seed <- seed(),
             deals <- StreamData.list_of(small_deal_count(), min_length: 3, max_length: 5),
             max_runs: 100
           ) do
-      initial_deck = Deck.new()
+      initial_deck = shuffled_deck(seed)
 
       # Chain multiple deals and collect all intermediate decks
       {_final_dealt, all_decks} =
@@ -408,8 +415,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   # =============================================================================
 
   property "draw/2 and deal_batch/2 are equivalent" do
-    check all(deal_amount <- small_deal_count(), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), deal_amount <- small_deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       {dealt, remaining_deal} = Deck.deal_batch(deck, deal_amount)
       {drawn, remaining_draw} = Deck.draw(deck, deal_amount)
@@ -427,8 +434,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   # =============================================================================
 
   property "remaining/1 always equals length of cards list" do
-    check all(deal_amount <- deal_count(), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), deal_amount <- deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       {_dealt, remaining} = Deck.deal_batch(deck, deal_amount)
 
       assert Deck.remaining(remaining) == length(remaining.cards),
@@ -437,8 +444,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "remaining count is never negative" do
-    check all(deal_amount <- deal_count(), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), deal_amount <- deal_count(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       {_dealt, remaining} = Deck.deal_batch(deck, deal_amount)
 
       assert Deck.remaining(remaining) >= 0,
@@ -451,8 +458,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   # =============================================================================
 
   property "dealing exact number of remaining cards empties deck" do
-    check all(initial_deal <- StreamData.integer(0..52), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), initial_deal <- StreamData.integer(0..52), max_runs: 100) do
+      deck = shuffled_deck(seed)
       {_first, partial} = Deck.deal_batch(deck, initial_deal)
 
       remaining_count = Deck.remaining(partial)
@@ -465,8 +472,8 @@ defmodule Pidro.Properties.DeckPropertiesTest do
   end
 
   property "Finnish Pidro standard deal pattern (4 players, 9 cards each)" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal 9 cards to each of 4 players
       {player1, deck2} = Deck.deal_batch(deck, 9)
@@ -490,22 +497,22 @@ defmodule Pidro.Properties.DeckPropertiesTest do
     end
   end
 
-  property "shuffling empty deck is valid" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+  property "shuffling an empty deck is valid" do
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       {_all, empty_deck} = Deck.deal_batch(deck, 52)
 
-      shuffled = Deck.shuffle(empty_deck)
+      {shuffled, chance} = Chance.shuffle(empty_deck.cards, Chance.from_seed(seed + 1))
 
-      assert Deck.remaining(shuffled) == 0
-      assert shuffled.cards == []
-      assert shuffled.shuffled? == true
+      assert shuffled == []
+      # Nothing was drawn, so the stream is handed back unadvanced.
+      assert chance == Chance.from_seed(seed + 1)
     end
   end
 
   property "dealing one card at a time eventually empties deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 20) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 20) do
+      deck = shuffled_deck(seed)
 
       # Deal one card at a time until empty
       final_state =

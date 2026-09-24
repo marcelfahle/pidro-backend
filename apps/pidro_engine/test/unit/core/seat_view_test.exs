@@ -215,6 +215,32 @@ defmodule Pidro.Core.SeatViewTest do
     end
   end
 
+  describe "chance containment" do
+    test "a seat view carries no chance value" do
+      state = mid_hand_state()
+      view = SeatView.for_seat(state, :north)
+
+      refute Map.has_key?(view, :chance)
+      refute state.chance in Map.values(Map.from_struct(view))
+
+      # The view is an allow-list, so the stream cannot appear anywhere in it
+      # — not under another name, and not nested inside a field. The control
+      # below is what makes that assertion mean something: the same search
+      # finds the stream in the state the view was built from.
+      needle = encoded_chance(state.chance)
+
+      assert :binary.match(:erlang.term_to_binary(view), needle) == :nomatch
+      assert :binary.match(:erlang.term_to_binary(state), needle) != :nomatch
+    end
+  end
+
+  # `term_to_binary/1` prefixes a version byte that never recurs inside a
+  # term, so it has to come off before the encoding can be used as a needle.
+  defp encoded_chance(chance) do
+    encoded = :erlang.term_to_binary(chance)
+    binary_part(encoded, 1, byte_size(encoded) - 1)
+  end
+
   describe "killed_cards/1" do
     test "takes the first non-empty entry per seat since the last deal" do
       events = [

@@ -2,9 +2,9 @@ defmodule Pidro.Core.Deck do
   @moduledoc """
   Deck operations for the Pidro game engine.
 
-  This module provides functions for creating, shuffling, and dealing cards
-  from a standard 52-card deck. The deck is represented as a simple list of
-  cards for efficient dealing operations.
+  This module provides functions for building and dealing cards from a
+  standard 52-card deck. The deck is represented as a simple list of cards for
+  efficient dealing operations.
 
   ## Deck Structure
 
@@ -14,21 +14,28 @@ defmodule Pidro.Core.Deck do
 
   ## Operations
 
-  - `new/0` - Creates a new shuffled deck
-  - `shuffle/1` - Shuffles an existing deck
+  - `ordered/0` - The 52 cards in a fixed generation order
   - `deal_batch/2` - Deals a batch of N cards
   - `draw/2` - Draws N cards from the deck
   - `remaining/1` - Returns count of remaining cards
 
+  ## Shuffling
+
+  This module does not shuffle. Shuffling is a draw on the game's explicit
+  chance stream, so it belongs to `Pidro.Core.Chance`, which is the only module
+  in the domain permitted to touch `:rand`:
+
+      {cards, chance} = Pidro.Core.Chance.shuffle(Deck.ordered(), state.chance)
+
   ## Examples
 
       iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
       iex> Deck.remaining(deck)
       52
 
       iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
       iex> {cards, remaining_deck} = Deck.deal_batch(deck, 9)
       iex> length(cards)
       9
@@ -55,37 +62,6 @@ defmodule Pidro.Core.Deck do
   # =============================================================================
   # Deck Creation
   # =============================================================================
-
-  @doc """
-  Creates a new shuffled 52-card deck.
-
-  The deck is automatically shuffled using Erlang's `:rand` module with
-  a uniform distribution algorithm.
-
-  ## Returns
-  A new Deck struct with 52 shuffled cards
-
-  ## Examples
-
-      iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
-      iex> Deck.remaining(deck)
-      52
-
-      iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
-      iex> deck.shuffled?
-      true
-  """
-  @spec new() :: t()
-  def new do
-    shuffled_cards = Enum.shuffle(ordered())
-
-    %__MODULE__{
-      cards: shuffled_cards,
-      shuffled?: true
-    }
-  end
 
   @doc """
   Returns the 52 cards in a fixed generation order, as a bare list.
@@ -122,46 +98,6 @@ defmodule Pidro.Core.Deck do
   end
 
   # =============================================================================
-  # Deck Manipulation
-  # =============================================================================
-
-  @doc """
-  Shuffles the deck using a uniform random distribution.
-
-  This operation randomizes the order of all remaining cards in the deck.
-  Uses Erlang's `:rand.uniform/1` for cryptographically secure shuffling.
-
-  ## Parameters
-  - `deck` - The deck to shuffle
-
-  ## Returns
-  A new Deck struct with cards shuffled
-
-  ## Examples
-
-      iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
-      iex> shuffled = Deck.shuffle(deck)
-      iex> shuffled.shuffled?
-      true
-
-      iex> alias Pidro.Core.Deck
-      iex> {_cards, remaining} = Deck.deal_batch(Deck.new(), 10)
-      iex> Deck.remaining(remaining)
-      42
-      iex> reshuffled = Deck.shuffle(remaining)
-      iex> Deck.remaining(reshuffled)
-      42
-  """
-  @spec shuffle(t()) :: t()
-  def shuffle(%__MODULE__{cards: cards}) do
-    %__MODULE__{
-      cards: Enum.shuffle(cards),
-      shuffled?: true
-    }
-  end
-
-  # =============================================================================
   # Dealing Operations
   # =============================================================================
 
@@ -183,7 +119,7 @@ defmodule Pidro.Core.Deck do
   ## Examples
 
       iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
       iex> {cards, remaining} = Deck.deal_batch(deck, 9)
       iex> length(cards)
       9
@@ -191,7 +127,7 @@ defmodule Pidro.Core.Deck do
       43
 
       iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
       iex> {batch1, deck2} = Deck.deal_batch(deck, 3)
       iex> {batch2, deck3} = Deck.deal_batch(deck2, 3)
       iex> {batch3, deck4} = Deck.deal_batch(deck3, 3)
@@ -237,7 +173,7 @@ defmodule Pidro.Core.Deck do
   ## Examples
 
       iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
       iex> {cards, remaining} = Deck.draw(deck, 5)
       iex> length(cards)
       5
@@ -265,12 +201,13 @@ defmodule Pidro.Core.Deck do
   ## Examples
 
       iex> alias Pidro.Core.Deck
-      iex> deck = Deck.new()
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
       iex> Deck.remaining(deck)
       52
 
       iex> alias Pidro.Core.Deck
-      iex> {_cards, remaining_deck} = Deck.deal_batch(Deck.new(), 36)
+      iex> deck = %Deck{cards: Deck.ordered(), shuffled?: false}
+      iex> {_cards, remaining_deck} = Deck.deal_batch(deck, 36)
       iex> Deck.remaining(remaining_deck)
       16
 

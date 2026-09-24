@@ -453,11 +453,12 @@ defmodule Pidro.Properties.RedealPropertiesTest do
 
         if hand_size > 6 do
           # Create a minimal game state for testing
-          state = %Types.GameState{
-            phase: :playing,
-            trump_suit: trump_suit,
-            players: %{north: %{player | hand: hand}},
-            killed_cards: %{}
+          state = %{
+            GameState.new(seed: 1)
+            | phase: :playing,
+              trump_suit: trump_suit,
+              players: %{north: %{player | hand: hand}},
+              killed_cards: %{}
           }
 
           # Compute kills

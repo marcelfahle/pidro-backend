@@ -1,6 +1,7 @@
 defmodule Pidro.Game.PlayTrickCompletionTest do
   use ExUnit.Case, async: true
-  alias Pidro.Core.Types.{Player, GameState}
+  alias Pidro.Core.GameState
+  alias Pidro.Core.Types.Player
   alias Pidro.Game.Play
 
   describe "trick completion with eliminated players" do
@@ -50,16 +51,17 @@ defmodule Pidro.Game.PlayTrickCompletionTest do
         ]
       }
 
-      state = %GameState{
-        phase: :playing,
-        trump_suit: trump,
-        # Should be South's turn
-        current_turn: :south,
-        players: players,
-        current_trick: current_trick,
-        trick_number: 1,
-        tricks: [],
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | phase: :playing,
+          trump_suit: trump,
+          # Should be South's turn
+          current_turn: :south,
+          players: players,
+          current_trick: current_trick,
+          trick_number: 1,
+          tricks: [],
+          events: []
       }
 
       # Verify the trick is NOT considered complete by attempting to play for South

@@ -15,7 +15,7 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Pidro.Core.Deck
+  alias Pidro.Core.{Chance, Deck}
 
   # =============================================================================
   # Generators
@@ -42,13 +42,27 @@ defmodule Pidro.Properties.DealingPropertiesTest do
     StreamData.member_of([3])
   end
 
+  @doc """
+  Generates a seed for the chance stream a deck is shuffled from.
+  """
+  def seed do
+    StreamData.integer(1..1_000_000)
+  end
+
+  # A deck as the engine builds one: `Deck.ordered/0` permuted by an explicit
+  # chance value, with no draw from the calling process's RNG.
+  defp shuffled_deck(seed) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
+    %Deck{cards: cards, shuffled?: true}
+  end
+
   # =============================================================================
   # Property: Initial Deal Gives Exactly 9 Cards to Each Player
   # =============================================================================
 
   property "initial deal gives exactly 9 cards to each player" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal 9 cards to each of 4 players (simulating initial deal)
       {player1_hand, deck2} = Deck.deal_batch(deck, 9)
@@ -84,8 +98,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "all dealt cards are unique across all players" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal 9 cards to each of 4 players
       {player1_hand, deck2} = Deck.deal_batch(deck, 9)
@@ -127,8 +141,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealt cards plus remaining cards equals full deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
       original_cards = Enum.sort(deck.cards)
 
       # Deal to 4 players
@@ -156,8 +170,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "initial deal distributes cards in batches of 3" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Simulate dealing in batches of 3 to each player (3 rounds)
       # Round 1: 3 cards to each player
@@ -217,8 +231,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealing in batches of 3 maintains card uniqueness" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal in batches of 3 to simulate Finnish dealing pattern
       batches =
@@ -248,8 +262,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "batches of 3 can be combined to form player hands of 9" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal 12 batches of 3 cards (enough for 4 players with 3 batches each)
       {batches, remaining_deck} =
@@ -281,8 +295,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "after initial deal, exactly 16 cards remain in deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal 9 cards to each of 4 players (36 cards total)
       {_p1, deck2} = Deck.deal_batch(deck, 9)
@@ -299,8 +313,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "kitty (remaining 16 cards) contains valid unique cards" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal to 4 players
       {_p1, deck2} = Deck.deal_batch(deck, 9)
@@ -331,8 +345,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "remaining 16 cards can be further dealt" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Initial deal to 4 players
       {_p1, deck2} = Deck.deal_batch(deck, 9)
@@ -364,8 +378,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "dealing order is consistent (cards dealt in sequence)" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal all 52 cards one at a time to verify order
       {all_cards, empty_deck} =
@@ -384,12 +398,10 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealing operation is deterministic for same deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      # Create two identical decks (note: in real implementation,
-      # Deck.new() shuffles, so we'd need a way to create identical decks
-      # for true determinism testing. This property verifies the dealing
-      # logic itself is deterministic.)
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      # A deck is now a pure function of the chance value it was shuffled
+      # with, so "the same deck" is something a test can simply ask for.
+      deck = shuffled_deck(seed)
 
       # First deal
       {dealt1, remaining1} = Deck.deal_batch(deck, 9)
@@ -411,8 +423,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "cannot deal 9 cards to more than 5 players from full deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal to 5 players (45 cards)
       {_p1, deck2} = Deck.deal_batch(deck, 9)
@@ -435,8 +447,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "dealing 0 cards multiple times does not affect deck" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # Deal 0 cards multiple times
       {dealt1, deck2} = Deck.deal_batch(deck, 0)
@@ -459,8 +471,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   # =============================================================================
 
   property "Finnish Pidro initial deal follows 3-3-3 pattern per player" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # For one player, verify they receive 3 cards, then 3 more, then 3 more
       # (interleaved with other players in real game)
@@ -492,8 +504,8 @@ defmodule Pidro.Properties.DealingPropertiesTest do
   end
 
   property "Finnish Pidro standard game setup: 4 players, 9 cards each, 16 in kitty" do
-    check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
+    check all(seed <- seed(), max_runs: 100) do
+      deck = shuffled_deck(seed)
 
       # This is the canonical Finnish Pidro initial deal
       {north_hand, deck2} = Deck.deal_batch(deck, 9)

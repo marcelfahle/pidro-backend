@@ -1,6 +1,7 @@
 defmodule Pidro.Game.EngineTransitionTest do
   use ExUnit.Case, async: true
-  alias Pidro.Core.Types.{Player, GameState}
+  alias Pidro.Core.GameState
+  alias Pidro.Core.Types.Player
   alias Pidro.Game.Engine
 
   test "playing phase automatically transitions to scoring when all hands are empty" do
@@ -21,22 +22,27 @@ defmodule Pidro.Game.EngineTransitionTest do
       }
     }
 
-    state = %GameState{
-      phase: :playing,
-      trump_suit: trump,
-      current_turn: :south,
-      players: players,
-      current_trick: nil,
-      trick_number: 1,
-      tricks: [],
-      hand_points: %{north_south: 0, east_west: 0},
-      events: [],
-      highest_bid: {:south, 6},
-      bidding_team: :north_south,
-      # Needs a dealer for rotation after hand_complete
-      current_dealer: :north,
-      # Mock deck for next deal
-      deck: Enum.to_list(1..36) |> Enum.map(fn _ -> {2, :hearts} end)
+    # Built from `GameState.new/1` rather than as a bare struct literal: this
+    # fixture is played through `:hand_complete`, which shuffles the next
+    # hand's deck from `state.chance`. A literal would carry `chance: nil` and
+    # fail there.
+    state = %{
+      GameState.new(seed: 1)
+      | phase: :playing,
+        trump_suit: trump,
+        current_turn: :south,
+        players: players,
+        current_trick: nil,
+        trick_number: 1,
+        tricks: [],
+        hand_points: %{north_south: 0, east_west: 0},
+        events: [],
+        highest_bid: {:south, 6},
+        bidding_team: :north_south,
+        # Needs a dealer for rotation after hand_complete
+        current_dealer: :north,
+        # Mock deck for this hand; the next hand's deck is shuffled from chance
+        deck: Enum.to_list(1..36) |> Enum.map(fn _ -> {2, :hearts} end)
     }
 
     # South plays the last card

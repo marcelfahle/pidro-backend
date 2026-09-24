@@ -12,7 +12,7 @@ defmodule Pidro.Game.DealingTest do
 
   use ExUnit.Case, async: true
 
-  alias Pidro.Core.{GameState, Types, Deck}
+  alias Pidro.Core.{Chance, Deck, GameState, Types}
   alias Pidro.Game.Dealing
 
   # =============================================================================
@@ -21,8 +21,9 @@ defmodule Pidro.Game.DealingTest do
 
   defp new_game_with_deck do
     state = GameState.new(seed: 1)
-    deck = Deck.new()
-    Map.put(state, :deck, deck.cards)
+    {deck, chance} = Chance.shuffle(Deck.ordered(), state.chance)
+
+    %{state | deck: deck, chance: chance}
   end
 
   defp new_game_with_dealer do

@@ -129,9 +129,9 @@ end
 
 ```elixir
 property "deck always contains exactly 52 cards" do
-  check all seed <- integer() do
-    deck = Deck.new(seed)
-    assert length(deck.cards) == 52
+  check all seed <- integer(1..1_000_000) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
+    assert length(cards) == 52
   end
 end
 ```
@@ -140,11 +140,11 @@ end
 
 ```elixir
 property "each suit contains exactly 13 cards" do
-  check all seed <- integer() do
-    deck = Deck.new(seed)
+  check all seed <- integer(1..1_000_000) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
 
     Enum.each([:hearts, :diamonds, :clubs, :spades], fn suit ->
-      count = Enum.count(deck.cards, fn {_rank, s} -> s == suit end)
+      count = Enum.count(cards, fn {_rank, s} -> s == suit end)
       assert count == 13
     end)
   end

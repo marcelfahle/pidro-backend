@@ -1,7 +1,7 @@
 defmodule Pidro.Game.DiscardLeaderTest do
   use ExUnit.Case, async: true
+  alias Pidro.Core.GameState
   alias Pidro.Core.Types
-  alias Pidro.Core.Types.GameState
   alias Pidro.Game.Discard
 
   describe "leader selection for first trick" do
@@ -29,18 +29,19 @@ defmodule Pidro.Game.DiscardLeaderTest do
       # Cards for dealer to rob
       deck = [{10, :hearts}, {9, :hearts}, {8, :hearts}]
 
-      state = %GameState{
-        phase: :second_deal,
-        trump_suit: trump,
-        current_dealer: :south,
-        # Dealer's turn to rob
-        current_turn: :south,
-        players: players,
-        deck: deck,
-        # South is highest bidder
-        highest_bid: {:south, 14},
-        discarded_cards: [],
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | phase: :second_deal,
+          trump_suit: trump,
+          current_dealer: :south,
+          # Dealer's turn to rob
+          current_turn: :south,
+          players: players,
+          deck: deck,
+          # South is highest bidder
+          highest_bid: {:south, 14},
+          discarded_cards: [],
+          events: []
       }
 
       # Dealer selects 6 cards to keep
@@ -83,17 +84,18 @@ defmodule Pidro.Game.DiscardLeaderTest do
         east: %Types.Player{position: :east, team: :east_west, hand: []}
       }
 
-      state = %GameState{
-        phase: :second_deal,
-        trump_suit: trump,
-        current_dealer: :south,
-        players: players,
-        # Empty deck, no rob possible
-        deck: [],
-        # North is highest bidder
-        highest_bid: {:north, 10},
-        discarded_cards: [],
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | phase: :second_deal,
+          trump_suit: trump,
+          current_dealer: :south,
+          players: players,
+          # Empty deck, no rob possible
+          deck: [],
+          # North is highest bidder
+          highest_bid: {:north, 10},
+          discarded_cards: [],
+          events: []
       }
 
       {:ok, new_state} = Discard.second_deal(state)

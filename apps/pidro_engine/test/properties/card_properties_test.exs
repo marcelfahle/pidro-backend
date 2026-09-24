@@ -40,15 +40,13 @@ defmodule Pidro.Properties.CardPropertiesTest do
 
   property "deck always contains exactly 52 cards" do
     check all(_ <- StreamData.constant(:ok), max_runs: 100) do
-      deck = Deck.new()
-      assert Deck.remaining(deck) == 52
+      assert length(Deck.ordered()) == 52
     end
   end
 
   property "each suit contains exactly 13 ranks in a standard deck" do
     check all(suit_value <- suit(), max_runs: 100) do
-      deck = Deck.new()
-      {all_cards, _} = Deck.deal_batch(deck, 52)
+      all_cards = Deck.ordered()
 
       cards_of_suit = Enum.filter(all_cards, fn {_rank, card_suit} -> card_suit == suit_value end)
       assert length(cards_of_suit) == 13
@@ -57,8 +55,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
 
   property "each suit contains exactly 14 cards when including cross-color 5 as trump" do
     check all(trump_suit <- suit(), max_runs: 100) do
-      deck = Deck.new()
-      {all_cards, _} = Deck.deal_batch(deck, 52)
+      all_cards = Deck.ordered()
 
       # Count all cards that are trump for this suit
       trump_cards = Enum.filter(all_cards, fn card -> Card.is_trump?(card, trump_suit) end)
@@ -322,8 +319,7 @@ defmodule Pidro.Properties.CardPropertiesTest do
 
   property "total points in any trump suit always equals 14" do
     check all(trump_suit <- suit(), max_runs: 100) do
-      deck = Deck.new()
-      {all_cards, _} = Deck.deal_batch(deck, 52)
+      all_cards = Deck.ordered()
 
       # Calculate total points for all cards
       total_points =

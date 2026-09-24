@@ -39,7 +39,7 @@ defmodule Pidro.Game.Dealing do
 
       # Deal initial cards
       iex> state = GameState.new(seed: 7) |> Map.put(:current_dealer, :north)
-      iex> state = Map.put(state, :deck, Pidro.Core.Deck.new().cards)
+      iex> state = Map.put(state, :deck, Pidro.Core.Deck.ordered())
       iex> {:ok, state} = Dealing.deal_initial(state)
       iex> Enum.all?(state.players, fn {_pos, player} -> length(player.hand) == 9 end)
       true
@@ -215,7 +215,7 @@ defmodule Pidro.Game.Dealing do
       # Deal with deck as card list
       iex> state = GameState.new(seed: 7)
       iex> state = Map.put(state, :current_dealer, :north)
-      iex> state = Map.put(state, :deck, Pidro.Core.Deck.new().cards)
+      iex> state = Map.put(state, :deck, Pidro.Core.Deck.ordered())
       iex> {:ok, state} = Dealing.deal_initial(state)
       iex> Enum.all?(state.players, fn {_pos, p} -> length(p.hand) == 9 end)
       true
@@ -224,7 +224,7 @@ defmodule Pidro.Game.Dealing do
 
       # Error when no dealer set
       iex> state = GameState.new(seed: 7)
-      iex> state = Map.put(state, :deck, Pidro.Core.Deck.new().cards)
+      iex> state = Map.put(state, :deck, Pidro.Core.Deck.ordered())
       iex> Dealing.deal_initial(state)
       {:error, :no_dealer, "Cannot deal cards without a dealer"}
   """

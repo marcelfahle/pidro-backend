@@ -2,21 +2,35 @@ defmodule Pidro.Core.DeckTest do
   use ExUnit.Case, async: true
   doctest Pidro.Core.Deck
 
-  alias Pidro.Core.Deck
+  alias Pidro.Core.{Chance, Deck}
 
-  describe "new/0" do
+  # A deterministic stand-in for the deck the engine shuffles at the start of a
+  # hand: `Deck.ordered/0` permuted by a fixed chance value. Nothing here draws
+  # from the calling process's RNG.
+  defp shuffled_deck(seed \\ 1) do
+    {cards, _chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(seed))
+    %Deck{cards: cards, shuffled?: true}
+  end
+
+  describe "ordered/0" do
+    test "is the same 52 cards every time, in the same order" do
+      assert Deck.ordered() == Deck.ordered()
+      assert length(Deck.ordered()) == 52
+    end
+
+    test "starts unshuffled, in generation order" do
+      assert Enum.take(Deck.ordered(), 3) == [{2, :hearts}, {3, :hearts}, {4, :hearts}]
+    end
+  end
+
+  describe "a deck shuffled from the chance stream" do
     test "creates a deck with exactly 52 cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       assert Deck.remaining(deck) == 52
     end
 
-    test "creates a shuffled deck by default" do
-      deck = Deck.new()
-      assert deck.shuffled? == true
-    end
-
     test "contains all 52 unique cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       cards = deck.cards
 
       # Verify all cards are unique
@@ -24,7 +38,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "contains all 4 suits" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       suits = deck.cards |> Enum.map(fn {_rank, suit} -> suit end) |> Enum.uniq()
 
       assert :hearts in suits
@@ -35,7 +49,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "contains all 13 ranks per suit" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       # Count cards per suit
       for suit <- [:hearts, :diamonds, :clubs, :spades] do
@@ -45,14 +59,14 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "contains ranks 2 through 14 (Ace)" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       ranks = deck.cards |> Enum.map(fn {rank, _suit} -> rank end) |> Enum.uniq() |> Enum.sort()
 
       assert ranks == Enum.to_list(2..14)
     end
 
     test "each rank-suit combination appears exactly once" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       for suit <- [:hearts, :diamonds, :clubs, :spades],
           rank <- 2..14 do
@@ -61,19 +75,16 @@ defmodule Pidro.Core.DeckTest do
       end
     end
 
-    test "creates different shuffles on multiple calls" do
-      # While theoretically possible to get the same shuffle twice,
-      # the probability is 1 / 52! which is astronomically small
-      deck1 = Deck.new()
-      deck2 = Deck.new()
-      deck3 = Deck.new()
-
-      # At least one should be different
-      assert deck1.cards != deck2.cards or deck2.cards != deck3.cards
+    test "different chance values produce different orders" do
+      # There is no process-RNG deck constructor to be nondeterministic any
+      # more: a deck's order is a function of the chance value it was shuffled
+      # with, and the same value always produces the same deck.
+      assert shuffled_deck(1).cards == shuffled_deck(1).cards
+      refute shuffled_deck(1).cards == shuffled_deck(2).cards
     end
 
     test "contains all point cards for Finnish Pidro" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       # Check for all fives (important for Right 5 and Wrong 5)
       fives = Enum.filter(deck.cards, fn {rank, _suit} -> rank == 5 end)
@@ -97,106 +108,79 @@ defmodule Pidro.Core.DeckTest do
     end
   end
 
-  describe "shuffle/1" do
+  describe "shuffling through the chance stream" do
     test "maintains the same number of cards" do
-      deck = Deck.new()
-      original_count = Deck.remaining(deck)
+      deck = shuffled_deck()
 
-      shuffled = Deck.shuffle(deck)
+      {cards, _chance} = Chance.shuffle(deck.cards, Chance.from_seed(9))
 
-      assert Deck.remaining(shuffled) == original_count
-    end
-
-    test "sets shuffled? flag to true" do
-      deck = Deck.new()
-      shuffled = Deck.shuffle(deck)
-
-      assert shuffled.shuffled? == true
+      assert length(cards) == Deck.remaining(deck)
     end
 
     test "contains the same cards (different order)" do
-      deck = Deck.new()
-      original_cards = Enum.sort(deck.cards)
+      deck = shuffled_deck()
 
-      shuffled = Deck.shuffle(deck)
-      shuffled_cards = Enum.sort(shuffled.cards)
+      {cards, _chance} = Chance.shuffle(deck.cards, Chance.from_seed(9))
 
-      assert original_cards == shuffled_cards
+      assert Enum.sort(cards) == Enum.sort(deck.cards)
+      refute cards == deck.cards
     end
 
-    test "randomizes card order" do
-      deck = Deck.new()
-
-      # Shuffle multiple times and expect different orders
-      shuffled1 = Deck.shuffle(deck)
-      shuffled2 = Deck.shuffle(deck)
-      shuffled3 = Deck.shuffle(deck)
-
-      # At least one should be different from the original
-      assert shuffled1.cards != deck.cards or
-               shuffled2.cards != deck.cards or
-               shuffled3.cards != deck.cards
-    end
-
-    test "works with partially dealt deck" do
-      deck = Deck.new()
+    test "works with a partially dealt deck" do
+      deck = shuffled_deck()
       {_dealt, remaining} = Deck.deal_batch(deck, 20)
 
       assert Deck.remaining(remaining) == 32
 
-      shuffled = Deck.shuffle(remaining)
+      {cards, _chance} = Chance.shuffle(remaining.cards, Chance.from_seed(9))
 
-      assert Deck.remaining(shuffled) == 32
-      assert shuffled.shuffled? == true
+      assert length(cards) == 32
+      assert Enum.sort(cards) == Enum.sort(remaining.cards)
     end
 
-    test "works with empty deck" do
-      deck = Deck.new()
+    test "works with an empty deck" do
+      deck = shuffled_deck()
       {_dealt, empty_deck} = Deck.deal_batch(deck, 52)
 
-      assert Deck.remaining(empty_deck) == 0
-
-      shuffled = Deck.shuffle(empty_deck)
-
-      assert Deck.remaining(shuffled) == 0
-      assert shuffled.shuffled? == true
+      assert {[], _chance} = Chance.shuffle(empty_deck.cards, Chance.from_seed(9))
     end
 
     test "maintains deck integrity after multiple shuffles" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
-      # Shuffle multiple times
-      shuffled =
-        deck
-        |> Deck.shuffle()
-        |> Deck.shuffle()
-        |> Deck.shuffle()
+      {cards, chance} = Chance.shuffle(deck.cards, Chance.from_seed(9))
+      {cards, chance} = Chance.shuffle(cards, chance)
+      {cards, _chance} = Chance.shuffle(cards, chance)
 
-      # Should still have all 52 cards
-      assert Deck.remaining(shuffled) == 52
+      assert length(cards) == 52
+      assert length(Enum.uniq(cards)) == 52
+    end
 
-      # Should still have all unique cards
-      assert length(Enum.uniq(shuffled.cards)) == 52
+    test "the advanced stream gives the next shuffle a different order" do
+      {first, chance} = Chance.shuffle(Deck.ordered(), Chance.from_seed(9))
+      {second, _chance} = Chance.shuffle(Deck.ordered(), chance)
+
+      refute first == second
     end
   end
 
   describe "deal_batch/2" do
     test "deals the correct number of cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {dealt, _remaining} = Deck.deal_batch(deck, 9)
 
       assert length(dealt) == 9
     end
 
     test "removes dealt cards from the deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, remaining} = Deck.deal_batch(deck, 9)
 
       assert Deck.remaining(remaining) == 43
     end
 
     test "returns both dealt cards and remaining deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {dealt, remaining} = Deck.deal_batch(deck, 9)
 
       assert is_list(dealt)
@@ -206,7 +190,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "dealt cards are removed from remaining deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {dealt, remaining} = Deck.deal_batch(deck, 9)
 
       # No card in dealt should appear in remaining
@@ -216,7 +200,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "can deal all 52 cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {dealt, remaining} = Deck.deal_batch(deck, 52)
 
       assert length(dealt) == 52
@@ -224,7 +208,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "can deal cards in batches" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       {batch1, deck2} = Deck.deal_batch(deck, 9)
       {batch2, deck3} = Deck.deal_batch(deck2, 9)
@@ -243,7 +227,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "deals 0 cards when count is 0" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {dealt, remaining} = Deck.deal_batch(deck, 0)
 
       assert dealt == []
@@ -251,7 +235,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "deals cards from the top of the deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       top_cards = Enum.take(deck.cards, 3)
 
       {dealt, _remaining} = Deck.deal_batch(deck, 3)
@@ -260,7 +244,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "maintains deck integrity after dealing" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       original_cards = Enum.sort(deck.cards)
 
       {dealt, remaining} = Deck.deal_batch(deck, 20)
@@ -270,7 +254,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "typical Finnish Pidro deal (9 cards to 4 players)" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       # Deal 9 cards to player 1
       {player1_hand, deck2} = Deck.deal_batch(deck, 9)
@@ -298,7 +282,7 @@ defmodule Pidro.Core.DeckTest do
 
   describe "deal_batch/2 - edge cases" do
     test "dealing more cards than available returns all remaining cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_first_batch, partial_deck} = Deck.deal_batch(deck, 50)
 
       assert Deck.remaining(partial_deck) == 2
@@ -310,7 +294,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "dealing from empty deck returns empty list" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_all_cards, empty_deck} = Deck.deal_batch(deck, 52)
 
       assert Deck.remaining(empty_deck) == 0
@@ -322,7 +306,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "dealing from single card deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, single_card_deck} = Deck.deal_batch(deck, 51)
 
       assert Deck.remaining(single_card_deck) == 1
@@ -334,7 +318,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "dealing exact number of remaining cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, partial_deck} = Deck.deal_batch(deck, 40)
 
       assert Deck.remaining(partial_deck) == 12
@@ -346,7 +330,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "dealing with negative count is not allowed (relies on guard clause)" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       # This should raise FunctionClauseError due to guard clause (count >= 0)
       assert_raise FunctionClauseError, fn ->
@@ -355,7 +339,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "multiple sequential deals from deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       # Deal 5 cards, 10 times
       result =
@@ -374,21 +358,21 @@ defmodule Pidro.Core.DeckTest do
 
   describe "draw/2" do
     test "draws the correct number of cards" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {drawn, _remaining} = Deck.draw(deck, 5)
 
       assert length(drawn) == 5
     end
 
     test "removes drawn cards from the deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_drawn, remaining} = Deck.draw(deck, 5)
 
       assert Deck.remaining(remaining) == 47
     end
 
     test "is an alias for deal_batch/2" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       {drawn, remaining1} = Deck.draw(deck, 5)
       {dealt, remaining2} = Deck.deal_batch(deck, 5)
@@ -398,7 +382,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "works with various counts" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       {drawn1, deck2} = Deck.draw(deck, 1)
       {drawn3, deck3} = Deck.draw(deck2, 3)
@@ -410,7 +394,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "draws 0 cards when count is 0" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {drawn, remaining} = Deck.draw(deck, 0)
 
       assert drawn == []
@@ -418,7 +402,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "drawing more than available returns all remaining" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, partial_deck} = Deck.deal_batch(deck, 50)
 
       {drawn, remaining} = Deck.draw(partial_deck, 10)
@@ -428,7 +412,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "drawing from empty deck returns empty list" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_all, empty_deck} = Deck.draw(deck, 52)
 
       {drawn, remaining} = Deck.draw(empty_deck, 5)
@@ -440,19 +424,19 @@ defmodule Pidro.Core.DeckTest do
 
   describe "remaining/1" do
     test "returns 52 for new deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       assert Deck.remaining(deck) == 52
     end
 
     test "returns 0 for empty deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, empty_deck} = Deck.deal_batch(deck, 52)
 
       assert Deck.remaining(empty_deck) == 0
     end
 
     test "returns correct count after dealing" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       {_dealt, remaining} = Deck.deal_batch(deck, 9)
       assert Deck.remaining(remaining) == 43
@@ -465,7 +449,7 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "returns correct count for various deck sizes" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       for count <- [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 51, 52] do
         {_dealt, remaining} = Deck.deal_batch(deck, count)
@@ -474,25 +458,25 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "returns 1 for single card deck" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, single_card} = Deck.deal_batch(deck, 51)
 
       assert Deck.remaining(single_card) == 1
     end
 
     test "remains accurate after shuffling" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, partial} = Deck.deal_batch(deck, 20)
 
       assert Deck.remaining(partial) == 32
 
-      shuffled = Deck.shuffle(partial)
+      {cards, _chance} = Chance.shuffle(partial.cards, Chance.from_seed(9))
 
-      assert Deck.remaining(shuffled) == 32
+      assert Deck.remaining(%Deck{partial | cards: cards}) == 32
     end
 
     test "is consistent with length of cards list" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       for count <- [0, 10, 20, 30, 40, 50, 52] do
         {_dealt, remaining} = Deck.deal_batch(deck, count)
@@ -503,24 +487,24 @@ defmodule Pidro.Core.DeckTest do
 
   describe "deck struct" do
     test "has required fields" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       assert Map.has_key?(deck, :cards)
       assert Map.has_key?(deck, :shuffled?)
     end
 
     test "cards field is a list" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       assert is_list(deck.cards)
     end
 
     test "shuffled? field is a boolean" do
-      deck = Deck.new()
+      deck = shuffled_deck()
       assert is_boolean(deck.shuffled?)
     end
 
     test "cards are tuples of {rank, suit}" do
-      deck = Deck.new()
+      deck = shuffled_deck()
 
       for card <- deck.cards do
         assert {rank, suit} = card
@@ -534,7 +518,7 @@ defmodule Pidro.Core.DeckTest do
   describe "complete game simulation" do
     test "Finnish Pidro complete deal scenario" do
       # Start with a fresh deck
-      deck = Deck.new()
+      deck = shuffled_deck()
       assert Deck.remaining(deck) == 52
 
       # Deal 9 cards to each of 4 players
@@ -560,13 +544,14 @@ defmodule Pidro.Core.DeckTest do
 
     test "dealing and reshuffling scenario" do
       # Deal some cards
-      deck = Deck.new()
+      deck = shuffled_deck()
       {_dealt, remaining} = Deck.deal_batch(deck, 30)
 
       assert Deck.remaining(remaining) == 22
 
-      # Reshuffle the remaining cards
-      reshuffled = Deck.shuffle(remaining)
+      # Reshuffle the remaining cards from the chance stream
+      {cards, _chance} = Chance.shuffle(remaining.cards, Chance.from_seed(9))
+      reshuffled = %Deck{remaining | cards: cards}
 
       # Should still have 22 cards
       assert Deck.remaining(reshuffled) == 22
@@ -579,8 +564,8 @@ defmodule Pidro.Core.DeckTest do
     end
 
     test "multiple new decks are independent" do
-      deck1 = Deck.new()
-      deck2 = Deck.new()
+      deck1 = shuffled_deck(1)
+      deck2 = shuffled_deck(2)
 
       {_dealt1, remaining1} = Deck.deal_batch(deck1, 10)
       {_dealt2, remaining2} = Deck.deal_batch(deck2, 20)

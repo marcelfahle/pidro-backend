@@ -1,7 +1,7 @@
 defmodule Pidro.Game.PlayKillRuleTest do
   use ExUnit.Case, async: true
 
-  alias Pidro.Core.Types
+  alias Pidro.Core.GameState
   alias Pidro.Core.Types.Player
   alias Pidro.Game.Play
 
@@ -45,12 +45,13 @@ defmodule Pidro.Game.PlayKillRuleTest do
         team: :east_west
       }
 
-      state = %Types.GameState{
-        trump_suit: :clubs,
-        players: %{west: player},
-        phase: :playing,
-        current_turn: :west,
-        trick_number: 0
+      state = %{
+        GameState.new(seed: 1)
+        | trump_suit: :clubs,
+          players: %{west: player},
+          phase: :playing,
+          current_turn: :west,
+          trick_number: 0
       }
 
       # Compute kills

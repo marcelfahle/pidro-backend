@@ -1,8 +1,9 @@
 defmodule Pidro.Game.PlayColdPlayerTest do
   use ExUnit.Case, async: true
 
+  alias Pidro.Core.GameState
   alias Pidro.Core.Types
-  alias Pidro.Core.Types.{GameState, Player}
+  alias Pidro.Core.Types.Player
   alias Pidro.Game.Play
 
   describe "cold players at start of play" do
@@ -34,12 +35,13 @@ defmodule Pidro.Game.PlayColdPlayerTest do
         }
       }
 
-      state = %GameState{
-        phase: :playing,
-        trump_suit: :clubs,
-        current_turn: :east,
-        players: players,
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | phase: :playing,
+          trump_suit: :clubs,
+          current_turn: :east,
+          players: players,
+          events: []
       }
 
       new_state = Play.compute_kills(state)
@@ -65,12 +67,13 @@ defmodule Pidro.Game.PlayColdPlayerTest do
            }}
         end)
 
-      state = %GameState{
-        phase: :playing,
-        trump_suit: :clubs,
-        current_turn: :north,
-        players: players,
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | phase: :playing,
+          trump_suit: :clubs,
+          current_turn: :north,
+          players: players,
+          events: []
       }
 
       new_state = Play.compute_kills(state)

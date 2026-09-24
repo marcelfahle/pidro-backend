@@ -165,6 +165,25 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
       end
     end
 
+    property "the chance stream is outside the hashed position" do
+      # `hash_state/1` and `cache_key_for_moves/2` are allow-lists over the
+      # fields that make a position, and the chance stream is not one of them:
+      # two states that differ only in what they will deal next are the same
+      # position to a cache. Asserted rather than assumed, because a cache that
+      # keyed on chance would quietly stop hitting.
+      state = GameState.new(seed: 1)
+      restreamed = %{state | chance: GameState.new(seed: 2).chance}
+
+      refute state.chance == restreamed.chance
+      assert Perf.hash_state(state) == Perf.hash_state(restreamed)
+      assert Perf.states_equal?(state, restreamed)
+
+      for position <- [:north, :east, :south, :west] do
+        assert Perf.cache_key_for_moves(state, position) ==
+                 Perf.cache_key_for_moves(restreamed, position)
+      end
+    end
+
     property "estimate_size returns positive value" do
       state = GameState.new(seed: 1)
       size = Perf.estimate_size(state)

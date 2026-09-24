@@ -2,6 +2,7 @@ defmodule Pidro.Finnish.ScorerTest do
   use ExUnit.Case, async: true
 
   alias Pidro.Finnish.Scorer
+  alias Pidro.Core.GameState
   alias Pidro.Core.Types
 
   doctest Pidro.Finnish.Scorer
@@ -204,13 +205,14 @@ defmodule Pidro.Finnish.ScorerTest do
 
   describe "apply_bid_result/1" do
     test "bidding team makes their bid" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        bidding_team: :north_south,
-        highest_bid: {:north, 7},
-        hand_points: %{north_south: 9, east_west: 5},
-        cumulative_scores: %{north_south: 15, east_west: 20},
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          bidding_team: :north_south,
+          highest_bid: {:north, 7},
+          hand_points: %{north_south: 9, east_west: 5},
+          cumulative_scores: %{north_south: 15, east_west: 20},
+          events: []
       }
 
       result = Scorer.apply_bid_result(state)
@@ -223,13 +225,14 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "bidding team exactly makes their bid" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        bidding_team: :east_west,
-        highest_bid: {:east, 7},
-        hand_points: %{north_south: 7, east_west: 7},
-        cumulative_scores: %{north_south: 30, east_west: 40},
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          bidding_team: :east_west,
+          highest_bid: {:east, 7},
+          hand_points: %{north_south: 7, east_west: 7},
+          cumulative_scores: %{north_south: 30, east_west: 40},
+          events: []
       }
 
       result = Scorer.apply_bid_result(state)
@@ -241,13 +244,14 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "bidding team fails their bid" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        bidding_team: :east_west,
-        highest_bid: {:east, 10},
-        hand_points: %{north_south: 8, east_west: 6},
-        cumulative_scores: %{north_south: 15, east_west: 20},
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          bidding_team: :east_west,
+          highest_bid: {:east, 10},
+          hand_points: %{north_south: 8, east_west: 6},
+          cumulative_scores: %{north_south: 15, east_west: 20},
+          events: []
       }
 
       result = Scorer.apply_bid_result(state)
@@ -259,13 +263,14 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "bidding team can go negative" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        bidding_team: :north_south,
-        highest_bid: {:north, 12},
-        hand_points: %{north_south: 5, east_west: 9},
-        cumulative_scores: %{north_south: 8, east_west: 30},
-        events: []
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          bidding_team: :north_south,
+          highest_bid: {:north, 12},
+          hand_points: %{north_south: 5, east_west: 9},
+          cumulative_scores: %{north_south: 8, east_west: 30},
+          events: []
       }
 
       result = Scorer.apply_bid_result(state)
@@ -277,13 +282,14 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "adds scoring events to event history" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        bidding_team: :north_south,
-        highest_bid: {:north, 7},
-        hand_points: %{north_south: 9, east_west: 5},
-        cumulative_scores: %{north_south: 15, east_west: 20},
-        events: [{:some_previous_event, :data}]
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          bidding_team: :north_south,
+          highest_bid: {:north, 7},
+          hand_points: %{north_south: 9, east_west: 5},
+          cumulative_scores: %{north_south: 15, east_west: 20},
+          events: [{:some_previous_event, :data}]
       }
 
       result = Scorer.apply_bid_result(state)
@@ -296,54 +302,60 @@ defmodule Pidro.Finnish.ScorerTest do
 
   describe "game_over?/1" do
     test "returns false when no team has reached 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 61, east_west: 58}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 61, east_west: 58}
       }
 
       refute Scorer.game_over?(state)
     end
 
     test "returns true when north_south reaches 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 62, east_west: 58}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 62, east_west: 58}
       }
 
       assert Scorer.game_over?(state)
     end
 
     test "returns true when east_west reaches 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 55, east_west: 62}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 55, east_west: 62}
       }
 
       assert Scorer.game_over?(state)
     end
 
     test "returns true when both teams reach 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 62, east_west: 62}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 62, east_west: 62}
       }
 
       assert Scorer.game_over?(state)
     end
 
     test "returns true when score exceeds 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 70, east_west: 55}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 70, east_west: 55}
       }
 
       assert Scorer.game_over?(state)
     end
 
     test "handles negative scores correctly" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: -10, east_west: 62}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: -10, east_west: 62}
       }
 
       assert Scorer.game_over?(state)
@@ -352,60 +364,66 @@ defmodule Pidro.Finnish.ScorerTest do
 
   describe "determine_winner/1" do
     test "returns north_south when they reach 62 first" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 65, east_west: 58},
-        bidding_team: :north_south
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 65, east_west: 58},
+          bidding_team: :north_south
       }
 
       assert {:ok, :north_south} = Scorer.determine_winner(state)
     end
 
     test "returns east_west when they reach 62 first" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 55, east_west: 63},
-        bidding_team: :east_west
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 55, east_west: 63},
+          bidding_team: :east_west
       }
 
       assert {:ok, :east_west} = Scorer.determine_winner(state)
     end
 
     test "bidding team wins when both teams reach 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 62, east_west: 62},
-        bidding_team: :east_west
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 62, east_west: 62},
+          bidding_team: :east_west
       }
 
       assert {:ok, :east_west} = Scorer.determine_winner(state)
     end
 
     test "bidding team wins when both exceed 62" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 70, east_west: 65},
-        bidding_team: :east_west
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 70, east_west: 65},
+          bidding_team: :east_west
       }
 
       assert {:ok, :east_west} = Scorer.determine_winner(state)
     end
 
     test "returns error when game is not over" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: 61, east_west: 58},
-        bidding_team: :north_south
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: 61, east_west: 58},
+          bidding_team: :north_south
       }
 
       assert {:error, :game_not_over} = Scorer.determine_winner(state)
     end
 
     test "handles one team with negative score" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        cumulative_scores: %{north_south: -5, east_west: 62},
-        bidding_team: :north_south
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          cumulative_scores: %{north_south: -5, east_west: 62},
+          bidding_team: :north_south
       }
 
       assert {:ok, :east_west} = Scorer.determine_winner(state)
@@ -414,25 +432,27 @@ defmodule Pidro.Finnish.ScorerTest do
 
   describe "total_available_points/1" do
     test "returns 14 when no cards have been killed" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{}
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{}
       }
 
       assert Scorer.total_available_points(state) == 14
     end
 
     test "returns 14 when only non-point cards are killed" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          north: [{13, :hearts}],
-          # King (0 points)
-          east: [{12, :hearts}, {9, :hearts}]
-          # Queen, 9 (both 0 points)
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            north: [{13, :hearts}],
+            # King (0 points)
+            east: [{12, :hearts}, {9, :hearts}]
+            # Queen, 9 (both 0 points)
+          }
       }
 
       assert Scorer.total_available_points(state) == 14
@@ -441,27 +461,29 @@ defmodule Pidro.Finnish.ScorerTest do
     test "excludes point value of killed cards that are not the top card" do
       # North killed King (top, 0 pts) and 10 (2nd, 1 pt)
       # Only the 10 is excluded, King will be played
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          north: [{13, :hearts}, {10, :hearts}]
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            north: [{13, :hearts}, {10, :hearts}]
+          }
       }
 
       assert Scorer.total_available_points(state) == 13
     end
 
     test "handles multiple players with killed point cards" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          # Top: King (0 pts, played), Out: 10 (1 pt)
-          north: [{13, :hearts}, {10, :hearts}],
-          # Top: Ace (1 pt, played), Out: Jack (1 pt)
-          east: [{14, :hearts}, {11, :hearts}]
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            # Top: King (0 pts, played), Out: 10 (1 pt)
+            north: [{13, :hearts}, {10, :hearts}],
+            # Top: Ace (1 pt, played), Out: Jack (1 pt)
+            east: [{14, :hearts}, {11, :hearts}]
+          }
       }
 
       # 14 - 1 (10) - 1 (Jack) = 12
@@ -469,15 +491,16 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "handles killed right-5 and wrong-5 (5 points each)" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          # Top: King (0 pts), Out: Right-5 (5 pts)
-          north: [{13, :hearts}, {5, :hearts}],
-          # Top: Queen (0 pts), Out: Wrong-5 (5 pts)
-          south: [{12, :hearts}, {5, :diamonds}]
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            # Top: King (0 pts), Out: Right-5 (5 pts)
+            north: [{13, :hearts}, {5, :hearts}],
+            # Top: Queen (0 pts), Out: Wrong-5 (5 pts)
+            south: [{12, :hearts}, {5, :diamonds}]
+          }
       }
 
       # 14 - 5 (Right-5) - 5 (Wrong-5) = 4
@@ -485,13 +508,14 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "handles killed 2 of trump (1 point)" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          # Top: King (0 pts), Out: 2 (1 pt)
-          north: [{13, :hearts}, {2, :hearts}]
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            # Top: King (0 pts), Out: 2 (1 pt)
+            north: [{13, :hearts}, {2, :hearts}]
+          }
       }
 
       # 14 - 1 (2 of trump) = 13
@@ -499,13 +523,14 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "handles player with only one killed card (top card will be played)" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          # Top: Ace (1 pt) - will be played, not excluded
-          north: [{14, :hearts}]
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            # Top: Ace (1 pt) - will be played, not excluded
+            north: [{14, :hearts}]
+          }
       }
 
       # 14 - 0 = 14 (Ace will be played)
@@ -513,19 +538,20 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "handles complex scenario with multiple players and various point cards" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :clubs,
-        killed_cards: %{
-          # Top: King, Out: Ace (1), 10 (1)
-          north: [{13, :clubs}, {14, :clubs}, {10, :clubs}],
-          # Top: Queen - will be played
-          east: [{12, :clubs}],
-          # Top: 9, Out: Jack (1), 2 (1)
-          south: [{9, :clubs}, {11, :clubs}, {2, :clubs}],
-          # No killed cards
-          west: []
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :clubs,
+          killed_cards: %{
+            # Top: King, Out: Ace (1), 10 (1)
+            north: [{13, :clubs}, {14, :clubs}, {10, :clubs}],
+            # Top: Queen - will be played
+            east: [{12, :clubs}],
+            # Top: 9, Out: Jack (1), 2 (1)
+            south: [{9, :clubs}, {11, :clubs}, {2, :clubs}],
+            # No killed cards
+            west: []
+          }
       }
 
       # 14 - 1 (Ace) - 1 (10) - 1 (Jack) - 1 (2) = 10
@@ -533,17 +559,18 @@ defmodule Pidro.Finnish.ScorerTest do
     end
 
     test "handles empty killed_cards for specific positions" do
-      state = %Types.GameState{
-        players: create_test_players(),
-        trump_suit: :hearts,
-        killed_cards: %{
-          north: [],
-          east: [{13, :hearts}, {10, :hearts}],
-          # Empty list
-          # Top: King, Out: 10 (1 pt)
-          south: [],
-          west: []
-        }
+      state = %{
+        GameState.new(seed: 1)
+        | players: create_test_players(),
+          trump_suit: :hearts,
+          killed_cards: %{
+            north: [],
+            east: [{13, :hearts}, {10, :hearts}],
+            # Empty list
+            # Top: King, Out: 10 (1 pt)
+            south: [],
+            west: []
+          }
       }
 
       # 14 - 1 (10 from east) = 13
