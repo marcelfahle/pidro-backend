@@ -14,7 +14,6 @@ lib/mix/tasks/pidro.seed_admin.ex:32:13:
 lib/mix/tasks/pidro.selfplay.ex:1:
 lib/mix/tasks/pidro.selfplay.ex:44:11:
 lib/mix/tasks/pidro.selfplay.ex:58:9:
-lib/pidro/core/binary.ex:325:8:
 lib/pidro/game/engine.ex:289:8:
 lib/pidro/game/engine.ex:297:8:
 lib/pidro/game/engine.ex:320:18:

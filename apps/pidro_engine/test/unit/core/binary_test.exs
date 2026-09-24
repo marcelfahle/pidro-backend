@@ -4,6 +4,14 @@ defmodule Pidro.Core.BinaryTest do
   alias Pidro.Core.Binary
   alias Pidro.Core.GameState
 
+  describe "card decoding" do
+    test "rejects the unused rank bit patterns" do
+      for rank_bits <- 13..15 do
+        assert {:error, :invalid_binary} = Binary.decode_card(<<rank_bits::4, 0::2>>)
+      end
+    end
+  end
+
   describe "game-state encoding" do
     test "round-trips every field carried by the compact format" do
       state = supported_state()
@@ -38,6 +46,7 @@ defmodule Pidro.Core.BinaryTest do
       assert decoded.tricks == []
       assert decoded.events == []
       assert decoded.dealer_selection_cuts == nil
+
       assert decoded.config == %{
                min_bid: 6,
                max_bid: 14,
