@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Pidro.Selfplay do
       mix pidro.selfplay                          # 2000 games, seed 1, rulebook vs random
       mix pidro.selfplay --games 500 --seed 7
       mix pidro.selfplay --a rulebook --b rulebook
-      mix pidro.selfplay --pairs 1000 --seed 71 --a regular --b casual
+      mix pidro.selfplay --pairs 1000 --seed 71 --a rulebook --b random
 
   Team A alternates between North/South and East/West. The summary reports
   win rate, bids made and set, average bid, decision times, and any illegal
@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Pidro.Selfplay do
 
   @shortdoc "Plays seeded bot-vs-bot games and prints a summary"
 
-  @policies ~w(rulebook random regular casual)
+  @policies ~w(rulebook random regular)
 
   @impl Mix.Task
   def run(args) do
@@ -63,8 +63,7 @@ defmodule Mix.Tasks.Pidro.Selfplay do
 
   defp policy("rulebook"), do: SelfPlay.rulebook_policy()
   defp policy("random"), do: SelfPlay.random_policy()
-  defp policy("regular"), do: SelfPlay.rulebook_policy(:regular)
-  defp policy("casual"), do: SelfPlay.rulebook_policy(:casual)
+  defp policy("regular"), do: SelfPlay.rulebook_policy()
 
   defp policy(name),
     do: usage("Unknown policy #{inspect(name)}; use one of #{Enum.join(@policies, ", ")}")

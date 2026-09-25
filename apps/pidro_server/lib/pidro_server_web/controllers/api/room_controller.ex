@@ -124,9 +124,10 @@ defmodule PidroServerWeb.API.RoomController do
       - `seats` - `seat_2` (east), `seat_3` (south) and `seat_4` (west), each `"ai"` or
         `"open"`; a missing seat is open. A bot is started for every `"ai"` seat, and a
         room whose three seats are all `"ai"` is a solo room, hidden from the lobby
-      - `bot_difficulty` - `"random"`, `"basic"` or `"smart"`; defaults to `"basic"`
+      - `bot_difficulty` - Deprecated compatibility field; new clients should omit it.
+        Legacy `"random"`, `"basic"` and `"smart"` all use the same rulebook.
 
-      Name, difficulty and solo are stored on the room and returned as `config`.
+      Name, the legacy preference and solo are stored on the room and returned as `config`.
 
       Every other key is rejected, including a `room` wrapper and `settings`. A rejected
       request creates no room and starts no bot. The 422 response lists every problem at
@@ -840,7 +841,8 @@ defmodule PidroServerWeb.API.RoomController do
       which documents the grammar. Every field is optional:
       - `name` - Room name, at most 60 characters
       - `seats` - `seat_2`, `seat_3` and `seat_4`, each `"ai"` or `"open"`
-      - `bot_difficulty` - `"random"`, `"basic"` or `"smart"`; defaults to `"basic"`
+      - `bot_difficulty` - Deprecated compatibility field; new clients should omit it.
+        Legacy `"random"`, `"basic"` and `"smart"` all use the same rulebook.
     * `_params` - Unused. The merged params also carry query-string keys, which
       must not count as unknown body fields.
 

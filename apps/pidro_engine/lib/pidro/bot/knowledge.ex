@@ -137,17 +137,10 @@ defmodule Pidro.Bot.Knowledge do
   Returns true when one of `seats` could hold a live trump above `card`.
 
   A seat with no cards holds nothing, so an empty or card-less list of seats
-  can never beat the card. Casual conservatively treats every non-Ace as
-  beatable without consulting completed tricks or killed cards.
+  can never beat the card.
   """
-  @spec beatable_by?(view(), card(), [position()], Pidro.Bot.Rulebook.profile()) :: boolean()
-  def beatable_by?(view, card, seats, profile \\ :regular)
-
-  def beatable_by?(%SeatView{} = view, card, seats, :casual) do
-    Enum.any?(seats, &(view.players[&1].hand_count > 0)) and card != {14, view.trump_suit}
-  end
-
-  def beatable_by?(%SeatView{} = view, card, seats, :regular) do
+  @spec beatable_by?(view(), card(), [position()]) :: boolean()
+  def beatable_by?(%SeatView{} = view, card, seats) do
     trump = view.trump_suit
 
     Enum.any?(seats, &(view.players[&1].hand_count > 0)) and
@@ -157,21 +150,21 @@ defmodule Pidro.Bot.Knowledge do
   @doc """
   Returns true when no other seat could hold a trump above `card`.
   """
-  @spec unbeatable?(view(), card(), Pidro.Bot.Rulebook.profile()) :: boolean()
-  def unbeatable?(%SeatView{} = view, card, profile \\ :regular) do
-    not beatable_by?(view, card, other_active_seats(view), profile)
+  @spec unbeatable?(view(), card()) :: boolean()
+  def unbeatable?(%SeatView{} = view, card) do
+    not beatable_by?(view, card, other_active_seats(view))
   end
 
   @doc """
   Returns true when the viewer's side holds the winning card and no opponent
   still to act could hold a higher trump.
   """
-  @spec safe_trick?(view(), Pidro.Bot.Rulebook.profile()) :: boolean()
-  def safe_trick?(%SeatView{} = view, profile \\ :regular) do
+  @spec safe_trick?(view()) :: boolean()
+  def safe_trick?(%SeatView{} = view) do
     case current_winner(view) do
       {winner, card} ->
         Types.position_to_team(winner) == my_team(view) and
-          not beatable_by?(view, card, opponents_to_act(view), profile)
+          not beatable_by?(view, card, opponents_to_act(view))
 
       nil ->
         false
@@ -182,9 +175,9 @@ defmodule Pidro.Bot.Knowledge do
   Returns true when playing `card` would win the trick for the viewer's side
   and no opponent still to act could beat it.
   """
-  @spec safe_after?(view(), card(), Pidro.Bot.Rulebook.profile()) :: boolean()
-  def safe_after?(%SeatView{} = view, card, profile \\ :regular) do
-    wins_trick?(view, card) and not beatable_by?(view, card, opponents_to_act(view), profile)
+  @spec safe_after?(view(), card()) :: boolean()
+  def safe_after?(%SeatView{} = view, card) do
+    wins_trick?(view, card) and not beatable_by?(view, card, opponents_to_act(view))
   end
 
   @doc """

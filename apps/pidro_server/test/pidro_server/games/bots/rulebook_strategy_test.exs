@@ -9,7 +9,7 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
 
   alias Pidro.Core.SeatView
   alias PidroServer.Games.Bots.{BotBrain, BotManager}
-  alias PidroServer.Games.Bots.Strategies.{CasualStrategy, RulebookStrategy}
+  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
 
   defmodule RecordingStrategy do
@@ -97,7 +97,7 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
   end
 
   describe "pick_action/2" do
-    test "Casual adapter uses the simpler profile, while Regular recognises the spent Ace" do
+    test "every legacy difficulty uses public history to recognise the spent Ace" do
       {_room, game} = bidding_room()
 
       view = %{
@@ -126,7 +126,11 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
 
       legal = Enum.map(view.hand, &{:play_card, &1})
       assert {:ok, {:play_card, {5, :hearts}}, _} = RulebookStrategy.pick_action(legal, view)
-      assert {:ok, {:play_card, {3, :hearts}}, _} = CasualStrategy.pick_action(legal, view)
+
+      for difficulty <- [:random, :basic, :smart] do
+        strategy = PidroServer.Games.Bots.Strategy.resolve(difficulty)
+        assert {:ok, {:play_card, {5, :hearts}}, _} = strategy.pick_action(legal, view)
+      end
     end
 
     test "returns a legal action and a one-sentence reason from the seat view" do
@@ -142,7 +146,7 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
 
   describe "strategy names" do
     for {name, strategy} <- [
-          random: CasualStrategy,
+          random: RulebookStrategy,
           basic: RulebookStrategy,
           smart: RulebookStrategy
         ] do

@@ -11,7 +11,7 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
   alias Pidro.Bot.Rulebook
   alias Pidro.Core.SeatView
   alias PidroServer.Games.Bots.{BotBrain, BotManager, BotSupervisor}
-  alias PidroServer.Games.Bots.Strategies.{CasualStrategy, RulebookStrategy}
+  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
 
   setup do
@@ -152,7 +152,7 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
   end
 
   for {difficulty, strategy} <- [
-        random: CasualStrategy,
+        random: RulebookStrategy,
         basic: RulebookStrategy,
         smart: RulebookStrategy
       ] do

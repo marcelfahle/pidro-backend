@@ -53,9 +53,9 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
   end
 
   test "each pair uses the same deal with teams swapped, matching direct games" do
-    a = SelfPlay.rulebook_policy(:regular)
-    b = SelfPlay.rulebook_policy(:casual)
-    summary = SelfPlay.run(pairs: 3, seed: 71, a: {:regular, a}, b: {:casual, b})
+    a = SelfPlay.rulebook_policy()
+    b = SelfPlay.random_policy()
+    summary = SelfPlay.run(pairs: 3, seed: 71, a: {:rulebook, a}, b: {:random, b})
 
     assert summary.games == 6
     assert summary.complete == 6
@@ -69,8 +69,8 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
       second = SelfPlay.play_game(%{north_south: b, east_west: a}, seed: seed)
 
       labels = [
-        %{north_south: :regular, east_west: :casual},
-        %{north_south: :casual, east_west: :regular}
+        %{north_south: :rulebook, east_west: :random},
+        %{north_south: :random, east_west: :rulebook}
       ]
 
       assert pair.winners ==
@@ -94,8 +94,8 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
     opts = [
       pairs: 10,
       seed: 73,
-      a: {:regular, SelfPlay.rulebook_policy()},
-      b: {:casual, SelfPlay.rulebook_policy(:casual)}
+      a: {:rulebook, SelfPlay.rulebook_policy()},
+      b: {:random, SelfPlay.random_policy()}
     ]
 
     one = SelfPlay.run(opts ++ [max_concurrency: 1])
@@ -124,9 +124,9 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
     end
   end
 
-  test "CLI accepts named profiles and pairs, rejects ambiguous or invalid runs" do
+  test "CLI accepts benchmark policies and pairs, rejects ambiguous or invalid runs" do
     output =
-      capture_io(fn -> SelfplayTask.run(["--pairs", "2", "--a", "regular", "--b", "casual"]) end)
+      capture_io(fn -> SelfplayTask.run(["--pairs", "2", "--a", "rulebook", "--b", "random"]) end)
 
     assert output =~ "complete 4, illegal 0"
     assert output =~ "Pairs: 2"
@@ -137,7 +137,8 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
             ["--pairs", "0"],
             ["--pairs", "1", "--games", "2"],
             ["stray"],
-            ["--a", "unknown"]
+            ["--a", "unknown"],
+            ["--a", "casual"]
           ] do
         assert catch_exit(SelfplayTask.run(args)) == {:shutdown, 1}
       end

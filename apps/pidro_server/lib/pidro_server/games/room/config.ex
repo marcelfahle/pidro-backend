@@ -1,7 +1,11 @@
 defmodule PidroServer.Games.Room.Config do
   @moduledoc """
-  The record of how a room was set up: its name, the bot difficulty requested
-  at creation, and whether it is a solo table.
+  The record of how a room was set up: its name, legacy bot preference,
+  and whether it is a solo table.
+
+  `bot_difficulty` is deprecated compatibility data for older clients. It is
+  still validated and echoed, but every accepted value uses the same production
+  rulebook. New clients should omit it.
 
   A config is set once, when the room is created, and does not change for the
   life of the room. The seat plan sent at creation is not part of it: seats
