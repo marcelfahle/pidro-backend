@@ -11,7 +11,7 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
   alias Pidro.Bot.Rulebook
   alias Pidro.Core.SeatView
   alias PidroServer.Games.Bots.{BotBrain, BotManager, BotSupervisor}
-  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
+  alias PidroServer.Games.Bots.Strategies.{CasualStrategy, RulebookStrategy}
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
 
   setup do
@@ -40,9 +40,9 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
     :ok
   end
 
-  defp playing_room do
+  defp playing_room(config \\ %{}) do
     [host | others] = users = Enum.map(1..4, fn _ -> Ecto.UUID.generate() end)
-    {:ok, room} = RoomManager.create_room(host, %{name: "Takeover"})
+    {:ok, room} = RoomManager.create_room(host, Map.merge(%{name: "Takeover"}, config))
     for user <- others, do: {:ok, _, _} = RoomManager.join_room(room.code, user)
     PidroServer.RoomFixtures.ready_room(room.code)
     {:ok, room} = RoomManager.get_room(room.code)
@@ -149,6 +149,30 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
     pid = room.seats[:east].bot_pid
     assert is_pid(pid)
     assert :sys.get_state(pid).strategy == RulebookStrategy
+  end
+
+  for {difficulty, strategy} <- [
+        random: CasualStrategy,
+        basic: RulebookStrategy,
+        smart: RulebookStrategy
+      ] do
+    test "#{difficulty} reaches substitutes and survives their recovery" do
+      {room, positions, _users, _game} = playing_room(%{bot_difficulty: unquote(difficulty)})
+      :ok = RoomManager.handle_player_disconnect(room.code, positions[:east])
+      {:ok, room} = expire_phase(room.code, :east, :phase2_start)
+      pid = room.seats.east.bot_pid
+      assert :sys.get_state(pid).strategy == unquote(strategy)
+      Process.exit(pid, :kill)
+
+      recovered =
+        eventually(fn ->
+          {:ok, current} = RoomManager.get_room(room.code)
+          next = current.seats.east.bot_pid
+          if is_pid(next) and next != pid and Process.alive?(next), do: next
+        end)
+
+      assert :sys.get_state(recovered).strategy == unquote(strategy)
+    end
   end
 
   test "AE14: a human bids 10, plays two tricks and drops; the substitute finishes the hand" do

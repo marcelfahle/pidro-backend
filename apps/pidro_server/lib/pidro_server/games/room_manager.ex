@@ -1880,7 +1880,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_playing(room),
          :ok <- ensure_seat_vacant(room, position),
          {:start_bot, {:ok, bot_pid}} <-
-           {:start_bot, start_substitute_bot(room_code, position)} do
+           {:start_bot, start_substitute_bot(room, position)} do
       seat = Map.get(room.seats, position)
 
       # Fill seat then transition to bot_substitute (vacant -> connected -> bot path
@@ -2011,7 +2011,7 @@ defmodule PidroServer.Games.RoomManager do
 
         if is_reference(ref) && room.phase_timers[position] == ref && seat &&
              seat.status == :reconnecting do
-          with {:ok, bot_pid} <- start_substitute_bot(room_code, position) do
+          with {:ok, bot_pid} <- start_substitute_bot(room, position) do
             # Calculate remaining grace duration (total grace minus hiccup already elapsed)
             grace_ms = Lifecycle.config(:grace_timeout_ms)
             hiccup_ms = Lifecycle.config(:hiccup_timeout_ms)
@@ -3341,7 +3341,7 @@ defmodule PidroServer.Games.RoomManager do
     position = Positions.get_position(room, player_id)
     seat = Map.get(room.seats, position)
 
-    with {:ok, bot_pid} <- departure_bot(room.code, seat) do
+    with {:ok, bot_pid} <- departure_bot(room, seat) do
       if position do
         PidroServer.Stats.record_abandonment(player_id, room.code, position)
       end
@@ -3378,14 +3378,14 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   # An owner-opened vacancy (or a replaced former membership) stays open.
-  defp departure_bot(_room_code, nil), do: {:ok, nil}
-  defp departure_bot(_room_code, %Seat{occupant_type: :vacant}), do: {:ok, nil}
+  defp departure_bot(_room, nil), do: {:ok, nil}
+  defp departure_bot(_room, %Seat{occupant_type: :vacant}), do: {:ok, nil}
 
-  defp departure_bot(room_code, %Seat{} = seat) do
+  defp departure_bot(room, %Seat{} = seat) do
     if is_pid(seat.bot_pid) and Process.alive?(seat.bot_pid) do
       {:ok, seat.bot_pid}
     else
-      start_substitute_bot(room_code, seat.position)
+      start_substitute_bot(room, seat.position)
     end
   catch
     :exit, reason -> {:error, reason}
@@ -3522,14 +3522,14 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   # Game over stopped the substitutes, so bring them back for the rematch.
-  defp revive_substitute_bots(%Room{code: room_code, seats: seats} = room) do
+  defp revive_substitute_bots(%Room{seats: seats} = room) do
     seats =
       Map.new(seats, fn
         {position, %Seat{occupant_type: :bot, status: :bot_substitute, bot_pid: pid} = seat} ->
           if is_pid(pid) and Process.alive?(pid) do
             {position, seat}
           else
-            case start_substitute_bot(room_code, position) do
+            case start_substitute_bot(room, position) do
               {:ok, new_pid} -> {position, %{seat | bot_pid: new_pid}}
               {:error, _reason} -> {position, seat}
             end
@@ -3905,8 +3905,8 @@ defmodule PidroServer.Games.RoomManager do
 
   # RoomManager is the sole restart authority for replacement controllers.
   # A delayed DOWN after reclaim/open or another recovery cannot resurrect a seat.
-  defp start_substitute_bot(room_code, position) do
-    with {:ok, pid} <- SubstituteBot.start(room_code, position) do
+  defp start_substitute_bot(room, position) do
+    with {:ok, pid} <- SubstituteBot.start(room.code, position, room.config.bot_difficulty) do
       Process.monitor(pid)
       {:ok, pid}
     end
@@ -3915,11 +3915,11 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp recover_substitute_bot(
-         %Room{status: :playing},
+         %Room{status: :playing} = room,
          %Seat{occupant_type: :bot, status: :bot_substitute} = seat,
          room_code
        ) do
-    case start_substitute_bot(room_code, seat.position) do
+    case start_substitute_bot(room, seat.position) do
       {:ok, pid} ->
         Logger.info("Recovered substitute bot in room #{room_code} at #{seat.position}")
         %{seat | bot_pid: pid}

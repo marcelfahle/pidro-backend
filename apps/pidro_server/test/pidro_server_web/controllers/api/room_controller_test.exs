@@ -128,23 +128,30 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       refute code in listed
     end
 
-    test "an all-AI create with bot_difficulty smart stores :smart and solo on the room", %{
-      conn: conn
-    } do
-      user = AccountsFixtures.user_fixture()
+    for {difficulty, strategy} <- [
+          random: PidroServer.Games.Bots.Strategies.CasualStrategy,
+          basic: PidroServer.Games.Bots.Strategies.RulebookStrategy,
+          smart: PidroServer.Games.Bots.Strategies.RulebookStrategy
+        ] do
+      test "an all-AI create applies #{difficulty} to every bot", %{conn: conn} do
+        user = AccountsFixtures.user_fixture()
 
-      data =
-        conn
-        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
-        |> post(~p"/api/v1/rooms", %{
-          "seats" => %{"seat_2" => "ai", "seat_3" => "ai", "seat_4" => "ai"},
-          "bot_difficulty" => "smart"
-        })
-        |> json_response(201)
-        |> Map.fetch!("data")
+        data =
+          conn
+          |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+          |> post(~p"/api/v1/rooms", %{
+            "seats" => %{"seat_2" => "ai", "seat_3" => "ai", "seat_4" => "ai"},
+            "bot_difficulty" => Atom.to_string(unquote(difficulty))
+          })
+          |> json_response(201)
+          |> Map.fetch!("data")
 
-      assert {:ok, room} = RoomManager.get_room(data["code"])
-      assert room.config == %Config{name: nil, bot_difficulty: :smart, solo: true}
+        assert {:ok, room} = RoomManager.get_room(data["code"])
+        assert room.config == %Config{name: nil, bot_difficulty: unquote(difficulty), solo: true}
+        bots = for {_, %{occupant_type: :bot, bot_pid: pid}} <- room.seats, do: pid
+        assert length(bots) == 3
+        for pid <- bots, do: assert(:sys.get_state(pid).strategy == unquote(strategy))
+      end
     end
 
     test "AE4: a named room with one bot seat reports name, difficulty and not solo", %{
