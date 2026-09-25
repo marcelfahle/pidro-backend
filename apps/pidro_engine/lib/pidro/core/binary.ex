@@ -1,6 +1,6 @@
 defmodule Pidro.Core.Binary do
   @moduledoc """
-  Binary encoding and decoding for game state.
+  Compact, lossy binary encoding and decoding for game positions.
 
   This module provides efficient binary representations of game state components
   for performance-critical operations. Inspired by chess bitboards and binary
@@ -11,21 +11,23 @@ defmodule Pidro.Core.Binary do
 
   - Cards: 6 bits (4 bits for rank 2-14, 2 bits for suit)
   - Hands: Variable length based on card count
-  - Full game state: ~200-400 bytes depending on phase
+  - Game position: variable length based on cards held
 
   ## Performance
 
   Binary encoding is particularly useful for:
   - Fast state hashing for caching
   - Network transmission
-  - Comparing states for equality
+  - Comparing the encoded subset of states for equality
 
   ## Not a resume format
 
-  This format is lossy by design: it carries phase, hand number, seats, hands,
-  deck, trump, bid and scores, and nothing else. It does not carry the bid or
-  trick history, the event log, the dealer-selection cuts, the game's config,
-  or the chance stream. A state from `from_binary/1` therefore has
+  This format is lossy by design: it carries phase, hand number, current dealer
+  and turn, each player's hand and eliminated flag, deck, trump, highest bid,
+  and cumulative scores, and nothing else. It does not carry revealed cards,
+  tricks won, the bid or trick history, the event log, redeal state,
+  dealer-selection cuts, the winner, the game's config, or the chance stream.
+  A state from `from_binary/1` therefore has
   `chance: nil` and cannot cross a transition that draws — it is a compact
   fingerprint of a position, not a saved game. To save and resume a game, use
   `:erlang.term_to_binary/1` on the `%GameState{}` itself, which preserves
@@ -39,8 +41,7 @@ defmodule Pidro.Core.Binary do
       # Encode a hand
       hand_binary = Binary.encode_hand([{14, :hearts}, {13, :hearts}])
 
-      # Encode full state (see `from_binary/1` for what decoding does and
-      # does not currently do)
+      # Encode the compact, lossy position
       state_binary = Binary.to_binary(state)
   """
 
@@ -85,7 +86,7 @@ defmodule Pidro.Core.Binary do
       {:ok, {2, :spades}}
   """
   @spec decode_card(<<_::6>>) :: {:ok, Types.card()} | {:error, :invalid_binary}
-  def decode_card(<<rank_bits::4, suit_bits::2>>) do
+  def decode_card(<<rank_bits::4, suit_bits::2>>) when rank_bits <= 12 do
     with {:ok, suit} <- decode_suit(suit_bits) do
       rank = rank_bits + 2
       {:ok, {rank, suit}}
@@ -93,6 +94,8 @@ defmodule Pidro.Core.Binary do
   rescue
     _ -> {:error, :invalid_binary}
   end
+
+  def decode_card(_), do: {:error, :invalid_binary}
 
   # =============================================================================
   # Hand Encoding/Decoding
@@ -102,7 +105,7 @@ defmodule Pidro.Core.Binary do
   Encodes a hand (list of cards) as binary.
 
   ## Binary Format
-  - First byte: Number of cards (0-14)
+  - First byte: Number of cards (0-255)
   - Remaining bytes: Concatenated card encodings
 
   ## Examples
@@ -110,8 +113,8 @@ defmodule Pidro.Core.Binary do
       iex> Binary.encode_hand([{14, :hearts}, {13, :hearts}])
       <<2, 0b001100::6, 0b001011::6>>
   """
-  @spec encode_hand([Types.card()]) :: binary()
-  def encode_hand(cards) when is_list(cards) do
+  @spec encode_hand([Types.card()]) :: bitstring()
+  def encode_hand(cards) when is_list(cards) and length(cards) <= 255 do
     card_count = length(cards)
 
     # Encode each card into 6 bits and concatenate them into a single binary
@@ -135,14 +138,21 @@ defmodule Pidro.Core.Binary do
       {:ok, [{14, :hearts}, {13, :hearts}]}
   """
   @spec decode_hand(bitstring()) :: {:ok, [Types.card()]} | {:error, :invalid_binary}
-  def decode_hand(<<card_count::8, rest::bitstring>>) do
+  def decode_hand(bitstring) do
+    case decode_hand_prefix(bitstring) do
+      {:ok, cards, <<>>} -> {:ok, cards}
+      _ -> {:error, :invalid_binary}
+    end
+  end
+
+  defp decode_hand_prefix(<<card_count::8, rest::bitstring>>) do
     decode_cards(rest, card_count, [])
   end
 
-  def decode_hand(_), do: {:error, :invalid_binary}
+  defp decode_hand_prefix(_), do: {:error, :invalid_binary}
 
   # Helper for decoding multiple cards
-  defp decode_cards(<<>>, 0, acc), do: {:ok, Enum.reverse(acc)}
+  defp decode_cards(rest, 0, acc), do: {:ok, Enum.reverse(acc), rest}
 
   defp decode_cards(<<card_bits::6, rest::bitstring>>, count, acc) when count > 0 do
     case decode_card(<<card_bits::6>>) do
@@ -158,10 +168,12 @@ defmodule Pidro.Core.Binary do
   # =============================================================================
 
   @doc """
-  Encodes the complete game state as binary.
+  Encodes the supported subset of a game state as a compact bitstring.
 
-  This creates a compact binary representation of the entire game state,
-  suitable for hashing, caching, or transmission.
+  The format supports hand numbers from 0 to 255, card lists containing at
+  most 255 cards, and cumulative scores from -32,768 to 32,767. Values outside
+  those ranges cannot be represented. See "Not a resume format" for the state
+  fields deliberately omitted from the format.
 
   ## Binary Format
 
@@ -171,14 +183,13 @@ defmodule Pidro.Core.Binary do
   3. Current dealer and turn (6 bits)
   4. Bidding state (variable)
   5. Trump suit (3 bits, includes nil option)
-  6. Player hands (variable)
+  6. Player hands and eliminated flags (variable)
   7. Deck (variable)
   8. Scores (32 bits)
-  9. Tricks data (variable)
 
   ## Returns
 
-  Binary representation of the game state.
+  Bitstring representation of the supported fields.
 
   ## Examples
 
@@ -187,10 +198,9 @@ defmodule Pidro.Core.Binary do
       iex> is_bitstring(binary)
       true
 
-  Note the output is a bitstring, not necessarily byte-aligned, and that
-  `from_binary/1` does not currently decode it — see its documentation.
+  The output is a bitstring and is not necessarily byte-aligned.
   """
-  @spec to_binary(GameState.t()) :: binary()
+  @spec to_binary(GameState.t()) :: bitstring()
   def to_binary(%GameState{} = state) do
     phase_bits = encode_phase(state.phase)
     hand_number = state.hand_number
@@ -231,32 +241,24 @@ defmodule Pidro.Core.Binary do
   Decodes a binary back into a partial game state.
 
   The result carries only what `to_binary/1` encodes. Everything else is
-  reset: no bids, no tricks, no hand points, no event log, no
-  dealer-selection cuts, the default config in place of the original's, and
-  `chance: nil`. See "Not a resume format" in the module documentation — a
-  decoded state cannot be played across a transition that draws.
+  reset to the `%GameState{}` defaults, including no bids, no tricks, no hand
+  points, no event log, no dealer-selection cuts, the default config in place
+  of the original's, and `chance: nil`. See "Not a resume format" in the
+  module documentation — a decoded state cannot be played across a transition
+  that draws.
 
   ## Parameters
 
-  - `binary` - Binary representation of a game state
+  - `binary` - Bitstring representation of a game state
 
   ## Returns
 
   - `{:ok, game_state}` if decoding succeeds
   - `{:error, reason}` if the binary is invalid
 
-  ## Known limitation
-
-  This decoder does not currently accept `to_binary/1`'s own output: the
-  round trip returns `{:error, :invalid_binary}` for every state tried. The
-  defect predates the explicit chance stream — the format has no tests and no
-  production caller — and completing the format is separate, tracked work.
-  Until then nothing can be restored through it, which is another way of
-  saying it is not a resume format.
-
-  Whoever fixes the format has one decision to make about chance: either keep
-  leaving it `nil` and keep saying so here, or carry the stream explicitly.
-  It must not invent one.
+  Decoding never generates entropy or invents a default chance value. Use
+  `:erlang.term_to_binary/1` on the full state when continued play must survive
+  a future random transition.
   """
   @spec from_binary(bitstring()) :: {:ok, GameState.t()} | {:error, atom()}
   def from_binary(
@@ -282,23 +284,7 @@ defmodule Pidro.Core.Binary do
         players: players,
         deck: deck,
         cumulative_scores: %{north_south: ns_score, east_west: ew_score},
-        # Initialize other fields with defaults
-        bids: [],
-        tricks: [],
-        current_trick: nil,
-        trick_number: 0,
-        hand_points: %{north_south: 0, east_west: 0},
-        winner: nil,
-        events: [],
-        config: %{
-          min_bid: 6,
-          max_bid: 14,
-          winning_score: 62,
-          initial_deal_count: 9,
-          final_hand_size: 6,
-          allow_negative_scores: true
-        },
-        cache: %{}
+        chance: nil
       }
 
       {:ok, state}
@@ -317,12 +303,11 @@ defmodule Pidro.Core.Binary do
   defp encode_suit(:clubs), do: 2
   defp encode_suit(:spades), do: 3
 
-  @spec decode_suit(0..3) :: {:ok, Types.suit()} | {:error, :invalid_suit}
+  @spec decode_suit(0..3) :: {:ok, Types.suit()}
   defp decode_suit(0), do: {:ok, :hearts}
   defp decode_suit(1), do: {:ok, :diamonds}
   defp decode_suit(2), do: {:ok, :clubs}
   defp decode_suit(3), do: {:ok, :spades}
-  defp decode_suit(_), do: {:error, :invalid_suit}
 
   @spec encode_phase(Types.phase()) :: 0..9
   defp encode_phase(:dealer_selection), do: 0
@@ -336,7 +321,7 @@ defmodule Pidro.Core.Binary do
   defp encode_phase(:complete), do: 8
   defp encode_phase(:hand_complete), do: 9
 
-  @spec decode_phase(0..9) :: {:ok, Types.phase()} | {:error, :invalid_phase}
+  @spec decode_phase(0..15) :: {:ok, Types.phase()} | {:error, :invalid_phase}
   defp decode_phase(0), do: {:ok, :dealer_selection}
   defp decode_phase(1), do: {:ok, :dealing}
   defp decode_phase(2), do: {:ok, :bidding}
@@ -363,12 +348,14 @@ defmodule Pidro.Core.Binary do
   defp encode_optional_position(:south), do: 3
   defp encode_optional_position(:west), do: 4
 
-  @spec decode_position(0..4) :: {:ok, Types.position() | nil}
+  @spec decode_position(0..7) ::
+          {:ok, Types.position() | nil} | {:error, :invalid_position}
   defp decode_position(0), do: {:ok, nil}
   defp decode_position(1), do: {:ok, :north}
   defp decode_position(2), do: {:ok, :east}
   defp decode_position(3), do: {:ok, :south}
   defp decode_position(4), do: {:ok, :west}
+  defp decode_position(_), do: {:error, :invalid_position}
 
   @spec encode_trump_suit(Types.suit() | nil) :: 0..4
   defp encode_trump_suit(nil), do: 0
@@ -377,14 +364,15 @@ defmodule Pidro.Core.Binary do
   defp encode_trump_suit(:clubs), do: 3
   defp encode_trump_suit(:spades), do: 4
 
-  @spec decode_trump_suit(0..4) :: {:ok, Types.suit() | nil}
+  @spec decode_trump_suit(0..7) :: {:ok, Types.suit() | nil} | {:error, :invalid_suit}
   defp decode_trump_suit(0), do: {:ok, nil}
   defp decode_trump_suit(1), do: {:ok, :hearts}
   defp decode_trump_suit(2), do: {:ok, :diamonds}
   defp decode_trump_suit(3), do: {:ok, :clubs}
   defp decode_trump_suit(4), do: {:ok, :spades}
+  defp decode_trump_suit(_), do: {:error, :invalid_suit}
 
-  @spec encode_bid_state({Types.position(), Types.bid_amount()} | nil) :: binary()
+  @spec encode_bid_state({Types.position(), Types.bid_amount()} | nil) :: bitstring()
   defp encode_bid_state(nil), do: <<0::1>>
 
   defp encode_bid_state({position, amount}) do
@@ -397,7 +385,8 @@ defmodule Pidro.Core.Binary do
           | {:error, :invalid_binary}
   defp decode_bid_state(<<0::1, rest::bitstring>>), do: {:ok, nil, rest}
 
-  defp decode_bid_state(<<1::1, pos_bits::3, amount::4, rest::bitstring>>) do
+  defp decode_bid_state(<<1::1, pos_bits::3, amount::4, rest::bitstring>>)
+       when amount in 6..14 do
     case decode_position(pos_bits) do
       {:ok, position} when not is_nil(position) ->
         {:ok, {position, amount}, rest}
@@ -409,7 +398,7 @@ defmodule Pidro.Core.Binary do
 
   defp decode_bid_state(_), do: {:error, :invalid_binary}
 
-  @spec encode_player(Player.t()) :: binary()
+  @spec encode_player(Player.t()) :: bitstring()
   defp encode_player(%Player{hand: hand, eliminated?: eliminated}) do
     hand_binary = encode_hand(hand)
     eliminated_bit = if eliminated, do: 1, else: 0
@@ -435,13 +424,8 @@ defmodule Pidro.Core.Binary do
   @spec decode_player(Types.position(), bitstring()) ::
           {:ok, Player.t(), bitstring()} | {:error, :invalid_binary}
   defp decode_player(position, <<eliminated_bit::1, rest::bitstring>>) do
-    case decode_hand(rest) do
-      {:ok, hand} ->
-        # Calculate how many bits were consumed
-        hand_binary = encode_hand(hand)
-        hand_bit_size = bit_size(hand_binary)
-        <<_consumed::bitstring-size(^hand_bit_size), remaining::bitstring>> = rest
-
+    case decode_hand_prefix(rest) do
+      {:ok, hand, remaining} ->
         player = %Player{
           position: position,
           team: Types.position_to_team(position),
@@ -462,12 +446,8 @@ defmodule Pidro.Core.Binary do
 
   @spec decode_deck(bitstring()) :: {:ok, [Types.card()], bitstring()} | {:error, :invalid_binary}
   defp decode_deck(bitstring) do
-    case decode_hand(bitstring) do
-      {:ok, deck} ->
-        # Calculate how many bits were consumed
-        deck_binary = encode_hand(deck)
-        deck_bit_size = bit_size(deck_binary)
-        <<_consumed::bitstring-size(^deck_bit_size), remaining::bitstring>> = bitstring
+    case decode_hand_prefix(bitstring) do
+      {:ok, deck, remaining} ->
         {:ok, deck, remaining}
 
       error ->
@@ -476,7 +456,7 @@ defmodule Pidro.Core.Binary do
   end
 
   @spec decode_scores(bitstring()) :: {:ok, integer(), integer()} | {:error, :invalid_binary}
-  defp decode_scores(<<ns_score::signed-16, ew_score::signed-16, _rest::bitstring>>) do
+  defp decode_scores(<<ns_score::signed-16, ew_score::signed-16>>) do
     {:ok, ns_score, ew_score}
   end
 

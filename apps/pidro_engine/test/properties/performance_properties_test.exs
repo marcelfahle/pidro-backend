@@ -52,11 +52,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
       end
     end
 
-    @tag :skip
     property "state encoding round-trip preserves essential fields" do
-      # TODO: Full state binary encoding/decoding is complex due to bitstring alignment
-      # This test is skipped for Phase 9 initial implementation
-      # The simpler binary operations (cards, hands) work correctly
       check all(
               phase <-
                 member_of([
@@ -247,9 +243,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
              "states_equal? took #{time_us}μs, expected < #{@max_operation_time_us}μs"
     end
 
-    @tag :skip
     test "full state binary encoding completes quickly" do
-      # TODO: Skipped pending full state encoding/decoding fix
       state = GameState.new(seed: 1)
 
       {time_us, _result} =
@@ -261,9 +255,7 @@ defmodule Pidro.Properties.PerformancePropertiesTest do
              "to_binary took #{time_us}μs, expected < #{@max_operation_time_us * 2}μs"
     end
 
-    @tag :skip
     test "full state binary decoding completes quickly" do
-      # TODO: Skipped pending full state encoding/decoding fix
       state = GameState.new(seed: 1)
       binary = Binary.to_binary(state)
 
