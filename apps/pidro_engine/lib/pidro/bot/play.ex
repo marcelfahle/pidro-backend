@@ -59,8 +59,8 @@ defmodule Pidro.Bot.Play do
 
   `{{:play_card, card}, reason}` where the action is a member of `legal`.
   """
-  @spec decide(SeatView.t(), [Types.action()]) :: decision()
-  def decide(%SeatView{} = view, legal) do
+  @spec decide(SeatView.t(), [Types.action()], Pidro.Bot.Rulebook.profile()) :: decision()
+  def decide(%SeatView{} = view, legal, profile \\ :regular) do
     trump = view.trump_suit
 
     cards =
@@ -70,7 +70,7 @@ defmodule Pidro.Bot.Play do
       |> Knowledge.sort_ascending(trump)
 
     rules = if Knowledge.leading?(view), do: @lead_rules, else: @follow_rules
-    {card, reason} = Enum.find_value(rules, &apply_rule(&1, view, cards))
+    {card, reason} = Enum.find_value(rules, &apply_rule(&1, view, cards, profile))
     {{:play_card, card}, reason}
   end
 
@@ -96,12 +96,12 @@ defmodule Pidro.Bot.Play do
 
   # --- Following --------------------------------------------------------------
 
-  @spec apply_rule(atom(), SeatView.t(), [card()]) :: rule_result()
-  defp apply_rule(:only_card, _view, [card]), do: {card, "It is my only trump."}
-  defp apply_rule(:only_card, _view, _cards), do: nil
+  @spec apply_rule(atom(), SeatView.t(), [card()], Pidro.Bot.Rulebook.profile()) :: rule_result()
+  defp apply_rule(:only_card, _view, [card], _profile), do: {card, "It is my only trump."}
+  defp apply_rule(:only_card, _view, _cards, _profile), do: nil
 
-  defp apply_rule(:feed_safe_trick, view, cards) do
-    if Knowledge.safe_trick?(view) do
+  defp apply_rule(:feed_safe_trick, view, cards, profile) do
+    if Knowledge.safe_trick?(view, profile) do
       {_pos, winning} = Knowledge.current_winner(view)
 
       case five_to_feed(cards, view.trump_suit) do
@@ -118,22 +118,23 @@ defmodule Pidro.Bot.Play do
     end
   end
 
-  defp apply_rule(:stop_opponent_five, view, cards) do
+  defp apply_rule(:stop_opponent_five, view, cards, profile) do
     high = List.last(cards)
 
-    if Knowledge.opponent_five_on_trick?(view) and not Knowledge.safe_trick?(view) and
+    if Knowledge.opponent_five_on_trick?(view) and not Knowledge.safe_trick?(view, profile) and
          Knowledge.wins_trick?(view, high) do
       {high,
        "An opponent put a Five on the trick, so I take it with my highest trump, the #{name(high)}."}
     end
   end
 
-  defp apply_rule(:secure_partner_points, view, cards) do
+  defp apply_rule(:secure_partner_points, view, cards, profile) do
     {winner, winning} = Knowledge.current_winner(view)
     points = Knowledge.points_on_trick(view)
 
-    if winner == Knowledge.partner(view) and points > 0 and not Knowledge.safe_trick?(view) do
-      case Enum.find(cards, &Knowledge.safe_after?(view, &1)) do
+    if winner == Knowledge.partner(view) and points > 0 and
+         not Knowledge.safe_trick?(view, profile) do
+      case Enum.find(cards, &Knowledge.safe_after?(view, &1, profile)) do
         nil ->
           nil
 
@@ -145,7 +146,7 @@ defmodule Pidro.Bot.Play do
     end
   end
 
-  defp apply_rule(:take_points, view, cards) do
+  defp apply_rule(:take_points, view, cards, _profile) do
     {winner, winning} = Knowledge.current_winner(view)
     points = Knowledge.points_on_trick(view)
     opponent? = Types.position_to_team(winner) != Knowledge.my_team(view)
@@ -163,7 +164,7 @@ defmodule Pidro.Bot.Play do
     end
   end
 
-  defp apply_rule(:play_low, view, cards) do
+  defp apply_rule(:play_low, view, cards, _profile) do
     low = lowest(cards, view)
     {winner, _winning} = Knowledge.current_winner(view)
 
@@ -184,7 +185,7 @@ defmodule Pidro.Bot.Play do
 
   # --- Leading ----------------------------------------------------------------
 
-  defp apply_rule(:only_fives, view, cards) do
+  defp apply_rule(:only_fives, view, cards, _profile) do
     trump = view.trump_suit
 
     if Enum.all?(cards, &Knowledge.five?(&1, trump)) do
@@ -193,20 +194,20 @@ defmodule Pidro.Bot.Play do
     end
   end
 
-  defp apply_rule(:lead_top, view, cards) do
+  defp apply_rule(:lead_top, view, cards, profile) do
     top = List.last(cards)
     trump = view.trump_suit
 
     cond do
       not Knowledge.bidding_side?(view) -> nil
-      not Knowledge.unbeatable?(view, top) -> nil
+      not Knowledge.unbeatable?(view, top, profile) -> nil
       Knowledge.five?(top, trump) -> nil
       ace_too_short?(view, cards, top) -> nil
       true -> {top, "My #{name(top)} is the highest trump left, so I lead it."}
     end
   end
 
-  defp apply_rule(:lead_low, view, cards) do
+  defp apply_rule(:lead_low, view, cards, _profile) do
     low = lowest(cards, view)
 
     reason =

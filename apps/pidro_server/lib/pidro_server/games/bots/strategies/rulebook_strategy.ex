@@ -1,6 +1,6 @@
 defmodule PidroServer.Games.Bots.Strategies.RulebookStrategy do
   @moduledoc """
-  The rule-based bot every seated bot plays with.
+  The Regular rulebook profile, also used for the legacy `smart` alias.
 
   A thin adapter over `Pidro.Bot.Rulebook` in the engine, which bids from
   hand strength, names trump, and plays by partnership conventions. It decides

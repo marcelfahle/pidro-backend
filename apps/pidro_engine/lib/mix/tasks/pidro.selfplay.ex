@@ -5,6 +5,7 @@ defmodule Mix.Tasks.Pidro.Selfplay do
       mix pidro.selfplay                          # 2000 games, seed 1, rulebook vs random
       mix pidro.selfplay --games 500 --seed 7
       mix pidro.selfplay --a rulebook --b rulebook
+      mix pidro.selfplay --pairs 1000 --seed 71 --a regular --b casual
 
   Team A alternates between North/South and East/West. The summary reports
   win rate, bids made and set, average bid, decision times, and any illegal
@@ -17,25 +18,39 @@ defmodule Mix.Tasks.Pidro.Selfplay do
 
   @shortdoc "Plays seeded bot-vs-bot games and prints a summary"
 
-  @policies ~w(rulebook random)
+  @policies ~w(rulebook random regular casual)
 
   @impl Mix.Task
   def run(args) do
-    {opts, _rest, invalid} =
-      OptionParser.parse(args, strict: [games: :integer, seed: :integer, a: :string, b: :string])
+    {opts, rest, invalid} =
+      OptionParser.parse(args,
+        strict: [games: :integer, pairs: :integer, seed: :integer, a: :string, b: :string]
+      )
 
     if invalid != [], do: usage("Unknown options: #{inspect(invalid)}")
+    if rest != [], do: usage("Unexpected arguments: #{inspect(rest)}")
+
+    if Keyword.has_key?(opts, :pairs) and Keyword.has_key?(opts, :games),
+      do: usage("Choose --pairs or --games, not both")
+
+    count_key = if Keyword.has_key?(opts, :pairs), do: :pairs, else: :games
+    count = Keyword.get(opts, count_key, 2000)
+    if count < 1, do: usage("Game/pair count must be positive")
 
     a = Keyword.get(opts, :a, "rulebook")
     b = Keyword.get(opts, :b, "random")
+    policy_a = policy(a)
+    policy_b = policy(b)
     {label_a, label_b} = if a == b, do: {"#{a}_a", "#{b}_b"}, else: {a, b}
 
     summary =
       SelfPlay.run(
-        games: Keyword.get(opts, :games, 2000),
-        seed: Keyword.get(opts, :seed, 1),
-        a: {String.to_atom(label_a), policy(a)},
-        b: {String.to_atom(label_b), policy(b)}
+        [{count_key, count}] ++
+          [
+            seed: Keyword.get(opts, :seed, 1),
+            a: {String.to_atom(label_a), policy_a},
+            b: {String.to_atom(label_b), policy_b}
+          ]
       )
 
     Mix.shell().info(SelfPlay.format(summary))
@@ -48,6 +63,8 @@ defmodule Mix.Tasks.Pidro.Selfplay do
 
   defp policy("rulebook"), do: SelfPlay.rulebook_policy()
   defp policy("random"), do: SelfPlay.random_policy()
+  defp policy("regular"), do: SelfPlay.rulebook_policy(:regular)
+  defp policy("casual"), do: SelfPlay.rulebook_policy(:casual)
 
   defp policy(name),
     do: usage("Unknown policy #{inspect(name)}; use one of #{Enum.join(@policies, ", ")}")
@@ -56,7 +73,7 @@ defmodule Mix.Tasks.Pidro.Selfplay do
     Mix.shell().error(message)
 
     Mix.shell().info(
-      "Usage: mix pidro.selfplay [--games N] [--seed N] [--a rulebook|random] [--b rulebook|random]"
+      "Usage: mix pidro.selfplay [--games N | --pairs N] [--seed N] [--a POLICY] [--b POLICY]\nPolicies: #{Enum.join(@policies, ", ")}"
     )
 
     exit({:shutdown, 1})

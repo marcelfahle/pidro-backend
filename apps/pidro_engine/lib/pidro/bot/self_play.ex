@@ -21,7 +21,7 @@ defmodule Pidro.Bot.SelfPlay do
   release gate refuses.
   """
 
-  alias Pidro.Bot.{RandomPolicy, Rulebook}
+  alias Pidro.Bot.{Knowledge, RandomPolicy, Rulebook}
   alias Pidro.Core.{GameState, SeatView, Types}
   alias Pidro.Game.{DealerRob, Dealing, Engine}
 
@@ -46,18 +46,19 @@ defmodule Pidro.Bot.SelfPlay do
           winner: Types.team() | nil,
           actions: non_neg_integer(),
           hands: [hand_record()],
+          fives: [%{owner: Types.team(), winner: Types.team()}],
           decision_us: %{Types.team() => [non_neg_integer()]}
         }
 
   @default_max_actions 5_000
 
   @doc """
-  Returns the rulebook bot as a policy.
+  Returns a rulebook profile as a policy (Regular by default).
   """
-  @spec rulebook_policy() :: policy()
-  def rulebook_policy do
+  @spec rulebook_policy(Rulebook.profile()) :: policy()
+  def rulebook_policy(profile \\ :regular) when profile in [:casual, :regular] do
     fn view, legal ->
-      {action, _reason} = Rulebook.decide(view, legal)
+      {action, _reason} = Rulebook.decide(view, legal, profile)
       action
     end
   end
@@ -104,6 +105,7 @@ defmodule Pidro.Bot.SelfPlay do
       winner: if(outcome == :complete, do: final.winner),
       actions: acc.actions,
       hands: hand_records(final.events),
+      fives: five_records(final.events),
       decision_us: acc.decision_us
     }
   end
@@ -113,7 +115,8 @@ defmodule Pidro.Bot.SelfPlay do
 
   ## Options
 
-  - `:games` - number of games (default 100)
+  - `:games` - number of unpaired games (default 100)
+  - `:pairs` - play each seed twice with teams swapped; mutually exclusive with `:games`
   - `:seed` - base seed (default 1); game `i` uses seed `seed * 100_000 + i`
   - `:a`, `:b` - `{label, policy}` for each team (default rulebook vs random)
   - `:max_actions` - per-game action cap
@@ -124,34 +127,69 @@ defmodule Pidro.Bot.SelfPlay do
   A summary map with, per label, games won, win rate, contracts won, bids
   made and set, made rate (also without forced dealer bids), and average
   bid; plus counts of illegal moves, crashes, stalls and capped games, and
-  per-label decision times under `:timing`.
+  per-label decision times under `:timing`. Five metrics count cards, not
+  points: captured includes own Fives kept, taken means an opposing Five
+  captured, and lost means an own Five captured by the opponents. Only
+  completed tricks count, including completed tricks in failed games.
+
+  Paired runs also include each pair's seed and winners, sweep/split counts
+  and incomplete pairs. Pairing fixes cuts and deck order per hand; different
+  trump choices and game lengths can still yield different hands. It does
+  not promise identical random-policy choices after play diverges.
   """
   @spec run(keyword()) :: map()
   def run(opts \\ []) do
-    games = Keyword.get(opts, :games, 100)
+    if Keyword.has_key?(opts, :pairs) and Keyword.has_key?(opts, :games),
+      do: raise(ArgumentError, "choose either :pairs or :games")
+
+    paired? = Keyword.has_key?(opts, :pairs)
+    count = positive!(Keyword.get(opts, if(paired?, do: :pairs, else: :games), 100))
+    games = if paired?, do: count * 2, else: count
     seed = Keyword.get(opts, :seed, 1)
     {label_a, policy_a} = Keyword.get(opts, :a, {:rulebook, rulebook_policy()})
     {label_b, policy_b} = Keyword.get(opts, :b, {:random, random_policy()})
+    if label_a == label_b, do: raise(ArgumentError, "team labels must differ")
+    concurrency = positive!(Keyword.get(opts, :max_concurrency, System.schedulers_online()))
     game_opts = Keyword.take(opts, [:max_actions])
 
+    jobs =
+      for i <- 1..count,
+          team <- if(paired?, do: [:north_south, :east_west], else: [alternating_team(i)]),
+          do: {seed * 100_000 + i, team}
+
     results =
-      1..games//1
+      jobs
       |> Task.async_stream(
-        fn i ->
-          a_team = if rem(i, 2) == 0, do: :north_south, else: :east_west
+        fn {game_seed, a_team} ->
           b_team = Types.opposing_team(a_team)
           policies = %{a_team => policy_a, b_team => policy_b}
-          result = play_game(policies, [seed: seed * 100_000 + i] ++ game_opts)
+          result = play_game(policies, [seed: game_seed] ++ game_opts)
           {%{a_team => label_a, b_team => label_b}, result}
         end,
         ordered: true,
         timeout: :infinity,
-        max_concurrency: Keyword.get(opts, :max_concurrency, System.schedulers_online())
+        max_concurrency: concurrency
       )
       |> Enum.map(fn {:ok, labelled} -> labelled end)
 
-    summarise(results, [label_a, label_b], games, seed)
+    summary = summarise(results, [label_a, label_b], games, seed)
+
+    if paired? do
+      Map.merge(summary, %{
+        pairs: count,
+        pair_results: summarise_pairs(results, seed, [label_a, label_b])
+      })
+    else
+      summary
+    end
   end
+
+  defp positive!(n) when is_integer(n) and n > 0, do: n
+
+  defp positive!(_),
+    do: raise(ArgumentError, "game/pair counts and concurrency must be positive integers")
+
+  defp alternating_team(i), do: if(rem(i, 2) == 0, do: :north_south, else: :east_west)
 
   @doc """
   Formats a summary from `run/1` as text for the terminal.
@@ -168,16 +206,24 @@ defmodule Pidro.Bot.SelfPlay do
           wins            #{t.wins}/#{summary.complete} (#{pct(t.win_rate)})
           contracts       #{t.contracts} (#{t.forced} forced), average bid #{Float.round(t.average_bid, 2)}
           made / set      #{t.made} / #{t.set} (#{pct(t.made_rate)}; #{pct(t.made_rate_unforced)} unforced)
+          Fives           #{t.fives_captured} captured, #{t.fives_taken} taken from opponents, #{t.fives_lost} lost
           decision time   p50 #{time.p50} µs, p95 #{time.p95} µs, max #{time.max} µs
         """
       end
 
     """
     Self-play: #{summary.games} games, seed #{summary.seed}
-    #{Enum.join(teams)}
+    #{format_pairs(summary)}#{Enum.join(teams)}
     complete #{summary.complete}, illegal #{summary.illegal}, crashed #{summary.crashed}, stalled #{summary.stalled}, capped #{summary.capped}
     """
   end
+
+  defp format_pairs(%{pairs: pairs, pair_results: result}) do
+    "Pairs: #{pairs}, complete #{result.complete}, splits #{result.splits}, " <>
+      "sweeps #{inspect(result.sweeps)}, failed #{result.failed}\n"
+  end
+
+  defp format_pairs(_), do: ""
 
   # --- Game loop --------------------------------------------------------------
 
@@ -266,8 +312,65 @@ defmodule Pidro.Bot.SelfPlay do
     Enum.reverse(records)
   end
 
+  # Read public events rather than hidden hands. A Five is lost only when a
+  # completed trick awards it to the other team; this is not a mistake label.
+  defp five_records(events) do
+    {records, _trump, _owners} =
+      Enum.reduce(events, {[], nil, []}, fn
+        {:trump_declared, suit}, {records, _, _} ->
+          {records, suit, []}
+
+        {:card_played, position, card}, {records, trump, owners} ->
+          owners =
+            if Knowledge.five?(card, trump),
+              do: [Types.position_to_team(position) | owners],
+              else: owners
+
+          {records, trump, owners}
+
+        {:trick_won, position, _points}, {records, trump, owners} ->
+          won = for owner <- owners, do: %{owner: owner, winner: Types.position_to_team(position)}
+          {won ++ records, trump, []}
+
+        _, acc ->
+          acc
+      end)
+
+    Enum.reverse(records)
+  end
+
+  defp summarise_pairs(results, seed, labels) do
+    pairs =
+      results
+      |> Enum.chunk_every(2)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {pair, i} ->
+        %{
+          seed: seed * 100_000 + i,
+          winners: Enum.map(pair, fn {teams, game} -> teams[game.winner] end),
+          complete?: Enum.all?(pair, fn {_, game} -> game.outcome == :complete end)
+        }
+      end)
+
+    complete = Enum.filter(pairs, & &1.complete?)
+
+    %{
+      results: pairs,
+      complete: length(complete),
+      failed: length(pairs) - length(complete),
+      splits: Enum.count(complete, fn %{winners: [a, b]} -> a != b end),
+      sweeps:
+        Map.new(labels, fn label ->
+          {label, Enum.count(complete, &(&1.winners == [label, label]))}
+        end)
+    }
+  end
+
   defp summarise(results, labels, games, seed) do
     complete = for {teams, %{outcome: :complete} = r} <- results, do: {teams, r}
+
+    fives =
+      for {teams, r} <- results, five <- r.fives, do: {teams[five.owner], teams[five.winner]}
 
     team_stats =
       Map.new(labels, fn label ->
@@ -279,6 +382,11 @@ defmodule Pidro.Bot.SelfPlay do
 
         {label,
          %{
+           fives_captured: Enum.count(fives, fn {_, winner} -> winner == label end),
+           fives_taken:
+             Enum.count(fives, fn {owner, winner} -> winner == label and owner != label end),
+           fives_lost:
+             Enum.count(fives, fn {owner, winner} -> owner == label and winner != label end),
            wins: wins,
            win_rate: ratio(wins, length(complete)),
            contracts: length(hands),

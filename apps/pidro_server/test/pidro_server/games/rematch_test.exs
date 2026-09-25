@@ -25,10 +25,10 @@ defmodule PidroServer.Games.RematchTest do
     :ok
   end
 
-  defp four_player_game do
+  defp four_player_game(config \\ %{}) do
     users = Enum.map(1..4, &AccountsFixtures.user_fixture(%{display_name: "Rematch #{&1}"}))
     [host | others] = users
-    {:ok, room} = RoomManager.create_room(host.id, %{name: "Thursday four"})
+    {:ok, room} = RoomManager.create_room(host.id, Map.merge(%{name: "Thursday four"}, config))
     for user <- others, do: {:ok, _, _} = RoomManager.join_room(room.code, user.id)
     playing = RoomFixtures.ready_room(room.code)
     assert playing.status == :playing
@@ -415,6 +415,46 @@ defmodule PidroServer.Games.RematchTest do
       Process.sleep(Lifecycle.config(:hiccup_timeout_ms) + 100)
 
       assert {:ok, %{status: :finished}} = RoomManager.get_room(room.code)
+    end
+  end
+
+  test "Casual substitutes retain room difficulty when revived for a rematch" do
+    {room, [host | remaining]} = four_player_game(%{bot_difficulty: :random})
+    position = Enum.find_value(room.positions, fn {pos, user} -> if user == host, do: pos end)
+    :ok = RoomManager.handle_player_disconnect(room.code, host)
+    {:ok, departed} = PidroServer.RoomManagerCase.expire_phase(room.code, position, :phase2_start)
+    old_pid = departed.seats[position].bot_pid
+    assert :sys.get_state(old_pid).strategy == PidroServer.Games.Bots.Strategies.CasualStrategy
+    finish_game(room.code)
+    ask_for_rematch(room, remaining)
+    {:ok, restarted} = RoomManager.get_room(room.code)
+    assert restarted.status == :playing
+    assert restarted.config.bot_difficulty == :random
+    {new_pid, bot} = current_bot(room.code, position)
+    assert new_pid != old_pid
+    assert bot.strategy == PidroServer.Games.Bots.Strategies.CasualStrategy
+  end
+
+  # A substitute may be recovered while the old game registry entry retires.
+  # Assert on the current seat owner after its initial continuation finishes.
+  defp current_bot(room_code, position, attempts \\ 100)
+  defp current_bot(_room_code, _position, 0), do: flunk("rematch substitute did not recover")
+
+  defp current_bot(room_code, position, attempts) do
+    result =
+      try do
+        {:ok, room} = RoomManager.get_room(room_code)
+        pid = room.seats[position].bot_pid
+        if is_pid(pid), do: {pid, :sys.get_state(pid)}
+      catch
+        :exit, _reason -> nil
+      end
+
+    if result do
+      result
+    else
+      Process.sleep(10)
+      current_bot(room_code, position, attempts - 1)
     end
   end
 

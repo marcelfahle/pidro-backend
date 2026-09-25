@@ -9,7 +9,7 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
 
   alias Pidro.Core.SeatView
   alias PidroServer.Games.Bots.{BotBrain, BotManager}
-  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
+  alias PidroServer.Games.Bots.Strategies.{CasualStrategy, RulebookStrategy}
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomManager}
 
   defmodule RecordingStrategy do
@@ -97,6 +97,38 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
   end
 
   describe "pick_action/2" do
+    test "Casual adapter uses the simpler profile, while Regular recognises the spent Ace" do
+      {_room, game} = bidding_room()
+
+      view = %{
+        SeatView.for_seat(game, :south)
+        | phase: :playing,
+          trump_suit: :hearts,
+          hand: [{5, :hearts}, {9, :hearts}, {3, :hearts}],
+          current_trick: %Pidro.Core.Types.Trick{
+            number: 2,
+            leader: :north,
+            plays: [north: {13, :hearts}, east: {7, :hearts}]
+          },
+          tricks: [
+            %Pidro.Core.Types.Trick{
+              number: 1,
+              leader: :north,
+              plays: [
+                north: {14, :hearts},
+                east: {4, :hearts},
+                south: {2, :hearts},
+                west: {6, :hearts}
+              ]
+            }
+          ]
+      }
+
+      legal = Enum.map(view.hand, &{:play_card, &1})
+      assert {:ok, {:play_card, {5, :hearts}}, _} = RulebookStrategy.pick_action(legal, view)
+      assert {:ok, {:play_card, {3, :hearts}}, _} = CasualStrategy.pick_action(legal, view)
+    end
+
     test "returns a legal action and a one-sentence reason from the seat view" do
       {_room, game} = bidding_room()
       view = SeatView.for_seat(game, game.current_turn)
@@ -109,12 +141,16 @@ defmodule PidroServer.Games.Bots.RulebookStrategyTest do
   end
 
   describe "strategy names" do
-    for name <- [:random, :basic, :smart] do
+    for {name, strategy} <- [
+          random: CasualStrategy,
+          basic: RulebookStrategy,
+          smart: RulebookStrategy
+        ] do
       test "#{name} starts a bot that plays the rulebook" do
         {:ok, room} = RoomManager.create_room("host_user", %{})
         {:ok, pid} = BotManager.start_bot(room.code, :east, unquote(name), 0)
 
-        assert :sys.get_state(pid).strategy == RulebookStrategy
+        assert :sys.get_state(pid).strategy == unquote(strategy)
         BotManager.stop_all_bots(room.code)
       end
     end

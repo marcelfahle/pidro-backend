@@ -25,4 +25,15 @@ defmodule PidroServer.Games.Bots.Strategy do
 
   @callback pick_action(legal_actions :: [term()], view :: Pidro.Core.SeatView.t()) ::
               {:ok, action :: term(), reasoning :: String.t()}
+
+  @doc """
+  Resolves legacy room difficulty values to policy adapters. `random` now
+  means Casual, `basic` means Regular, and `smart` remains a Regular alias
+  until a stronger policy is proven. Custom strategy modules pass through.
+  """
+  @spec resolve(atom()) :: module()
+  def resolve(:random), do: PidroServer.Games.Bots.Strategies.CasualStrategy
+  def resolve(:basic), do: PidroServer.Games.Bots.Strategies.RulebookStrategy
+  def resolve(:smart), do: PidroServer.Games.Bots.Strategies.RulebookStrategy
+  def resolve(module) when is_atom(module), do: module
 end

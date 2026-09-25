@@ -5,7 +5,10 @@ defmodule Pidro.Bot.Rulebook do
   `decide/2` dispatches on the phase to `Pidro.Bot.Bidding` or
   `Pidro.Bot.Play` and returns the action with a one-sentence reason. It is
   deterministic: the same view and legal actions always give the same move
-  and reason, and no rule draws a random number.
+  and reason, and no rule draws a random number. `decide/3` accepts `:casual` or
+  `:regular` (the default). Casual keeps the same bidding and partnership
+  rules but recognises safe trumps only from an Ace or the absence of an
+  opponent still to act; it does not remember played or killed cards.
 
   Every decision is guarded. If the legal actions have a shape the rules do
   not expect, a rule raises, or a rule returns a move that is not legal, the
@@ -28,6 +31,7 @@ defmodule Pidro.Bot.Rulebook do
   alias Pidro.Bot.{Bidding, Play}
   alias Pidro.Core.{SeatView, Types}
 
+  @type profile :: :casual | :regular
   @type decision :: {Types.action(), String.t()}
 
   @doc """
@@ -38,12 +42,13 @@ defmodule Pidro.Bot.Rulebook do
   `{action, reason}`, where `action` is a member of `legal` and `reason` is
   one plain-language sentence.
   """
-  @spec decide(SeatView.t(), [Types.action(), ...]) :: decision()
-  def decide(%SeatView{} = view, [_ | _] = legal) do
+  @spec decide(SeatView.t(), [Types.action(), ...], profile()) :: decision()
+  def decide(%SeatView{} = view, [_ | _] = legal, profile \\ :regular)
+      when profile in [:casual, :regular] do
     phase = view.phase
 
     if Enum.all?(legal, &expected_shape?(phase, &1)) do
-      view |> dispatch(phase, legal) |> ensure_legal(view, legal)
+      view |> dispatch(phase, legal, profile) |> ensure_legal(view, legal)
     else
       fallback(view, legal, "I did not recognise the moves on offer")
     end
@@ -88,16 +93,17 @@ defmodule Pidro.Bot.Rulebook do
     end
   end
 
-  defp dispatch(_view, _phase, [:select_dealer]), do: {:select_dealer, "I cut for dealer."}
+  defp dispatch(_view, _phase, [:select_dealer], _profile),
+    do: {:select_dealer, "I cut for dealer."}
 
-  defp dispatch(_view, :second_deal, [{:select_hand, :choose_6_cards} = marker]) do
+  defp dispatch(_view, :second_deal, [{:select_hand, :choose_6_cards} = marker], _profile) do
     {marker, "The engine keeps my best six cards from the pack."}
   end
 
-  defp dispatch(view, :bidding, legal), do: Bidding.decide_bid(view, legal)
-  defp dispatch(view, :declaring, legal), do: Bidding.decide_trump(view, legal)
-  defp dispatch(view, :playing, legal), do: Play.decide(view, legal)
-  defp dispatch(view, _phase, legal), do: fallback(view, legal)
+  defp dispatch(view, :bidding, legal, _profile), do: Bidding.decide_bid(view, legal)
+  defp dispatch(view, :declaring, legal, _profile), do: Bidding.decide_trump(view, legal)
+  defp dispatch(view, :playing, legal, profile), do: Play.decide(view, legal, profile)
+  defp dispatch(view, _phase, legal, _profile), do: fallback(view, legal)
 
   defp ensure_legal({action, reason} = decision, view, legal) do
     if action in legal and is_binary(reason) and reason != "" do

@@ -5,7 +5,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   Unlike `BotPlayer`, a SubstituteBot does NOT join the room — it takes over
   an existing seat that was vacated by a disconnected human. It subscribes to
   game PubSub updates, detects when it's the bot's turn, and plays moves
-  with the rulebook strategy, the same bot every seated bot uses.
+  with the room's configured rulebook profile.
 
   RoomManager starts and monitors these temporary children under BotSupervisor.
   The seat's bot_pid is the sole action authority; only RoomManager replaces it
@@ -22,8 +22,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
   use GenServer, restart: :temporary
   require Logger
 
-  alias PidroServer.Games.Bots.BotBrain
-  alias PidroServer.Games.Bots.Strategies.RulebookStrategy
+  alias PidroServer.Games.Bots.{BotBrain, Strategy}
   alias PidroServer.Games.GameAdapter
 
   ## Public API
@@ -33,11 +32,11 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
   Returns `{:ok, pid}` on success. The bot is started under `BotSupervisor`.
   """
-  @spec start(String.t(), atom()) :: {:ok, pid()} | {:error, term()}
-  def start(room_code, position) do
+  @spec start(String.t(), atom(), atom()) :: {:ok, pid()} | {:error, term()}
+  def start(room_code, position, difficulty \\ :basic) do
     DynamicSupervisor.start_child(
       PidroServer.Games.Bots.BotSupervisor,
-      {__MODULE__, room_code: room_code, position: position}
+      {__MODULE__, room_code: room_code, position: position, difficulty: difficulty}
     )
   end
 
@@ -60,7 +59,7 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
     state = %{
       room_code: room_code,
       position: position,
-      strategy: RulebookStrategy,
+      strategy: Strategy.resolve(Keyword.get(opts, :difficulty, :basic)),
       move_scheduled?: false
     }
 
