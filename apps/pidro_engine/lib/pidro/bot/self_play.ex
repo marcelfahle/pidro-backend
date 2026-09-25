@@ -53,12 +53,12 @@ defmodule Pidro.Bot.SelfPlay do
   @default_max_actions 5_000
 
   @doc """
-  Returns a rulebook profile as a policy (Regular by default).
+  Returns the production rulebook as an evaluation policy.
   """
-  @spec rulebook_policy(Rulebook.profile()) :: policy()
-  def rulebook_policy(profile \\ :regular) when profile in [:casual, :regular] do
+  @spec rulebook_policy() :: policy()
+  def rulebook_policy do
     fn view, legal ->
-      {action, _reason} = Rulebook.decide(view, legal, profile)
+      {action, _reason} = Rulebook.decide(view, legal)
       action
     end
   end

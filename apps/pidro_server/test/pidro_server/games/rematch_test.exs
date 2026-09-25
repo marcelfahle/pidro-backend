@@ -418,13 +418,13 @@ defmodule PidroServer.Games.RematchTest do
     end
   end
 
-  test "Casual substitutes retain room difficulty when revived for a rematch" do
+  test "legacy random rooms use the rulebook for substitutes before and after rematch" do
     {room, [host | remaining]} = four_player_game(%{bot_difficulty: :random})
     position = Enum.find_value(room.positions, fn {pos, user} -> if user == host, do: pos end)
     :ok = RoomManager.handle_player_disconnect(room.code, host)
     {:ok, departed} = PidroServer.RoomManagerCase.expire_phase(room.code, position, :phase2_start)
     old_pid = departed.seats[position].bot_pid
-    assert :sys.get_state(old_pid).strategy == PidroServer.Games.Bots.Strategies.CasualStrategy
+    assert :sys.get_state(old_pid).strategy == PidroServer.Games.Bots.Strategies.RulebookStrategy
     finish_game(room.code)
     ask_for_rematch(room, remaining)
     {:ok, restarted} = RoomManager.get_room(room.code)
@@ -432,7 +432,7 @@ defmodule PidroServer.Games.RematchTest do
     assert restarted.config.bot_difficulty == :random
     {new_pid, bot} = current_bot(room.code, position)
     assert new_pid != old_pid
-    assert bot.strategy == PidroServer.Games.Bots.Strategies.CasualStrategy
+    assert bot.strategy == PidroServer.Games.Bots.Strategies.RulebookStrategy
   end
 
   # A substitute may be recovered while the old game registry entry retires.

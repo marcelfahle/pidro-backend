@@ -1,6 +1,6 @@
 defmodule PidroServer.Games.Bots.Strategies.RulebookStrategy do
   @moduledoc """
-  The Regular rulebook profile, also used for the legacy `smart` alias.
+  The production bot strategy, used for every legacy room difficulty value.
 
   A thin adapter over `Pidro.Bot.Rulebook` in the engine, which bids from
   hand strength, names trump, and plays by partnership conventions. It decides

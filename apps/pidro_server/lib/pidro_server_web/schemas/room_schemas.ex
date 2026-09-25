@@ -110,8 +110,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         bot_difficulty: %Schema{
           type: :string,
           enum: Config.difficulties(),
+          deprecated: true,
           description:
-            "Bot difficulty requested at creation. Records the request, not what each seat's bot runs now",
+            "Deprecated compatibility field, echoing the legacy request. All values use the same rulebook",
           example: "basic"
         },
         solo: %Schema{
@@ -187,7 +188,8 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           type: :string,
           enum: Config.difficulties(),
           default: "basic",
-          description: "Difficulty of the bots started for `ai` seats"
+          deprecated: true,
+          description: "Deprecated; omit this field. All accepted values use the same rulebook"
         }
       },
       example: %{

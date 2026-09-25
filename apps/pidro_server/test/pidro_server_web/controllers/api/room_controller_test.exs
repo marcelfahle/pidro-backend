@@ -128,29 +128,44 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       refute code in listed
     end
 
-    for {difficulty, strategy} <- [
-          random: PidroServer.Games.Bots.Strategies.CasualStrategy,
-          basic: PidroServer.Games.Bots.Strategies.RulebookStrategy,
-          smart: PidroServer.Games.Bots.Strategies.RulebookStrategy
+    for {label, legacy_value, extra_params} <- [
+          {"omitted", :basic, %{}},
+          {"random", :random, %{"bot_difficulty" => "random"}},
+          {"basic", :basic, %{"bot_difficulty" => "basic"}},
+          {"smart", :smart, %{"bot_difficulty" => "smart"}}
         ] do
-      test "an all-AI create applies #{difficulty} to every bot", %{conn: conn} do
+      test "an all-AI create with difficulty #{label} uses the one rulebook", %{conn: conn} do
         user = AccountsFixtures.user_fixture()
+
+        params =
+          Map.merge(
+            %{"seats" => %{"seat_2" => "ai", "seat_3" => "ai", "seat_4" => "ai"}},
+            unquote(Macro.escape(extra_params))
+          )
 
         data =
           conn
           |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
-          |> post(~p"/api/v1/rooms", %{
-            "seats" => %{"seat_2" => "ai", "seat_3" => "ai", "seat_4" => "ai"},
-            "bot_difficulty" => Atom.to_string(unquote(difficulty))
-          })
+          |> post(~p"/api/v1/rooms", params)
           |> json_response(201)
           |> Map.fetch!("data")
 
         assert {:ok, room} = RoomManager.get_room(data["code"])
-        assert room.config == %Config{name: nil, bot_difficulty: unquote(difficulty), solo: true}
+
+        assert room.config == %Config{
+                 name: nil,
+                 bot_difficulty: unquote(legacy_value),
+                 solo: true
+               }
+
         bots = for {_, %{occupant_type: :bot, bot_pid: pid}} <- room.seats, do: pid
         assert length(bots) == 3
-        for pid <- bots, do: assert(:sys.get_state(pid).strategy == unquote(strategy))
+
+        for pid <- bots,
+            do:
+              assert(
+                :sys.get_state(pid).strategy == PidroServer.Games.Bots.Strategies.RulebookStrategy
+              )
       end
     end
 
