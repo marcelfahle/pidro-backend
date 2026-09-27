@@ -15,11 +15,22 @@ defmodule PidroServer.Profiles.LegacyProgression do
 
     * `xp` — lifetime legacy XP (`users.xp`). The only field needed for the
       Veteran level/title; kept verbatim. Defaults to `0` (→ level 1).
+    * `classic_user_id`, `classic_username`, and `classic_level` — the Classic
+      account's immutable id and profile identity.
+    * `legacy_played_games`, `legacy_victories`, and `legacy_losses` — the
+      oldest counters frozen in 2016.
+    * `games_played_counter`, `wins`, and `losses` — the counters used from
+      December 2016 onward.
+    * `games_logged` — number of XP-log rows since 2018. It is retained for
+      auditing, never added to games played.
+    * `games_started` and `games_ended` — fair-play row counts. They are
+      retained for auditing, never added to games played.
+    * `member_since` — the Classic account creation date.
     * `badges` — opaque legacy accolade names (`user_badges.AchievementData`),
-      routed to the display-only `legacy_accolades` Heritage flag. Default `[]`.
+      routed to the display-only `legacy_accolades` Heritage flag.
     * `premium` — the bridge's active-premium decision (`now < users.premium_until`).
       Recorded as a display-only Heritage flag (Pidro 2 has no entitlement system).
-      Default `false`.
+      Missing values stay `nil`, distinct from a known `false` value.
     * `founding_member` — pre-launch cohort flag (display only). Default `false`.
     * `playstyle` — pre-aggregated bidding facts (`bidding_attempts`,
       `bidding_wins`, `won_bid_sum`) from `game_play_data.RoomData`, or `nil`
@@ -38,11 +49,43 @@ defmodule PidroServer.Profiles.LegacyProgression do
 
   @type t :: %__MODULE__{
           xp: non_neg_integer(),
-          badges: [String.t()],
-          premium: boolean(),
+          classic_user_id: integer() | nil,
+          classic_username: String.t() | nil,
+          classic_name_allowed: boolean() | nil,
+          classic_level: non_neg_integer() | nil,
+          legacy_played_games: non_neg_integer() | nil,
+          legacy_victories: non_neg_integer() | nil,
+          legacy_losses: non_neg_integer() | nil,
+          games_played_counter: non_neg_integer() | nil,
+          wins: non_neg_integer() | nil,
+          losses: non_neg_integer() | nil,
+          games_logged: non_neg_integer() | nil,
+          games_started: non_neg_integer() | nil,
+          games_ended: non_neg_integer() | nil,
+          member_since: String.t() | nil,
+          badges: [String.t()] | nil,
+          premium: boolean() | nil,
           founding_member: boolean(),
           playstyle: playstyle() | nil
         }
 
-  defstruct xp: 0, badges: [], premium: false, founding_member: false, playstyle: nil
+  defstruct xp: 0,
+            classic_user_id: nil,
+            classic_username: nil,
+            classic_name_allowed: nil,
+            classic_level: nil,
+            legacy_played_games: nil,
+            legacy_victories: nil,
+            legacy_losses: nil,
+            games_played_counter: nil,
+            wins: nil,
+            losses: nil,
+            games_logged: nil,
+            games_started: nil,
+            games_ended: nil,
+            member_since: nil,
+            badges: nil,
+            premium: nil,
+            founding_member: false,
+            playstyle: nil
 end

@@ -70,19 +70,16 @@ defmodule PidroServer.Profiles do
   @doc """
   Imports a Pidro 1 player's progression into their Pidro 2 profile (PID-53).
 
-  The pure legacy → profile mapping: carries the Veteran XP/level, routes legacy
-  badges + premium + founding-member recognition into display-only Heritage
-  flags, sets the playstyle accumulators from the bridge's pre-aggregation, and
-  leaves skill at `Rating.default/0` with `rating_games_count: 0` (NO seed) so a
-  migrated player is Provisional on arrival.
+  The pure legacy → profile mapping: adds Classic XP to Veteran XP, retains the
+  raw Classic career in Heritage flags, and adds the bridge's pre-aggregated
+  playstyle facts. New-game results, rating, and achievements are untouched.
 
   `legacy_data` is a `%LegacyProgression{}` or a plain map (normalized via
   `struct/2`, so any missing/`nil` field falls to its struct default). The first
   argument is a `user_id` or a `%User{}` (resolved to its id) for the future
   bridge call site.
 
-  Every write is an ABSOLUTE set through one `PlayerProfile.changeset/2`, wrapped
-  in a transaction (the single-write boundary `rebuild_from_history/1` uses).
+  The import is one `PlayerProfile.changeset/2` write wrapped in a transaction.
 
   ## Idempotency
 
@@ -107,7 +104,7 @@ defmodule PidroServer.Profiles do
       if already_migrated?(profile) do
         :already_migrated
       else
-        case profile |> PlayerProfile.changeset(legacy_attrs(legacy)) |> Repo.update() do
+        case profile |> PlayerProfile.changeset(legacy_attrs(profile, legacy)) |> Repo.update() do
           {:ok, updated} -> updated
           {:error, changeset} -> Repo.rollback(changeset)
         end
@@ -127,34 +124,47 @@ defmodule PidroServer.Profiles do
 
   defp already_migrated?(_profile), do: false
 
-  # Build the full absolute-set attrs map for the one import changeset. Skill is
-  # left at Rating.default/0 + count 0 (NO seed → guaranteed Provisional). When
-  # legacy.playstyle is nil the four accumulators stay 0.
-  defp legacy_attrs(%LegacyProgression{} = legacy) do
-    level = Progression.level_for_xp(legacy.xp)
-    {default_mu, default_sigma} = Rating.default()
+  defp legacy_attrs(%PlayerProfile{} = profile, %LegacyProgression{} = legacy) do
+    veteran_xp = profile.veteran_xp + legacy.xp
 
     %{attempts: attempts, wins: wins, won_bid_sum: won_bid_sum} =
       legacy_playstyle(legacy.playstyle)
 
     %{
-      veteran_xp: legacy.xp,
-      veteran_level: level,
-      heritage_flags: %{
-        "played_pidro_one" => true,
-        "legacy_level" => level,
-        "legacy_accolades" => legacy.badges,
-        "founding_member" => legacy.founding_member,
-        "legacy_premium" => legacy.premium
-      },
-      playstyle_bidding_attempts: attempts,
-      playstyle_bidding_wins: wins,
-      avg_winning_bid_sum: won_bid_sum,
-      # wins == won-bid count (a winning bid is a won round).
-      avg_winning_bid_count: wins,
-      rating_mu: default_mu,
-      rating_sigma: default_sigma,
-      rating_games_count: 0
+      veteran_xp: veteran_xp,
+      veteran_level: Progression.level_for_xp(veteran_xp),
+      heritage_flags: Map.merge(profile.heritage_flags || %{}, legacy_heritage(legacy)),
+      playstyle_bidding_attempts: profile.playstyle_bidding_attempts + attempts,
+      playstyle_bidding_wins: profile.playstyle_bidding_wins + wins,
+      avg_winning_bid_sum: profile.avg_winning_bid_sum + won_bid_sum,
+      avg_winning_bid_count: profile.avg_winning_bid_count + wins
+    }
+  end
+
+  defp legacy_heritage(%LegacyProgression{} = legacy) do
+    %{
+      "played_pidro_one" => true,
+      "classic_user_id" => legacy.classic_user_id,
+      "classic_username" => legacy.classic_username,
+      "classic_name_allowed" => legacy.classic_name_allowed,
+      "classic_level" => legacy.classic_level,
+      "legacy_played_games" => legacy.legacy_played_games,
+      "legacy_victories" => legacy.legacy_victories,
+      "legacy_losses" => legacy.legacy_losses,
+      "games_played_counter" => legacy.games_played_counter,
+      "wins" => legacy.wins,
+      "losses" => legacy.losses,
+      "games_logged" => legacy.games_logged,
+      "games_started" => legacy.games_started,
+      "games_ended" => legacy.games_ended,
+      "member_since" => legacy.member_since,
+      "premium" => legacy.premium,
+      "badges" => legacy.badges,
+      # Existing Heritage badges remain compatible with imported profiles.
+      "legacy_level" => legacy.classic_level,
+      "legacy_accolades" => legacy.badges || [],
+      "founding_member" => legacy.founding_member,
+      "legacy_premium" => legacy.premium == true
     }
   end
 
@@ -306,6 +316,7 @@ defmodule PidroServer.Profiles do
 
     screen
     |> public_profile()
+    |> put_classic_claimed_at(user)
     |> Map.merge(%{
       username: user.username,
       display_name: user.display_name,
@@ -349,6 +360,10 @@ defmodule PidroServer.Profiles do
       # Heritage (already a display list)
       heritage: screen.heritage,
 
+      # Classic career. Raw source counters stay private; missing display values
+      # are omitted rather than turned into zeroes.
+      classic: classic_profile(screen.heritage_flags, Map.get(screen, :classic_claimed_at)),
+
       # Playstyle (display view; raw counters NOT carried)
       playstyle: %{
         bidding_win_rate: screen.bidding_win_rate,
@@ -374,6 +389,92 @@ defmodule PidroServer.Profiles do
   # passes through as JSON null.
   defp encode_prestige_progress({into, step}), do: [into, step]
   defp encode_prestige_progress(nil), do: nil
+
+  # PID-144 owns the user column. Reading through the struct map keeps this
+  # profile code compatible before and after that migration lands.
+  defp put_classic_claimed_at(%{classic: classic} = profile, user) when is_map(classic) do
+    case user |> Map.from_struct() |> Map.get(:classic_claimed_at) do
+      nil -> profile
+      claimed_at -> put_in(profile, [:classic, :claimed_at], claimed_at)
+    end
+  end
+
+  defp put_classic_claimed_at(profile, _user), do: profile
+
+  defp classic_profile(flags, claimed_at) do
+    if heritage_value(flags, :played_pidro_one) == true do
+      games_played = classic_games_played(flags)
+      wins = classic_result(flags, :legacy_victories, :wins)
+      losses = classic_result(flags, :legacy_losses, :losses)
+
+      %{
+        name: classic_public_name(flags),
+        games_played: games_played,
+        wins: wins,
+        losses: losses,
+        win_rate: classic_win_rate(wins, games_played),
+        level: heritage_value(flags, :classic_level),
+        member_since: heritage_value(flags, :member_since),
+        claimed_at: claimed_at
+      }
+      |> Map.reject(fn {_key, value} -> is_nil(value) end)
+    end
+  end
+
+  defp classic_public_name(flags) do
+    if heritage_value(flags, :classic_name_allowed) == true,
+      do: heritage_value(flags, :classic_username)
+  end
+
+  defp classic_games_played(flags) do
+    old = heritage_value(flags, :legacy_played_games)
+    counter = heritage_value(flags, :games_played_counter)
+
+    cond do
+      is_integer(old) and is_integer(counter) and counter >= old -> counter
+      is_integer(old) and is_integer(counter) -> old + counter
+      is_integer(counter) -> counter
+      is_integer(old) -> old
+      true -> nil
+    end
+  end
+
+  defp classic_result(flags, old_key, counter_key) do
+    old_games = heritage_value(flags, :legacy_played_games)
+    counter_games = heritage_value(flags, :games_played_counter)
+    old = heritage_value(flags, old_key)
+    counter = heritage_value(flags, counter_key)
+
+    cond do
+      is_integer(old_games) and is_integer(counter_games) and counter_games >= old_games ->
+        counter
+
+      is_integer(old_games) and is_integer(counter_games) and is_integer(old) and
+          is_integer(counter) ->
+        old + counter
+
+      is_integer(counter_games) ->
+        counter
+
+      is_integer(old_games) ->
+        old
+
+      true ->
+        nil
+    end
+  end
+
+  defp classic_win_rate(wins, games_played)
+       when is_integer(wins) and is_integer(games_played) and games_played > 0,
+       do: wins / games_played
+
+  defp classic_win_rate(_wins, _games_played), do: nil
+
+  defp heritage_value(flags, key) when is_map(flags) do
+    Map.get(flags, key) || Map.get(flags, Atom.to_string(key))
+  end
+
+  defp heritage_value(_flags, _key), do: nil
 
   # Joins the user's earned rows to the Catalog for display copy, ordered by
   # award time. Unknown keys (a def removed from the catalog) are dropped.
