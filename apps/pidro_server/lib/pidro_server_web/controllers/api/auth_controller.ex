@@ -564,26 +564,33 @@ defmodule PidroServerWeb.API.AuthController do
     end
   end
 
-  defp creation_token(params, nil) do
-    case Ecto.UUID.cast(params["creation_token"]) do
+  defp creation_token(%{"creation_token" => token}, nil)
+       when is_binary(token) and byte_size(token) == 36 do
+    case Ecto.UUID.cast(token) do
       {:ok, token} ->
         {:ok, token}
 
       :error ->
-        changeset =
-          {%{}, %{creation_token: :string}}
-          |> Ecto.Changeset.cast(%{}, [])
-          |> Ecto.Changeset.add_error(:creation_token, "must be a UUID")
-
-        {:error, changeset}
+        invalid_creation_token()
     end
   end
+
+  defp creation_token(_params, nil), do: invalid_creation_token()
 
   defp creation_token(params, %Invite{}) do
     case params["creation_token"] do
       nil -> {:ok, nil}
       token -> creation_token(%{"creation_token" => token}, nil)
     end
+  end
+
+  defp invalid_creation_token do
+    changeset =
+      {%{}, %{creation_token: :string}}
+      |> Ecto.Changeset.cast(%{}, [])
+      |> Ecto.Changeset.add_error(:creation_token, "must be a UUID")
+
+    {:error, changeset}
   end
 
   defp guest_state(nil), do: {:ok, nil}

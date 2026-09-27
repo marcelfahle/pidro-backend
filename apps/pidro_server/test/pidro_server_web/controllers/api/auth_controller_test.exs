@@ -320,6 +320,14 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                })
                |> json_response(422)
 
+      assert %{"errors" => [%{"code" => "creation_token"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/guest", %{
+                 "display_name" => "Anna",
+                 "creation_token" => "sixteen-byte-key"
+               })
+               |> json_response(422)
+
       refute Repo.exists?(from(u in User, where: u.display_name == "Anna"))
     end
 
