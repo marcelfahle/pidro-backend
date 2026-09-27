@@ -69,10 +69,17 @@ EOF
 fi
 
 eval "$("$mise_bin" activate bash)"
-step "Installing pinned Erlang, Elixir, and Ruby" mise install
+# Debian 12 is compatible with Hex's Ubuntu 22.04 OTP build, but mise cannot
+# infer that target. Require binaries so setup never silently spends minutes
+# compiling Erlang or Ruby from source.
+step "Installing pinned Erlang, Elixir, and Ruby" \
+  env MISE_ERLANG_COMPILE=false \
+  MISE_ERLANG_PRECOMPILED_OS=ubuntu-22.04 \
+  MISE_RUBY_COMPILE=false \
+  mise install
 
-step "Installing Hex" mix local.hex --force
-step "Installing Rebar" mix local.rebar --force
+step "Installing Hex if missing" mix local.hex --if-missing --force
+step "Installing Rebar if missing" mix local.rebar --if-missing --force
 step "Fetching Mix dependencies" mix deps.get
 step "Compiling development dependencies and applications" env MIX_ENV=dev mix compile
 step "Installing frontend build tools" \
