@@ -386,6 +386,22 @@ defmodule PidroServer.Profiles.LegacyImportTest do
       assert classic.losses == 47
     end
 
+    test "omits a result when disjoint eras are incomplete" do
+      classic =
+        import_and_show(%{
+          legacy_played_games: 100,
+          legacy_losses: 39,
+          games_played_counter: 20,
+          wins: 12,
+          losses: 8
+        })
+
+      assert classic.games_played == 120
+      refute Map.has_key?(classic, :wins)
+      assert classic.losses == 47
+      refute Map.has_key?(classic, :win_rate)
+    end
+
     test "shows complete data, omits missing data, and keeps an unapproved name private" do
       complete =
         import_and_show(%{

@@ -449,9 +449,8 @@ defmodule PidroServer.Profiles do
       is_integer(old_games) and is_integer(counter_games) and counter_games >= old_games ->
         counter
 
-      is_integer(old_games) and is_integer(counter_games) and is_integer(old) and
-          is_integer(counter) ->
-        old + counter
+      is_integer(old_games) and is_integer(counter_games) ->
+        if is_integer(old) and is_integer(counter), do: old + counter
 
       is_integer(counter_games) ->
         counter
