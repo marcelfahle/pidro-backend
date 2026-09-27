@@ -17,7 +17,7 @@ defmodule PidroServerWeb.API.AuthController do
   This controller includes OpenAPI 3.0 specifications for all endpoints:
   - POST /api/v1/auth/register - Register a new user account
   - POST /api/v1/auth/login - Authenticate (username or email) and receive a token
-  - POST /api/v1/auth/guest - Create a guest account from an invite (R10)
+  - POST /api/v1/auth/guest - Create a direct or invited guest account
   - POST /api/v1/auth/upgrade - Upgrade the calling guest in place (R13)
   - GET /api/v1/auth/me - Retrieve current authenticated user
   - DELETE /api/v1/auth/me - Delete the calling account (R15)
@@ -227,12 +227,17 @@ defmodule PidroServerWeb.API.AuthController do
   end
 
   operation(:guest,
-    summary: "Create a guest account from an invite",
+    summary: "Create a guest account",
     description: """
-    Creates a `guest: true` account with a generated username so a friend can sit
-    down without registering (KD4, KD6). The invite must be neither `revoked` nor
-    `expired` (410 otherwise); any other state still creates the guest and is
-    returned as `state` so the client can show the table's situation.
+    Creates a `guest: true` account with a generated username, either directly
+    or for an invitation. A supplied invite is always validated and must be
+    neither `revoked` nor `expired` (410 otherwise); any other state still
+    creates the guest and is returned as `state`.
+
+    Direct creation requires a random `creation_token`. Retrying that token
+    returns the same guest with a fresh authentication token, so a lost response
+    does not create another player. Invitation clients may also supply one;
+    omitting it keeps the existing create-on-every-call behavior.
 
     The display name is NFKC-normalized and trimmed, is 2-20 graphemes, and must
     not look like the name of a player connected at the invite's table
@@ -247,6 +252,9 @@ defmodule PidroServerWeb.API.AuthController do
     responses: [
       created: {"Guest created", "application/json", UserSchemas.GuestResponse},
       not_found: {"Unknown invite code", "application/json", ErrorSchemas.not_found_error()},
+      conflict:
+        {"Creation token belongs to an upgraded account", "application/json",
+         ErrorSchemas.conflict_error()},
       gone: {"Invite revoked or expired", "application/json", ErrorSchemas.gone_error()},
       unprocessable_entity:
         {"Invalid display name or platform", "application/json", ErrorSchemas.validation_error()},
@@ -257,28 +265,29 @@ defmodule PidroServerWeb.API.AuthController do
   )
 
   @doc """
-  Creates a guest account for an invite (R10, R11) and answers 201 with the
-  user, a token and the invite's state.
+  Creates a direct or invited guest account and answers 201 with the user and
+  token. Invited responses also include the invite's state.
   """
   @spec guest(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def guest(conn, params) do
     with {:ok, platform} <- parse_platform(params["platform"]),
-         {:ok, invite} <- Invites.get_by_code(params["invite_code"]),
+         {:ok, invite} <- guest_invite(params),
+         {:ok, creation_token} <- creation_token(params, invite),
          {:ok, state} <- guest_state(invite),
-         {:ok, user} <- Auth.create_guest_user(guest_attrs(params), taken_name_keys(invite)) do
+         {:ok, user, created?} <-
+           Auth.create_guest_user_once(
+             guest_attrs(params, creation_token),
+             taken_name_keys(invite)
+           ) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 
-      InviteController.log_event(invite, %{
-        kind: "guest_created",
-        user_id: user.id,
-        platform: platform
-      })
+      log_guest_created(invite, user, platform, created?)
 
       conn
       |> put_status(:created)
       |> put_view(UserJSON)
-      |> render(:guest, %{user: user, token: token, state: state})
+      |> render_guest(user, token, state)
     end
   end
 
@@ -548,6 +557,37 @@ defmodule PidroServerWeb.API.AuthController do
 
   # `revoked` and `expired` refuse guest creation (R10); every other state is
   # returned to the client so it can show the table's situation.
+  defp guest_invite(params) do
+    case Map.fetch(params, "invite_code") do
+      :error -> {:ok, nil}
+      {:ok, code} -> Invites.get_by_code(code)
+    end
+  end
+
+  defp creation_token(params, nil) do
+    case Ecto.UUID.cast(params["creation_token"]) do
+      {:ok, token} ->
+        {:ok, token}
+
+      :error ->
+        changeset =
+          {%{}, %{creation_token: :string}}
+          |> Ecto.Changeset.cast(%{}, [])
+          |> Ecto.Changeset.add_error(:creation_token, "must be a UUID")
+
+        {:error, changeset}
+    end
+  end
+
+  defp creation_token(params, %Invite{}) do
+    case params["creation_token"] do
+      nil -> {:ok, nil}
+      token -> creation_token(%{"creation_token" => token}, nil)
+    end
+  end
+
+  defp guest_state(nil), do: {:ok, nil}
+
   defp guest_state(%Invite{} = invite) do
     case InviteController.derive_state(invite) do
       state when state in [:revoked, :expired] -> InviteController.state_error(state, invite)
@@ -555,8 +595,12 @@ defmodule PidroServerWeb.API.AuthController do
     end
   end
 
-  defp guest_attrs(params) do
-    %{display_name: params["display_name"], install_id: params["install_id"]}
+  defp guest_attrs(params, creation_token) do
+    %{
+      display_name: params["display_name"],
+      install_id: params["install_id"],
+      creation_token: creation_token
+    }
   end
 
   defp upgrade_attrs(%{"user" => user_params}) when is_map(user_params),
@@ -569,6 +613,8 @@ defmodule PidroServerWeb.API.AuthController do
   # The look-alike keys of the players connected at the invite's table (R11):
   # `:connected` human seats only, so a held seat's name can be reused by its
   # returning owner. Empty when the room is gone.
+  defp taken_name_keys(nil), do: []
+
   defp taken_name_keys(%Invite{room_code: room_code, room_id: room_id}) do
     case RoomManager.get_room(room_code) do
       {:ok, %Room{id: ^room_id, seats: seats}} ->
@@ -589,6 +635,21 @@ defmodule PidroServerWeb.API.AuthController do
     do: is_binary(id)
 
   defp connected_human?(_seat), do: false
+
+  defp log_guest_created(%Invite{} = invite, user, platform, :created) do
+    InviteController.log_event(invite, %{
+      kind: "guest_created",
+      user_id: user.id,
+      platform: platform
+    })
+  end
+
+  defp log_guest_created(_invite, _user, _platform, _created?), do: :ok
+
+  defp render_guest(conn, user, token, nil), do: render(conn, :show, %{user: user, token: token})
+
+  defp render_guest(conn, user, token, state),
+    do: render(conn, :guest, %{user: user, token: token, state: state})
 
   defp parse_platform(nil), do: {:ok, nil}
   defp parse_platform(platform) when platform in @platforms, do: {:ok, platform}

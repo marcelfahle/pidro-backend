@@ -12,8 +12,9 @@ defmodule PidroServer.Accounts.User do
 
     * `registration_changeset/2` and `changeset/2` serve the public API. They
       cast `username`, `email`, `password` and `display_name` only.
-    * `guest_changeset/2` builds a guest row from `username`, `display_name`
-      and `install_id` and forces `guest: true`. It is internal to the server.
+    * `guest_changeset/2` builds a guest row from `username`, `display_name`,
+      `install_id` and an optional creation-token hash, and forces `guest: true`.
+      It is internal to the server.
     * `upgrade_changeset/2` turns a guest into a registered account: it casts
       `email`, `password` and an optional `username` and forces `guest: false`.
     * `admin_changeset/2` is `changeset/2` plus `guest`, for the dev admin
@@ -30,8 +31,8 @@ defmodule PidroServer.Accounts.User do
   `token_version` defaults to 0 both in the schema and in the database so a
   freshly inserted struct signs a valid token without a reload.
   `last_seen_at` is written only by `PidroServer.Accounts.Auth.touch_last_seen/1`;
-  `install_id` is stored at guest creation. Neither is logged or exposed by
-  the API.
+  `install_id` and `guest_creation_token_hash` are stored at guest creation.
+  None is logged or exposed by the API.
   """
 
   use Ecto.Schema
@@ -70,6 +71,7 @@ defmodule PidroServer.Accounts.User do
     field(:token_version, :integer, default: 0)
     field(:last_seen_at, :utc_datetime_usec)
     field(:install_id, :string)
+    field(:guest_creation_token_hash, :binary)
     field(:avatar_url, :string, virtual: true)
 
     timestamps(type: :utc_datetime_usec)
@@ -174,26 +176,28 @@ defmodule PidroServer.Accounts.User do
   Builds a changeset for creating a guest account.
 
   Guests are created by the server, never from public params: this changeset
-  casts only `username`, `display_name` and `install_id` (at most 64
-  characters), forces `guest: true`, and leaves `email` and `password_hash`
-  nil. Username is required, at least 3 characters and unique.
+  casts only `username`, `display_name`, `install_id` (at most 64 characters)
+  and `guest_creation_token_hash`, forces `guest: true`, and leaves `email`
+  and `password_hash` nil. Username is required, at least 3 characters and
+  unique.
 
   ## Parameters
     - user: The user struct (typically a new/empty one)
-    - attrs: The attributes map with `username`, optional `display_name` and
-      optional `install_id`
+    - attrs: The attributes map with `username`, optional `display_name`,
+      `install_id` and `guest_creation_token_hash`
 
   ## Returns
     A changeset with validation results and `guest` set to true
   """
   def guest_changeset(user, attrs) do
     user
-    |> cast(attrs, [:username, :display_name, :install_id])
+    |> cast(attrs, [:username, :display_name, :install_id, :guest_creation_token_hash])
     |> validate_required([:username])
     |> validate_length(:username, min: @username_min_length)
     |> validate_length(:install_id, max: @install_id_max_length)
     |> validate_display_name()
     |> unique_constraint(:username)
+    |> unique_constraint(:guest_creation_token_hash)
     |> put_change(:guest, true)
   end
 

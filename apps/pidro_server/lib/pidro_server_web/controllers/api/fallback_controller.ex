@@ -13,11 +13,12 @@ defmodule PidroServerWeb.API.FallbackController do
   - `{:error, :invalid_credentials}` - Authentication failures
   - `{:error, :not_found}` - Resource not found errors
   - Invite and host-control atoms (KTD5): `:table_full`, `:room_not_waiting`,
-    `:invite_limit`, `:not_a_guest`, `:email_taken` and `:username_taken` answer
-    409; `:table_started`, `:table_closed`, `:invite_expired`, `:invite_revoked`
-    and `{:invite_moved, next_code}` answer 410; `:table_locked` answers 423;
-    `:kicked` answers 403; `{:seat_taken, next_open}` answers 409 with the open
-    positions while the bare `:seat_taken` keeps its 422 for room joins
+    `:invite_limit`, `:not_a_guest`, `:email_taken`, `:username_taken` and
+    `:creation_conflict` answer 409; `:table_started`, `:table_closed`,
+    `:invite_expired`, `:invite_revoked` and `{:invite_moved, next_code}` answer
+    410; `:table_locked` answers 423; `:kicked` answers 403;
+    `{:seat_taken, next_open}` answers 409 with the open positions while the bare
+    `:seat_taken` keeps its 422 for room joins
   - `{:error, {:invalid_room_params, errors}}` - Room config validation errors;
     answers 422 with one entry per error and the field path as the code
   - Any other atom answers 422 with the atom upcased as the code
@@ -431,6 +432,15 @@ defmodule PidroServerWeb.API.FallbackController do
 
   def call(conn, {:error, :username_taken}) do
     conflict(conn, "USERNAME_TAKEN", "Username taken", "Another account uses that username")
+  end
+
+  def call(conn, {:error, :creation_conflict}) do
+    conflict(
+      conn,
+      "CREATION_CONFLICT",
+      "Creation token already used",
+      "Generate a new creation token and try again"
+    )
   end
 
   def call(conn, {:error, :table_started}) do

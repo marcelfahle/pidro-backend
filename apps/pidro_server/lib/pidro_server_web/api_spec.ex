@@ -26,7 +26,7 @@ defmodule PidroServerWeb.ApiSpec do
 
         ## Features
 
-        - User authentication with JWT tokens; guest accounts created from an invite and upgraded in place
+        - User authentication with JWT tokens; direct or invited guest accounts upgraded in place
         - Room management (create, join, leave) and host controls (seat, lock, kick)
         - Invite links: one shareable code per table with an optional seat hint
         - Real-time gameplay via WebSocket channels

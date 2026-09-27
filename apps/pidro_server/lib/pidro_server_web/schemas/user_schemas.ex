@@ -60,7 +60,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         guest: %Schema{
           type: :boolean,
           description:
-            "Whether this is a guest account (created from an invite, upgradable in place with email and password)",
+            "Whether this is a guest account (upgradable in place with email and password)",
           example: false
         },
         inserted_at: %Schema{
@@ -242,17 +242,18 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
 
   defmodule GuestRequest do
     @moduledoc """
-    Request body schema for guest creation (R10).
+    Request body schema for guest creation.
 
-    A guest needs a display name and a valid invite code; the install id and
-    platform are optional. The install id keys a rate-limit bucket and is never
-    logged.
+    A guest needs a display name. Direct entry also needs a random creation
+    token; invited entry keeps the token optional for older clients. A supplied
+    invite is always validated. The install id keys a rate-limit bucket and is
+    never logged.
     """
 
     OpenApiSpex.schema(%{
       type: :object,
       title: "Guest Request",
-      description: "Request body for creating a guest account from an invite",
+      description: "Request body for direct or invited guest creation",
       properties: %{
         display_name: %Schema{
           type: :string,
@@ -264,8 +265,15 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         },
         invite_code: %Schema{
           type: :string,
-          description: "Invite code; dashes and lower case are accepted",
+          description:
+            "Optional invite code; when supplied, dashes and lower case are accepted and the invite is always validated",
           example: "7KQ4-M2XB"
+        },
+        creation_token: %Schema{
+          type: :string,
+          format: :uuid,
+          description:
+            "Random UUID required for direct entry. Retry the same token after a lost response; generate a new token after changing the request. Never log it."
         },
         install_id: %Schema{
           type: :string,
@@ -279,10 +287,10 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           description: "Client platform, recorded on the funnel event"
         }
       },
-      required: [:display_name, :invite_code],
+      required: [:display_name],
       example: %{
         "display_name" => "Anna",
-        "invite_code" => "7KQ4-M2XB",
+        "creation_token" => "8b597c4a-c208-4cf6-b274-81b29f6751ea",
         "install_id" => "b5f6c0d2-3a1e-4f2b-9c8d-1e2f3a4b5c6d",
         "platform" => "ios"
       }
@@ -295,7 +303,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
     OpenApiSpex.schema(%{
       type: :object,
       title: "Guest User",
-      description: "A guest account created from an invite",
+      description: "A direct or invited guest account",
       properties: %{
         id: %Schema{
           type: :string,
@@ -356,7 +364,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
 
   defmodule GuestResponse do
     @moduledoc """
-    Response for a created guest: the user, a token and the invite's state.
+    Response for a created guest: the user, a token and, for invited entry,
+    the invite's state.
 
     The state tells the client whether to redeem right away (`open`) or show
     the table's situation first (`full`, `locked`, `started`, `closed`, `moved`).
@@ -365,7 +374,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
     OpenApiSpex.schema(%{
       type: :object,
       title: "Guest Response",
-      description: "Response containing the guest user, a token and the invite state",
+      description:
+        "Response containing the guest user, a token and, for invited entry, the invite state",
       properties: %{
         data: %Schema{
           type: :object,
@@ -379,7 +389,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             },
             state: PidroServerWeb.Schemas.InviteSchemas.State
           },
-          required: [:user, :token, :state]
+          required: [:user, :token]
         }
       },
       required: [:data],

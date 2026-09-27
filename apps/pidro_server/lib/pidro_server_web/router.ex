@@ -107,8 +107,8 @@ defmodule PidroServerWeb.Router do
     post "/auth/password-reset/confirm", AuthController, :reset_password,
       private: %{rate_limit: [:password_reset_confirm]}
 
-    # Guest creation needs a valid invite (KD6); limited per address, per day
-    # and per install id (R12).
+    # Direct and invited guest creation share the address, daily and install
+    # abuse limits.
     post "/auth/guest", AuthController, :guest,
       private: %{rate_limit: [:guest_create, :guest_create_daily, :guest_create_install]}
 
