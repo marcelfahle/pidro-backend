@@ -21,6 +21,7 @@ defmodule PidroServerWeb.ApiSpecTest do
     {"/api/v1/auth/apple", ["post"]},
     {"/api/v1/auth/facebook", ["post"]},
     {"/api/v1/classic/claim", ["post"]},
+    {"/api/v1/classic/verify", ["post"]},
     {"/api/v1/auth/upgrade", ["post"]},
     {"/api/v1/auth/me", ["get", "delete"]}
   ]

@@ -101,6 +101,20 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :claim_binding_required}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      errors: [
+        %{
+          code: "CLAIM_BINDING_REQUIRED",
+          title: "Install identifier required",
+          detail: "Send an install identifier or sign in before verifying the Classic account"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, {:already_claimed, method}})
       when method in [:password, :apple, :facebook, nil] do
     error = %{

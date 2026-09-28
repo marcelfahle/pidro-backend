@@ -58,6 +58,9 @@ env:
   secret:
     - SECRET_KEY_BASE
     - POSTGRES_PASSWORD
+    - CLASSIC_API_URL
+    - CLASSIC_CLAIM_SECRET
+    - FB_APP_SECRET
 
 logging:
   driver: local

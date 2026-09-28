@@ -5,6 +5,70 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Repo
 
+  test "verifies Classic ownership and returns a user-bound preview ticket", %{conn: conn} do
+    guest = AccountsFixtures.guest_fixture()
+
+    Req.Test.expect(PidroServer.Accounts.ClassicClient, fn classic_conn ->
+      {:ok, body, classic_conn} = Plug.Conn.read_body(classic_conn)
+
+      assert Jason.decode!(body) == %{
+               "login" => "old@example.com",
+               "password" => "classic-password"
+             }
+
+      Req.Test.json(classic_conn, %{
+        "id" => 70_000,
+        "username" => "Veteran",
+        "inserted_at" => "2011-01-02T00:00:00Z",
+        "xp" => 500,
+        "level" => 14,
+        "total_game" => 88
+      })
+    end)
+
+    data =
+      conn
+      |> put_req_header("authorization", "Bearer #{Token.generate(guest)}")
+      |> post(~p"/api/v1/classic/verify", %{
+        method: "password",
+        login: "old@example.com",
+        password: "classic-password"
+      })
+      |> json_response(200)
+      |> Map.fetch!("data")
+
+    assert is_binary(data["ticket"])
+    assert is_binary(data["expires_at"])
+
+    assert data["classic"] == %{
+             "name" => "Veteran",
+             "games_played" => 88,
+             "level" => 14,
+             "member_since" => "2011-01-02T00:00:00Z",
+             "name_allowed" => nil
+           }
+
+    assert Repo.get_by!(PidroServer.Accounts.ClassicClaimTicket, classic_user_id: 70_000).bound_user_id ==
+             guest.id
+  end
+
+  test "a malformed Apple token is a retryable authentication failure", %{conn: conn} do
+    malformed =
+      Base.url_encode64("1", padding: false) <>
+        "." <> Base.url_encode64("{}", padding: false) <> ".AA"
+
+    assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} =
+             conn
+             |> post(~p"/api/v1/classic/verify", %{
+               method: "apple",
+               identity_token: malformed,
+               install_id: "malformed-apple"
+             })
+             |> json_response(401)
+
+    assert Repo.aggregate(PidroServer.Accounts.ClassicClaimTicket, :count) == 0
+  end
+
   test "claims onto the authenticated user and returns a usable session", %{conn: conn} do
     guest = AccountsFixtures.guest_fixture()
 

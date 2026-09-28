@@ -139,6 +139,33 @@ config :pidro_server,
     System.get_env("TRUST_PROXY_HEADERS", trust_proxy_default) in ~w(true TRUE 1 yes YES)
 
 if config_env() == :prod do
+  classic_api_url =
+    System.get_env("CLASSIC_API_URL") || raise "environment variable CLASSIC_API_URL is missing"
+
+  classic_claim_secret =
+    System.get_env("CLASSIC_CLAIM_SECRET") ||
+      raise "environment variable CLASSIC_CLAIM_SECRET is missing"
+
+  facebook_app_secret =
+    System.get_env("FB_APP_SECRET") ||
+      raise "environment variable FB_APP_SECRET is missing"
+
+  config :pidro_server, PidroServer.Accounts.ClassicClient,
+    base_url: String.trim_trailing(classic_api_url, "/"),
+    secret: classic_claim_secret
+
+  config :pidro_server, PidroServer.Accounts.ProviderIdentity,
+    apple_jwks_url: "https://appleid.apple.com/auth/keys",
+    apple_audience: System.get_env("APPLE_AUDIENCE", "com.oneapps.pidro"),
+    facebook_graph_url:
+      System.get_env("FACEBOOK_GRAPH_URL", "https://graph.facebook.com/v24.0")
+      |> String.trim_trailing("/"),
+    facebook_app_id: System.get_env("FACEBOOK_APP_ID", "345200965110578"),
+    facebook_app_secret: facebook_app_secret
+
+  config :pidro_server,
+    provider_verifier: PidroServer.Accounts.ExternalProviderVerifier
+
   database_url =
     System.get_env("DATABASE_URL") ||
       case {
