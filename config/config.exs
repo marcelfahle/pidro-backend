@@ -83,6 +83,17 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
 # it from TRUST_PROXY_HEADERS (default true in prod, false everywhere else).
 config :pidro_server, trust_proxy_headers: false
 
+config :pidro_server, PidroServer.Accounts.ClassicClient,
+  base_url: "http://localhost:4001",
+  secret: ""
+
+config :pidro_server, PidroServer.Accounts.ProviderIdentity,
+  apple_jwks_url: "https://appleid.apple.com/auth/keys",
+  apple_audience: "com.oneapps.pidro",
+  facebook_graph_url: "https://graph.facebook.com/v24.0",
+  facebook_app_id: "345200965110578",
+  facebook_app_secret: ""
+
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
 # ordinal distribution.

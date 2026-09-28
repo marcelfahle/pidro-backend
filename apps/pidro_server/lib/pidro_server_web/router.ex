@@ -134,6 +134,9 @@ defmodule PidroServerWeb.Router do
   scope "/api/v1", PidroServerWeb.API do
     pipe_through :api_optional_authenticated
 
+    post "/classic/verify", ClassicClaimController, :verify,
+      private: %{rate_limit: [:classic_claim]}
+
     post "/classic/claim", ClassicClaimController, :create,
       private: %{rate_limit: [:classic_claim]}
   end

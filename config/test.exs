@@ -2,6 +2,19 @@ import Config
 
 config :pidro_server, PidroServer.Invites.DeferredMatcher, enabled: true
 
+config :pidro_server, PidroServer.Accounts.ClassicClient,
+  base_url: "https://classic.test",
+  secret: "classic-test-secret",
+  req_options: [plug: {Req.Test, PidroServer.Accounts.ClassicClient}]
+
+config :pidro_server, PidroServer.Accounts.ProviderIdentity,
+  apple_jwks_url: "https://apple.test/auth/keys",
+  apple_audience: "com.oneapps.pidro",
+  facebook_graph_url: "https://facebook.test/v24.0",
+  facebook_app_id: "345200965110578",
+  facebook_app_secret: "facebook-test-secret",
+  req_options: [plug: {Req.Test, PidroServer.Accounts.ProviderIdentity}]
+
 config :pidro_server, PidroServerWeb.DeferredInviteCaptureController,
   endpoint_origin: "http://localhost:4002",
   allowed_origins: ["http://localhost:4002"]

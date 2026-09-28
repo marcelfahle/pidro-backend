@@ -1,15 +1,32 @@
 defmodule PidroServerWeb.API.ClassicClaimController do
-  @moduledoc "Redeems a verified Classic claim ticket for the current user or fresh install."
+  @moduledoc "Verifies and redeems Classic account claims."
 
   use PidroServerWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias PidroServer.Accounts.{Auth, ClassicClaims, Token}
+  alias PidroServer.Accounts.{Auth, ClassicClaims, ClassicVerification, Token}
   alias PidroServerWeb.API.UserJSON
   alias PidroServerWeb.Schemas.{ClassicClaimSchemas, ErrorSchemas, UserSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
   tags(["Authentication"])
+
+  operation(:verify,
+    summary: "Verify ownership of a Classic account",
+    description:
+      "Validates a Classic password, Apple identity token or Facebook access token and returns a short-lived claim ticket.",
+    request_body: {"Classic verification", "application/json", ClassicClaimSchemas.VerifyRequest},
+    responses: [
+      ok: {"Classic account verified", "application/json", ClassicClaimSchemas.VerifyResponse},
+      unauthorized:
+        {"Ownership could not be verified", "application/json", ErrorSchemas.unauthorized_error()},
+      service_unavailable:
+        {"Classic or identity provider unavailable", "application/json",
+         ErrorSchemas.error_response()},
+      unprocessable_entity:
+        {"Missing install binding", "application/json", ErrorSchemas.validation_error()}
+    ]
+  )
 
   operation(:create,
     summary: "Attach a verified Classic account",
@@ -28,6 +45,12 @@ defmodule PidroServerWeb.API.ClassicClaimController do
         {"Invalid claim or account data", "application/json", ErrorSchemas.validation_error()}
     ]
   )
+
+  def verify(conn, params) do
+    with {:ok, result} <- ClassicVerification.verify(params, conn.assigns[:current_user]) do
+      json(conn, %{data: result})
+    end
+  end
 
   def create(conn, %{"ticket" => ticket} = params) do
     with {:ok, user} <- ClassicClaims.redeem(ticket, conn.assigns[:current_user], params) do
