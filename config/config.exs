@@ -89,7 +89,7 @@ config :pidro_server, PidroServer.Accounts.ClassicClient,
 
 config :pidro_server, PidroServer.Accounts.ProviderIdentity,
   apple_jwks_url: "https://appleid.apple.com/auth/keys",
-  apple_audience: "com.oneapps.pidro",
+  apple_audience: ["com.oneapps.pidro", "com.oneapps.pidro.beta"],
   facebook_graph_url: "https://graph.facebook.com/v24.0",
   facebook_app_id: "345200965110578",
   facebook_app_secret: ""

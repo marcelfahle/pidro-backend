@@ -149,6 +149,11 @@ defmodule PidroServer.Accounts.ProviderIdentity do
     end
   end
 
+  # `expected` is one bundle ID or a list: the store app and the side-by-side
+  # Beta (com.oneapps.pidro.beta) both sign in against this backend.
+  defp audience?(audience, expected) when is_list(expected),
+    do: Enum.any?(expected, &audience?(audience, &1))
+
   defp audience?(audience, expected) when is_binary(audience), do: audience == expected
   defp audience?(audiences, expected) when is_list(audiences), do: expected in audiences
   defp audience?(_audience, _expected), do: false

@@ -15,6 +15,34 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
       {:ok, Map.merge(profile(), %{"played_games" => 100, "total_game" => 20})}
     end
 
+    # A pre-2017 veteran exactly as Classic's live endpoint describes one,
+    # passed through the real client's normalizer.
+    def verify_password("bengt@example.com", "correct-password") do
+      {:ok,
+       PidroServer.Accounts.ClassicClient.normalize(%{
+         "id" => 50,
+         "username" => nil,
+         "first_name" => "Bengt",
+         "email" => "bengt@example.com",
+         "member_since" => "2014-03-02T10:00:00",
+         "level" => 1,
+         "xp" => 0,
+         "games" => %{
+           "legacy_played_games" => 1862,
+           "legacy_victories" => 937,
+           "legacy_losses" => 925,
+           "total_game" => 0,
+           "win_game" => 0,
+           "lost_game" => 0,
+           "games_logged" => 0,
+           "games_started" => 0,
+           "games_ended" => 0
+         },
+         "premium" => %{"active" => false, "until" => nil},
+         "badges" => []
+       })}
+    end
+
     def verify_password(_login, _password), do: {:error, :invalid_credentials}
 
     @impl true
@@ -81,6 +109,26 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     def facebook("facebook-token"), do: {:ok, "current-app-id"}
     def facebook(_token), do: {:error, :invalid_credentials}
     def facebook_business_ids("facebook-token"), do: {:ok, ["old-app-id"]}
+  end
+
+  test "a real Classic payload for a no-username veteran previews name and old games" do
+    user = AccountsFixtures.guest_fixture()
+
+    assert {:ok, result} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "password",
+                 "login" => "bengt@example.com",
+                 "password" => "correct-password"
+               },
+               user,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    assert result.classic.name == "Bengt"
+    assert result.classic.games_played == 1862
+    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 50).bound_user_id == user.id
   end
 
   test "password verification accepts an email login and binds the authenticated user" do

@@ -16,13 +16,16 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
                "password" => "classic-password"
              }
 
+      # Real /internal/claims/verify_password payload shape (pidro_api).
       Req.Test.json(classic_conn, %{
-        "id" => 70_000,
-        "username" => "Veteran",
-        "inserted_at" => "2011-01-02T00:00:00Z",
-        "xp" => 500,
-        "level" => 14,
-        "total_game" => 88
+        "classic" => %{
+          "id" => 70_000,
+          "username" => "Veteran",
+          "member_since" => "2011-01-02T00:00:00Z",
+          "xp" => 500,
+          "level" => 14,
+          "games" => %{"legacy_played_games" => 0, "total_game" => 88}
+        }
       })
     end)
 
