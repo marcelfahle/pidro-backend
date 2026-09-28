@@ -207,6 +207,14 @@ config :pidro_server, PidroServerWeb.WellKnownController,
       fingerprints: [
         "11:24:29:B7:D0:61:FA:FF:89:D2:F0:04:92:12:FF:18:24:90:C1:EF:CF:71:00:5D:51:6A:D6:92:66:88:1A:31"
       ]
+    },
+    # Pidro Beta on Google Play; this is Play's app-signing certificate, not
+    # the EAS upload key (Play re-signs what testers install).
+    %{
+      package: "com.oneapps.pidro.beta",
+      fingerprints: [
+        "60:DF:21:12:ED:8E:5E:4E:E7:F0:AA:AC:3D:C7:FB:B5:21:C0:7A:9B:02:D3:10:67:62:F2:8E:BA:F1:07:9F:03"
+      ]
     }
   ]
 
