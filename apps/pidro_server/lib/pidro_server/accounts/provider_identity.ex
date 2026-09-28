@@ -101,9 +101,16 @@ defmodule PidroServer.Accounts.ProviderIdentity do
            Keyword.merge([receive_timeout: 5_000], Keyword.get(config, :req_options, []))
          ) do
       {:ok, %{status: 200, body: %{"keys" => keys}}} when is_list(keys) ->
-        case Enum.find(keys, &(&1["kid"] == kid and &1["kty"] == "RSA")) do
-          %{"n" => modulus, "e" => exponent} -> rsa_key(modulus, exponent)
-          _missing -> {:error, :invalid_credentials}
+        case Enum.find(keys, fn
+               %{"kid" => key_kid, "kty" => "RSA"} -> key_kid == kid
+               _invalid -> false
+             end) do
+          %{"n" => modulus, "e" => exponent}
+          when is_binary(modulus) and is_binary(exponent) ->
+            rsa_key(modulus, exponent)
+
+          _missing ->
+            {:error, :invalid_credentials}
         end
 
       _response ->

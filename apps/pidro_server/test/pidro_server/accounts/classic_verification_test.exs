@@ -10,6 +10,11 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
 
     @impl true
     def verify_password("veteran@example.com", "correct-password"), do: {:ok, profile()}
+
+    def verify_password("disjoint-counters", "correct-password") do
+      {:ok, Map.merge(profile(), %{"played_games" => 100, "total_game" => 20})}
+    end
+
     def verify_password(_login, _password), do: {:error, :invalid_credentials}
 
     @impl true
@@ -107,6 +112,24 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.method == :password
     assert ticket.legacy_data["classic_username"] == "Old Timer"
     assert ticket.legacy_data["games_played_counter"] == 321
+  end
+
+  test "preview uses the same disjoint-era game count as the claimed profile" do
+    user = AccountsFixtures.guest_fixture()
+
+    assert {:ok, result} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "password",
+                 "login" => "disjoint-counters",
+                 "password" => "correct-password"
+               },
+               user,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    assert result.classic.games_played == 120
   end
 
   test "Apple proof resolves Classic by email but stores only the stable subject" do

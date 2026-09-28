@@ -146,7 +146,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
   defp preview(legacy) do
     preview = %{
       name: legacy.classic_username,
-      games_played: legacy.games_played_counter || legacy.legacy_played_games,
+      games_played: classic_games_played(legacy),
       level: legacy.classic_level,
       member_since: legacy.member_since,
       name_allowed: legacy.classic_name_allowed
@@ -159,6 +159,19 @@ defmodule PidroServer.Accounts.ClassicVerification do
       {:ok, preview}
     else
       {:error, :provider_unavailable}
+    end
+  end
+
+  defp classic_games_played(legacy) do
+    old = legacy.legacy_played_games
+    counter = legacy.games_played_counter
+
+    cond do
+      is_integer(old) and is_integer(counter) and counter >= old -> counter
+      is_integer(old) and is_integer(counter) -> old + counter
+      is_integer(counter) -> counter
+      is_integer(old) -> old
+      true -> nil
     end
   end
 

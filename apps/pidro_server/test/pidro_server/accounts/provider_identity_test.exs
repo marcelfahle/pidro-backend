@@ -58,7 +58,10 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
 
     Req.Test.expect(ProviderIdentity, fn conn ->
       Req.Test.json(conn, %{
-        "keys" => [%{"kid" => "test-key", "kty" => "RSA", "n" => "", "e" => ""}]
+        "keys" => [
+          1,
+          %{"kid" => "test-key", "kty" => "RSA", "n" => "", "e" => ""}
+        ]
       })
     end)
 
