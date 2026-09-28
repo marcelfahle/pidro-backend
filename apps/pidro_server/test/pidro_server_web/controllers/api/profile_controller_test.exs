@@ -29,6 +29,7 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
             "skill",
             "veteran",
             "heritage",
+            "classic",
             "playstyle",
             "achievements",
             "achievements_catalog"
@@ -90,18 +91,31 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
       assert data["win_rate"] == 0.0
       assert data["skill"] == %{"tier" => "provisional", "provisional" => true}
       assert data["heritage"] == []
+      assert data["classic"] == nil
       assert data["playstyle"]["bidding_win_rate"] == nil
       assert data["playstyle"]["aggression_insufficient"] == true
       assert data["achievements"] == []
     end
 
-    test "migrated user shows veteran progression and heritage badges", %{conn: conn} do
+    test "migrated user shows veteran progression, heritage badges, and Classic career", %{
+      conn: conn
+    } do
       user = AccountsFixtures.user_fixture()
 
       {:ok, _profile} =
         Profiles.import_legacy_progression(user, %{
           xp: 9_999,
-          founding_member: true
+          founding_member: true,
+          classic_username: "Veteran",
+          classic_name_allowed: true,
+          classic_level: 42,
+          legacy_played_games: 100,
+          legacy_victories: 61,
+          legacy_losses: 39,
+          games_played_counter: 20,
+          wins: 12,
+          losses: 8,
+          member_since: "2013-04-12T09:30:00Z"
         })
 
       conn = conn |> auth(user) |> get(~p"/api/v1/profile")
@@ -115,7 +129,17 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
       assert "played_pidro_one" in heritage_keys
       assert "founding_member" in heritage_keys
 
-      # Migration seeds no rating, so skill stays provisional.
+      assert data["classic"] == %{
+               "games_played" => 120,
+               "level" => 42,
+               "losses" => 47,
+               "member_since" => "2013-04-12T09:30:00Z",
+               "name" => "Veteran",
+               "win_rate" => 73 / 120,
+               "wins" => 73
+             }
+
+      # Importing Classic history does not seed rating, so skill stays provisional.
       assert data["skill"]["provisional"] == true
     end
   end

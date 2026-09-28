@@ -26,8 +26,13 @@ defmodule PidroServer.Profiles.LegacyImportTest do
     test "fills defaults from a partial map" do
       assert %LegacyProgression{
                xp: 100,
-               badges: [],
-               premium: false,
+               classic_user_id: nil,
+               classic_username: nil,
+               classic_level: nil,
+               legacy_played_games: nil,
+               games_played_counter: nil,
+               badges: nil,
+               premium: nil,
                founding_member: false,
                playstyle: nil
              } = struct(LegacyProgression, %{xp: 100})
@@ -35,14 +40,45 @@ defmodule PidroServer.Profiles.LegacyImportTest do
   end
 
   describe "import_legacy_progression/2 — veteran XP/level mapping" do
-    test "maps XP -> level via the shared curve, keeps XP verbatim" do
+    test "adds Classic XP and recomputes the level without changing new-game results or rating" do
       user = insert_user()
 
-      # 32_000 XP lands on the L20 milestone under the re-paced power-law curve.
+      {:ok, profile} = Profiles.get_or_create_profile(user.id)
+
+      {:ok, before} =
+        profile
+        |> PlayerProfile.changeset(%{
+          games_played: 7,
+          wins: 4,
+          losses: 3,
+          veteran_xp: 500,
+          veteran_level: Progression.level_for_xp(500),
+          rating_mu: 41.5,
+          rating_sigma: 3.2,
+          rating_games_count: 27,
+          heritage_flags: %{"new_game_flag" => "kept"},
+          playstyle_bidding_attempts: 5,
+          playstyle_bidding_wins: 2,
+          avg_winning_bid_sum: 18,
+          avg_winning_bid_count: 2
+        })
+        |> Repo.update()
+
+      assert :awarded = Profiles.award_achievement(user.id, :player)
+      achievements_before = Profiles.list_achievements(user.id)
+
       assert {:ok, p} = Profiles.import_legacy_progression(user.id, %{xp: 32_000})
-      assert p.veteran_xp == 32_000
-      assert p.veteran_level == Progression.level_for_xp(32_000)
-      assert p.veteran_level == 20
+      assert p.veteran_xp == 32_500
+      assert p.veteran_level == Progression.level_for_xp(32_500)
+      assert {p.games_played, p.wins, p.losses} == {7, 4, 3}
+
+      assert {p.rating_mu, p.rating_sigma, p.rating_games_count} ==
+               {before.rating_mu, before.rating_sigma, before.rating_games_count}
+
+      assert p.heritage_flags["new_game_flag"] == "kept"
+      assert p.playstyle_bidding_attempts == 5
+      assert p.playstyle_bidding_wins == 2
+      assert Profiles.list_achievements(user.id) == achievements_before
     end
 
     test "xp: 0 -> level 1" do
@@ -68,7 +104,56 @@ defmodule PidroServer.Profiles.LegacyImportTest do
       assert p.heritage_flags["played_pidro_one"] == true
       assert p.heritage_flags["legacy_accolades"] == ["champion_2019", "marathon"]
       assert p.heritage_flags["founding_member"] == true
-      assert p.heritage_flags["legacy_level"] == Progression.level_for_xp(174)
+      assert p.heritage_flags["legacy_level"] == nil
+    end
+
+    test "stores every raw Classic career field under its own key" do
+      user = insert_user()
+
+      legacy = %{
+        xp: 2_000,
+        classic_user_id: 481,
+        classic_username: "Old Timer",
+        classic_name_allowed: true,
+        classic_level: 37,
+        legacy_played_games: 120,
+        legacy_victories: 70,
+        legacy_losses: 50,
+        games_played_counter: 24,
+        wins: 14,
+        losses: 10,
+        games_logged: 19,
+        games_started: 18,
+        games_ended: 17,
+        member_since: "2013-04-12T09:30:00Z",
+        premium: true,
+        badges: ["champion_2019"]
+      }
+
+      assert {:ok, profile} = Profiles.import_legacy_progression(user.id, legacy)
+
+      for key <- [
+            :classic_user_id,
+            :classic_username,
+            :classic_name_allowed,
+            :classic_level,
+            :legacy_played_games,
+            :legacy_victories,
+            :legacy_losses,
+            :games_played_counter,
+            :wins,
+            :losses,
+            :games_logged,
+            :games_started,
+            :games_ended,
+            :member_since,
+            :premium,
+            :badges
+          ] do
+        assert profile.heritage_flags[Atom.to_string(key)] == legacy[key]
+      end
+
+      assert profile.heritage_flags["legacy_level"] == 37
     end
 
     test "premium: true -> legacy_premium flag + renders in Heritage.display" do
@@ -126,7 +211,7 @@ defmodule PidroServer.Profiles.LegacyImportTest do
 
       assert {:ok, p} = Profiles.import_legacy_progression(user.id, %{xp: 9_999})
       assert p.rating_mu == default_mu
-      assert p.rating_sigma == default_sigma
+      assert_in_delta p.rating_sigma, default_sigma, 0.001
       assert p.rating_games_count == 0
 
       assert Tier.classify(%{
@@ -218,6 +303,7 @@ defmodule PidroServer.Profiles.LegacyImportTest do
       assert {:ok, _} =
                Profiles.import_legacy_progression(user.id, %{
                  xp: 174,
+                 classic_level: 8,
                  badges: ["champion_2019"],
                  premium: true,
                  founding_member: true,
@@ -244,6 +330,102 @@ defmodule PidroServer.Profiles.LegacyImportTest do
                rating_sigma: screen.rating_sigma,
                rating_games_count: screen.rating_games_count
              }) == %{tier: :provisional, provisional: true}
+    end
+  end
+
+  describe "public Classic career" do
+    test "uses the old total when there is no counter row" do
+      classic =
+        import_and_show(%{
+          legacy_played_games: 100,
+          legacy_victories: 61,
+          legacy_losses: 39,
+          games_logged: 80,
+          games_started: 75,
+          games_ended: 70
+        })
+
+      assert classic.games_played == 100
+      assert classic.wins == 61
+      assert classic.losses == 39
+      assert_in_delta classic.win_rate, 0.61, 0.0001
+    end
+
+    test "uses the continuing counter when it is at or above the old total" do
+      classic =
+        import_and_show(%{
+          legacy_played_games: 100,
+          legacy_victories: 61,
+          legacy_losses: 39,
+          games_played_counter: 130,
+          wins: 80,
+          losses: 50
+        })
+
+      assert classic.games_played == 130
+      assert classic.wins == 80
+      assert classic.losses == 50
+    end
+
+    test "adds disjoint counters when the newer counter is below the old total" do
+      classic =
+        import_and_show(%{
+          legacy_played_games: 100,
+          legacy_victories: 61,
+          legacy_losses: 39,
+          games_played_counter: 20,
+          wins: 12,
+          losses: 8,
+          games_logged: 9_999,
+          games_started: 8_888,
+          games_ended: 7_777
+        })
+
+      assert classic.games_played == 120
+      assert classic.wins == 73
+      assert classic.losses == 47
+    end
+
+    test "omits a result when disjoint eras are incomplete" do
+      classic =
+        import_and_show(%{
+          legacy_played_games: 100,
+          legacy_losses: 39,
+          games_played_counter: 20,
+          wins: 12,
+          losses: 8
+        })
+
+      assert classic.games_played == 120
+      refute Map.has_key?(classic, :wins)
+      assert classic.losses == 47
+      refute Map.has_key?(classic, :win_rate)
+    end
+
+    test "shows complete data, omits missing data, and keeps an unapproved name private" do
+      complete =
+        import_and_show(%{
+          classic_username: "Veteran",
+          classic_name_allowed: true,
+          classic_level: 42,
+          legacy_played_games: 100,
+          legacy_victories: 61,
+          legacy_losses: 39,
+          member_since: "2013-04-12T09:30:00Z"
+        })
+
+      assert complete.name == "Veteran"
+      assert complete.level == 42
+      assert complete.member_since == "2013-04-12T09:30:00Z"
+
+      partial = import_and_show(%{classic_username: "Private", classic_name_allowed: false})
+      assert partial == %{}
+    end
+
+    defp import_and_show(legacy) do
+      user = insert_user()
+      assert {:ok, _profile} = Profiles.import_legacy_progression(user.id, legacy)
+      Profiles.public_profile(user.id).classic
     end
   end
 end

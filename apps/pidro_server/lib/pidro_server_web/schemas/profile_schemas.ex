@@ -159,6 +159,41 @@ defmodule PidroServerWeb.Schemas.ProfileSchemas do
                 %{"key" => "founding_member", "label" => "Founding Member", "value" => true}
               ]
             },
+            classic: %Schema{
+              type: :object,
+              nullable: true,
+              description:
+                "Classic career summary, or null before a claim. Missing career values are omitted.",
+              properties: %{
+                name: %Schema{
+                  type: :string,
+                  description: "Classic public name, present only when approved for display",
+                  example: "Veteran"
+                },
+                games_played: %Schema{type: :integer, minimum: 0, example: 35_279},
+                wins: %Schema{type: :integer, minimum: 0, example: 18_240},
+                losses: %Schema{type: :integer, minimum: 0, example: 17_039},
+                win_rate: %Schema{
+                  type: :number,
+                  format: :double,
+                  minimum: 0.0,
+                  maximum: 1.0,
+                  example: 0.517
+                },
+                level: %Schema{type: :integer, minimum: 0, example: 73},
+                member_since: %Schema{
+                  type: :string,
+                  format: "date-time",
+                  example: "2013-04-12T09:30:00Z"
+                },
+                claimed_at: %Schema{
+                  type: :string,
+                  format: "date-time",
+                  description: "When the Classic account was attached",
+                  example: "2026-09-27T18:30:00Z"
+                }
+              }
+            },
             playstyle: %Schema{
               type: :object,
               description:
@@ -252,6 +287,7 @@ defmodule PidroServerWeb.Schemas.ProfileSchemas do
             :skill,
             :veteran,
             :heritage,
+            :classic,
             :playstyle,
             :achievements,
             :achievements_catalog
@@ -279,6 +315,16 @@ defmodule PidroServerWeb.Schemas.ProfileSchemas do
             %{"key" => "played_pidro_one", "label" => "Played Pidro 1", "value" => true},
             %{"key" => "founding_member", "label" => "Founding Member", "value" => true}
           ],
+          "classic" => %{
+            "name" => "Veteran",
+            "games_played" => 35_279,
+            "wins" => 18_240,
+            "losses" => 17_039,
+            "win_rate" => 0.517,
+            "level" => 73,
+            "member_since" => "2013-04-12T09:30:00Z",
+            "claimed_at" => "2026-09-27T18:30:00Z"
+          },
           "playstyle" => %{
             "bidding_win_rate" => 0.61,
             "aggression_needle" => 0.72,
