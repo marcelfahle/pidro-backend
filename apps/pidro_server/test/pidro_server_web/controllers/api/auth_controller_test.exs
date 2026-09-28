@@ -246,6 +246,103 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   describe "guest" do
     setup :start_room_manager
 
+    test "201 creates a direct guest without an invitation", %{conn: conn} do
+      response =
+        conn
+        |> post(~p"/api/v1/auth/guest", %{
+          "display_name" => "Anna",
+          "creation_token" => Ecto.UUID.generate(),
+          "install_id" => "device-direct",
+          "platform" => "android"
+        })
+        |> json_response(201)
+
+      assert %{"user" => user, "token" => token} = response["data"]
+      refute Map.has_key?(response["data"], "state")
+      assert user["guest"]
+      assert user["display_name"] == "Anna"
+      assert %{"user" => %{"id" => id}} = json_response(me(build_conn(), token), 200)["data"]
+      assert id == user["id"]
+    end
+
+    test "a direct retry returns the same guest instead of creating another", %{conn: conn} do
+      creation_token = Ecto.UUID.generate()
+
+      params = %{
+        "display_name" => "Anna",
+        "creation_token" => creation_token,
+        "install_id" => "device-retry"
+      }
+
+      first = conn |> post(~p"/api/v1/auth/guest", params) |> data(201)
+      second = build_conn() |> post(~p"/api/v1/auth/guest", params) |> data(201)
+
+      assert second["user"]["id"] == first["user"]["id"]
+      assert json_response(me(build_conn(), second["token"]), 200)
+      assert Repo.aggregate(from(u in User, where: u.install_id == "device-retry"), :count) == 1
+    end
+
+    test "a creation token cannot recover an account after it is upgraded", %{conn: conn} do
+      creation_token = Ecto.UUID.generate()
+      params = %{"display_name" => "Anna", "creation_token" => creation_token}
+
+      %{"user" => %{"id" => id}, "token" => token} =
+        conn |> post(~p"/api/v1/auth/guest", params) |> data(201)
+
+      assert build_conn()
+             |> put_req_header("authorization", "Bearer #{token}")
+             |> post(~p"/api/v1/auth/upgrade", %{
+               "email" => "anna@example.com",
+               "password" => "password123"
+             })
+             |> json_response(200)
+
+      assert %{"errors" => [%{"code" => "CREATION_CONFLICT"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/guest", params)
+               |> json_response(409)
+
+      refute Repo.get!(User, id).guest
+      assert Repo.aggregate(User, :count) == 1
+    end
+
+    test "direct entry requires a valid creation token", %{conn: conn} do
+      assert %{"errors" => [%{"code" => "creation_token"}]} =
+               conn
+               |> post(~p"/api/v1/auth/guest", %{"display_name" => "Anna"})
+               |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "creation_token"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/guest", %{
+                 "display_name" => "Anna",
+                 "creation_token" => "not-a-uuid"
+               })
+               |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "creation_token"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/guest", %{
+                 "display_name" => "Anna",
+                 "creation_token" => "sixteen-byte-key"
+               })
+               |> json_response(422)
+
+      refute Repo.exists?(from(u in User, where: u.display_name == "Anna"))
+    end
+
+    test "a supplied invalid invite never falls back to direct entry", %{conn: conn} do
+      assert conn
+             |> post(~p"/api/v1/auth/guest", %{
+               "display_name" => "Anna",
+               "creation_token" => Ecto.UUID.generate(),
+               "invite_code" => "ZZZZZZZZ"
+             })
+             |> json_response(404)
+
+      refute Repo.exists?(from(u in User, where: u.display_name == "Anna"))
+    end
+
     test "201 with a guest user, a working token and the invite state", %{conn: conn} do
       {host, room} = host_and_room()
       invite = mint!(room, host)
@@ -272,6 +369,25 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert [%Event{kind: "guest_created", platform: "ios", user_id: ^id}] =
                invite_events(invite, "guest_created")
+    end
+
+    test "an invited retry returns one guest and records one creation event", %{conn: conn} do
+      {host, room} = host_and_room()
+      invite = mint!(room, host)
+
+      params = %{
+        "display_name" => "Anna",
+        "invite_code" => invite.code,
+        "creation_token" => Ecto.UUID.generate(),
+        "platform" => "ios"
+      }
+
+      first = conn |> post(~p"/api/v1/auth/guest", params) |> data(201)
+      second = build_conn() |> post(~p"/api/v1/auth/guest", params) |> data(201)
+
+      assert second["user"]["id"] == first["user"]["id"]
+      assert second["state"] == "open"
+      assert [%Event{kind: "guest_created"}] = invite_events(invite, "guest_created")
     end
 
     test "a full table still creates the guest and answers state full", %{conn: conn} do
@@ -423,6 +539,28 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                "invite_code" => invite.code
              })
              |> json_response(201)
+    end
+
+    test "direct creation keeps the install abuse limit", %{conn: conn} do
+      with_limit(:guest_create_install, 1, 3_600_000)
+
+      assert conn
+             |> from_ip({10, 3, 1, 1})
+             |> post(~p"/api/v1/auth/guest", %{
+               "display_name" => "Anna",
+               "creation_token" => Ecto.UUID.generate(),
+               "install_id" => "direct-shared"
+             })
+             |> json_response(201)
+
+      assert build_conn()
+             |> from_ip({10, 3, 1, 2})
+             |> post(~p"/api/v1/auth/guest", %{
+               "display_name" => "Ben",
+               "creation_token" => Ecto.UUID.generate(),
+               "install_id" => "direct-shared"
+             })
+             |> json_response(429)
     end
   end
 

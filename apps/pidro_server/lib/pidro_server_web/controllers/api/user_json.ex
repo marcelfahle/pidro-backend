@@ -61,7 +61,7 @@ defmodule PidroServerWeb.API.UserJSON do
   #
   # Includes user fields (id, username, email, display_name, guest,
   # inserted_at, updated_at) but explicitly excludes password_hash,
-  # token_version, last_seen_at and install_id.
+  # token_version, last_seen_at, install_id and guest_creation_token_hash.
   defp user(user) do
     %{
       id: user.id,

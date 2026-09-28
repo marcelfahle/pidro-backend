@@ -22,6 +22,8 @@ defmodule PidroServer.Accounts.Auth do
   `create_guest_user/2` builds a `guest: true` row with a generated
   `guest_<code>` username and rejects a display name whose
   `User.name_key/1` is in the caller's taken list (R10, R11).
+  `create_guest_user_once/2` additionally deduplicates retries carrying the
+  same opaque creation token.
   `upgrade_guest/2` turns that row into a registered account in place and
   bumps `token_version` without a disconnect broadcast, so the guest's open
   socket survives while every older token dies (R13, KTD7).
@@ -141,6 +143,43 @@ defmodule PidroServer.Accounts.Auth do
       when is_map(attrs) and is_list(taken_name_keys) and is_list(opts) do
     generator = Keyword.get(opts, :generator, &Codes.generate/0)
     insert_guest(guest_attrs(attrs), taken_name_keys, generator, @guest_username_attempts)
+  end
+
+  @doc """
+  Creates a guest once for an opaque creation token.
+
+  A repeated token returns the original guest instead of minting another
+  player. The token is hashed before storage and is never returned. Calls
+  without a token retain the original create-on-every-call behavior for older
+  invitation clients.
+  """
+  @spec create_guest_user_once(map(), [String.t()], keyword()) ::
+          {:ok, User.t(), :created | :existing} | {:error, Changeset.t() | :creation_conflict}
+  def create_guest_user_once(attrs, taken_name_keys, opts \\ [])
+      when is_map(attrs) and is_list(taken_name_keys) and is_list(opts) do
+    case creation_token_hash(attrs) do
+      nil ->
+        with {:ok, user} <- create_guest_user(attrs, taken_name_keys, opts) do
+          {:ok, user, :created}
+        end
+
+      token_hash ->
+        case guest_by_creation_token(token_hash) do
+          %User{} = user ->
+            {:ok, user, :existing}
+
+          nil ->
+            attrs = Map.put(attrs, :guest_creation_token_hash, token_hash)
+
+            case create_guest_user(attrs, taken_name_keys, opts) do
+              {:ok, user} ->
+                {:ok, user, :created}
+
+              {:error, changeset} ->
+                recover_guest_retry(changeset, token_hash)
+            end
+        end
+    end
   end
 
   @doc """
@@ -769,6 +808,32 @@ defmodule PidroServer.Accounts.Auth do
     %{}
     |> maybe_put_attr(:display_name, fetch_attr(attrs, :display_name))
     |> maybe_put_attr(:install_id, fetch_attr(attrs, :install_id))
+    |> maybe_put_attr(
+      :guest_creation_token_hash,
+      fetch_attr(attrs, :guest_creation_token_hash)
+    )
+  end
+
+  defp creation_token_hash(attrs) do
+    case fetch_attr(attrs, :creation_token) do
+      token when is_binary(token) -> :crypto.hash(:sha256, token)
+      _missing -> nil
+    end
+  end
+
+  defp guest_by_creation_token(token_hash) do
+    Repo.get_by(User, guest_creation_token_hash: token_hash, guest: true)
+  end
+
+  defp recover_guest_retry(changeset, token_hash) do
+    if unique_error?(changeset, :guest_creation_token_hash) do
+      case guest_by_creation_token(token_hash) do
+        %User{} = user -> {:ok, user, :existing}
+        nil -> {:error, :creation_conflict}
+      end
+    else
+      {:error, changeset}
+    end
   end
 
   defp insert_guest(attrs, taken_name_keys, generator, attempts_left) do
