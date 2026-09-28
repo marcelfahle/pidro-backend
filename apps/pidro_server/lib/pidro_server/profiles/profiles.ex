@@ -53,13 +53,10 @@ defmodule PidroServer.Profiles do
         |> PlayerProfile.changeset(%{user_id: user_id})
         |> Repo.insert(on_conflict: :nothing, conflict_target: :user_id)
         |> case do
-          {:ok, %PlayerProfile{id: nil}} ->
-            # on_conflict: :nothing returned a struct without an id (a concurrent
-            # insert won the race) — re-fetch the existing row.
+          {:ok, %PlayerProfile{}} ->
+            # UUIDs are generated before insert, so the struct cannot tell us
+            # whether ON CONFLICT inserted. The row is the source of truth.
             {:ok, Repo.get_by!(PlayerProfile, user_id: user_id)}
-
-          {:ok, %PlayerProfile{} = profile} ->
-            {:ok, profile}
 
           {:error, changeset} ->
             {:error, changeset}
@@ -101,6 +98,9 @@ defmodule PidroServer.Profiles do
     Repo.transaction(fn ->
       {:ok, profile} = get_or_create_profile(user_id)
 
+      profile =
+        Repo.one!(from p in PlayerProfile, where: p.id == ^profile.id, lock: "FOR UPDATE")
+
       if already_migrated?(profile) do
         :already_migrated
       else
@@ -116,7 +116,7 @@ defmodule PidroServer.Profiles do
   defp user_id_from(user_id) when is_binary(user_id), do: user_id
 
   defp normalize_legacy(%LegacyProgression{} = legacy), do: legacy
-  defp normalize_legacy(map) when is_map(map), do: struct(LegacyProgression, map)
+  defp normalize_legacy(map) when is_map(map), do: LegacyProgression.new(map)
 
   defp already_migrated?(%PlayerProfile{heritage_flags: flags}) when is_map(flags) do
     Map.get(flags, "played_pidro_one") == true or Map.get(flags, :played_pidro_one) == true

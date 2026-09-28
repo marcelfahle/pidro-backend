@@ -1,0 +1,238 @@
+defmodule PidroServer.Accounts.ClassicClaims do
+  @moduledoc """
+  Redeems verified Classic claims without merging or replacing accounts.
+
+  PID-143 issues an opaque, short-lived ticket after verification. This module
+  owns the durable one-to-one link, career import and repeat-sign-in identity.
+  """
+
+  import Ecto.Query
+
+  alias PidroServer.Accounts.{ClassicClaimTicket, User}
+  alias PidroServer.Profiles
+  alias PidroServer.Profiles.{LegacyProgression, PlayerProfile}
+  alias PidroServer.Repo
+
+  @ticket_bytes 32
+  @ticket_lifetime_seconds 10 * 60
+
+  @doc """
+  Stores a verified claim and returns its one-time opaque token.
+
+  The caller is PID-143's verifier. `attrs` must contain trusted Classic data,
+  a method, and exactly one binding: `user_id` or `install_id`.
+  """
+  def issue_ticket(attrs) when is_map(attrs) do
+    token = @ticket_bytes |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
+    now = DateTime.utc_now()
+
+    ticket_attrs = %{
+      token_hash: hash_token(token),
+      classic_user_id: fetch(attrs, :classic_user_id),
+      method: fetch(attrs, :method),
+      provider_id: fetch(attrs, :provider_id),
+      legacy_data: attrs |> fetch(:legacy_data) |> LegacyProgression.new() |> Map.from_struct(),
+      bound_user_id: fetch(attrs, :user_id),
+      install_id: fetch(attrs, :install_id),
+      expires_at:
+        fetch(attrs, :expires_at) || DateTime.add(now, @ticket_lifetime_seconds, :second)
+    }
+
+    case %ClassicClaimTicket{}
+         |> ClassicClaimTicket.issue_changeset(ticket_attrs)
+         |> Repo.insert() do
+      {:ok, ticket} -> {:ok, %{ticket: token, expires_at: ticket.expires_at}}
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  @doc "Redeems a ticket for the current user, or creates a user for an install-bound claim."
+  def redeem(token, current_user, params)
+      when is_binary(token) and (is_nil(current_user) or is_struct(current_user, User)) and
+             is_map(params) do
+    now = DateTime.utc_now()
+
+    Repo.transaction(fn ->
+      with %ClassicClaimTicket{} = ticket <- lock_ticket(token),
+           :ok <- validate_binding(ticket, current_user, params),
+           :ok <- validate_expiry(ticket, now),
+           :ok <- lock_classic(ticket.classic_user_id),
+           {:ok, user, mode} <- target_user(ticket, current_user, params),
+           {:ok, user} <- redeem_for_user(ticket, user, mode, now) do
+        user
+      else
+        nil -> Repo.rollback(:invalid_claim_ticket)
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  def redeem(_token, _current_user, _params), do: {:error, :invalid_claim_ticket}
+
+  defp lock_ticket(token) do
+    Repo.one(
+      from t in ClassicClaimTicket,
+        where: t.token_hash == ^hash_token(token),
+        lock: "FOR UPDATE"
+    )
+  end
+
+  defp validate_binding(%{bound_user_id: id}, %User{id: id}, _params), do: :ok
+
+  defp validate_binding(%{bound_user_id: nil, install_id: install_id}, nil, params) do
+    if fetch(params, :install_id) == install_id,
+      do: :ok,
+      else: {:error, :claim_ticket_binding_mismatch}
+  end
+
+  defp validate_binding(_ticket, _user, _params),
+    do: {:error, :claim_ticket_binding_mismatch}
+
+  defp validate_expiry(%{expires_at: expires_at}, now) do
+    if DateTime.compare(expires_at, now) == :gt,
+      do: :ok,
+      else: {:error, :claim_ticket_expired}
+  end
+
+  defp lock_classic(classic_user_id) do
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+           "classic-claim:#{classic_user_id}"
+         ]) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp target_user(%{redeemed_by_id: id}, %User{id: id}, _params),
+    do: {:ok, lock_user(id), :retry}
+
+  defp target_user(%{redeemed_by_id: id, install_id: install_id}, nil, params)
+       when is_binary(id) do
+    if fetch(params, :install_id) == install_id,
+      do: {:ok, lock_user(id), :retry},
+      else: {:error, :claim_ticket_binding_mismatch}
+  end
+
+  defp target_user(%{redeemed_by_id: id}, _current_user, _params) when is_binary(id),
+    do: {:error, :already_claimed}
+
+  defp target_user(_ticket, %User{id: id}, _params), do: {:ok, lock_user(id), :first}
+
+  defp target_user(ticket, nil, params) do
+    if Repo.exists?(from u in User, where: u.classic_user_id == ^ticket.classic_user_id) do
+      {:error, :already_claimed}
+    else
+      create_user(ticket, fetch(params, :account) || %{})
+    end
+  end
+
+  defp create_user(%{method: :password}, attrs) do
+    %User{}
+    |> User.registration_changeset(attrs)
+    |> Repo.insert()
+    |> with_mode()
+  end
+
+  defp create_user(%{method: method}, attrs) when method in [:apple, :facebook] do
+    %User{}
+    |> User.social_registration_changeset(attrs)
+    |> Repo.insert()
+    |> with_mode()
+  end
+
+  defp with_mode({:ok, user}), do: {:ok, user, :first}
+  defp with_mode({:error, reason}), do: {:error, reason}
+
+  defp redeem_for_user(ticket, user, :retry, _now) do
+    if user.classic_user_id == ticket.classic_user_id,
+      do: {:ok, user},
+      else: {:error, :already_claimed}
+  end
+
+  defp redeem_for_user(ticket, user, :first, now) do
+    with :ok <- ensure_link_available(ticket, user),
+         {:ok, linked} <- link_user(ticket, user, now),
+         :ok <- import_progression(linked, ticket),
+         {:ok, _ticket} <-
+           ticket |> ClassicClaimTicket.redeem_changeset(linked.id, now) |> Repo.update() do
+      {:ok, linked}
+    end
+  end
+
+  defp ensure_link_available(ticket, user) do
+    owner =
+      Repo.one(
+        from u in User,
+          where: u.classic_user_id == ^ticket.classic_user_id,
+          lock: "FOR UPDATE"
+      )
+
+    cond do
+      user.classic_user_id not in [nil, ticket.classic_user_id] -> {:error, :user_already_claimed}
+      is_nil(owner) or owner.id == user.id -> :ok
+      true -> {:error, :already_claimed}
+    end
+  end
+
+  defp link_user(ticket, user, now) do
+    attrs =
+      %{
+        classic_user_id: ticket.classic_user_id,
+        classic_claimed_at: user.classic_claimed_at || now
+      }
+      |> put_provider(ticket.method, ticket.provider_id)
+
+    user
+    |> User.classic_claim_changeset(attrs)
+    |> Repo.update()
+    |> map_link_error()
+  end
+
+  defp put_provider(attrs, :apple, provider_id), do: Map.put(attrs, :apple_sub, provider_id)
+  defp put_provider(attrs, :facebook, provider_id), do: Map.put(attrs, :facebook_id, provider_id)
+  defp put_provider(attrs, :password, _provider_id), do: attrs
+
+  defp map_link_error({:ok, user}), do: {:ok, user}
+
+  defp map_link_error({:error, changeset}) do
+    cond do
+      unique_error?(changeset, :classic_user_id) -> {:error, :already_claimed}
+      unique_error?(changeset, :apple_sub) -> {:error, :provider_already_linked}
+      unique_error?(changeset, :facebook_id) -> {:error, :provider_already_linked}
+      true -> {:error, changeset}
+    end
+  end
+
+  defp import_progression(user, ticket) do
+    case Profiles.import_legacy_progression(user, ticket.legacy_data) do
+      {:ok, %PlayerProfile{}} -> :ok
+      {:ok, :already_migrated} -> ensure_same_import(user.id, ticket.classic_user_id)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp ensure_same_import(user_id, classic_user_id) do
+    profile = Repo.get_by!(PlayerProfile, user_id: user_id)
+    imported_id = Map.get(profile.heritage_flags || %{}, "classic_user_id")
+
+    if imported_id == classic_user_id,
+      do: :ok,
+      else: {:error, :user_already_claimed}
+  end
+
+  defp lock_user(id),
+    do: Repo.one!(from u in User, where: u.id == ^id, lock: "FOR UPDATE")
+
+  defp unique_error?(changeset, field) do
+    Enum.any?(changeset.errors, fn
+      {^field, {_message, opts}} -> Keyword.get(opts, :constraint) == :unique
+      _other -> false
+    end)
+  end
+
+  defp hash_token(token), do: :crypto.hash(:sha256, token)
+
+  defp fetch(map, key) do
+    Map.get(map, key, Map.get(map, Atom.to_string(key)))
+  end
+end

@@ -72,6 +72,10 @@ defmodule PidroServer.Accounts.User do
     field(:last_seen_at, :utc_datetime_usec)
     field(:install_id, :string)
     field(:guest_creation_token_hash, :binary)
+    field(:classic_user_id, :integer)
+    field(:classic_claimed_at, :utc_datetime_usec)
+    field(:apple_sub, :string)
+    field(:facebook_id, :string)
     field(:avatar_url, :string, virtual: true)
 
     timestamps(type: :utc_datetime_usec)
@@ -96,6 +100,27 @@ defmodule PidroServer.Accounts.User do
     |> validate_required(:password)
     |> validate_length(:password, min: @password_min_length)
     |> put_password_hash()
+  end
+
+  @doc "Builds a passwordless registered account for a verified social claim."
+  def social_registration_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:username, :display_name])
+    |> validate_required(:username)
+    |> validate_length(:username, min: @username_min_length)
+    |> validate_display_name()
+    |> unique_constraint(:username)
+  end
+
+  @doc false
+  def classic_claim_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:classic_user_id, :classic_claimed_at, :apple_sub, :facebook_id])
+    |> validate_required([:classic_user_id, :classic_claimed_at])
+    |> unique_constraint(:classic_user_id)
+    |> unique_constraint(:apple_sub)
+    |> unique_constraint(:facebook_id)
+    |> check_constraint(:classic_user_id, name: :classic_link_is_complete)
   end
 
   @doc """

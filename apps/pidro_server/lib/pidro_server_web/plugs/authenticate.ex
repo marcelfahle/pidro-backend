@@ -69,12 +69,20 @@ defmodule PidroServerWeb.Plugs.Authenticate do
     * Halted connection with 401 response on failure
   """
   @spec call(conn :: Plug.Conn.t(), opts :: Keyword.t()) :: Plug.Conn.t()
-  def call(conn, _opts) do
+  def call(conn, opts) do
+    optional? = Keyword.get(opts, :optional, false)
+
     case extract_token(conn) do
       {:ok, token} ->
         authenticate_token(conn, token)
 
+      :missing when optional? ->
+        assign(conn, :current_user, nil)
+
       :error ->
+        unauthorized_response(conn)
+
+      :missing ->
         unauthorized_response(conn)
     end
   end
@@ -82,6 +90,9 @@ defmodule PidroServerWeb.Plugs.Authenticate do
   @doc false
   defp extract_token(conn) do
     case Plug.Conn.get_req_header(conn, "authorization") do
+      [] ->
+        :missing
+
       [auth_header] ->
         case String.split(auth_header, " ") do
           ["Bearer", token] -> {:ok, token}

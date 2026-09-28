@@ -154,7 +154,9 @@ defmodule PidroServer.Accounts.GuestReaper do
   defp stale_guest_ids(cutoff, failed_ids) do
     query =
       from(u in User,
-        where: u.guest == true and coalesce(u.last_seen_at, u.inserted_at) < ^cutoff,
+        where:
+          u.guest == true and is_nil(u.classic_user_id) and
+            coalesce(u.last_seen_at, u.inserted_at) < ^cutoff,
         order_by: [asc: fragment("COALESCE(?, ?)", u.last_seen_at, u.inserted_at), asc: u.id],
         limit: @batch_size,
         select: u.id
@@ -175,7 +177,7 @@ defmodule PidroServer.Accounts.GuestReaper do
       {:ok, _deleted} ->
         true
 
-      {:error, reason} when reason in [:not_found, :not_a_guest] ->
+      {:error, reason} when reason in [:not_found, :not_a_guest, :claimed_guest] ->
         false
 
       {:error, reason} ->

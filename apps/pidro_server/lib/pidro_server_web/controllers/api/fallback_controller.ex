@@ -87,6 +87,50 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :provider_unavailable}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> json(%{
+      errors: [
+        %{
+          code: "PROVIDER_UNAVAILABLE",
+          title: "Sign-in unavailable",
+          detail: "The identity provider is temporarily unavailable"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, reason})
+      when reason in [:already_claimed, :user_already_claimed, :provider_already_linked] do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [
+        %{
+          code: reason |> Atom.to_string() |> String.upcase(),
+          title: "Account already linked",
+          detail: "This Classic account or sign-in identity belongs to another account",
+          action: "sign_in"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :claim_ticket_expired}) do
+    conn
+    |> put_status(:gone)
+    |> json(%{
+      errors: [
+        %{
+          code: "CLAIM_TICKET_EXPIRED",
+          title: "Claim expired",
+          detail: "Verify the Classic account again"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :invalid_or_expired_password_reset_token}) do
     conn
     |> put_status(:unprocessable_entity)

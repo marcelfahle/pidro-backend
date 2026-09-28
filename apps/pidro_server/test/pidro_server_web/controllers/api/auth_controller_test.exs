@@ -12,6 +12,15 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   alias PidroServer.Invites.Event
   alias PidroServer.Repo
 
+  defmodule ProviderVerifier do
+    @behaviour PidroServer.Accounts.ProviderVerifier
+
+    @impl true
+    def verify(:apple, "apple-token"), do: {:ok, "apple-sub"}
+    def verify(:facebook, "facebook-token"), do: {:ok, "facebook-id"}
+    def verify(_provider, _token), do: {:error, :invalid_credentials}
+  end
+
   describe "register" do
     test "ignores guest in the request body", %{conn: conn} do
       conn =
@@ -78,6 +87,52 @@ defmodule PidroServerWeb.API.AuthControllerTest do
         })
 
       assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} = json_response(conn, 401)
+    end
+  end
+
+  describe "provider login" do
+    setup do
+      previous = Application.get_env(:pidro_server, :provider_verifier)
+      Application.put_env(:pidro_server, :provider_verifier, ProviderVerifier)
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:pidro_server, :provider_verifier, previous),
+          else: Application.delete_env(:pidro_server, :provider_verifier)
+      end)
+    end
+
+    test "Apple and Facebook return the linked account, never an email match", %{conn: conn} do
+      apple =
+        AccountsFixtures.user_fixture()
+        |> Ecto.Changeset.change(apple_sub: "apple-sub")
+        |> Repo.update!()
+
+      facebook =
+        AccountsFixtures.user_fixture()
+        |> Ecto.Changeset.change(facebook_id: "facebook-id")
+        |> Repo.update!()
+
+      assert %{"user" => %{"id" => apple_id}, "token" => _token} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-token"})
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      assert apple_id == apple.id
+
+      assert %{"user" => %{"id" => facebook_id}, "token" => _token} =
+               build_conn()
+               |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-token"})
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      assert facebook_id == facebook.id
+
+      assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "wrong"})
+               |> json_response(401)
     end
   end
 

@@ -18,6 +18,9 @@ defmodule PidroServerWeb.ApiSpecTest do
     {"/api/v1/rooms/{code}/kick", ["post"]},
     {"/api/v1/rooms/{code}/bot", ["post"]},
     {"/api/v1/auth/guest", ["post"]},
+    {"/api/v1/auth/apple", ["post"]},
+    {"/api/v1/auth/facebook", ["post"]},
+    {"/api/v1/classic/claim", ["post"]},
     {"/api/v1/auth/upgrade", ["post"]},
     {"/api/v1/auth/me", ["get", "delete"]}
   ]
@@ -51,7 +54,7 @@ defmodule PidroServerWeb.ApiSpecTest do
     for policy <-
           ~w(invite_mint invite_preview invite_capture invite_capture_code invite_deferred
              invite_deferred_install invite_redeem guest_create guest_create_daily
-             guest_create_install room_join auth_upgrade) do
+             guest_create_install room_join auth_upgrade provider_auth classic_claim) do
       assert description =~ "`#{policy}`"
     end
   end
@@ -73,14 +76,14 @@ defmodule PidroServerWeb.ApiSpecTest do
     assert %OpenApiSpex.Schema{type: :string} = gone_properties.next_code
   end
 
-  test "guest responses use a nullable-email user schema" do
+  test "guest and passwordless social responses use nullable-email user schemas" do
     assert %OpenApiSpex.Schema{properties: %{email: email}} = UserSchemas.GuestUser.schema()
     assert email.nullable == true
 
     assert %OpenApiSpex.Schema{properties: %{email: registered_email}} =
              UserSchemas.User.schema()
 
-    refute registered_email.nullable
+    assert registered_email.nullable == true
   end
 
   describe "the room config contract" do
