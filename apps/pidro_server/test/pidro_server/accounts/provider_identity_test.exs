@@ -128,6 +128,35 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
              ProviderIdentity.facebook_business_ids("facebook-token")
   end
 
+  test "Facebook JSON served as text/javascript (what Graph sends servers) is decoded" do
+    Req.Test.stub(ProviderIdentity, fn conn ->
+      body =
+        case Path.basename(conn.request_path) do
+          "debug_token" ->
+            ~s({"data":{"is_valid":true,"app_id":"345200965110578","user_id":"fb-user"}})
+
+          "me" ->
+            ~s({"id":"fb-user"})
+        end
+
+      conn
+      |> Plug.Conn.put_resp_content_type("text/javascript")
+      |> Plug.Conn.send_resp(200, body)
+    end)
+
+    assert {:ok, "fb-user"} = ProviderIdentity.facebook("user-token")
+  end
+
+  test "an invalid Facebook token served as text/javascript is invalid, not an outage" do
+    Req.Test.stub(ProviderIdentity, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("text/javascript")
+      |> Plug.Conn.send_resp(200, ~s({"data":{"is_valid":false,"error":{"code":190}}}))
+    end)
+
+    assert {:error, :invalid_credentials} = ProviderIdentity.facebook("bogus")
+  end
+
   test "Facebook rejects a token issued for another app" do
     Req.Test.expect(ProviderIdentity, fn conn ->
       Req.Test.json(conn, %{

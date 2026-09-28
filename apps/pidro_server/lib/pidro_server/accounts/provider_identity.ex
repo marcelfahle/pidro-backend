@@ -164,11 +164,24 @@ defmodule PidroServer.Accounts.ProviderIdentity do
     options = [url: base_url <> path, params: params, receive_timeout: 5_000]
 
     case Req.get(Keyword.merge(options, Keyword.get(config, :req_options, []))) do
-      {:ok, %{status: 200, body: body}} when is_map(body) -> {:ok, body}
+      {:ok, %{status: 200, body: body}} -> json_body(body)
       {:ok, %{status: status}} when status in 400..499 -> {:error, :invalid_credentials}
       _response -> {:error, :provider_unavailable}
     end
   end
+
+  # Graph answers server-side calls with `content-type: text/javascript`, so Req
+  # leaves the JSON undecoded. Decode it here; anything else is an outage.
+  defp json_body(body) when is_map(body), do: {:ok, body}
+
+  defp json_body(body) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, decoded} when is_map(decoded) -> {:ok, decoded}
+      _invalid -> {:error, :provider_unavailable}
+    end
+  end
+
+  defp json_body(_body), do: {:error, :provider_unavailable}
 
   defp identity_id(%{"id" => id}) when is_binary(id), do: [id]
   defp identity_id(_identity), do: []
