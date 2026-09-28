@@ -87,6 +87,77 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :provider_unavailable}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> json(%{
+      errors: [
+        %{
+          code: "PROVIDER_UNAVAILABLE",
+          title: "Sign-in unavailable",
+          detail: "The identity provider is temporarily unavailable"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, {:already_claimed, method}})
+      when method in [:password, :apple, :facebook, nil] do
+    error = %{
+      code: "ALREADY_CLAIMED",
+      title: "Account already linked",
+      detail: "This Classic account belongs to another account"
+    }
+
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [if(method, do: Map.put(error, :action, sign_in_action(method)), else: error)]
+    })
+  end
+
+  def call(conn, {:error, :user_already_claimed}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [
+        %{
+          code: "USER_ALREADY_CLAIMED",
+          title: "Classic profile already linked",
+          detail: "This account already has a different Classic profile"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :provider_already_linked}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [
+        %{
+          code: "PROVIDER_ALREADY_LINKED",
+          title: "Sign-in already linked",
+          detail: "This provider identity cannot be linked to this account"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :claim_ticket_expired}) do
+    conn
+    |> put_status(:gone)
+    |> json(%{
+      errors: [
+        %{
+          code: "CLAIM_TICKET_EXPIRED",
+          title: "Claim expired",
+          detail: "Verify the Classic account again"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :invalid_or_expired_password_reset_token}) do
     conn
     |> put_status(:unprocessable_entity)
@@ -559,6 +630,15 @@ defmodule PidroServerWeb.API.FallbackController do
       ]
     })
   end
+
+  defp sign_in_action(:password),
+    do: %{type: "sign_in", method: "password", endpoint: "/api/v1/auth/login"}
+
+  defp sign_in_action(:apple),
+    do: %{type: "sign_in", method: "apple", endpoint: "/api/v1/auth/apple"}
+
+  defp sign_in_action(:facebook),
+    do: %{type: "sign_in", method: "facebook", endpoint: "/api/v1/auth/facebook"}
 
   defp conflict(conn, code, title, detail), do: error(conn, :conflict, code, title, detail)
 

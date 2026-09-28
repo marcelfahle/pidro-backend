@@ -88,6 +88,20 @@ defmodule PidroServer.Accounts.GuestReaperTest do
       assert %User{} = Repo.get(User, keeper.id)
     end
 
+    test "keeps a claimed guest even when it is idle" do
+      claimed =
+        AccountsFixtures.guest_fixture(%{last_seen_at: days_ago(40)})
+        |> Ecto.Changeset.change(
+          classic_user_id: 99_001,
+          classic_claimed_at: DateTime.utc_now()
+        )
+        |> Repo.update!()
+
+      assert {:ok, 0} = GuestReaper.run_once()
+      assert %User{} = Repo.get(User, claimed.id)
+      assert {:error, :claimed_guest} = Auth.delete_guest(claimed.id)
+    end
+
     test "rejects non-positive timing configuration" do
       assert_raise ArgumentError, ~r/max_idle_days must be a positive integer/, fn ->
         GuestReaper.run_once(max_idle_days: 0)

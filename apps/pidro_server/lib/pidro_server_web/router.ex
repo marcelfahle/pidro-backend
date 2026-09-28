@@ -60,6 +60,13 @@ defmodule PidroServerWeb.Router do
     plug PidroServerWeb.Plugs.RateLimit
   end
 
+  pipeline :api_optional_authenticated do
+    plug :accepts, ["json"]
+    plug OpenApiSpex.Plug.PutApiSpec, module: PidroServerWeb.ApiSpec
+    plug PidroServerWeb.Plugs.Authenticate, optional: true
+    plug PidroServerWeb.Plugs.RateLimit
+  end
+
   pipeline :public_asset do
     plug PidroServerWeb.Plugs.RateLimit
   end
@@ -100,6 +107,8 @@ defmodule PidroServerWeb.Router do
     # the PidroServerWeb.Plugs.RateLimit policies applied to the route.
     post "/auth/register", AuthController, :register, private: %{rate_limit: [:register]}
     post "/auth/login", AuthController, :login, private: %{rate_limit: [:login]}
+    post "/auth/apple", AuthController, :apple, private: %{rate_limit: [:provider_auth]}
+    post "/auth/facebook", AuthController, :facebook, private: %{rate_limit: [:provider_auth]}
 
     post "/auth/password-reset", AuthController, :request_password_reset,
       private: %{rate_limit: [:password_reset, :password_reset_identifier]}
@@ -120,6 +129,13 @@ defmodule PidroServerWeb.Router do
       private: %{rate_limit: [:invite_deferred, :invite_deferred_install]}
 
     get "/invites/:code", InviteController, :show, private: %{rate_limit: [:invite_preview]}
+  end
+
+  scope "/api/v1", PidroServerWeb.API do
+    pipe_through :api_optional_authenticated
+
+    post "/classic/claim", ClassicClaimController, :create,
+      private: %{rate_limit: [:classic_claim]}
   end
 
   scope "/api/v1", PidroServerWeb.API do

@@ -73,6 +73,8 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   guest_create_install: %{limit: 3, scale_ms: 3_600_000, key: :install_id},
   room_join: %{limit: 30, scale_ms: 60_000, key: :user},
   auth_upgrade: %{limit: 10, scale_ms: 600_000, key: :ip},
+  provider_auth: %{limit: 10, scale_ms: 60_000, key: :ip},
+  classic_claim: %{limit: 10, scale_ms: 600_000, key: :ip},
   avatar_upload: %{limit: 10, scale_ms: 600_000, key: :user},
   avatar_read: %{limit: 300, scale_ms: 60_000, key: :ip}
 
@@ -177,11 +179,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# Parameters Phoenix.Logger redacts from request logs. Deferred matching inputs
-# and the per-install fairness id must never appear in application logs.
+# Credentials, deferred matching inputs and the per-install fairness id must
+# never appear in application logs.
 config :phoenix,
        :filter_parameters,
-       ~w(password install_id referrer platform os_major screen_class locale timezone)
+       ~w(password ticket identity_token access_token install_id referrer platform os_major screen_class locale timezone)
 
 # ---------------------------------------------------------------------------
 # Well-known association files (AASA / assetlinks.json), served by

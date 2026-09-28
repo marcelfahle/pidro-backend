@@ -33,7 +33,7 @@ defmodule PidroServerWeb.API.AuthController do
   import Swoosh.Email
   require Logger
 
-  alias PidroServer.Accounts.{Auth, Token, User}
+  alias PidroServer.Accounts.{Auth, ProviderAuth, Token, User}
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -41,7 +41,7 @@ defmodule PidroServerWeb.API.AuthController do
   alias PidroServer.Invites.{Invite, Redemption}
   alias PidroServer.Mailer
   alias PidroServerWeb.API.{InviteController, UserJSON}
-  alias PidroServerWeb.Schemas.{ErrorSchemas, UserSchemas}
+  alias PidroServerWeb.Schemas.{ClassicClaimSchemas, ErrorSchemas, UserSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
 
@@ -217,6 +217,48 @@ defmodule PidroServerWeb.API.AuthController do
   @spec login(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def login(conn, %{"username" => username, "password" => password}) do
     with {:ok, user} <- Auth.authenticate_user(username, password) do
+      token = Token.generate(user)
+      Auth.touch_last_seen(user)
+
+      conn
+      |> put_view(UserJSON)
+      |> render(:show, %{user: user, token: token})
+    end
+  end
+
+  operation(:apple,
+    summary: "Sign in with Apple",
+    request_body: {"Apple identity token", "application/json", ClassicClaimSchemas.AppleRequest},
+    responses: [
+      ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
+      unauthorized:
+        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      service_unavailable:
+        {"Provider verification unavailable", "application/json", ErrorSchemas.error_response()}
+    ]
+  )
+
+  def apple(conn, %{"identity_token" => token}), do: provider_login(conn, :apple, token)
+  def apple(_conn, _params), do: {:error, :invalid_credentials}
+
+  operation(:facebook,
+    summary: "Sign in with Facebook",
+    request_body:
+      {"Facebook access token", "application/json", ClassicClaimSchemas.FacebookRequest},
+    responses: [
+      ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
+      unauthorized:
+        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      service_unavailable:
+        {"Provider verification unavailable", "application/json", ErrorSchemas.error_response()}
+    ]
+  )
+
+  def facebook(conn, %{"access_token" => token}), do: provider_login(conn, :facebook, token)
+  def facebook(_conn, _params), do: {:error, :invalid_credentials}
+
+  defp provider_login(conn, provider, provider_token) do
+    with {:ok, user} <- ProviderAuth.authenticate(provider, provider_token) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 

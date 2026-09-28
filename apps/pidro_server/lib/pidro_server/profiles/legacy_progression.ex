@@ -88,4 +88,20 @@ defmodule PidroServer.Profiles.LegacyProgression do
             premium: nil,
             founding_member: false,
             playstyle: nil
+
+  @doc "Builds the typed importer input from trusted atom-keyed data or a JSON map."
+  @spec new(map()) :: t()
+  def new(attrs) when is_map(attrs) do
+    defaults = Map.from_struct(%__MODULE__{})
+
+    values =
+      Enum.reduce(Map.keys(defaults), %{}, fn key, acc ->
+        value =
+          Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), Map.fetch!(defaults, key)))
+
+        Map.put(acc, key, if(is_nil(value), do: Map.fetch!(defaults, key), else: value))
+      end)
+
+    struct!(__MODULE__, values)
+  end
 end

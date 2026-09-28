@@ -698,16 +698,24 @@ defmodule PidroServer.Accounts.Auth do
   same recipe and post-commit cleanup as `delete_user/1`.
   """
   @spec delete_guest(Ecto.UUID.t()) ::
-          {:ok, User.t()} | {:error, :not_found | :not_a_guest | term()}
+          {:ok, User.t()} | {:error, :not_found | :not_a_guest | :claimed_guest | term()}
   def delete_guest(id) when is_binary(id) do
     result =
       Repo.transaction(fn ->
         query = from u in User, where: u.id == ^id, lock: "FOR UPDATE"
 
         case Repo.one(query) do
-          nil -> Repo.rollback(:not_found)
-          %User{guest: false} -> Repo.rollback(:not_a_guest)
-          %User{guest: true} = guest -> delete_personal_rows_in_transaction(guest)
+          nil ->
+            Repo.rollback(:not_found)
+
+          %User{guest: false} ->
+            Repo.rollback(:not_a_guest)
+
+          %User{classic_user_id: classic_user_id} when not is_nil(classic_user_id) ->
+            Repo.rollback(:claimed_guest)
+
+          %User{guest: true} = guest ->
+            delete_personal_rows_in_transaction(guest)
         end
       end)
 
@@ -822,7 +830,13 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   defp guest_by_creation_token(token_hash) do
-    Repo.get_by(User, guest_creation_token_hash: token_hash, guest: true)
+    Repo.one(
+      from u in User,
+        where:
+          u.guest_creation_token_hash == ^token_hash and u.guest == true and
+            is_nil(u.classic_user_id),
+        limit: 1
+    )
   end
 
   defp recover_guest_retry(changeset, token_hash) do

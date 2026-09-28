@@ -45,7 +45,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         email: %Schema{
           type: :string,
           format: :email,
-          description: "User's email address",
+          nullable: true,
+          description: "User's email address, null for passwordless social accounts",
           example: "john@example.com"
         },
         display_name: %Schema{
@@ -76,7 +77,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           example: "2024-11-02T15:45:30Z"
         }
       },
-      required: [:id, :username, :email, :guest, :inserted_at, :updated_at],
+      required: [:id, :username, :guest, :inserted_at, :updated_at],
       example: %{
         "id" => "550e8400-e29b-41d4-a716-446655440000",
         "username" => "john_doe",
