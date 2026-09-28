@@ -15,6 +15,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
          {:ok, profile, provider_id} <- verify_method(method, params, classic, providers),
          {:ok, classic_user_id} <- classic_user_id(profile),
          legacy = legacy_data(profile),
+         {:ok, preview} <- preview(legacy),
          {:ok, ticket} <-
            ClassicClaims.issue_ticket(
              binding
@@ -25,7 +26,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
                legacy_data: legacy
              })
            ) do
-      {:ok, Map.put(ticket, :classic, preview(legacy))}
+      {:ok, Map.put(ticket, :classic, preview)}
     end
   end
 
@@ -143,13 +144,22 @@ defmodule PidroServer.Accounts.ClassicVerification do
   end
 
   defp preview(legacy) do
-    %{
+    preview = %{
       name: legacy.classic_username,
       games_played: legacy.games_played_counter || legacy.legacy_played_games,
       level: legacy.classic_level,
       member_since: legacy.member_since,
       name_allowed: legacy.classic_name_allowed
     }
+
+    if is_binary(preview.name) and preview.name != "" and
+         is_integer(preview.games_played) and preview.games_played >= 0 and
+         is_integer(preview.level) and preview.level >= 0 and
+         is_binary(preview.member_since) and preview.member_since != "" do
+      {:ok, preview}
+    else
+      {:error, :provider_unavailable}
+    end
   end
 
   defp classic_name(profile) do

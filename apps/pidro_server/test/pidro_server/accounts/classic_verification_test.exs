@@ -16,6 +16,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     def lookup(:email, "apple@example.com"), do: {:ok, profile()}
     def lookup(:fbid, "current-app-id"), do: {:error, :not_found}
     def lookup(:fbid, "old-app-id"), do: {:ok, profile()}
+    def lookup(:email, "sparse@example.com"), do: {:ok, %{"id" => 98_765}}
     def lookup(_field, _value), do: {:error, :not_found}
 
     defp profile do
@@ -61,6 +62,15 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
 
     def apple("missing-verification-apple-token"),
       do: {:ok, %{"sub" => "apple-subject", "email" => "apple@example.com"}}
+
+    def apple("sparse-profile-token"),
+      do:
+        {:ok,
+         %{
+           "sub" => "apple-subject",
+           "email" => "sparse@example.com",
+           "email_verified" => true
+         }}
 
     def apple(_token), do: {:error, :invalid_credentials}
     def facebook("facebook-token"), do: {:ok, "current-app-id"}
@@ -151,6 +161,22 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
                  provider_identity: Providers
                )
     end
+
+    assert Repo.aggregate(ClassicClaimTicket, :count) == 0
+  end
+
+  test "a malformed Classic profile cannot issue a schema-invalid ticket" do
+    assert {:error, :provider_unavailable} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "apple",
+                 "identity_token" => "sparse-profile-token",
+                 "install_id" => "apple-install"
+               },
+               nil,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
 
     assert Repo.aggregate(ClassicClaimTicket, :count) == 0
   end

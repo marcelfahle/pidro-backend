@@ -122,8 +122,11 @@ defmodule PidroServer.Accounts.ProviderIdentity do
     end
   end
 
-  defp verify_signature(key, signed, signature),
-    do: :public_key.verify(signed, :sha256, signature, key)
+  defp verify_signature(key, signed, signature) do
+    :public_key.verify(signed, :sha256, signature, key)
+  rescue
+    _error -> false
+  end
 
   defp validate_apple_claims(claims) do
     config = Application.fetch_env!(:pidro_server, __MODULE__)

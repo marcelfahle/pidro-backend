@@ -52,6 +52,19 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
     assert {:error, :invalid_credentials} = ProviderIdentity.apple(scalar_header)
   end
 
+  test "malformed Apple JWKS key material is rejected instead of raising" do
+    private_key = :public_key.generate_key({:rsa, 1024, 65_537})
+    token = apple_token(private_key, %{})
+
+    Req.Test.expect(ProviderIdentity, fn conn ->
+      Req.Test.json(conn, %{
+        "keys" => [%{"kid" => "test-key", "kty" => "RSA", "n" => "", "e" => ""}]
+      })
+    end)
+
+    assert {:error, :invalid_credentials} = ProviderIdentity.apple(token)
+  end
+
   test "Facebook requires the configured app and returns all business-scoped ids" do
     Req.Test.expect(ProviderIdentity, 4, fn conn ->
       conn = Plug.Conn.fetch_query_params(conn)
