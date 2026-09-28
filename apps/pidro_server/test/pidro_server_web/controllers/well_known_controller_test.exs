@@ -16,6 +16,7 @@ defmodule PidroServerWeb.WellKnownControllerTest do
   ]
 
   @fingerprint "11:24:29:B7:D0:61:FA:FF:89:D2:F0:04:92:12:FF:18:24:90:C1:EF:CF:71:00:5D:51:6A:D6:92:66:88:1A:31"
+  @beta_fingerprint "60:DF:21:12:ED:8E:5E:4E:E7:F0:AA:AC:3D:C7:FB:B5:21:C0:7A:9B:02:D3:10:67:62:F2:8E:BA:F1:07:9F:03"
 
   setup do
     original = Application.get_env(:pidro_server, @config_key)
@@ -84,13 +85,21 @@ defmodule PidroServerWeb.WellKnownControllerTest do
     test "serves the statement list built from the default config", %{conn: conn} do
       conn = get(conn, ~p"/.well-known/assetlinks.json")
 
-      assert [statement] = json_response(conn, 200)
+      assert [statement, beta] = json_response(conn, 200)
       assert statement["relation"] == ["delegate_permission/common.handle_all_urls"]
 
       assert statement["target"] == %{
                "namespace" => "android_app",
                "package_name" => "com.oneapps.pidro",
                "sha256_cert_fingerprints" => [@fingerprint]
+             }
+
+      assert beta["relation"] == ["delegate_permission/common.handle_all_urls"]
+
+      assert beta["target"] == %{
+               "namespace" => "android_app",
+               "package_name" => "com.oneapps.pidro.beta",
+               "sha256_cert_fingerprints" => [@beta_fingerprint]
              }
 
       assert_association_headers(conn)
@@ -102,7 +111,8 @@ defmodule PidroServerWeb.WellKnownControllerTest do
         |> put_req_header("accept", "text/html")
         |> get(~p"/.well-known/assetlinks.json")
 
-      assert [%{"target" => %{"package_name" => "com.oneapps.pidro"}}] = json_response(conn, 200)
+      assert [%{"target" => %{"package_name" => "com.oneapps.pidro"}}, _beta] =
+               json_response(conn, 200)
     end
 
     test "HEAD returns 200 with an empty body", %{conn: conn} do
