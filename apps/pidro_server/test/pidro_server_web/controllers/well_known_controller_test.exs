@@ -12,7 +12,7 @@ defmodule PidroServerWeb.WellKnownControllerTest do
   @app_ids [
     "LSFK7YF82G.com.oneapps.pidro",
     "LSFK7YF82G.com.marcelfahle.pidro3.dev",
-    "LSFK7YF82G.com.marcelfahle.pidro3.preview"
+    "LSFK7YF82G.com.oneapps.pidro.beta"
   ]
 
   @fingerprint "11:24:29:B7:D0:61:FA:FF:89:D2:F0:04:92:12:FF:18:24:90:C1:EF:CF:71:00:5D:51:6A:D6:92:66:88:1A:31"
