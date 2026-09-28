@@ -37,6 +37,8 @@ defmodule PidroServer.Repo.Migrations.AddClassicClaims do
 
     create unique_index(:classic_claim_tickets, [:token_hash])
     create index(:classic_claim_tickets, [:classic_user_id])
+    create index(:classic_claim_tickets, [:bound_user_id])
+    create index(:classic_claim_tickets, [:redeemed_by_id])
 
     create constraint(:classic_claim_tickets, :claim_ticket_has_one_binding,
              check:

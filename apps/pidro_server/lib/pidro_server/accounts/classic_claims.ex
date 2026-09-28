@@ -25,17 +25,24 @@ defmodule PidroServer.Accounts.ClassicClaims do
   def issue_ticket(attrs) when is_map(attrs) do
     token = @ticket_bytes |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
     now = DateTime.utc_now()
+    classic_user_id = fetch(attrs, :classic_user_id)
+
+    legacy_data =
+      attrs
+      |> fetch(:legacy_data)
+      |> LegacyProgression.new()
+      |> Map.from_struct()
+      |> Map.put(:classic_user_id, classic_user_id)
 
     ticket_attrs = %{
       token_hash: hash_token(token),
-      classic_user_id: fetch(attrs, :classic_user_id),
+      classic_user_id: classic_user_id,
       method: fetch(attrs, :method),
       provider_id: fetch(attrs, :provider_id),
-      legacy_data: attrs |> fetch(:legacy_data) |> LegacyProgression.new() |> Map.from_struct(),
+      legacy_data: legacy_data,
       bound_user_id: fetch(attrs, :user_id),
       install_id: fetch(attrs, :install_id),
-      expires_at:
-        fetch(attrs, :expires_at) || DateTime.add(now, @ticket_lifetime_seconds, :second)
+      expires_at: DateTime.add(now, @ticket_lifetime_seconds, :second)
     }
 
     case %ClassicClaimTicket{}
@@ -53,21 +60,32 @@ defmodule PidroServer.Accounts.ClassicClaims do
     now = DateTime.utc_now()
 
     Repo.transaction(fn ->
-      with %ClassicClaimTicket{} = ticket <- lock_ticket(token),
-           :ok <- validate_binding(ticket, current_user, params),
-           :ok <- validate_expiry(ticket, now),
-           :ok <- lock_classic(ticket.classic_user_id),
-           {:ok, user, mode} <- target_user(ticket, current_user, params),
-           {:ok, user} <- redeem_for_user(ticket, user, mode, now) do
-        user
-      else
-        nil -> Repo.rollback(:invalid_claim_ticket)
-        {:error, reason} -> Repo.rollback(reason)
+      case find_ticket(token) do
+        nil ->
+          Repo.rollback(:invalid_claim_ticket)
+
+        preview ->
+          locked_user = lock_known_user(preview, current_user)
+
+          with %ClassicClaimTicket{} = ticket <- lock_ticket(token),
+               :ok <- validate_binding(ticket, current_user, params),
+               :ok <- validate_expiry(ticket, now),
+               :ok <- lock_classic(ticket.classic_user_id),
+               {:ok, user, mode} <- target_user(ticket, current_user, params, locked_user),
+               {:ok, user} <- redeem_for_user(ticket, user, mode, now) do
+            user
+          else
+            nil -> Repo.rollback(:invalid_claim_ticket)
+            {:error, reason} -> Repo.rollback(reason)
+          end
       end
     end)
   end
 
   def redeem(_token, _current_user, _params), do: {:error, :invalid_claim_ticket}
+
+  defp find_ticket(token),
+    do: Repo.get_by(ClassicClaimTicket, token_hash: hash_token(token))
 
   defp lock_ticket(token) do
     Repo.one(
@@ -76,6 +94,10 @@ defmodule PidroServer.Accounts.ClassicClaims do
         lock: "FOR UPDATE"
     )
   end
+
+  defp lock_known_user(_ticket, %User{id: id}), do: lock_user(id)
+  defp lock_known_user(%{redeemed_by_id: id}, nil) when is_binary(id), do: lock_user(id)
+  defp lock_known_user(_ticket, nil), do: nil
 
   defp validate_binding(%{bound_user_id: id}, %User{id: id}, _params), do: :ok
 
@@ -103,24 +125,31 @@ defmodule PidroServer.Accounts.ClassicClaims do
     end
   end
 
-  defp target_user(%{redeemed_by_id: id}, %User{id: id}, _params),
-    do: {:ok, lock_user(id), :retry}
+  defp target_user(%{redeemed_by_id: id}, %User{id: id}, _params, %User{id: id} = user),
+    do: {:ok, user, :retry}
 
-  defp target_user(%{redeemed_by_id: id, install_id: install_id}, nil, params)
+  defp target_user(
+         %{redeemed_by_id: id, install_id: install_id},
+         nil,
+         params,
+         %User{id: id} = user
+       )
        when is_binary(id) do
     if fetch(params, :install_id) == install_id,
-      do: {:ok, lock_user(id), :retry},
+      do: {:ok, user, :retry},
       else: {:error, :claim_ticket_binding_mismatch}
   end
 
-  defp target_user(%{redeemed_by_id: id}, _current_user, _params) when is_binary(id),
-    do: {:error, :already_claimed}
+  defp target_user(%{redeemed_by_id: id, method: method}, _current_user, _params, _locked_user)
+       when is_binary(id),
+       do: {:error, {:already_claimed, method}}
 
-  defp target_user(_ticket, %User{id: id}, _params), do: {:ok, lock_user(id), :first}
+  defp target_user(_ticket, %User{id: id}, _params, %User{id: id} = user),
+    do: {:ok, user, :first}
 
-  defp target_user(ticket, nil, params) do
+  defp target_user(ticket, nil, params, nil) do
     if Repo.exists?(from u in User, where: u.classic_user_id == ^ticket.classic_user_id) do
-      {:error, :already_claimed}
+      {:error, {:already_claimed, ticket.method}}
     else
       create_user(ticket, fetch(params, :account) || %{})
     end
@@ -128,7 +157,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   defp create_user(%{method: :password}, attrs) do
     %User{}
-    |> User.registration_changeset(attrs)
+    |> User.classic_password_registration_changeset(attrs)
     |> Repo.insert()
     |> with_mode()
   end
@@ -150,13 +179,29 @@ defmodule PidroServer.Accounts.ClassicClaims do
   end
 
   defp redeem_for_user(ticket, user, :first, now) do
+    already_linked? = user.classic_user_id == ticket.classic_user_id
+
     with :ok <- ensure_link_available(ticket, user),
+         :ok <- ensure_provider_available(ticket, user),
          {:ok, linked} <- link_user(ticket, user, now),
-         :ok <- import_progression(linked, ticket),
+         :ok <- maybe_import_progression(already_linked?, linked, ticket),
          {:ok, _ticket} <-
            ticket |> ClassicClaimTicket.redeem_changeset(linked.id, now) |> Repo.update() do
       {:ok, linked}
     end
+  end
+
+  defp ensure_provider_available(%{method: :password}, _user), do: :ok
+
+  defp ensure_provider_available(%{method: :apple, provider_id: id}, %User{apple_sub: current}) do
+    if current in [nil, id], do: :ok, else: {:error, :provider_already_linked}
+  end
+
+  defp ensure_provider_available(
+         %{method: :facebook, provider_id: id},
+         %User{facebook_id: current}
+       ) do
+    if current in [nil, id], do: :ok, else: {:error, :provider_already_linked}
   end
 
   defp ensure_link_available(ticket, user) do
@@ -170,7 +215,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
     cond do
       user.classic_user_id not in [nil, ticket.classic_user_id] -> {:error, :user_already_claimed}
       is_nil(owner) or owner.id == user.id -> :ok
-      true -> {:error, :already_claimed}
+      true -> {:error, {:already_claimed, ticket.method}}
     end
   end
 
@@ -185,23 +230,26 @@ defmodule PidroServer.Accounts.ClassicClaims do
     user
     |> User.classic_claim_changeset(attrs)
     |> Repo.update()
-    |> map_link_error()
+    |> map_link_error(ticket.method)
   end
 
   defp put_provider(attrs, :apple, provider_id), do: Map.put(attrs, :apple_sub, provider_id)
   defp put_provider(attrs, :facebook, provider_id), do: Map.put(attrs, :facebook_id, provider_id)
   defp put_provider(attrs, :password, _provider_id), do: attrs
 
-  defp map_link_error({:ok, user}), do: {:ok, user}
+  defp map_link_error({:ok, user}, _method), do: {:ok, user}
 
-  defp map_link_error({:error, changeset}) do
+  defp map_link_error({:error, changeset}, method) do
     cond do
-      unique_error?(changeset, :classic_user_id) -> {:error, :already_claimed}
+      unique_error?(changeset, :classic_user_id) -> {:error, {:already_claimed, method}}
       unique_error?(changeset, :apple_sub) -> {:error, :provider_already_linked}
       unique_error?(changeset, :facebook_id) -> {:error, :provider_already_linked}
       true -> {:error, changeset}
     end
   end
+
+  defp maybe_import_progression(true, _user, _ticket), do: :ok
+  defp maybe_import_progression(false, user, ticket), do: import_progression(user, ticket)
 
   defp import_progression(user, ticket) do
     case Profiles.import_legacy_progression(user, ticket.legacy_data) do

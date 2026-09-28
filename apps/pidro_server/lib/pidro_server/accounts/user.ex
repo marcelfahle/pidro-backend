@@ -102,6 +102,13 @@ defmodule PidroServer.Accounts.User do
     |> put_password_hash()
   end
 
+  @doc false
+  def classic_password_registration_changeset(user, attrs) do
+    user
+    |> registration_changeset(attrs)
+    |> validate_required(:email)
+  end
+
   @doc "Builds a passwordless registered account for a verified social claim."
   def social_registration_changeset(user, attrs) do
     user

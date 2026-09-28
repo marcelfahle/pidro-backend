@@ -101,17 +101,45 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
-  def call(conn, {:error, reason})
-      when reason in [:already_claimed, :user_already_claimed, :provider_already_linked] do
+  def call(conn, {:error, {:already_claimed, method}})
+      when method in [:password, :apple, :facebook] do
     conn
     |> put_status(:conflict)
     |> json(%{
       errors: [
         %{
-          code: reason |> Atom.to_string() |> String.upcase(),
+          code: "ALREADY_CLAIMED",
           title: "Account already linked",
-          detail: "This Classic account or sign-in identity belongs to another account",
-          action: "sign_in"
+          detail: "This Classic account belongs to another account",
+          action: sign_in_action(method)
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :user_already_claimed}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [
+        %{
+          code: "USER_ALREADY_CLAIMED",
+          title: "Classic profile already linked",
+          detail: "This account already has a different Classic profile"
+        }
+      ]
+    })
+  end
+
+  def call(conn, {:error, :provider_already_linked}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      errors: [
+        %{
+          code: "PROVIDER_ALREADY_LINKED",
+          title: "Sign-in already linked",
+          detail: "This provider identity belongs to another account"
         }
       ]
     })
@@ -603,6 +631,15 @@ defmodule PidroServerWeb.API.FallbackController do
       ]
     })
   end
+
+  defp sign_in_action(:password),
+    do: %{type: "sign_in", method: "password", endpoint: "/api/v1/auth/login"}
+
+  defp sign_in_action(:apple),
+    do: %{type: "sign_in", method: "apple", endpoint: "/api/v1/auth/apple"}
+
+  defp sign_in_action(:facebook),
+    do: %{type: "sign_in", method: "facebook", endpoint: "/api/v1/auth/facebook"}
 
   defp conflict(conn, code, title, detail), do: error(conn, :conflict, code, title, detail)
 

@@ -1,7 +1,7 @@
 defmodule PidroServer.Accounts.ClassicClaimsTest do
   use PidroServer.DataCase, async: false
 
-  alias PidroServer.Accounts.{Auth, ClassicClaims, ProviderAuth, User}
+  alias PidroServer.Accounts.{Auth, ClassicClaims, ClassicClaimTicket, ProviderAuth, User}
   alias PidroServer.AccountsFixtures
   alias PidroServer.Profiles
   alias PidroServer.Profiles.PlayerProfile
@@ -58,12 +58,40 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert {:ok, first} = ClassicClaims.redeem(first_ticket, first, %{})
 
     same_classic = issue_ticket!(second, 20_001, :password, nil, %{xp: 20})
-    assert {:error, :already_claimed} = ClassicClaims.redeem(same_classic, second, %{})
+
+    assert {:error, {:already_claimed, :password}} =
+             ClassicClaims.redeem(same_classic, second, %{})
+
     assert Repo.get!(User, second.id).classic_user_id == nil
 
     other_classic = issue_ticket!(first, 20_002, :password, nil, %{xp: 20})
     assert {:error, :user_already_claimed} = ClassicClaims.redeem(other_classic, first, %{})
     assert Repo.get!(User, first.id).classic_user_id == 20_001
+  end
+
+  test "a new ticket for the same pair cannot change heritage or overwrite a provider" do
+    user = AccountsFixtures.user_fixture()
+    first_ticket = issue_ticket!(user, 25_001, :apple, "original-sub", %{xp: 100})
+    assert {:ok, claimed} = ClassicClaims.redeem(first_ticket, user, %{})
+
+    {:ok, %{ticket: retry_ticket}} =
+      ClassicClaims.issue_ticket(%{
+        classic_user_id: 25_001,
+        method: :password,
+        user_id: user.id,
+        legacy_data: %{classic_user_id: 999_999, xp: 900}
+      })
+
+    assert {:ok, retried} = ClassicClaims.redeem(retry_ticket, claimed, %{})
+    assert retried.classic_claimed_at == claimed.classic_claimed_at
+
+    profile = Repo.get_by!(PlayerProfile, user_id: user.id)
+    assert profile.veteran_xp == 100
+    assert profile.heritage_flags["classic_user_id"] == 25_001
+
+    replacement = issue_ticket!(retried, 25_001, :apple, "replacement-sub", %{xp: 500})
+    assert {:error, :provider_already_linked} = ClassicClaims.redeem(replacement, retried, %{})
+    assert Repo.get!(User, user.id).apple_sub == "original-sub"
   end
 
   test "an import conflict rolls the link and provider identity back" do
@@ -129,9 +157,13 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
         classic_user_id: 60_001,
         method: :password,
         user_id: user.id,
-        legacy_data: %{xp: 100},
-        expires_at: DateTime.add(DateTime.utc_now(), -1, :second)
+        legacy_data: %{xp: 100}
       })
+
+    ClassicClaimTicket
+    |> Repo.get_by!(classic_user_id: 60_001)
+    |> Ecto.Changeset.change(expires_at: DateTime.add(DateTime.utc_now(), -1, :second))
+    |> Repo.update!()
 
     assert {:error, :claim_ticket_expired} = ClassicClaims.redeem(expired, user, %{})
     assert Repo.get!(User, user.id).classic_user_id == nil
