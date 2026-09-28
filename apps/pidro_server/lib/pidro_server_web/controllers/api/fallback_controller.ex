@@ -138,7 +138,7 @@ defmodule PidroServerWeb.API.FallbackController do
         %{
           code: "PROVIDER_ALREADY_LINKED",
           title: "Sign-in already linked",
-          detail: "This provider identity belongs to another account"
+          detail: "This provider identity cannot be linked to this account"
         }
       ]
     })
