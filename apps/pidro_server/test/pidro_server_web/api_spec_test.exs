@@ -86,6 +86,15 @@ defmodule PidroServerWeb.ApiSpecTest do
     assert registered_email.nullable == true
   end
 
+  test "provider sign-in documents its unavailable response" do
+    spec = ApiSpec.spec()
+
+    for path <- ["/api/v1/auth/apple", "/api/v1/auth/facebook"] do
+      operation = spec.paths |> Map.fetch!(path) |> Map.fetch!(:post)
+      assert Map.has_key?(operation.responses, 503)
+    end
+  end
+
   describe "the room config contract" do
     # Drift guard (KTD12): the OpenAPI create-request schema and the boundary
     # parser are two hand-written descriptions of one request. Adding a field to

@@ -179,11 +179,11 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
-# Parameters Phoenix.Logger redacts from request logs. Deferred matching inputs
-# and the per-install fairness id must never appear in application logs.
+# Credentials, deferred matching inputs and the per-install fairness id must
+# never appear in application logs.
 config :phoenix,
        :filter_parameters,
-       ~w(password install_id referrer platform os_major screen_class locale timezone)
+       ~w(password ticket identity_token access_token install_id referrer platform os_major screen_class locale timezone)
 
 # ---------------------------------------------------------------------------
 # Well-known association files (AASA / assetlinks.json), served by

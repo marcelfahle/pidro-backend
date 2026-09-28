@@ -232,7 +232,9 @@ defmodule PidroServerWeb.API.AuthController do
     responses: [
       ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
       unauthorized:
-        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()}
+        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      service_unavailable:
+        {"Provider verification unavailable", "application/json", ErrorSchemas.error_response()}
     ]
   )
 
@@ -246,7 +248,9 @@ defmodule PidroServerWeb.API.AuthController do
     responses: [
       ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
       unauthorized:
-        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()}
+        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      service_unavailable:
+        {"Provider verification unavailable", "application/json", ErrorSchemas.error_response()}
     ]
   )
 
