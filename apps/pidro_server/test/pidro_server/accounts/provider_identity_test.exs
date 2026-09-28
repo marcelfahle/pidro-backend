@@ -44,6 +44,19 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
              |> ProviderIdentity.apple()
   end
 
+  test "accepts Apple tokens from the side-by-side Beta app" do
+    private_key = :public_key.generate_key({:rsa, 1024, 65_537})
+
+    Req.Test.stub(ProviderIdentity, fn conn ->
+      Req.Test.json(conn, %{"keys" => [public_jwk(private_key)]})
+    end)
+
+    assert {:ok, %{"aud" => "com.oneapps.pidro.beta"}} =
+             private_key
+             |> apple_token(%{"aud" => "com.oneapps.pidro.beta"})
+             |> ProviderIdentity.apple()
+  end
+
   test "malformed Apple JWT JSON is rejected instead of raising" do
     scalar_header =
       Base.url_encode64("1", padding: false) <>

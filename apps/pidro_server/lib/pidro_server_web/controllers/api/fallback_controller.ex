@@ -101,6 +101,20 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :account_inactive}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{
+      errors: [
+        %{
+          code: "ACCOUNT_INACTIVE",
+          title: "Classic account inactive",
+          detail: "This Classic account is switched off. Contact support to reactivate it."
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :claim_binding_required}) do
     conn
     |> put_status(:unprocessable_entity)

@@ -156,7 +156,10 @@ if config_env() == :prod do
 
   config :pidro_server, PidroServer.Accounts.ProviderIdentity,
     apple_jwks_url: "https://appleid.apple.com/auth/keys",
-    apple_audience: System.get_env("APPLE_AUDIENCE", "com.oneapps.pidro"),
+    apple_audience:
+      System.get_env("APPLE_AUDIENCE", "com.oneapps.pidro,com.oneapps.pidro.beta")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1),
     facebook_graph_url:
       System.get_env("FACEBOOK_GRAPH_URL", "https://graph.facebook.com/v24.0")
       |> String.trim_trailing("/"),
