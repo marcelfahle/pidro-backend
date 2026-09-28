@@ -53,6 +53,43 @@ defmodule PidroServer.Accounts.ClassicClaimsConcurrencyTest do
     end
   end
 
+  test "concurrent fresh-install redemption returns the same account to both requests" do
+    :ok = Sandbox.checkout(Repo, sandbox: false)
+
+    try do
+      ticket = issue_install_ticket!("concurrent-install", 80_004)
+
+      params = %{
+        install_id: "concurrent-install",
+        account: %{
+          username: "concurrent_veteran",
+          email: "concurrent@example.com",
+          password: "password123"
+        }
+      }
+
+      tasks =
+        for _ <- 1..2 do
+          async_unboxed(fn ->
+            receive do
+              :go -> ClassicClaims.redeem(ticket, nil, params)
+            end
+          end)
+        end
+
+      Enum.each(tasks, &send(&1.pid, :go))
+      results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+      assert [{:ok, %User{id: id}}, {:ok, %User{id: id}}] = results
+      assert Repo.aggregate(from(u in User, where: u.classic_user_id == 80_004), :count) == 1
+    after
+      Repo.delete_all(ClassicClaimTicket)
+      Repo.delete_all(PlayerProfile)
+      Repo.delete_all(from u in User, where: u.classic_user_id == 80_004)
+      Sandbox.checkin(Repo)
+    end
+  end
+
   defp race_claims(users_and_tickets) do
     tasks =
       Enum.map(users_and_tickets, fn {user, ticket} ->
@@ -73,6 +110,18 @@ defmodule PidroServer.Accounts.ClassicClaimsConcurrencyTest do
         classic_user_id: classic_user_id,
         method: :password,
         user_id: user.id,
+        legacy_data: %{xp: 10}
+      })
+
+    ticket
+  end
+
+  defp issue_install_ticket!(install_id, classic_user_id) do
+    {:ok, %{ticket: ticket}} =
+      ClassicClaims.issue_ticket(%{
+        classic_user_id: classic_user_id,
+        method: :password,
+        install_id: install_id,
         legacy_data: %{xp: 10}
       })
 

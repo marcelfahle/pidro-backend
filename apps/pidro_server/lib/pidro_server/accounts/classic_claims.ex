@@ -57,6 +57,15 @@ defmodule PidroServer.Accounts.ClassicClaims do
   def redeem(token, current_user, params)
       when is_binary(token) and (is_nil(current_user) or is_struct(current_user, User)) and
              is_map(params) do
+    case redeem_once(token, current_user, params) do
+      {:error, :claim_state_changed} -> redeem_once(token, current_user, params)
+      result -> result
+    end
+  end
+
+  def redeem(_token, _current_user, _params), do: {:error, :invalid_claim_ticket}
+
+  defp redeem_once(token, current_user, params) do
     now = DateTime.utc_now()
 
     Repo.transaction(fn ->
@@ -68,6 +77,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
           locked_user = lock_known_user(preview, current_user)
 
           with %ClassicClaimTicket{} = ticket <- lock_ticket(token),
+               :ok <- validate_ticket_snapshot(preview, ticket, locked_user),
                :ok <- validate_binding(ticket, current_user, params),
                :ok <- validate_expiry(ticket, now),
                :ok <- lock_classic(ticket.classic_user_id),
@@ -81,8 +91,6 @@ defmodule PidroServer.Accounts.ClassicClaims do
       end
     end)
   end
-
-  def redeem(_token, _current_user, _params), do: {:error, :invalid_claim_ticket}
 
   defp find_ticket(token),
     do: Repo.get_by(ClassicClaimTicket, token_hash: hash_token(token))
@@ -98,6 +106,18 @@ defmodule PidroServer.Accounts.ClassicClaims do
   defp lock_known_user(_ticket, %User{id: id}), do: lock_user(id)
   defp lock_known_user(%{redeemed_by_id: id}, nil) when is_binary(id), do: lock_user(id)
   defp lock_known_user(_ticket, nil), do: nil
+
+  # A concurrent first redemption can commit while this transaction waits for
+  # the ticket. Restart so the established user is locked before the ticket.
+  defp validate_ticket_snapshot(
+         %{redeemed_by_id: nil},
+         %{redeemed_by_id: id},
+         nil
+       )
+       when is_binary(id),
+       do: {:error, :claim_state_changed}
+
+  defp validate_ticket_snapshot(_preview, _ticket, _locked_user), do: :ok
 
   defp validate_binding(%{bound_user_id: id}, %User{id: id}, _params), do: :ok
 
@@ -140,18 +160,17 @@ defmodule PidroServer.Accounts.ClassicClaims do
       else: {:error, :claim_ticket_binding_mismatch}
   end
 
-  defp target_user(%{redeemed_by_id: id, method: method}, _current_user, _params, _locked_user)
+  defp target_user(%{redeemed_by_id: id, method: method}, _current_user, _params, owner)
        when is_binary(id),
-       do: {:error, {:already_claimed, method}}
+       do: {:error, {:already_claimed, sign_in_method(owner, method)}}
 
   defp target_user(_ticket, %User{id: id}, _params, %User{id: id} = user),
     do: {:ok, user, :first}
 
   defp target_user(ticket, nil, params, nil) do
-    if Repo.exists?(from u in User, where: u.classic_user_id == ^ticket.classic_user_id) do
-      {:error, {:already_claimed, ticket.method}}
-    else
-      create_user(ticket, fetch(params, :account) || %{})
+    case Repo.get_by(User, classic_user_id: ticket.classic_user_id) do
+      nil -> create_user(ticket, fetch(params, :account) || %{})
+      owner -> {:error, {:already_claimed, sign_in_method(owner, ticket.method)}}
     end
   end
 
@@ -205,19 +224,36 @@ defmodule PidroServer.Accounts.ClassicClaims do
   end
 
   defp ensure_link_available(ticket, user) do
-    owner =
-      Repo.one(
-        from u in User,
-          where: u.classic_user_id == ^ticket.classic_user_id,
-          lock: "FOR UPDATE"
-      )
+    if user.classic_user_id in [nil, ticket.classic_user_id] do
+      owner =
+        Repo.one(
+          from u in User,
+            where: u.classic_user_id == ^ticket.classic_user_id,
+            lock: "FOR UPDATE"
+        )
 
-    cond do
-      user.classic_user_id not in [nil, ticket.classic_user_id] -> {:error, :user_already_claimed}
-      is_nil(owner) or owner.id == user.id -> :ok
-      true -> {:error, {:already_claimed, ticket.method}}
+      if is_nil(owner) or owner.id == user.id,
+        do: :ok,
+        else: {:error, {:already_claimed, sign_in_method(owner, ticket.method)}}
+    else
+      {:error, :user_already_claimed}
     end
   end
+
+  defp sign_in_method(%User{} = user, attempted_method) do
+    methods =
+      [
+        {:password, user.password_hash},
+        {:apple, user.apple_sub},
+        {:facebook, user.facebook_id}
+      ]
+      |> Enum.filter(fn {_method, identity} -> is_binary(identity) end)
+      |> Enum.map(&elem(&1, 0))
+
+    if attempted_method in methods, do: attempted_method, else: List.first(methods)
+  end
+
+  defp sign_in_method(_user, _attempted_method), do: nil
 
   defp link_user(ticket, user, now) do
     attrs =

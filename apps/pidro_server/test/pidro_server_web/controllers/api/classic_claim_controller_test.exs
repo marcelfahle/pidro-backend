@@ -54,7 +54,10 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
   end
 
   test "an already claimed Classic account returns the exact sign-in path", %{conn: conn} do
-    owner = AccountsFixtures.user_fixture()
+    owner =
+      %User{}
+      |> User.social_registration_changeset(%{username: "controller_apple_owner"})
+      |> Repo.insert!()
 
     owner
     |> User.classic_claim_changeset(%{
@@ -67,8 +70,8 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
     {:ok, %{ticket: ticket}} =
       ClassicClaims.issue_ticket(%{
         classic_user_id: 70_003,
-        method: :apple,
-        provider_id: "owner-apple-sub",
+        method: :facebook,
+        provider_id: "different-facebook-id",
         install_id: "install-owner",
         legacy_data: %{xp: 10}
       })

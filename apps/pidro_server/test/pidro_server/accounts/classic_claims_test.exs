@@ -69,6 +69,22 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert Repo.get!(User, first.id).classic_user_id == 20_001
   end
 
+  test "already claimed errors name a sign-in method the owner actually has" do
+    owner =
+      %User{}
+      |> User.social_registration_changeset(%{username: "apple_owner"})
+      |> Repo.insert!()
+
+    claimant = AccountsFixtures.user_fixture()
+    owner_ticket = issue_ticket!(owner, 20_003, :apple, "owner-apple", %{xp: 10})
+    assert {:ok, _owner} = ClassicClaims.redeem(owner_ticket, owner, %{})
+
+    facebook_ticket = issue_ticket!(claimant, 20_003, :facebook, "claimant-facebook", %{xp: 10})
+
+    assert {:error, {:already_claimed, :apple}} =
+             ClassicClaims.redeem(facebook_ticket, claimant, %{})
+  end
+
   test "a new ticket for the same pair cannot change heritage or overwrite a provider" do
     user = AccountsFixtures.user_fixture()
     first_ticket = issue_ticket!(user, 25_001, :apple, "original-sub", %{xp: 100})

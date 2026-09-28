@@ -102,18 +102,17 @@ defmodule PidroServerWeb.API.FallbackController do
   end
 
   def call(conn, {:error, {:already_claimed, method}})
-      when method in [:password, :apple, :facebook] do
+      when method in [:password, :apple, :facebook, nil] do
+    error = %{
+      code: "ALREADY_CLAIMED",
+      title: "Account already linked",
+      detail: "This Classic account belongs to another account"
+    }
+
     conn
     |> put_status(:conflict)
     |> json(%{
-      errors: [
-        %{
-          code: "ALREADY_CLAIMED",
-          title: "Account already linked",
-          detail: "This Classic account belongs to another account",
-          action: sign_in_action(method)
-        }
-      ]
+      errors: [if(method, do: Map.put(error, :action, sign_in_action(method)), else: error)]
     })
   end
 
