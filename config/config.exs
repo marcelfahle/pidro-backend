@@ -191,14 +191,14 @@ config :phoenix,
 # environment; config/runtime.exs overrides each list from AASA_APP_IDS,
 # AASA_PATHS and ASSETLINKS only when that variable is set. `/app/*` stays
 # listed so the live Unity app's links survive the phase-2 proxy cutover.
-# Dev and preview Android packages get an entry once their fingerprints are
-# known; the list accepts more.
+# The Beta (com.oneapps.pidro.beta) and dev Android packages get an entry once
+# their signing fingerprints are known; the list accepts more.
 # ---------------------------------------------------------------------------
 config :pidro_server, PidroServerWeb.WellKnownController,
   ios_app_ids: [
     "LSFK7YF82G.com.oneapps.pidro",
     "LSFK7YF82G.com.marcelfahle.pidro3.dev",
-    "LSFK7YF82G.com.marcelfahle.pidro3.preview"
+    "LSFK7YF82G.com.oneapps.pidro.beta"
   ],
   ios_paths: ["/j/*", "/app/*"],
   android_packages: [
