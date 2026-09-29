@@ -17,10 +17,15 @@ defmodule PidroServer.Accounts.ClassicNameReservations do
   @whitespace ~r/\s+/u
   @import_batch_size 5_000
 
-  @doc "Returns the fixed reservation key: lowercase, trimmed, with whitespace collapsed."
+  @doc """
+  Returns the fixed reservation key: NFC-normalized, lowercase, trimmed, with
+  whitespace collapsed. NFC only merges encodings of the same character; it
+  does not fold look-alikes.
+  """
   @spec name_key(String.t()) :: String.t()
   def name_key(name) when is_binary(name) do
     name
+    |> String.normalize(:nfc)
     |> String.trim()
     |> String.replace(@whitespace, " ")
     |> String.downcase()
@@ -56,6 +61,22 @@ defmodule PidroServer.Accounts.ClassicNameReservations do
       |> length()
 
     {:ok, %{inserted: inserted, existing: length(entries) - inserted, collisions: collisions}}
+  end
+
+  @doc "Reads a JSON array export from `path` and imports it."
+  def import_file(path) do
+    case path |> File.read!() |> Jason.decode!() do
+      rows when is_list(rows) -> __MODULE__.import(rows)
+      _other -> raise ArgumentError, "expected a JSON array of Classic accounts"
+    end
+  end
+
+  @doc "Formats an import result, including the configured ownership cutoff."
+  def import_summary({:ok, result}) do
+    cutoff = Application.fetch_env!(:pidro_server, __MODULE__)[:cutoff_date]
+
+    "Classic name cutoff #{cutoff}: imported #{result.inserted}, kept #{result.existing} existing, " <>
+      "found #{result.collisions} colliding key(s)."
   end
 
   @doc "Adds reservation errors for changed usernames and display names."

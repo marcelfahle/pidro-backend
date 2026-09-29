@@ -139,6 +139,27 @@ defmodule PidroServer.Release do
   end
 
   @doc """
+  Imports the fixed Classic name snapshot (PID-142) from a JSON file inside
+  the container. Safe to re-run: existing reservations are never changed.
+
+      ./bin/pidro_server eval 'PidroServer.Release.import_classic_name_reservations("/tmp/classic-names.json")'
+  """
+  @spec import_classic_name_reservations(Path.t()) :: :ok
+  def import_classic_name_reservations(path) do
+    load_app()
+
+    {:ok, summary, _started_apps} =
+      Ecto.Migrator.with_repo(PidroServer.Repo, fn _repo ->
+        path
+        |> PidroServer.Accounts.ClassicNameReservations.import_file()
+        |> PidroServer.Accounts.ClassicNameReservations.import_summary()
+      end)
+
+    IO.puts(summary)
+    :ok
+  end
+
+  @doc """
   Creates the first ops-panel admin from `ADMIN_EMAIL`, if no admin exists.
 
   Invoke after production migrations with `just seed-admin`, which runs:

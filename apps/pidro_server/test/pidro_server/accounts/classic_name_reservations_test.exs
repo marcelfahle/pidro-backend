@@ -13,6 +13,11 @@ defmodule PidroServer.Accounts.ClassicNameReservationsTest do
     assert ClassicNameReservations.name_key("Vet-eran") == "vet-eran"
   end
 
+  test "a decomposed accent keys the same as the precomposed one" do
+    assert ClassicNameReservations.name_key("Ve\u0301teran") ==
+             ClassicNameReservations.name_key("V\u00e9teran")
+  end
+
   test "import keeps both colliding owners and never overwrites an existing owner" do
     imported_at = ~U[2026-09-27 12:00:00.000000Z]
 
@@ -40,6 +45,18 @@ defmodule PidroServer.Accounts.ClassicNameReservationsTest do
     assert frozen.username == "Veteran  Name"
     assert frozen.name_key == "veteran name"
     assert frozen.imported_at == imported_at
+  end
+
+  @tag :tmp_dir
+  test "import_file reads the JSON export and summarizes it with the cutoff", %{tmp_dir: dir} do
+    path = Path.join(dir, "classic-names.json")
+    File.write!(path, Jason.encode!([%{"id" => 303, "username" => "Snapshot"}]))
+
+    assert ClassicNameReservations.import_file(path) |> ClassicNameReservations.import_summary() ==
+             "Classic name cutoff 2026-09-27: imported 1, kept 0 existing, found 0 colliding key(s)."
+
+    File.write!(path, ~s({"id": 1}))
+    assert_raise ArgumentError, fn -> ClassicNameReservations.import_file(path) end
   end
 
   test "registration rejects reserved username and display-name variants" do

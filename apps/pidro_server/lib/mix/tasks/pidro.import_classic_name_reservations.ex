@@ -5,7 +5,8 @@ defmodule Mix.Tasks.Pidro.ImportClassicNameReservations do
       mix pidro.import_classic_name_reservations path/to/classic-names.json
 
   Every object must contain `id`, `username`, and may contain the export's
-  `inserted_at`. Existing Classic IDs are never changed.
+  `inserted_at`. Existing Classic IDs are never changed. In production, where
+  Mix is unavailable, run `PidroServer.Release.import_classic_name_reservations/1`.
   """
 
   use Mix.Task
@@ -18,19 +19,10 @@ defmodule Mix.Tasks.Pidro.ImportClassicNameReservations do
   def run([path]) do
     Mix.Task.run("app.start")
 
-    rows = path |> File.read!() |> Jason.decode!()
-
-    unless is_list(rows) do
-      Mix.raise("Expected a JSON array of Classic accounts.")
-    end
-
-    {:ok, result} = ClassicNameReservations.import(rows)
-    cutoff = Application.fetch_env!(:pidro_server, ClassicNameReservations)[:cutoff_date]
-
-    Mix.shell().info(
-      "Classic name cutoff #{cutoff}: imported #{result.inserted}, kept #{result.existing} existing, " <>
-        "found #{result.collisions} colliding key(s)."
-    )
+    path
+    |> ClassicNameReservations.import_file()
+    |> ClassicNameReservations.import_summary()
+    |> Mix.shell().info()
   end
 
   def run(_args), do: Mix.raise("Usage: mix pidro.import_classic_name_reservations PATH")
