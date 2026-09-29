@@ -245,10 +245,10 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
     @moduledoc """
     Request body schema for guest creation.
 
-    A guest needs a display name. Direct entry also needs a random creation
-    token; invited entry keeps the token optional for older clients. A supplied
-    invite is always validated. The install id keys a rate-limit bucket and is
-    never logged.
+    A guest may supply a display name; otherwise the server generates one.
+    Direct entry also needs a random creation token; invited entry keeps the
+    token optional for older clients. A supplied invite is always validated.
+    The install id keys a rate-limit bucket and is never logged.
     """
 
     OpenApiSpex.schema(%{
@@ -258,10 +258,11 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       properties: %{
         display_name: %Schema{
           type: :string,
+          nullable: true,
           minLength: 2,
           maxLength: 20,
           description:
-            "Name shown at the table (2-20 graphemes); must not look like a connected player's name",
+            "Optional name shown at the table (2-20 graphemes); omitted or null generates a friendly two-word name, and a supplied name must not look like a connected player's name",
           example: "Anna"
         },
         invite_code: %Schema{
@@ -288,9 +289,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           description: "Client platform, recorded on the funnel event"
         }
       },
-      required: [:display_name],
       example: %{
-        "display_name" => "Anna",
         "creation_token" => "8b597c4a-c208-4cf6-b274-81b29f6751ea",
         "install_id" => "b5f6c0d2-3a1e-4f2b-9c8d-1e2f3a4b5c6d",
         "platform" => "ios"

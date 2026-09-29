@@ -100,8 +100,18 @@ defmodule PidroServer.Accounts.AuthTest do
                Auth.create_guest_user(%{"display_name" => "Ben", "install_id" => "i-2"}, [])
     end
 
-    test "requires a display_name" do
-      assert {:error, changeset} = Auth.create_guest_user(%{}, [])
+    test "generates a display_name when it is absent or nil" do
+      assert {:ok, %User{display_name: generated}} = Auth.create_guest_user(%{}, [])
+      assert generated =~ ~r/\A\S+ \S+(?: [2-9])?\z/u
+
+      assert {:ok, %User{display_name: generated_for_nil}} =
+               Auth.create_guest_user(%{display_name: nil}, [])
+
+      assert generated_for_nil =~ ~r/\A\S+ \S+(?: [2-9])?\z/u
+    end
+
+    test "still rejects a blank supplied display_name" do
+      assert {:error, changeset} = Auth.create_guest_user(%{display_name: "  "}, [])
       assert %{display_name: ["can't be blank"]} = errors_on(changeset)
     end
 
@@ -149,6 +159,16 @@ defmodule PidroServer.Accounts.AuthTest do
 
       assert {:ok, %User{username: "guest_FRESH123"}} =
                Auth.create_guest_user(%{display_name: "Cid"}, [], generator: generator)
+    end
+
+    test "keeps one generated display_name while retrying a username collision" do
+      AccountsFixtures.user_fixture(%{username: "guest_TAKEN123"})
+      generator = scripted_generator(["TAKEN123", "FRESH123"])
+
+      assert {:ok, %User{username: "guest_FRESH123", display_name: display_name}} =
+               Auth.create_guest_user(%{}, [], generator: generator)
+
+      assert display_name =~ ~r/\A\S+ \S+(?: [2-9])?\z/u
     end
 
     test "answers the changeset error when both draws collide" do

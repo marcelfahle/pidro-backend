@@ -69,6 +69,57 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert detail =~ "at most 20"
     end
+
+    test "a reserved public name has the machine-readable reservation code", %{conn: conn} do
+      assert {:ok, _} =
+               PidroServer.Accounts.ClassicNameReservations.import([
+                 %{id: 701, username: "Classic Hero"}
+               ])
+
+      response =
+        conn
+        |> post(~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "newcomer",
+            "display_name" => " classic   hero ",
+            "email" => "reserved@example.com",
+            "password" => "password123"
+          }
+        })
+        |> json_response(422)
+
+      assert %{
+               "code" => "classic_name_reserved",
+               "title" => "Display name",
+               "detail" =>
+                 "This name belongs to a Classic player. Claim your Classic profile or choose another name."
+             } in response["errors"]
+    end
+
+    test "reservation metadata only overrides its own error code", %{conn: conn} do
+      long_name = "Classic Hero Too Long"
+
+      assert {:ok, _} =
+               PidroServer.Accounts.ClassicNameReservations.import([
+                 %{id: 702, username: long_name}
+               ])
+
+      errors =
+        conn
+        |> post(~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "another_newcomer",
+            "display_name" => long_name,
+            "email" => "mixed-errors@example.com",
+            "password" => "password123"
+          }
+        })
+        |> json_response(422)
+        |> Map.fetch!("errors")
+
+      assert Enum.any?(errors, &match?(%{"code" => "classic_name_reserved"}, &1))
+      assert Enum.any?(errors, &match?(%{"code" => "display_name"}, &1))
+    end
   end
 
   describe "login" do
@@ -320,6 +371,30 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert id == user["id"]
     end
 
+    test "201 generates a public name when direct creation omits it", %{conn: conn} do
+      creation_token = Ecto.UUID.generate()
+      params = %{"creation_token" => creation_token, "install_id" => "device-generated"}
+
+      first = conn |> post(~p"/api/v1/auth/guest", params) |> data(201)
+      second = build_conn() |> post(~p"/api/v1/auth/guest", params) |> data(201)
+
+      assert first["user"]["display_name"] =~ ~r/\A\S+ \S+(?: [2-9])?\z/u
+      assert second["user"]["id"] == first["user"]["id"]
+      assert second["user"]["display_name"] == first["user"]["display_name"]
+    end
+
+    test "201 generates a public name when direct creation supplies null", %{conn: conn} do
+      assert %{"user" => %{"display_name" => display_name}} =
+               conn
+               |> post(~p"/api/v1/auth/guest", %{
+                 "display_name" => nil,
+                 "creation_token" => Ecto.UUID.generate()
+               })
+               |> data(201)
+
+      assert display_name =~ ~r/\A\S+ \S+(?: [2-9])?\z/u
+    end
+
     test "a direct retry returns the same guest instead of creating another", %{conn: conn} do
       creation_token = Ecto.UUID.generate()
 
@@ -537,14 +612,14 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                |> data(201)
     end
 
-    test "a missing display_name is 422 on display_name", %{conn: conn} do
+    test "an invited guest gets a generated display_name when it is missing", %{conn: conn} do
       {host, room} = host_and_room()
       invite = mint!(room, host)
 
-      assert %{"errors" => [%{"code" => "display_name"}]} =
-               conn
-               |> post(~p"/api/v1/auth/guest", %{"invite_code" => invite.code})
-               |> json_response(422)
+      assert %{"user" => %{"display_name" => display_name}} =
+               conn |> post(~p"/api/v1/auth/guest", %{"invite_code" => invite.code}) |> data(201)
+
+      assert display_name =~ ~r/\A\S+ \S+(?: [2-9])?\z/u
     end
 
     test "guest_create at limit 1: the second creation from one address is 429", %{conn: conn} do

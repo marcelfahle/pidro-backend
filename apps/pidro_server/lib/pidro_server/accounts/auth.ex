@@ -71,7 +71,7 @@ defmodule PidroServer.Accounts.Auth do
   require Logger
 
   alias Ecto.Changeset
-  alias PidroServer.Accounts.{Avatars, ClassicNameReservations, Token}
+  alias PidroServer.Accounts.{Avatars, ClassicNameReservations, GuestNames, Token}
   alias PidroServer.Accounts.User
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -122,8 +122,9 @@ defmodule PidroServer.Accounts.Auth do
   @doc """
   Creates a guest account (R10, R11).
 
-  Reads `display_name` (required) and `install_id` from `attrs` (atom or
-  string keys), generates the username as `guest_` plus a
+  Reads the optional `display_name` and `install_id` from `attrs` (atom or
+  string keys), generates a public name when none is supplied, and generates
+  the username as `guest_` plus a
   `PidroServer.Invites.Codes` code, inserts with `User.guest_changeset/2` and
   redraws once when the username is taken (KTD2). `taken_name_keys` are the
   `User.name_key/1` values of the players connected at the invite's table;
@@ -143,7 +144,10 @@ defmodule PidroServer.Accounts.Auth do
   def create_guest_user(attrs, taken_name_keys, opts \\ [])
       when is_map(attrs) and is_list(taken_name_keys) and is_list(opts) do
     generator = Keyword.get(opts, :generator, &Codes.generate/0)
-    insert_guest(guest_attrs(attrs), taken_name_keys, generator, @guest_username_attempts)
+
+    with {:ok, attrs} <- ensure_guest_display_name(guest_attrs(attrs)) do
+      insert_guest(attrs, taken_name_keys, generator, @guest_username_attempts)
+    end
   end
 
   @doc """
@@ -823,6 +827,12 @@ defmodule PidroServer.Accounts.Auth do
       :guest_creation_token_hash,
       fetch_attr(attrs, :guest_creation_token_hash)
     )
+  end
+
+  defp ensure_guest_display_name(%{display_name: _name} = attrs), do: {:ok, attrs}
+
+  defp ensure_guest_display_name(attrs) do
+    with {:ok, name} <- GuestNames.generate(), do: {:ok, Map.put(attrs, :display_name, name)}
   end
 
   defp creation_token_hash(attrs) do
