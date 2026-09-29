@@ -1,7 +1,15 @@
 defmodule PidroServer.Accounts.ClassicClaimsTest do
   use PidroServer.DataCase, async: false
 
-  alias PidroServer.Accounts.{Auth, ClassicClaims, ClassicClaimTicket, ProviderAuth, User}
+  alias PidroServer.Accounts.{
+    Auth,
+    ClassicClaims,
+    ClassicClaimTicket,
+    ClassicNameReservations,
+    ProviderAuth,
+    User
+  }
+
   alias PidroServer.AccountsFixtures
   alias PidroServer.Profiles
   alias PidroServer.Profiles.PlayerProfile
@@ -163,6 +171,50 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
              ProviderAuth.authenticate(:facebook, "valid-facebook-token", verifier: Verifier)
 
     assert signed_in.id == created.id
+  end
+
+  test "a verified owner may take a reserved name and wins a colliding reservation" do
+    assert {:ok, %{collisions: 1}} =
+             ClassicNameReservations.import([
+               %{id: 55_001, username: "Shared Veteran"},
+               %{id: 55_002, username: " shared   veteran "}
+             ])
+
+    first_ticket =
+      issue_install_ticket!("first-owner", 55_001, :password, nil, %{xp: 25})
+
+    assert {:ok, first} =
+             ClassicClaims.redeem(first_ticket, nil, %{
+               install_id: "first-owner",
+               account: %{
+                 username: "SHARED VETERAN",
+                 email: "first-owner@example.com",
+                 password: "password123"
+               }
+             })
+
+    assert first.classic_user_id == 55_001
+
+    second_ticket =
+      issue_install_ticket!("second-owner", 55_002, :password, nil, %{xp: 25})
+
+    assert {:error, %Ecto.Changeset{} = changeset} =
+             ClassicClaims.redeem(second_ticket, nil, %{
+               install_id: "second-owner",
+               account: %{
+                 username: " shared   veteran ",
+                 email: "second-owner@example.com",
+                 password: "password123"
+               }
+             })
+
+    assert %{
+             username: [
+               "This name belongs to a Classic player. Claim your Classic profile or choose another name."
+             ]
+           } = errors_on(changeset)
+
+    refute Repo.get_by(User, email: "second-owner@example.com")
   end
 
   test "expiry and binding failures leave the user untouched" do
