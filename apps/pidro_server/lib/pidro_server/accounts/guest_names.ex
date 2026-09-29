@@ -17,12 +17,12 @@ defmodule PidroServer.Accounts.GuestNames do
   @adjectives ~w(
     Agile Airy Alert Alpine Amber Arctic Awake Azure Balmy Beaming Breezy Bright
     Brisk Bubbly Calm Careful Cheery Cherry Clever Cloudy Cozy Crisp Dapper
-    Daring Dawn Dear Deep Dewy Eager Early Easy Fair Fancy Festive Fiery Fine
+    Daring Dawn Dear Deep Dewy Eager Early Sunlit Fair Fancy Festive Fiery Fine
     Fleet Floral Fluffy Flying Fond
     Forest Fresh Friendly Frosty Funny Gentle Glad Gleaming Golden Good Grand
     Green Happy Hardy Hazel Hearty Helpful Heroic Honest Honey Hopeful
     Icy Jolly Joyful Keen Kind Lively Lucky Lunar Merry Mighty Misty Mellow Neat
-    Nimble Noble Nordic Peachy Perky Pine Pink Plucky Polite Proud Quick Quiet
+    Nimble Noble Nordic Peachy Kindly Pine Pink Plucky Polite Proud Quick Quiet
     Radiant Ready Red Rosy Royal Shiny Silky Silver Sincere Smart Snappy Snowy
     Soft Solar Speedy Spry Starry Steady Sunny Swift Teal Tender Tidy Tiny Toasty
     True Velvet Vivid Warm Wavy White Wild Wise Witty Wooden Zesty Blue Bold
@@ -55,39 +55,43 @@ defmodule PidroServer.Accounts.GuestNames do
 
   @doc false
   def generate(draw_pair) when is_function(draw_pair, 0) do
-    live_name_keys = live_name_keys()
-    generate_random(draw_pair, live_name_keys, @random_attempts, nil)
+    pairs =
+      Stream.repeatedly(draw_pair)
+      |> Stream.reject(fn {adjective, noun} -> adjective == noun end)
+      |> Enum.take(@random_attempts)
+
+    names = Enum.map(pairs, fn {adjective, noun} -> adjective <> " " <> noun end)
+    last_name = List.last(names)
+    candidates = names ++ Enum.map(2..9, &"#{last_name} #{&1}")
+    taken = taken_name_keys(pairs)
+
+    case Enum.find(candidates, &available?(&1, taken)) do
+      nil -> {:ok, "#{last_name} #{Enum.random(10..99)}"}
+      name -> {:ok, name}
+    end
   end
 
   @doc false
   def word_lists, do: {@adjectives, @nouns}
 
-  defp generate_random(draw_pair, live_name_keys, attempts_left, _last_name)
-       when attempts_left > 0 do
-    {adjective, noun} = draw_pair.()
-    name = adjective <> " " <> noun
-
-    if available?(name, live_name_keys) do
-      {:ok, name}
-    else
-      generate_random(draw_pair, live_name_keys, attempts_left - 1, name)
-    end
-  end
-
-  defp generate_random(draw_pair, live_name_keys, 0, last_name) do
-    case Enum.find(2..9, &available?("#{last_name} #{&1}", live_name_keys)) do
-      nil -> generate_random(draw_pair, live_name_keys, @random_attempts, nil)
-      suffix -> {:ok, "#{last_name} #{suffix}"}
-    end
-  end
-
-  defp available?(name, live_name_keys) do
-    not MapSet.member?(live_name_keys, User.name_key(name)) and
+  defp available?(name, taken) do
+    not MapSet.member?(taken, User.name_key(name)) and
       not ClassicNameReservations.reserved?(name)
   end
 
-  defp live_name_keys do
+  # Only players whose public name contains a candidate noun can collide, so
+  # the database narrows the rows before `User.name_key/1` compares them.
+  defp taken_name_keys(pairs) do
+    matches_a_noun =
+      pairs
+      |> Enum.map(fn {_adjective, noun} -> "%" <> noun <> "%" end)
+      |> Enum.uniq()
+      |> Enum.reduce(dynamic(false), fn pattern, matches ->
+        dynamic([user], ^matches or ilike(coalesce(user.display_name, user.username), ^pattern))
+      end)
+
     User
+    |> where(^matches_a_noun)
     |> select([user], {user.username, user.display_name})
     |> Repo.all()
     |> MapSet.new(fn {username, display_name} -> User.name_key(display_name || username) end)
