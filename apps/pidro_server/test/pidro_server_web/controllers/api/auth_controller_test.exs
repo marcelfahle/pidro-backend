@@ -5,7 +5,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   import Ecto.Query
   import ExUnit.CaptureLog
 
-  alias PidroServer.Accounts.{Auth, ClassicClaimTicket, Token, User}
+  alias PidroServer.Accounts.{Auth, ClassicClaimTicket, ClassicNameReservations, Token, User}
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.RoomManager
   alias PidroServer.Invites
@@ -38,6 +38,19 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
   defmodule GuestNames do
     def generate, do: {:ok, "Lucky Moose"}
+  end
+
+  defmodule RetryGuestNames do
+    def generate do
+      case Process.get(__MODULE__, 0) do
+        0 ->
+          Process.put(__MODULE__, 1)
+          {:ok, "Lucky Moose"}
+
+        _retried ->
+          {:ok, "Brave Badger"}
+      end
+    end
   end
 
   describe "register" do
@@ -302,6 +315,20 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert user.apple_sub == "apple-no-email-sub"
       assert user.display_name == "Lucky Moose"
       assert is_binary(token)
+    end
+
+    test "provider registration redraws a generated Classic-reserved name", %{conn: conn} do
+      assert {:ok, _result} =
+               ClassicNameReservations.import([%{id: 71_004, username: "Lucky Moose"}])
+
+      Application.put_env(:pidro_server, :guest_names, RetryGuestNames)
+      expect_classic_not_found(:email, "new@example.com")
+
+      assert %{"user" => %{"username" => "Brave Badger", "display_name" => "Brave Badger"}} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-new"})
+               |> json_response(200)
+               |> Map.fetch!("data")
     end
 
     test "Facebook creates a provider-linked account only after every Classic ID misses", %{

@@ -141,7 +141,7 @@ defmodule PidroServer.Accounts.ProviderAuth do
         {:ok, user}
 
       nil ->
-        if attempts_left > 1 and unique_error?(changeset, :username) do
+        if attempts_left > 1 and generated_name_error?(changeset) do
           create_user(provider, provider_id, opts, attempts_left - 1)
         else
           {:error, changeset}
@@ -155,12 +155,10 @@ defmodule PidroServer.Accounts.ProviderAuth do
   defp user_for(:facebook, provider_id),
     do: Repo.one(from u in User, where: u.facebook_id == ^provider_id, limit: 1)
 
-  defp unique_error?(changeset, field) do
-    Enum.any?(changeset.errors, fn
-      {^field, {_message, opts}} -> Keyword.get(opts, :constraint) == :unique
-      _other -> false
-    end)
-  end
+  defp generated_name_error?(changeset),
+    do:
+      Keyword.has_key?(changeset.errors, :username) or
+        Keyword.has_key?(changeset.errors, :display_name)
 
   defp valid_id?(id), do: is_binary(id) and id != ""
 end
