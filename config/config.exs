@@ -87,6 +87,8 @@ config :pidro_server, PidroServer.Accounts.ClassicClient,
   base_url: "http://localhost:4001",
   secret: ""
 
+config :pidro_server, PidroServer.Accounts.ClassicNameReservations, cutoff_date: ~D[2026-09-27]
+
 config :pidro_server, PidroServer.Accounts.ProviderIdentity,
   apple_jwks_url: "https://appleid.apple.com/auth/keys",
   apple_audience: ["com.oneapps.pidro", "com.oneapps.pidro.beta"],

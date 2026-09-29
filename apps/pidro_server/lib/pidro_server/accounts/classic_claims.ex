@@ -8,7 +8,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   import Ecto.Query
 
-  alias PidroServer.Accounts.{ClassicClaimTicket, User}
+  alias PidroServer.Accounts.{ClassicClaimTicket, ClassicNameReservations, User}
   alias PidroServer.Profiles
   alias PidroServer.Profiles.{LegacyProgression, PlayerProfile}
   alias PidroServer.Repo
@@ -80,6 +80,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
                :ok <- validate_ticket_snapshot(preview, ticket, locked_user),
                :ok <- validate_binding(ticket, current_user, params),
                :ok <- validate_expiry(ticket, now),
+               :ok <- lock_claim_names(current_user, params),
                :ok <- lock_classic(ticket.classic_user_id),
                {:ok, user, mode} <- target_user(ticket, current_user, params, locked_user),
                {:ok, user} <- redeem_for_user(ticket, user, mode, now) do
@@ -136,6 +137,12 @@ defmodule PidroServer.Accounts.ClassicClaims do
       else: {:error, :claim_ticket_expired}
   end
 
+  defp lock_claim_names(%User{} = user, _params),
+    do: ClassicNameReservations.lock_claim_names(user)
+
+  defp lock_claim_names(nil, params),
+    do: ClassicNameReservations.lock_claim_names(fetch(params, :account) || %{})
+
   defp lock_classic(classic_user_id) do
     case Repo.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
            "classic-claim:#{classic_user_id}"
@@ -174,16 +181,19 @@ defmodule PidroServer.Accounts.ClassicClaims do
     end
   end
 
-  defp create_user(%{method: :password}, attrs) do
+  defp create_user(%{method: :password, classic_user_id: classic_user_id}, attrs) do
     %User{}
     |> User.classic_password_registration_changeset(attrs)
+    |> ClassicNameReservations.validate_changes(classic_user_id)
     |> Repo.insert()
     |> with_mode()
   end
 
-  defp create_user(%{method: method}, attrs) when method in [:apple, :facebook] do
+  defp create_user(%{method: method, classic_user_id: classic_user_id}, attrs)
+       when method in [:apple, :facebook] do
     %User{}
     |> User.social_registration_changeset(attrs)
+    |> ClassicNameReservations.validate_changes(classic_user_id)
     |> Repo.insert()
     |> with_mode()
   end

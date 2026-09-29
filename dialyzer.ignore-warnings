@@ -1,5 +1,9 @@
 lib/mix/tasks/pidro.demo_progression.ex:1:
 lib/mix/tasks/pidro.demo_progression.ex:54:14:
+lib/mix/tasks/pidro.import_classic_name_reservations.ex:1:
+lib/mix/tasks/pidro.import_classic_name_reservations.ex:20:14:
+lib/mix/tasks/pidro.import_classic_name_reservations.ex:25:12:
+lib/mix/tasks/pidro.import_classic_name_reservations.ex:28:27:
 lib/mix/tasks/pidro.rebuild_profiles.ex:1:
 lib/mix/tasks/pidro.rebuild_profiles.ex:17:14:
 lib/mix/tasks/pidro.rebuild_profiles.ex:21:9:
