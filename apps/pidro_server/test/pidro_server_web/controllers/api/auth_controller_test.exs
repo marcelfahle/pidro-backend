@@ -203,6 +203,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert user_id == user.id
       assert is_binary(token)
+      assert_token_user(conn, token, user_id)
     end
 
     test "Facebook returns a linked account without fetching business IDs or Classic", %{
@@ -218,6 +219,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert user_id == user.id
       assert is_binary(token)
+      assert_token_user(conn, token, user_id)
     end
 
     test "Apple Classic match returns a redeemable install-bound ticket", %{conn: conn} do
@@ -257,6 +259,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert claimed.id == claimed_id
       assert claimed.classic_user_id == 71_001
       assert is_binary(claimed_token)
+      assert_token_user(conn, claimed_token, claimed_id)
     end
 
     test "Facebook checks business IDs and tickets the current app identity", %{conn: conn} do
@@ -272,11 +275,28 @@ defmodule PidroServerWeb.API.AuthControllerTest do
         |> json_response(200)
         |> Map.fetch!("data")
 
-      assert %{"classic_found" => true, "classic" => %{"name" => "Birgit"}} = data
+      assert %{
+               "classic_found" => true,
+               "classic" => %{"name" => "Birgit"},
+               "ticket" => response_ticket
+             } = data
 
-      ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 71_002)
-      assert ticket.provider_id == "facebook-current-id"
-      assert ticket.install_id == "facebook-install"
+      stored_ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 71_002)
+      assert stored_ticket.provider_id == "facebook-current-id"
+      assert stored_ticket.install_id == "facebook-install"
+
+      assert %{"user" => %{"id" => claimed_id}, "token" => claimed_token} =
+               conn
+               |> recycle()
+               |> post(~p"/api/v1/classic/claim", %{
+                 ticket: response_ticket,
+                 install_id: "facebook-install",
+                 account: %{username: "birgit_returned"}
+               })
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      assert_token_user(conn, claimed_token, claimed_id)
     end
 
     test "Apple creates a provider-linked account after a definitive Classic miss", %{conn: conn} do
@@ -300,6 +320,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert user.apple_sub == "apple-new-sub"
       assert user.facebook_id == nil
       assert is_binary(token)
+      assert_token_user(conn, token, user_id)
     end
 
     test "Apple creates from a valid subject when there is no verified email to match", %{
@@ -355,6 +376,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert user.facebook_id == "facebook-new-id"
       assert user.apple_sub == nil
       assert is_binary(token)
+      assert_token_user(conn, token, user_id)
     end
 
     test "a Classic match without install_id returns the binding error and creates nothing", %{
@@ -504,6 +526,15 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     conn
     |> put_req_header("authorization", "Bearer #{token}")
     |> get(~p"/api/v1/auth/me")
+  end
+
+  defp assert_token_user(conn, token, user_id) do
+    assert %{"user" => %{"id" => ^user_id}} =
+             conn
+             |> recycle()
+             |> me(token)
+             |> json_response(200)
+             |> Map.fetch!("data")
   end
 
   defp data(conn, status), do: json_response(conn, status)["data"]
