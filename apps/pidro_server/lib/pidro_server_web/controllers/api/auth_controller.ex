@@ -228,43 +228,68 @@ defmodule PidroServerWeb.API.AuthController do
 
   operation(:apple,
     summary: "Sign in with Apple",
+    description:
+      "Signs in a linked account, returns an install-bound Classic claim when the verified email matches Classic, or creates a new provider account. `install_id` is required only for a Classic match.",
     request_body: {"Apple identity token", "application/json", ClassicClaimSchemas.AppleRequest},
     responses: [
-      ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
-      unauthorized:
-        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      ok:
+        {"Authentication successful or Classic account found", "application/json",
+         ClassicClaimSchemas.ProviderSignInResponse},
+      unauthorized: {"Invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      unprocessable_entity:
+        {"Missing Classic binding or invalid generated account data", "application/json",
+         ErrorSchemas.validation_error()},
       service_unavailable:
-        {"Provider verification unavailable", "application/json", ErrorSchemas.error_response()}
+        {"Provider or Classic verification unavailable", "application/json",
+         ErrorSchemas.error_response()}
     ]
   )
 
-  def apple(conn, %{"identity_token" => token}), do: provider_login(conn, :apple, token)
+  def apple(conn, %{"identity_token" => token} = params),
+    do: provider_login(conn, :apple, token, params)
+
   def apple(_conn, _params), do: {:error, :invalid_credentials}
 
   operation(:facebook,
     summary: "Sign in with Facebook",
+    description:
+      "Signs in a linked account, returns an install-bound Classic claim when any verified business ID matches Classic, or creates a new provider account. `install_id` is required only for a Classic match.",
     request_body:
       {"Facebook access token", "application/json", ClassicClaimSchemas.FacebookRequest},
     responses: [
-      ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
-      unauthorized:
-        {"Unknown or invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      ok:
+        {"Authentication successful or Classic account found", "application/json",
+         ClassicClaimSchemas.ProviderSignInResponse},
+      unauthorized: {"Invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      unprocessable_entity:
+        {"Missing Classic binding or invalid generated account data", "application/json",
+         ErrorSchemas.validation_error()},
       service_unavailable:
-        {"Provider verification unavailable", "application/json", ErrorSchemas.error_response()}
+        {"Provider or Classic verification unavailable", "application/json",
+         ErrorSchemas.error_response()}
     ]
   )
 
-  def facebook(conn, %{"access_token" => token}), do: provider_login(conn, :facebook, token)
+  def facebook(conn, %{"access_token" => token} = params),
+    do: provider_login(conn, :facebook, token, params)
+
   def facebook(_conn, _params), do: {:error, :invalid_credentials}
 
-  defp provider_login(conn, provider, provider_token) do
-    with {:ok, user} <- ProviderAuth.authenticate(provider, provider_token) do
-      token = Token.generate(user)
-      Auth.touch_last_seen(user)
+  defp provider_login(conn, provider, provider_token, params) do
+    case ProviderAuth.authenticate(provider, provider_token, params) do
+      {:ok, user} ->
+        token = Token.generate(user)
+        Auth.touch_last_seen(user)
 
-      conn
-      |> put_view(UserJSON)
-      |> render(:show, %{user: user, token: token})
+        conn
+        |> put_view(UserJSON)
+        |> render(:show, %{user: user, token: token})
+
+      {:classic_found, result} ->
+        json(conn, %{data: Map.put(result, :classic_found, true)})
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

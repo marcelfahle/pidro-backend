@@ -128,6 +128,27 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
              ProviderIdentity.facebook_business_ids("facebook-token")
   end
 
+  test "Facebook rejects an incomplete business-id list instead of authorizing creation" do
+    Req.Test.expect(ProviderIdentity, fn conn ->
+      Req.Test.json(conn, %{"data" => [%{"id" => "valid-id"}, %{"name" => "missing-id"}]})
+    end)
+
+    assert {:error, :provider_unavailable} =
+             ProviderIdentity.facebook_business_ids("facebook-token")
+  end
+
+  test "Facebook rejects malformed pagination instead of accepting a partial id list" do
+    Req.Test.expect(ProviderIdentity, fn conn ->
+      Req.Test.json(conn, %{
+        "data" => [%{"id" => "partial-id"}],
+        "paging" => %{"next" => 123}
+      })
+    end)
+
+    assert {:error, :provider_unavailable} =
+             ProviderIdentity.facebook_business_ids("facebook-token")
+  end
+
   test "Facebook JSON served as text/javascript (what Graph sends servers) is decoded" do
     Req.Test.stub(ProviderIdentity, fn conn ->
       body =

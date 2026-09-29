@@ -166,9 +166,6 @@ if config_env() == :prod do
     facebook_app_id: System.get_env("FACEBOOK_APP_ID", "345200965110578"),
     facebook_app_secret: facebook_app_secret
 
-  config :pidro_server,
-    provider_verifier: PidroServer.Accounts.ExternalProviderVerifier
-
   database_url =
     System.get_env("DATABASE_URL") ||
       case {
