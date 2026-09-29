@@ -977,6 +977,17 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "join/2 contract" do
+    test "an already seated guest keeps the existing error", %{conn: conn} do
+      guest = AccountsFixtures.guest_fixture()
+      {:ok, room} = RoomManager.create_room(guest.id, %{name: "Friends"})
+
+      assert %{"errors" => [%{"code" => "ALREADY_SEATED"}]} =
+               conn
+               |> as_user(guest)
+               |> post(~p"/api/v1/rooms/#{room.code}/join")
+               |> json_response(422)
+    end
+
     test "a guest cannot join an open table by room code", %{conn: conn} do
       host = AccountsFixtures.user_fixture()
       guest = AccountsFixtures.guest_fixture()

@@ -843,8 +843,13 @@ defmodule PidroServer.Games.RoomManager do
   # String IDs are trusted internal callers such as bots, fixtures and admin tools.
   defp admission_identity(id) when is_binary(id), do: {id, false}
 
-  defp ensure_ordinary_admission(false), do: :ok
-  defp ensure_ordinary_admission(true), do: {:error, :account_required}
+  defp ensure_ordinary_admission(%Room{} = room, player_id, true) do
+    if Positions.has_player?(room, player_id),
+      do: {:error, :already_seated},
+      else: {:error, :account_required}
+  end
+
+  defp ensure_ordinary_admission(%Room{}, _player_id, false), do: :ok
 
   @doc """
   Claims a seat in a room on behalf of an invite redemption.
@@ -1208,11 +1213,10 @@ defmodule PidroServer.Games.RoomManager do
         _from,
         %State{} = state
       ) do
-    with {:ok, %Room{} = room} <- fetch_room(state, room_code),
-         :ok <- ensure_ordinary_admission(guest?) do
+    with {:ok, %Room{} = room} <- fetch_room(state, room_code) do
       if room.status == :playing,
-        do: join_substitute(state, room, player_id),
-        else: join_open_seat(state, room, player_id, position)
+        do: join_substitute(state, room, player_id, guest?),
+        else: join_open_seat(state, room, player_id, position, guest?)
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -1968,9 +1972,8 @@ defmodule PidroServer.Games.RoomManager do
         _from,
         %State{} = state
       ) do
-    with {:ok, room} <- fetch_room(state, room_code),
-         :ok <- ensure_ordinary_admission(guest?) do
-      join_substitute(state, room, player_id)
+    with {:ok, room} <- fetch_room(state, room_code) do
+      join_substitute(state, room, player_id, guest?)
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -2871,8 +2874,14 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   # Only explicit admission commands use this transition. Validate everything
   # before ending a watch, then commit ownership and both membership indexes together.
-  defp join_substitute(%State{} = state, %Room{code: room_code} = room, player_id) do
+  defp join_substitute(
+         %State{} = state,
+         %Room{code: room_code} = room,
+         player_id,
+         guest?
+       ) do
     with :ok <- ensure_not_in_other_room(state, player_id, room_code),
+         :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_playing(room),
          :ok <- ensure_not_locked(room),
          :ok <- ensure_not_kicked(room, player_id),
@@ -2954,8 +2963,15 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc false
   # Validate the target join before evicting a disconnected seat elsewhere.
-  defp join_open_seat(%State{} = state, %Room{code: room_code} = room, player_id, position) do
+  defp join_open_seat(
+         %State{} = state,
+         %Room{code: room_code} = room,
+         player_id,
+         position,
+         guest?
+       ) do
     with :ok <- ensure_room_joinable(room, player_id),
+         :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_can_leave_other_room(state, player_id, room_code),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
       next_state = maybe_evict_from_other_room(state, player_id, room_code)
