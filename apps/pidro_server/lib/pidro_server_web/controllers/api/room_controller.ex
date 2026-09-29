@@ -232,7 +232,8 @@ defmodule PidroServerWeb.API.RoomController do
       channel joins/reconnects never claim unowned seats.
 
       A locked table answers 423 `TABLE_LOCKED`; a user the host kicked answers
-      403 `KICKED`. Limited at policy `room_join` (per user).
+      403 `KICKED`; and a guest answers 403 `ACCOUNT_REQUIRED`. Limited at policy
+      `room_join` (per user).
 
       Requires authentication via Bearer token.
       """,
@@ -255,7 +256,7 @@ defmodule PidroServerWeb.API.RoomController do
           ),
         403 =>
           Operation.response(
-            "Kicked from this room",
+            "Account required or kicked from this room",
             "application/json",
             ErrorSchemas.error_response()
           ),
@@ -1057,7 +1058,7 @@ defmodule PidroServerWeb.API.RoomController do
     user = conn.assigns[:current_user]
     position = parse_position(params["position"])
 
-    with {:ok, room, assigned_position} <- RoomManager.join_room(code, user.id, position) do
+    with {:ok, room, assigned_position} <- RoomManager.join_room(code, user, position) do
       conn
       |> put_view(RoomJSON)
       |> render(:show, %{room: room, assigned_position: assigned_position})
