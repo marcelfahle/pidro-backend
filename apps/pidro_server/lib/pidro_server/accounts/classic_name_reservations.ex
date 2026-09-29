@@ -79,6 +79,13 @@ defmodule PidroServer.Accounts.ClassicNameReservations do
       "found #{result.collisions} colliding key(s)."
   end
 
+  @doc "Returns whether a name is reserved for a Classic account."
+  @spec reserved?(String.t()) :: boolean()
+  def reserved?(name) when is_binary(name) do
+    key = name_key(name)
+    Repo.exists?(from r in ClassicNameReservation, where: r.name_key == ^key)
+  end
+
   @doc "Adds reservation errors for changed usernames and display names."
   def validate_changes(%Changeset{} = changeset, classic_user_id \\ nil) do
     Enum.reduce([:username, :display_name], changeset, fn field, acc ->
@@ -105,7 +112,7 @@ defmodule PidroServer.Accounts.ClassicNameReservations do
     if owner_ids == [] or allowed_owner?(key, owner_ids, classic_user_id) do
       changeset
     else
-      Changeset.add_error(changeset, field, @message)
+      Changeset.add_error(changeset, field, @message, code: :classic_name_reserved)
     end
   end
 

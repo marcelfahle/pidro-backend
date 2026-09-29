@@ -70,6 +70,7 @@ defmodule PidroServer.Accounts.ClassicNameReservationsTest do
              })
 
     assert %{username: [@message]} = errors_on(username_error)
+    assert {@message, [code: :classic_name_reserved]} = username_error.errors[:username]
 
     assert {:error, display_error} =
              Auth.register_user(%{
@@ -80,6 +81,9 @@ defmodule PidroServer.Accounts.ClassicNameReservationsTest do
              })
 
     assert %{display_name: [@message]} = errors_on(display_error)
+
+    assert {@message, [code: :classic_name_reserved]} =
+             display_error.errors[:display_name]
   end
 
   test "guest creation and guest upgrade reject reserved public names" do

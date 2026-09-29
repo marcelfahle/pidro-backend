@@ -281,11 +281,12 @@ defmodule PidroServerWeb.API.AuthController do
     does not create another player. Invitation clients may also supply one;
     omitting it keeps the existing create-on-every-call behavior.
 
-    The display name is NFKC-normalized and trimmed, is 2-20 graphemes, and must
-    not look like the name of a player connected at the invite's table
-    (casefolded, diacritics and non-alphanumerics removed); held seats are
-    excluded so a returning guest can reuse her own name. Violations answer 422
-    on `display_name`.
+    When omitted or null, the server generates a friendly two-word display
+    name. A supplied display name is NFKC-normalized and trimmed, is 2-20
+    graphemes, and must not look like the name of a player connected at the
+    invite's table (casefolded, diacritics and non-alphanumerics removed); held
+    seats are excluded so a returning guest can reuse her own name. Violations
+    answer 422 on `display_name`.
 
     Limited at policies `guest_create` and `guest_create_daily` (per client IP)
     and `guest_create_install` (per `install_id`; skipped without one).
