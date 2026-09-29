@@ -75,6 +75,48 @@ defmodule PidroServer.Accounts.AuthTest do
 
       assert %{display_name: ["should be at most 20 character(s)"]} = errors_on(changeset)
     end
+
+    test "rejects blocked usernames and display names" do
+      assert {:error, username_error} =
+               Auth.register_user(%{
+                 username: "Fuckface",
+                 email: "blocked-username@example.com",
+                 password: "password123"
+               })
+
+      assert %{username: ["is not allowed as a public name"]} = errors_on(username_error)
+
+      assert {:error, display_error} =
+               Auth.register_user(%{
+                 username: "allowed_login",
+                 display_name: "fuck face",
+                 email: "blocked-display@example.com",
+                 password: "password123"
+               })
+
+      assert %{display_name: ["is not allowed as a public name"]} = errors_on(display_error)
+    end
+
+    test "validates the stored username rather than a normalized display surrogate" do
+      assert {:error, long_error} =
+               Auth.register_user(%{
+                 username: "abc" <> String.duplicate(" ", 18),
+                 email: "long-raw-username@example.com",
+                 password: "password123"
+               })
+
+      assert %{username: ["should be at most 20 character(s)"]} = errors_on(long_error)
+
+      assert {:error, control_error} =
+               Auth.register_user(%{
+                 username: "line\nbreak",
+                 email: "control-username@example.com",
+                 password: "password123"
+               })
+
+      assert %{username: ["must not contain control or format characters"]} =
+               errors_on(control_error)
+    end
   end
 
   describe "create_guest_user/2" do
@@ -118,6 +160,11 @@ defmodule PidroServer.Accounts.AuthTest do
     test "applies the display-name rule" do
       assert {:error, changeset} = Auth.create_guest_user(%{display_name: "A"}, [])
       assert %{display_name: ["should be at least 2 character(s)"]} = errors_on(changeset)
+    end
+
+    test "rejects a blocked supplied display_name" do
+      assert {:error, changeset} = Auth.create_guest_user(%{display_name: "Fuckface"}, [])
+      assert %{display_name: ["is not allowed as a public name"]} = errors_on(changeset)
     end
 
     test "rejects a display_name whose key is taken at the table" do
@@ -223,6 +270,20 @@ defmodule PidroServer.Accounts.AuthTest do
                  password: "password123",
                  username: "anna_upgraded"
                })
+    end
+
+    test "rejects a blocked optional username" do
+      guest = AccountsFixtures.guest_fixture()
+
+      assert {:error, changeset} =
+               Auth.upgrade_guest(guest, %{
+                 email: "blocked-upgrade@example.com",
+                 password: "password123",
+                 username: "Fuckface"
+               })
+
+      assert %{username: ["is not allowed as a public name"]} = errors_on(changeset)
+      assert Repo.get!(User, guest.id).guest
     end
 
     test "accepts string-keyed attributes" do
@@ -562,6 +623,22 @@ defmodule PidroServer.Accounts.AuthTest do
 
       assert updated.username == "renamed_by_admin"
       assert updated.email == "renamed@example.com"
+    end
+
+    test "rejects a blocked admin rename" do
+      user = AccountsFixtures.user_fixture()
+
+      assert {:error, changeset} = Auth.update_user(user, %{"username" => "Fuckface"})
+      assert %{username: ["is not allowed as a public name"]} = errors_on(changeset)
+    end
+
+    test "rejects a control character in an admin rename" do
+      user = AccountsFixtures.user_fixture()
+
+      assert {:error, changeset} = Auth.update_user(user, %{"username" => "line\nbreak"})
+
+      assert %{username: ["must not contain control or format characters"]} =
+               errors_on(changeset)
     end
   end
 

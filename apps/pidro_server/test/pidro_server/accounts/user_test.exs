@@ -27,6 +27,16 @@ defmodule PidroServer.Accounts.UserTest do
       assert get_change(changeset, :display_name) == "Anna"
     end
 
+    test "collapses separator whitespace without hiding control characters" do
+      changeset =
+        User.changeset(%User{}, %{username: "spaced", display_name: "  Nordic\u{00A0}  Moose  "})
+
+      assert changeset.valid?
+      assert get_change(changeset, :display_name) == "Nordic Moose"
+
+      refute User.changeset(%User{}, %{username: "tabbed", display_name: "Nordic\tMoose"}).valid?
+    end
+
     test "clears an existing display_name with nil or a blank value" do
       user = %User{username: "anna_clear", display_name: "Anna"}
 

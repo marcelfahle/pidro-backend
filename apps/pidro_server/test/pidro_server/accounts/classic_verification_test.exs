@@ -15,6 +15,10 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
       {:ok, Map.merge(profile(), %{"played_games" => 100, "total_game" => 20})}
     end
 
+    def verify_password("blocked-name", "correct-password") do
+      {:ok, Map.put(profile(), "username", "  Fuckface  ")}
+    end
+
     # A pre-2017 veteran exactly as Classic's live endpoint describes one,
     # passed through the real client's normalizer.
     def verify_password("bengt@example.com", "correct-password") do
@@ -151,7 +155,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
              games_played: 321,
              level: 87,
              member_since: "2012-04-03T00:00:00Z",
-             name_allowed: nil
+             name_allowed: true
            }
 
     ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
@@ -159,7 +163,31 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.install_id == nil
     assert ticket.method == :password
     assert ticket.legacy_data["classic_username"] == "Old Timer"
+    assert ticket.legacy_data["classic_name_allowed"] == true
     assert ticket.legacy_data["games_played_counter"] == 321
+  end
+
+  test "a blocked Classic name is preserved privately and marked unavailable" do
+    user = AccountsFixtures.guest_fixture()
+
+    assert {:ok, result} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "password",
+                 "login" => "blocked-name",
+                 "password" => "correct-password"
+               },
+               user,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    assert result.classic.name == "  Fuckface  "
+    assert result.classic.name_allowed == false
+
+    ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
+    assert ticket.legacy_data["classic_username"] == "  Fuckface  "
+    assert ticket.legacy_data["classic_name_allowed"] == false
   end
 
   test "preview uses the same disjoint-era game count as the claimed profile" do

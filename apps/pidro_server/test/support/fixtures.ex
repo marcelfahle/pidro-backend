@@ -8,7 +8,12 @@ defmodule PidroServer.AccountsFixtures do
   alias PidroServer.Repo
 
   def unique_user_email, do: "user#{System.unique_integer()}@example.com"
-  def unique_username, do: "user#{System.unique_integer()}"
+
+  def unique_username do
+    suffix = System.unique_integer([:positive]) |> Integer.to_string(36)
+    "user#{suffix}"
+  end
+
   def valid_user_password, do: "hello world!"
 
   @doc """

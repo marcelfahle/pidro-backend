@@ -1,6 +1,7 @@
 defmodule PidroServer.Accounts.ClassicVerification do
   @moduledoc "Verifies Classic ownership and issues an account-bound claim ticket."
 
+  alias PidroServer.Accounts
   alias PidroServer.Accounts.{ClassicClaims, ClassicClient, ProviderIdentity}
   alias PidroServer.Profiles.LegacyProgression
 
@@ -125,8 +126,11 @@ defmodule PidroServer.Accounts.ClassicVerification do
   end
 
   defp legacy_data(profile) do
+    name = classic_name(profile)
+
     profile
-    |> Map.put("classic_username", classic_name(profile))
+    |> Map.put("classic_username", name)
+    |> Map.put("classic_name_allowed", Accounts.public_name_allowed?(name))
     |> Map.put("classic_level", fetch(profile, :level))
     |> Map.put("legacy_played_games", fetch(profile, :played_games))
     |> Map.put("legacy_victories", fetch(profile, :victories))
@@ -152,7 +156,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
       name_allowed: legacy.classic_name_allowed
     }
 
-    if is_binary(preview.name) and preview.name != "" and
+    if (is_nil(preview.name) or is_binary(preview.name)) and
          is_integer(preview.games_played) and preview.games_played >= 0 and
          is_integer(preview.level) and preview.level >= 0 and
          is_binary(preview.member_since) and preview.member_since != "" do
@@ -180,7 +184,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
       username when is_binary(username) ->
         case String.trim(username) do
           "" -> fetch(profile, :firstname)
-          name -> name
+          _name -> username
         end
 
       _blank ->

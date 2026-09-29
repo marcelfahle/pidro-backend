@@ -71,6 +71,7 @@ defmodule PidroServer.Accounts.Auth do
   require Logger
 
   alias Ecto.Changeset
+  alias PidroServer.Accounts
   alias PidroServer.Accounts.{Avatars, ClassicNameReservations, GuestNames, Token}
   alias PidroServer.Accounts.User
   alias PidroServer.Games.RoomManager
@@ -115,6 +116,7 @@ defmodule PidroServer.Accounts.Auth do
   def register_user(attrs) do
     %User{}
     |> User.registration_changeset(attrs)
+    |> Accounts.validate_public_name_changes([:username, :display_name])
     |> ClassicNameReservations.validate_changes()
     |> Repo.insert()
   end
@@ -405,6 +407,7 @@ defmodule PidroServer.Accounts.Auth do
          :ok <- ensure_username_free(Map.get(attrs, :username), id) do
       guest
       |> User.upgrade_changeset(attrs)
+      |> Accounts.validate_public_name_changes([:username])
       |> ClassicNameReservations.validate_changes(guest.classic_user_id)
       |> update_and_bump_version()
       |> map_upgrade_result()
@@ -653,6 +656,7 @@ defmodule PidroServer.Accounts.Auth do
   def change_user(%User{} = user, attrs \\ %{}) do
     user
     |> User.admin_changeset(admin_user_attrs(attrs))
+    |> Accounts.validate_public_name_changes([:username])
   end
 
   @doc """
@@ -663,6 +667,7 @@ defmodule PidroServer.Accounts.Auth do
   def update_user(%User{} = user, attrs) do
     user
     |> User.admin_changeset(admin_user_attrs(attrs))
+    |> Accounts.validate_public_name_changes([:username])
     |> ClassicNameReservations.validate_changes(user.classic_user_id)
     |> Repo.update()
   end
@@ -870,6 +875,7 @@ defmodule PidroServer.Accounts.Auth do
       %User{}
       |> User.guest_changeset(Map.put(attrs, :username, username))
       |> Changeset.validate_required(:display_name)
+      |> Accounts.validate_public_name_changes([:display_name])
       |> reject_taken_name(taken_name_keys)
       |> ClassicNameReservations.validate_changes()
 

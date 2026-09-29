@@ -1,7 +1,7 @@
 defmodule PidroServerWeb.API.ClassicClaimControllerTest do
   use PidroServerWeb.ConnCase, async: false
 
-  alias PidroServer.Accounts.{ClassicClaims, Token, User}
+  alias PidroServer.Accounts.{ClassicClaims, ClassicClaimTicket, Token, User}
   alias PidroServer.AccountsFixtures
   alias PidroServer.Repo
 
@@ -48,7 +48,7 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
              "games_played" => 88,
              "level" => 14,
              "member_since" => "2011-01-02T00:00:00Z",
-             "name_allowed" => nil
+             "name_allowed" => true
            }
 
     assert Repo.get_by!(PidroServer.Accounts.ClassicClaimTicket, classic_user_id: 70_000).bound_user_id ==
@@ -120,10 +120,42 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
     refute Repo.get_by(User, username: "must_not_exist")
   end
 
+  test "rejects a non-object account without redeeming the ticket", %{conn: conn} do
+    guest = AccountsFixtures.guest_fixture(%{display_name: "Original Guest"})
+
+    {:ok, %{ticket: ticket}} =
+      ClassicClaims.issue_ticket(%{
+        classic_user_id: 70_004,
+        method: :password,
+        user_id: guest.id,
+        legacy_data: %{
+          classic_user_id: 70_004,
+          classic_username: "Classic Veteran",
+          classic_name_allowed: true,
+          xp: 75
+        }
+      })
+
+    assert %{
+             "errors" => [
+               %{"code" => "account", "detail" => "must be an object"}
+             ]
+           } =
+             conn
+             |> put_req_header("authorization", "Bearer #{Token.generate(guest)}")
+             |> post(~p"/api/v1/classic/claim", %{ticket: ticket, account: []})
+             |> json_response(422)
+
+    persisted = Repo.get!(User, guest.id)
+    assert persisted.classic_user_id == nil
+    assert persisted.display_name == "Original Guest"
+    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 70_004).redeemed_by_id == nil
+  end
+
   test "an already claimed Classic account returns the exact sign-in path", %{conn: conn} do
     owner =
       %User{}
-      |> User.social_registration_changeset(%{username: "controller_apple_owner"})
+      |> User.social_registration_changeset(%{username: "controller_owner"})
       |> Repo.insert!()
 
     owner
@@ -140,7 +172,11 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
         method: :facebook,
         provider_id: "different-facebook-id",
         install_id: "install-owner",
-        legacy_data: %{xp: 10}
+        legacy_data: %{
+          xp: 10,
+          classic_username: "Fuckface",
+          classic_name_allowed: false
+        }
       })
 
     assert %{

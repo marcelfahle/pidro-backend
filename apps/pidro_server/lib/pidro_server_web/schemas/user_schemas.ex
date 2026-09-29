@@ -200,9 +200,9 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           properties: %{
             username: %Schema{
               type: :string,
-              description: "Unique username for the account",
+              description: "Unique public username for the account",
               minLength: 3,
-              maxLength: 255,
+              maxLength: 20,
               example: "john_doe"
             },
             email: %Schema{
@@ -439,9 +439,9 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         },
         username: %Schema{
           type: :string,
-          description: "Optional username replacing the generated guest username",
+          description: "Optional public username replacing the generated guest username",
           minLength: 3,
-          maxLength: 255,
+          maxLength: 20,
           example: "anna"
         }
       },

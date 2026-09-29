@@ -5,6 +5,7 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     Auth,
     ClassicClaims,
     ClassicClaimTicket,
+    ClassicNameReservation,
     ClassicNameReservations,
     ProviderAuth,
     User
@@ -58,6 +59,48 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert signed_in.id == guest.id
   end
 
+  test "a blocked Classic name requires a replacement without losing the claim or career" do
+    guest = AccountsFixtures.guest_fixture(%{display_name: "Random Guest"})
+
+    assert {:ok, _} =
+             ClassicNameReservations.import([%{id: 10_002, username: "Fuckface"}])
+
+    ticket =
+      issue_ticket!(guest, 10_002, :password, nil, %{
+        xp: 250,
+        classic_username: "Fuckface",
+        classic_name_allowed: false,
+        classic_level: 42,
+        games_played_counter: 99
+      })
+
+    assert {:error, changeset} = ClassicClaims.redeem(ticket, guest, %{})
+    assert %{display_name: ["can't be blank"]} = errors_on(changeset)
+    assert Repo.get!(User, guest.id).classic_user_id == nil
+    assert Repo.get_by(PlayerProfile, user_id: guest.id) == nil
+
+    assert {:ok, claimed} =
+             ClassicClaims.redeem(ticket, guest, %{account: %{display_name: "Kind Player"}})
+
+    assert claimed.id == guest.id
+    assert claimed.display_name == "Kind Player"
+    assert claimed.classic_user_id == 10_002
+
+    profile = Repo.get_by!(PlayerProfile, user_id: guest.id)
+    assert profile.veteran_xp == 250
+    assert profile.heritage_flags["classic_username"] == "Fuckface"
+    assert profile.heritage_flags["classic_name_allowed"] == false
+    assert Repo.get!(ClassicNameReservation, 10_002).username == "Fuckface"
+    refute Map.has_key?(Profiles.public_profile(guest.id).classic, :name)
+
+    assert {:ok, retried} =
+             ClassicClaims.redeem(ticket, claimed, %{
+               account: %{display_name: "Fuckface"}
+             })
+
+    assert retried.display_name == "Kind Player"
+  end
+
   test "both directions of the one-to-one link reject transfer" do
     first = AccountsFixtures.user_fixture()
     second = AccountsFixtures.user_fixture()
@@ -106,8 +149,13 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
         legacy_data: %{classic_user_id: 999_999, xp: 900}
       })
 
-    assert {:ok, retried} = ClassicClaims.redeem(retry_ticket, claimed, %{})
+    assert {:ok, retried} =
+             ClassicClaims.redeem(retry_ticket, claimed, %{
+               account: %{display_name: "Fuckface"}
+             })
+
     assert retried.classic_claimed_at == claimed.classic_claimed_at
+    assert retried.display_name == claimed.display_name
 
     profile = Repo.get_by!(PlayerProfile, user_id: user.id)
     assert profile.veteran_xp == 100
@@ -119,25 +167,40 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
   end
 
   test "an import conflict rolls the link and provider identity back" do
-    user = AccountsFixtures.user_fixture()
+    user = AccountsFixtures.user_fixture(%{display_name: "Original Player"})
     {:ok, _profile} = Profiles.import_legacy_progression(user, %{classic_user_id: 30_001, xp: 10})
     ticket = issue_ticket!(user, 30_002, :facebook, "facebook-subject", %{xp: 20})
 
-    assert {:error, :user_already_claimed} = ClassicClaims.redeem(ticket, user, %{})
+    assert {:error, :user_already_claimed} =
+             ClassicClaims.redeem(ticket, user, %{
+               account: %{display_name: "Changed Player"}
+             })
 
     persisted = Repo.get!(User, user.id)
     assert persisted.classic_user_id == nil
     assert persisted.facebook_id == nil
+    assert persisted.display_name == "Original Player"
+
+    profile = Repo.get_by!(PlayerProfile, user_id: user.id)
+    assert profile.veteran_xp == 10
+    assert profile.heritage_flags["classic_user_id"] == 30_001
+
+    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 30_002).redeemed_by_id == nil
   end
 
   test "a fresh password claim creates one recoverable registered account" do
     ticket =
-      issue_install_ticket!("fresh-password", 40_001, :password, nil, %{xp: 50})
+      issue_install_ticket!("fresh-password", 40_001, :password, nil, %{
+        xp: 50,
+        classic_username: "Fuckface",
+        classic_name_allowed: false
+      })
 
     params = %{
       install_id: "fresh-password",
       account: %{
         username: "returning_veteran",
+        display_name: "Returning Veteran",
         email: "veteran@example.com",
         password: "password123"
       }
@@ -145,6 +208,7 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
 
     assert {:ok, created} = ClassicClaims.redeem(ticket, nil, params)
     refute created.guest
+    assert created.display_name == "Returning Veteran"
     assert created.classic_user_id == 40_001
     assert {:ok, signed_in} = Auth.authenticate_user("veteran@example.com", "password123")
     assert signed_in.id == created.id
@@ -155,7 +219,11 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
 
   test "a fresh social claim binds repeat sign-in without inventing an email" do
     ticket =
-      issue_install_ticket!("fresh-facebook", 50_001, :facebook, "facebook-subject", %{xp: 25})
+      issue_install_ticket!("fresh-facebook", 50_001, :facebook, "facebook-subject", %{
+        xp: 25,
+        classic_username: "  Social   Veteran  ",
+        classic_name_allowed: true
+      })
 
     assert {:ok, created} =
              ClassicClaims.redeem(ticket, nil, %{
@@ -164,8 +232,13 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
              })
 
     refute created.guest
+    assert created.display_name == "Social Veteran"
     assert created.email == nil
     assert created.facebook_id == "facebook-subject"
+
+    assert Repo.get_by!(PlayerProfile, user_id: created.id).heritage_flags[
+             "classic_username"
+           ] == "  Social   Veteran  "
 
     assert {:ok, signed_in} =
              ProviderAuth.authenticate(:facebook, "valid-facebook-token", verifier: Verifier)
@@ -215,6 +288,20 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
            } = errors_on(changeset)
 
     refute Repo.get_by(User, email: "second-owner@example.com")
+
+    assert {:ok, second} =
+             ClassicClaims.redeem(second_ticket, nil, %{
+               install_id: "second-owner",
+               account: %{
+                 username: "second_veteran",
+                 display_name: "Second Veteran",
+                 email: "second-owner@example.com",
+                 password: "password123"
+               }
+             })
+
+    assert second.classic_user_id == 55_002
+    assert second.display_name == "Second Veteran"
   end
 
   test "expiry and binding failures leave the user untouched" do
