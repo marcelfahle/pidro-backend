@@ -16,13 +16,12 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Repo
 
-  defmodule Verifier do
-    @behaviour PidroServer.Accounts.ProviderVerifier
+  defmodule ProviderIdentity do
+    def apple("valid-apple-token"), do: {:ok, %{"sub" => "apple-subject"}}
+    def apple(_token), do: {:error, :invalid_credentials}
 
-    @impl true
-    def verify(:apple, "valid-apple-token"), do: {:ok, "apple-subject"}
-    def verify(:facebook, "valid-facebook-token"), do: {:ok, "facebook-subject"}
-    def verify(_provider, _token), do: {:error, :invalid_credentials}
+    def facebook("valid-facebook-token"), do: {:ok, "facebook-subject"}
+    def facebook(_token), do: {:error, :invalid_credentials}
   end
 
   test "an authenticated guest keeps its identity and progress, and retry is a no-op" do
@@ -54,7 +53,9 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert Repo.get_by!(PlayerProfile, user_id: guest.id).veteran_xp == 525
 
     assert {:ok, signed_in} =
-             ProviderAuth.authenticate(:apple, "valid-apple-token", verifier: Verifier)
+             ProviderAuth.authenticate(:apple, "valid-apple-token", %{},
+               provider_identity: ProviderIdentity
+             )
 
     assert signed_in.id == guest.id
   end
@@ -241,7 +242,9 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
            ] == "  Social   Veteran  "
 
     assert {:ok, signed_in} =
-             ProviderAuth.authenticate(:facebook, "valid-facebook-token", verifier: Verifier)
+             ProviderAuth.authenticate(:facebook, "valid-facebook-token", %{},
+               provider_identity: ProviderIdentity
+             )
 
     assert signed_in.id == created.id
   end

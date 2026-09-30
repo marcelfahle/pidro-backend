@@ -5,20 +5,52 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   import Ecto.Query
   import ExUnit.CaptureLog
 
-  alias PidroServer.Accounts.{Auth, Token, User}
+  alias PidroServer.Accounts.{Auth, ClassicClaimTicket, ClassicNameReservations, Token, User}
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.RoomManager
   alias PidroServer.Invites
   alias PidroServer.Invites.Event
   alias PidroServer.Repo
 
-  defmodule ProviderVerifier do
-    @behaviour PidroServer.Accounts.ProviderVerifier
+  defmodule ProviderIdentity do
+    def apple("apple-linked"), do: apple_identity("apple-linked-sub", "linked@example.com")
+    def apple("apple-classic"), do: apple_identity("apple-classic-sub", "classic@example.com")
+    def apple("apple-new"), do: apple_identity("apple-new-sub", "new@example.com")
+    def apple("apple-no-email"), do: {:ok, %{"sub" => "apple-no-email-sub"}}
+    def apple("apple-down"), do: apple_identity("apple-down-sub", "down@example.com")
+    def apple(_token), do: {:error, :invalid_credentials}
 
-    @impl true
-    def verify(:apple, "apple-token"), do: {:ok, "apple-sub"}
-    def verify(:facebook, "facebook-token"), do: {:ok, "facebook-id"}
-    def verify(_provider, _token), do: {:error, :invalid_credentials}
+    def facebook("facebook-linked"), do: {:ok, "facebook-linked-id"}
+    def facebook("facebook-classic"), do: {:ok, "facebook-current-id"}
+    def facebook("facebook-new"), do: {:ok, "facebook-new-id"}
+    def facebook("facebook-down"), do: {:ok, "facebook-down-id"}
+    def facebook(_token), do: {:error, :invalid_credentials}
+
+    def facebook_business_ids("facebook-linked"), do: raise("linked user fetched business IDs")
+    def facebook_business_ids("facebook-classic"), do: {:ok, ["facebook-classic-id"]}
+    def facebook_business_ids("facebook-new"), do: {:ok, ["facebook-new-old-id"]}
+    def facebook_business_ids("facebook-down"), do: {:ok, ["facebook-old-id"]}
+
+    defp apple_identity(subject, email) do
+      {:ok, %{"sub" => subject, "email" => email, "email_verified" => true}}
+    end
+  end
+
+  defmodule GuestNames do
+    def generate, do: {:ok, "Lucky Moose"}
+  end
+
+  defmodule RetryGuestNames do
+    def generate do
+      case Process.get(__MODULE__, 0) do
+        0 ->
+          Process.put(__MODULE__, 1)
+          {:ok, "Lucky Moose"}
+
+        _retried ->
+          {:ok, "Brave Badger"}
+      end
+    end
   end
 
   describe "register" do
@@ -143,45 +175,250 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
   describe "provider login" do
     setup do
-      previous = Application.get_env(:pidro_server, :provider_verifier)
-      Application.put_env(:pidro_server, :provider_verifier, ProviderVerifier)
+      previous_provider = Application.get_env(:pidro_server, :provider_identity)
+      previous_names = Application.get_env(:pidro_server, :guest_names)
+      Application.put_env(:pidro_server, :provider_identity, ProviderIdentity)
+      Application.put_env(:pidro_server, :guest_names, GuestNames)
+      Req.Test.verify_on_exit!()
 
       on_exit(fn ->
-        if previous,
-          do: Application.put_env(:pidro_server, :provider_verifier, previous),
-          else: Application.delete_env(:pidro_server, :provider_verifier)
+        if previous_provider,
+          do: Application.put_env(:pidro_server, :provider_identity, previous_provider),
+          else: Application.delete_env(:pidro_server, :provider_identity)
+
+        if previous_names,
+          do: Application.put_env(:pidro_server, :guest_names, previous_names),
+          else: Application.delete_env(:pidro_server, :guest_names)
       end)
     end
 
-    test "Apple and Facebook return the linked account, never an email match", %{conn: conn} do
-      apple =
-        AccountsFixtures.user_fixture()
-        |> Ecto.Changeset.change(apple_sub: "apple-sub")
-        |> Repo.update!()
+    test "Apple returns a linked account without consulting Classic", %{conn: conn} do
+      user = provider_user!(:apple_sub, "apple-linked-sub")
 
-      facebook =
-        AccountsFixtures.user_fixture()
-        |> Ecto.Changeset.change(facebook_id: "facebook-id")
-        |> Repo.update!()
-
-      assert %{"user" => %{"id" => apple_id}, "token" => _token} =
+      assert %{"user" => %{"id" => user_id}, "token" => token} =
                conn
-               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-token"})
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-linked"})
                |> json_response(200)
                |> Map.fetch!("data")
 
-      assert apple_id == apple.id
+      assert user_id == user.id
+      assert is_binary(token)
+      assert_token_user(conn, token, user_id)
+    end
 
-      assert %{"user" => %{"id" => facebook_id}, "token" => _token} =
-               build_conn()
-               |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-token"})
+    test "Facebook returns a linked account without fetching business IDs or Classic", %{
+      conn: conn
+    } do
+      user = provider_user!(:facebook_id, "facebook-linked-id")
+
+      assert %{"user" => %{"id" => user_id}, "token" => token} =
+               conn
+               |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-linked"})
                |> json_response(200)
                |> Map.fetch!("data")
 
-      assert facebook_id == facebook.id
+      assert user_id == user.id
+      assert is_binary(token)
+      assert_token_user(conn, token, user_id)
+    end
 
+    test "Apple Classic match returns a redeemable install-bound ticket", %{conn: conn} do
+      expect_classic_lookup(:email, "classic@example.com", classic_profile(71_001, "Bengt"))
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/apple", %{
+          identity_token: "apple-classic",
+          install_id: "apple-install"
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert %{
+               "classic_found" => true,
+               "classic" => %{"name" => "Bengt"},
+               "ticket" => ticket,
+               "expires_at" => expires_at
+             } = data
+
+      assert is_binary(expires_at)
+      refute Repo.get_by(User, apple_sub: "apple-classic-sub")
+
+      assert %{"user" => %{"id" => claimed_id}, "token" => claimed_token} =
+               conn
+               |> recycle()
+               |> post(~p"/api/v1/classic/claim", %{
+                 ticket: ticket,
+                 install_id: "apple-install",
+                 account: %{username: "bengt_returned"}
+               })
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      claimed = Repo.get_by!(User, apple_sub: "apple-classic-sub")
+      assert claimed.id == claimed_id
+      assert claimed.classic_user_id == 71_001
+      assert is_binary(claimed_token)
+      assert_token_user(conn, claimed_token, claimed_id)
+    end
+
+    test "Facebook checks business IDs and tickets the current app identity", %{conn: conn} do
+      expect_classic_not_found(:fbid, "facebook-current-id")
+      expect_classic_lookup(:fbid, "facebook-classic-id", classic_profile(71_002, "Birgit"))
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/facebook", %{
+          access_token: "facebook-classic",
+          install_id: "facebook-install"
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert %{
+               "classic_found" => true,
+               "classic" => %{"name" => "Birgit"},
+               "ticket" => response_ticket
+             } = data
+
+      stored_ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 71_002)
+      assert stored_ticket.provider_id == "facebook-current-id"
+      assert stored_ticket.install_id == "facebook-install"
+
+      assert %{"user" => %{"id" => claimed_id}, "token" => claimed_token} =
+               conn
+               |> recycle()
+               |> post(~p"/api/v1/classic/claim", %{
+                 ticket: response_ticket,
+                 install_id: "facebook-install",
+                 account: %{username: "birgit_returned"}
+               })
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      assert_token_user(conn, claimed_token, claimed_id)
+    end
+
+    test "Apple creates a provider-linked account after a definitive Classic miss", %{conn: conn} do
+      expect_classic_not_found(:email, "new@example.com")
+
+      assert %{
+               "user" => %{
+                 "id" => user_id,
+                 "username" => "Lucky Moose",
+                 "display_name" => "Lucky Moose",
+                 "guest" => false
+               },
+               "token" => token
+             } =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-new"})
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      user = Repo.get!(User, user_id)
+      assert user.apple_sub == "apple-new-sub"
+      assert user.facebook_id == nil
+      assert is_binary(token)
+      assert_token_user(conn, token, user_id)
+    end
+
+    test "Apple creates from a valid subject when there is no verified email to match", %{
+      conn: conn
+    } do
+      assert %{"user" => %{"id" => user_id}, "token" => token} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-no-email"})
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      user = Repo.get!(User, user_id)
+      assert user.apple_sub == "apple-no-email-sub"
+      assert user.display_name == "Lucky Moose"
+      assert is_binary(token)
+    end
+
+    test "provider registration redraws a generated Classic-reserved name", %{conn: conn} do
+      assert {:ok, _result} =
+               ClassicNameReservations.import([%{id: 71_004, username: "Lucky Moose"}])
+
+      Application.put_env(:pidro_server, :guest_names, RetryGuestNames)
+      expect_classic_not_found(:email, "new@example.com")
+
+      assert %{"user" => %{"username" => "Brave Badger", "display_name" => "Brave Badger"}} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-new"})
+               |> json_response(200)
+               |> Map.fetch!("data")
+    end
+
+    test "Facebook creates a provider-linked account only after every Classic ID misses", %{
+      conn: conn
+    } do
+      expect_classic_not_found(:fbid, "facebook-new-id")
+      expect_classic_not_found(:fbid, "facebook-new-old-id")
+
+      assert %{
+               "user" => %{
+                 "id" => user_id,
+                 "username" => "Lucky Moose",
+                 "display_name" => "Lucky Moose",
+                 "guest" => false
+               },
+               "token" => token
+             } =
+               conn
+               |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-new"})
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      user = Repo.get!(User, user_id)
+      assert user.facebook_id == "facebook-new-id"
+      assert user.apple_sub == nil
+      assert is_binary(token)
+      assert_token_user(conn, token, user_id)
+    end
+
+    test "a Classic match without install_id returns the binding error and creates nothing", %{
+      conn: conn
+    } do
+      expect_classic_lookup(:email, "classic@example.com", classic_profile(71_003, "Carin"))
+
+      assert %{"errors" => [%{"code" => "CLAIM_BINDING_REQUIRED"}]} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-classic"})
+               |> json_response(422)
+
+      refute Repo.get_by(User, apple_sub: "apple-classic-sub")
+      refute Repo.get_by(ClassicClaimTicket, classic_user_id: 71_003)
+    end
+
+    test "Apple returns 503 and creates nothing when Classic is unavailable", %{conn: conn} do
+      expect_classic_unavailable(:email, "down@example.com")
+
+      assert %{"errors" => [%{"code" => "PROVIDER_UNAVAILABLE"}]} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-down"})
+               |> json_response(503)
+
+      refute Repo.get_by(User, apple_sub: "apple-down-sub")
+    end
+
+    test "Facebook returns 503 after an earlier Classic miss and creates nothing", %{conn: conn} do
+      expect_classic_not_found(:fbid, "facebook-down-id")
+      expect_classic_unavailable(:fbid, "facebook-old-id")
+
+      assert %{"errors" => [%{"code" => "PROVIDER_UNAVAILABLE"}]} =
+               conn
+               |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-down"})
+               |> json_response(503)
+
+      refute Repo.get_by(User, facebook_id: "facebook-down-id")
+    end
+
+    test "invalid provider proof remains unauthorized", %{conn: conn} do
       assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} =
-               build_conn()
+               conn
                |> post(~p"/api/v1/auth/apple", %{identity_token: "wrong"})
                |> json_response(401)
     end
@@ -199,6 +436,44 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert %{"user" => %{"id" => id, "display_name" => nil}} = json_response(conn, 200)["data"]
       assert id == user.id
     end
+  end
+
+  defp provider_user!(field, value) do
+    AccountsFixtures.user_fixture()
+    |> Ecto.Changeset.change(%{field => value})
+    |> Repo.update!()
+  end
+
+  defp expect_classic_lookup(field, value, profile) do
+    Req.Test.expect(PidroServer.Accounts.ClassicClient, fn conn ->
+      assert conn.request_path == "/internal/claims/lookup"
+      assert Plug.Conn.fetch_query_params(conn).query_params[Atom.to_string(field)] == value
+      Req.Test.json(conn, %{"classic" => profile})
+    end)
+  end
+
+  defp expect_classic_not_found(field, value) do
+    Req.Test.expect(PidroServer.Accounts.ClassicClient, fn conn ->
+      assert Plug.Conn.fetch_query_params(conn).query_params[Atom.to_string(field)] == value
+      conn |> Plug.Conn.put_status(404) |> Req.Test.json(%{"error" => "not_found"})
+    end)
+  end
+
+  defp expect_classic_unavailable(field, value) do
+    Req.Test.stub(PidroServer.Accounts.ClassicClient, fn conn ->
+      assert Plug.Conn.fetch_query_params(conn).query_params[Atom.to_string(field)] == value
+      conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "unavailable"})
+    end)
+  end
+
+  defp classic_profile(id, username) do
+    %{
+      "id" => id,
+      "username" => username,
+      "member_since" => "2011-01-02T00:00:00Z",
+      "level" => 42,
+      "games" => %{"legacy_played_games" => 700, "total_game" => 0}
+    }
   end
 
   describe "token revocation" do
@@ -251,6 +526,15 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     conn
     |> put_req_header("authorization", "Bearer #{token}")
     |> get(~p"/api/v1/auth/me")
+  end
+
+  defp assert_token_user(conn, token, user_id) do
+    assert %{"user" => %{"id" => ^user_id}} =
+             conn
+             |> recycle()
+             |> me(token)
+             |> json_response(200)
+             |> Map.fetch!("data")
   end
 
   defp data(conn, status), do: json_response(conn, status)["data"]

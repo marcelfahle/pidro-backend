@@ -122,6 +122,21 @@ defmodule PidroServer.Accounts.User do
     |> unique_constraint(:username)
   end
 
+  @doc "Builds an account for a verified provider identity."
+  def provider_registration_changeset(user, attrs, :apple, provider_id) do
+    user
+    |> social_registration_changeset(attrs)
+    |> put_change(:apple_sub, provider_id)
+    |> unique_constraint(:apple_sub)
+  end
+
+  def provider_registration_changeset(user, attrs, :facebook, provider_id) do
+    user
+    |> social_registration_changeset(attrs)
+    |> put_change(:facebook_id, provider_id)
+    |> unique_constraint(:facebook_id)
+  end
+
   @doc false
   def classic_claim_changeset(user, attrs) do
     user

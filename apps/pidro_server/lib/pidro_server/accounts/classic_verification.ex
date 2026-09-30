@@ -14,24 +14,39 @@ defmodule PidroServer.Accounts.ClassicVerification do
     with {:ok, binding} <- binding(current_user, params),
          {:ok, method} <- method(params),
          {:ok, profile, provider_id} <- verify_method(method, params, classic, providers),
-         {:ok, classic_user_id} <- classic_user_id(profile),
-         legacy = legacy_data(profile),
-         {:ok, preview} <- preview(legacy),
-         {:ok, ticket} <-
-           ClassicClaims.issue_ticket(
-             binding
-             |> Map.merge(%{
-               classic_user_id: classic_user_id,
-               method: method,
-               provider_id: provider_id,
-               legacy_data: legacy
-             })
-           ) do
-      {:ok, Map.put(ticket, :classic, preview)}
+         {:ok, result} <- issue_ticket(binding, method, profile, provider_id) do
+      {:ok, result}
+    else
+      {:error, :not_found} -> {:error, :invalid_credentials}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   def verify(_params, _current_user, _opts), do: {:error, :invalid_credentials}
+
+  @doc """
+  Looks up Classic from an already verified provider identity and issues an
+  install-bound claim ticket when found.
+
+  Unlike `verify/3`, a missing Classic account remains `:not_found` so provider
+  sign-in can safely create a new account. Binding is checked only after a
+  match, because a new provider user does not need an install-bound ticket.
+  """
+  def verify_provider(provider, provider_id, lookup_ids, params, opts \\ [])
+
+  def verify_provider(provider, provider_id, lookup_ids, params, opts)
+      when provider in [:apple, :facebook] and is_binary(provider_id) and
+             is_list(lookup_ids) and is_map(params) do
+    classic = Keyword.get(opts, :classic_client, ClassicClient)
+
+    with {:ok, profile} <- lookup_provider(classic, provider, lookup_ids),
+         {:ok, binding} <- binding(nil, params) do
+      issue_ticket(binding, provider, profile, provider_id)
+    end
+  end
+
+  def verify_provider(_provider, _provider_id, _lookup_ids, _params, _opts),
+    do: {:error, :invalid_credentials}
 
   defp binding(%{id: user_id}, _params), do: {:ok, %{user_id: user_id}}
 
@@ -71,7 +86,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
          {:ok, %{"sub" => subject, "email" => email} = claims} <- providers.apple(token),
          true <- claims["email_verified"] in [true, "true"] or {:error, :invalid_credentials},
          true <- (is_binary(email) and email != "") or {:error, :invalid_credentials},
-         {:ok, profile} <- lookup(classic, :email, email) do
+         {:ok, profile} <- classic.lookup(:email, email) do
       {:ok, profile, subject}
     else
       {:error, reason} -> {:error, reason}
@@ -91,23 +106,39 @@ defmodule PidroServer.Accounts.ClassicVerification do
     end
   end
 
-  defp lookup(classic, field, value) do
-    case classic.lookup(field, value) do
-      {:error, :not_found} -> {:error, :invalid_credentials}
-      result -> result
-    end
-  end
+  defp lookup_provider(_classic, _provider, []), do: {:error, :not_found}
+  defp lookup_provider(classic, :apple, [email]), do: classic.lookup(:email, email)
+  defp lookup_provider(classic, :facebook, ids), do: lookup_facebook(classic, ids)
+  defp lookup_provider(_classic, _provider, _lookup_ids), do: {:error, :invalid_credentials}
 
   defp lookup_facebook(classic, ids) do
     ids
     |> Enum.uniq()
-    |> Enum.reduce_while({:error, :invalid_credentials}, fn id, _not_found ->
+    |> Enum.reduce_while({:error, :not_found}, fn id, _not_found ->
       case classic.lookup(:fbid, id) do
         {:ok, profile} -> {:halt, {:ok, profile}}
-        {:error, :not_found} -> {:cont, {:error, :invalid_credentials}}
+        {:error, :not_found} -> {:cont, {:error, :not_found}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp issue_ticket(binding, method, profile, provider_id) do
+    with {:ok, classic_user_id} <- classic_user_id(profile),
+         legacy = legacy_data(profile),
+         {:ok, preview} <- preview(legacy),
+         {:ok, ticket} <-
+           ClassicClaims.issue_ticket(
+             binding
+             |> Map.merge(%{
+               classic_user_id: classic_user_id,
+               method: method,
+               provider_id: provider_id,
+               legacy_data: legacy
+             })
+           ) do
+      {:ok, Map.put(ticket, :classic, preview)}
+    end
   end
 
   defp classic_user_id(profile) do
