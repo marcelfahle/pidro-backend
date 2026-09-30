@@ -51,6 +51,18 @@ defmodule PidroServer.Accounts.GuestNamesTest do
     assert {:ok, "Lucky Moose 4"} = GuestNames.generate(fn -> {"Lucky", "Moose"} end)
   end
 
+  test "draws new word pairs once every numbered name is taken" do
+    reservations =
+      ["Lucky Moose" | Enum.map(2..9, &"Lucky Moose #{&1}")]
+      |> Enum.with_index(200)
+      |> Enum.map(fn {username, id} -> %{id: id, username: username} end)
+
+    assert {:ok, _} = ClassicNameReservations.import(reservations)
+
+    pairs = List.duplicate({"Lucky", "Moose"}, 5) ++ [{"Sunny", "Pike"}]
+    assert {:ok, "Sunny Pike"} = GuestNames.generate(scripted_pairs(pairs))
+  end
+
   defp scripted_pairs(pairs) do
     {:ok, agent} = Agent.start_link(fn -> pairs end)
 

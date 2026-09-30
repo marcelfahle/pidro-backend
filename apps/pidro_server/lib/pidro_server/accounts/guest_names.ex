@@ -13,6 +13,7 @@ defmodule PidroServer.Accounts.GuestNames do
   alias PidroServer.Repo
 
   @random_attempts 5
+  @max_rounds 10
 
   @adjectives ~w(
     Agile Airy Alert Alpine Amber Arctic Awake Azure Balmy Beaming Breezy Bright
@@ -54,7 +55,11 @@ defmodule PidroServer.Accounts.GuestNames do
   end
 
   @doc false
-  def generate(draw_pair) when is_function(draw_pair, 0) do
+  def generate(draw_pair) when is_function(draw_pair, 0), do: generate(draw_pair, @max_rounds)
+
+  defp generate(_draw_pair, 0), do: raise("no free guest name after #{@max_rounds} rounds")
+
+  defp generate(draw_pair, rounds_left) do
     pairs =
       Stream.repeatedly(draw_pair)
       |> Stream.reject(fn {adjective, noun} -> adjective == noun end)
@@ -65,8 +70,10 @@ defmodule PidroServer.Accounts.GuestNames do
     candidates = names ++ Enum.map(2..9, &"#{last_name} #{&1}")
     taken = taken_name_keys(pairs)
 
+    # Every candidate, numbered ones included, is checked; when all are taken
+    # we draw new word pairs rather than hand out an unchecked name.
     case Enum.find(candidates, &available?(&1, taken)) do
-      nil -> {:ok, "#{last_name} #{Enum.random(10..99)}"}
+      nil -> generate(draw_pair, rounds_left - 1)
       name -> {:ok, name}
     end
   end
@@ -80,7 +87,10 @@ defmodule PidroServer.Accounts.GuestNames do
   end
 
   # Only players whose public name contains a candidate noun can collide, so
-  # the database narrows the rows before `User.name_key/1` compares them.
+  # the database narrows the rows before `User.name_key/1` compares them. A
+  # live name that spells the noun with an accent ("Lucky Móose") slips past
+  # this filter; two near-identical random guest names are harmless, loading
+  # every user on each guest creation is not.
   defp taken_name_keys(pairs) do
     matches_a_noun =
       pairs
