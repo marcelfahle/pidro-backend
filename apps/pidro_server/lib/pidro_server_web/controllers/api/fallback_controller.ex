@@ -559,6 +559,20 @@ defmodule PidroServerWeb.API.FallbackController do
     )
   end
 
+  def call(conn, {:error, :age_already_set}) do
+    conflict(conn, "AGE_ALREADY_SET", "Age already set", "The account's age band is already set")
+  end
+
+  def call(conn, {:error, :age_not_eligible}) do
+    error(
+      conn,
+      :forbidden,
+      "AGE_NOT_ELIGIBLE",
+      "Age not eligible",
+      "You must be at least 13 years old to use Pidro"
+    )
+  end
+
   def call(conn, {:error, :table_started}) do
     gone(conn, "TABLE_STARTED", "Table started", "The game at this table has already started")
   end

@@ -54,6 +54,68 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   end
 
   describe "register" do
+    test "stores a valid top-level declaration and defaults omitted fields", %{conn: conn} do
+      declared =
+        conn
+        |> post(~p"/api/v1/auth/register", %{
+          "age_band" => "18_plus",
+          "terms_version" => "1",
+          "user" => %{
+            "username" => "declared_register",
+            "email" => "declared-register@example.com",
+            "password" => "password123"
+          }
+        })
+        |> json_response(201)
+        |> get_in(["data", "user"])
+
+      assert declared["age_band"] == "18_plus"
+      assert declared["terms_version"] == "1"
+      assert_age_terms(Auth.get_user_by_username("declared_register"), "18_plus", "1")
+
+      omitted =
+        build_conn()
+        |> post(~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "unknown_register",
+            "email" => "unknown-register@example.com",
+            "password" => "password123"
+          }
+        })
+        |> json_response(201)
+        |> get_in(["data", "user"])
+
+      assert omitted["age_band"] == "unknown"
+      assert omitted["terms_version"] == nil
+    end
+
+    test "refuses under-13 and invalid declarations before creating a user" do
+      for {suffix, declaration, status, code} <- [
+            {"under", %{"age_band" => "under_13"}, 403, "AGE_NOT_ELIGIBLE"},
+            {"invalid", %{"age_band" => "adult"}, 422, "age_band"}
+          ] do
+        username = "register_#{suffix}"
+
+        response =
+          build_conn()
+          |> post(
+            ~p"/api/v1/auth/register",
+            %{
+              "user" => %{
+                "username" => username,
+                "email" => "#{suffix}@example.com",
+                "password" => "password123"
+              }
+            }
+            |> Map.merge(declaration)
+          )
+          |> json_response(status)
+
+        assert Enum.any?(response["errors"], &(&1["code"] == code))
+        refute Auth.get_user_by_username(username)
+      end
+    end
+
     test "ignores guest in the request body", %{conn: conn} do
       conn =
         post(conn, ~p"/api/v1/auth/register", %{
@@ -155,6 +217,62 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   end
 
   describe "login" do
+    test "fills an unknown declaration and never overwrites a stored band", %{conn: conn} do
+      user = AccountsFixtures.user_fixture(%{username: "age_login"})
+
+      first =
+        conn
+        |> post(~p"/api/v1/auth/login", %{
+          "username" => user.username,
+          "password" => AccountsFixtures.valid_user_password(),
+          "age_band" => "13_17",
+          "terms_version" => "1"
+        })
+        |> json_response(200)
+
+      assert get_in(first, ["data", "user", "age_band"]) == "13_17"
+      stored = assert_age_terms(Repo.get!(User, user.id), "13_17", "1")
+
+      second =
+        build_conn()
+        |> post(~p"/api/v1/auth/login", %{
+          "username" => user.username,
+          "password" => AccountsFixtures.valid_user_password(),
+          "age_band" => "18_plus",
+          "terms_version" => "2"
+        })
+        |> json_response(200)
+
+      assert get_in(second, ["data", "user", "age_band"]) == "13_17"
+      assert Repo.get!(User, user.id).age_declared_at == stored.age_declared_at
+      assert Repo.get!(User, user.id).terms_version == "1"
+    end
+
+    test "under-13 and invalid declarations do not change the account" do
+      user = AccountsFixtures.user_fixture(%{username: "unchanged_login"})
+
+      for {declaration, status} <- [
+            {%{"age_band" => "under_13"}, 403},
+            {%{"terms_version" => ""}, 422}
+          ] do
+        build_conn()
+        |> post(
+          ~p"/api/v1/auth/login",
+          Map.merge(
+            %{
+              "username" => user.username,
+              "password" => AccountsFixtures.valid_user_password()
+            },
+            declaration
+          )
+        )
+        |> json_response(status)
+
+        assert Repo.get!(User, user.id).age_band == "unknown"
+        assert Repo.get!(User, user.id).terms_version == nil
+      end
+    end
+
     test "returns invalid credentials for a guest without a password", %{conn: conn} do
       {:ok, guest} =
         %User{}
@@ -204,6 +322,75 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert user_id == user.id
       assert is_binary(token)
       assert_token_user(conn, token, user_id)
+    end
+
+    test "linked provider sign-in fills an unknown band but never overwrites it", %{conn: conn} do
+      user = provider_user!(:apple_sub, "apple-linked-sub")
+
+      first =
+        conn
+        |> post(~p"/api/v1/auth/apple", %{
+          identity_token: "apple-linked",
+          age_band: "13_17",
+          terms_version: "1"
+        })
+        |> json_response(200)
+
+      assert get_in(first, ["data", "user", "age_band"]) == "13_17"
+      assert_age_terms(Repo.get!(User, user.id), "13_17", "1")
+
+      second =
+        build_conn()
+        |> post(~p"/api/v1/auth/apple", %{
+          identity_token: "apple-linked",
+          age_band: "18_plus",
+          terms_version: "2"
+        })
+        |> json_response(200)
+
+      assert get_in(second, ["data", "user", "age_band"]) == "13_17"
+      assert Repo.get!(User, user.id).terms_version == "1"
+    end
+
+    test "Facebook stores a declaration on a newly created provider account", %{conn: conn} do
+      expect_classic_not_found(:fbid, "facebook-new-id")
+      expect_classic_not_found(:fbid, "facebook-new-old-id")
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/facebook", %{
+          access_token: "facebook-new",
+          age_band: "18_plus",
+          terms_version: "1"
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data["user"]["age_band"] == "18_plus"
+      assert_age_terms(Repo.get!(User, data["user"]["id"]), "18_plus", "1")
+    end
+
+    test "provider declarations are refused or validated before creating an account", %{
+      conn: conn
+    } do
+      assert %{"errors" => [%{"code" => "AGE_NOT_ELIGIBLE"}]} =
+               conn
+               |> post(~p"/api/v1/auth/apple", %{
+                 identity_token: "apple-new",
+                 age_band: "under_13"
+               })
+               |> json_response(403)
+
+      assert %{"errors" => [%{"code" => "terms_version"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/facebook", %{
+                 access_token: "facebook-new",
+                 terms_version: String.duplicate("x", 33)
+               })
+               |> json_response(422)
+
+      refute Repo.get_by(User, apple_sub: "apple-new-sub")
+      refute Repo.get_by(User, facebook_id: "facebook-new-id")
     end
 
     test "Facebook returns a linked account without fetching business IDs or Classic", %{
@@ -433,8 +620,83 @@ defmodule PidroServerWeb.API.AuthControllerTest do
         |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
         |> get(~p"/api/v1/auth/me")
 
-      assert %{"user" => %{"id" => id, "display_name" => nil}} = json_response(conn, 200)["data"]
+      assert %{
+               "user" => %{
+                 "id" => id,
+                 "display_name" => nil,
+                 "age_band" => "unknown",
+                 "terms_version" => nil
+               }
+             } = json_response(conn, 200)["data"]
+
       assert id == user.id
+    end
+  end
+
+  describe "age" do
+    test "stores the declaration once and returns the me shape", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      response =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+        |> post(~p"/api/v1/auth/age", %{age_band: "18_plus", terms_version: "1"})
+        |> json_response(200)
+
+      assert response["data"]["user"]["id"] == user.id
+      assert response["data"]["user"]["age_band"] == "18_plus"
+      assert response["data"]["user"]["terms_version"] == "1"
+      assert_age_terms(Repo.get!(User, user.id), "18_plus", "1")
+    end
+
+    test "returns 409 after the age band is set", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+      token = Token.generate(user)
+
+      assert conn
+             |> put_req_header("authorization", "Bearer #{token}")
+             |> post(~p"/api/v1/auth/age", %{age_band: "13_17"})
+             |> json_response(200)
+
+      assert %{"errors" => [%{"code" => "AGE_ALREADY_SET"}]} =
+               build_conn()
+               |> put_req_header("authorization", "Bearer #{token}")
+               |> post(~p"/api/v1/auth/age", %{age_band: "18_plus"})
+               |> json_response(409)
+
+      assert Repo.get!(User, user.id).age_band == "13_17"
+    end
+
+    test "returns 403 without changing the row for under-13", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      assert %{"errors" => [%{"code" => "AGE_NOT_ELIGIBLE"}]} =
+               conn
+               |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+               |> post(~p"/api/v1/auth/age", %{age_band: "under_13", terms_version: "1"})
+               |> json_response(403)
+
+      assert Repo.get!(User, user.id).age_band == "unknown"
+      assert Repo.get!(User, user.id).terms_version == nil
+    end
+
+    test "returns 422 for missing and invalid fields" do
+      user = AccountsFixtures.user_fixture()
+      token = Token.generate(user)
+
+      for body <- [%{}, %{age_band: "adult"}, %{age_band: "18_plus", terms_version: ""}] do
+        assert %{"errors" => [_ | _]} =
+                 build_conn()
+                 |> put_req_header("authorization", "Bearer #{token}")
+                 |> post(~p"/api/v1/auth/age", body)
+                 |> json_response(422)
+      end
+
+      assert Repo.get!(User, user.id).age_band == "unknown"
+    end
+
+    test "requires authentication", %{conn: conn} do
+      assert json_response(post(conn, ~p"/api/v1/auth/age", %{age_band: "18_plus"}), 401)
     end
   end
 
@@ -694,6 +956,56 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert second["user"]["id"] == first["user"]["id"]
       assert json_response(me(build_conn(), second["token"]), 200)
       assert Repo.aggregate(from(u in User, where: u.install_id == "device-retry"), :count) == 1
+    end
+
+    test "stores a declaration and an idempotent retry cannot overwrite it", %{conn: conn} do
+      creation_token = Ecto.UUID.generate()
+
+      first =
+        conn
+        |> post(~p"/api/v1/auth/guest", %{
+          "display_name" => "Anna",
+          "creation_token" => creation_token,
+          "age_band" => "13_17",
+          "terms_version" => "1"
+        })
+        |> data(201)
+
+      second =
+        build_conn()
+        |> post(~p"/api/v1/auth/guest", %{
+          "display_name" => "Anna",
+          "creation_token" => creation_token,
+          "age_band" => "18_plus",
+          "terms_version" => "2"
+        })
+        |> data(201)
+
+      assert second["user"]["id"] == first["user"]["id"]
+      assert second["user"]["age_band"] == "13_17"
+      assert_age_terms(Repo.get!(User, first["user"]["id"]), "13_17", "1")
+    end
+
+    test "refuses or validates declarations before creating a guest", %{conn: conn} do
+      count = Repo.aggregate(User, :count)
+
+      assert %{"errors" => [%{"code" => "AGE_NOT_ELIGIBLE"}]} =
+               conn
+               |> post(~p"/api/v1/auth/guest", %{
+                 "creation_token" => Ecto.UUID.generate(),
+                 "age_band" => "under_13"
+               })
+               |> json_response(403)
+
+      assert %{"errors" => [%{"code" => "age_band"}]} =
+               build_conn()
+               |> post(~p"/api/v1/auth/guest", %{
+                 "creation_token" => Ecto.UUID.generate(),
+                 "age_band" => "adult"
+               })
+               |> json_response(422)
+
+      assert Repo.aggregate(User, :count) == count
     end
 
     test "a creation token cannot recover an account after it is upgraded", %{conn: conn} do
@@ -1038,6 +1350,49 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                |> json_response(409)
     end
 
+    test "stores a valid declaration during upgrade", %{conn: conn} do
+      guest = AccountsFixtures.guest_fixture()
+
+      response =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(guest)}")
+        |> post(~p"/api/v1/auth/upgrade", %{
+          "email" => "declared-upgrade@example.com",
+          "password" => "long-enough",
+          "age_band" => "18_plus",
+          "terms_version" => "1"
+        })
+        |> json_response(200)
+
+      assert get_in(response, ["data", "user", "age_band"]) == "18_plus"
+      refute Repo.get!(User, guest.id).guest
+      assert_age_terms(Repo.get!(User, guest.id), "18_plus", "1")
+    end
+
+    test "refuses or validates declarations before changing a guest" do
+      for {declaration, status} <- [
+            {%{"age_band" => "under_13"}, 403},
+            {%{"terms_version" => ""}, 422}
+          ] do
+        guest = AccountsFixtures.guest_fixture()
+
+        body =
+          Map.merge(
+            %{"email" => "#{guest.id}@example.com", "password" => "long-enough"},
+            declaration
+          )
+
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{Token.generate(guest)}")
+        |> post(~p"/api/v1/auth/upgrade", body)
+        |> json_response(status)
+
+        persisted = Repo.get!(User, guest.id)
+        assert persisted.guest
+        assert persisted.age_band == "unknown"
+      end
+    end
+
     test "a taken email is 409 EMAIL_TAKEN and a taken username 409 USERNAME_TAKEN", %{
       conn: conn
     } do
@@ -1303,5 +1658,13 @@ defmodule PidroServerWeb.API.AuthControllerTest do
              |> post(~p"/api/v1/auth/register", params)
              |> json_response(429)
     end
+  end
+
+  defp assert_age_terms(user, age_band, terms_version) do
+    assert user.age_band == age_band
+    assert user.terms_version == terms_version
+    assert %DateTime{} = user.age_declared_at
+    assert %DateTime{} = user.terms_accepted_at
+    user
   end
 end

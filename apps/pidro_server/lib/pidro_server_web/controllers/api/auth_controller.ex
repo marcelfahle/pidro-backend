@@ -33,7 +33,7 @@ defmodule PidroServerWeb.API.AuthController do
   import Swoosh.Email
   require Logger
 
-  alias PidroServer.Accounts.{Auth, ProviderAuth, Token, User}
+  alias PidroServer.Accounts.{AgeTerms, Auth, ProviderAuth, Token, User}
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -67,6 +67,7 @@ defmodule PidroServerWeb.API.AuthController do
     responses: [
       created:
         {"User created successfully", "application/json", UserSchemas.UserWithTokenResponse},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       unprocessable_entity:
         {"Validation errors", "application/json", ErrorSchemas.validation_error()},
       too_many_requests:
@@ -127,8 +128,10 @@ defmodule PidroServerWeb.API.AuthController do
       }
   """
   @spec register(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def register(conn, %{"user" => user_params}) do
-    with {:ok, user} <- Auth.register_user(user_params) do
+  def register(conn, %{"user" => user_params} = params) do
+    with {:ok, declaration} <- AgeTerms.parse(params),
+         {:ok, user} <- Auth.register_user(user_params),
+         {:ok, user} <- AgeTerms.store(user, declaration) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 
@@ -159,6 +162,7 @@ defmodule PidroServerWeb.API.AuthController do
       ok: {"Authentication successful", "application/json", UserSchemas.UserWithTokenResponse},
       unauthorized:
         {"Invalid credentials", "application/json", ErrorSchemas.unauthorized_error()},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       too_many_requests:
         {"Rate limit exceeded; see Retry-After", "application/json",
          ErrorSchemas.too_many_requests_error()}
@@ -215,8 +219,10 @@ defmodule PidroServerWeb.API.AuthController do
       }
   """
   @spec login(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def login(conn, %{"username" => username, "password" => password}) do
-    with {:ok, user} <- Auth.authenticate_user(username, password) do
+  def login(conn, %{"username" => username, "password" => password} = params) do
+    with {:ok, declaration} <- AgeTerms.parse(params),
+         {:ok, user} <- Auth.authenticate_user(username, password),
+         {:ok, user} <- AgeTerms.store(user, declaration) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 
@@ -236,6 +242,7 @@ defmodule PidroServerWeb.API.AuthController do
         {"Authentication successful or Classic account found", "application/json",
          ClassicClaimSchemas.ProviderSignInResponse},
       unauthorized: {"Invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       unprocessable_entity:
         {"Missing Classic binding or invalid generated account data", "application/json",
          ErrorSchemas.validation_error()},
@@ -261,6 +268,7 @@ defmodule PidroServerWeb.API.AuthController do
         {"Authentication successful or Classic account found", "application/json",
          ClassicClaimSchemas.ProviderSignInResponse},
       unauthorized: {"Invalid identity", "application/json", ErrorSchemas.unauthorized_error()},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       unprocessable_entity:
         {"Missing Classic binding or invalid generated account data", "application/json",
          ErrorSchemas.validation_error()},
@@ -276,14 +284,22 @@ defmodule PidroServerWeb.API.AuthController do
   def facebook(_conn, _params), do: {:error, :invalid_credentials}
 
   defp provider_login(conn, provider, provider_token, params) do
+    with {:ok, declaration} <- AgeTerms.parse(params) do
+      provider_login(conn, provider, provider_token, params, declaration)
+    end
+  end
+
+  defp provider_login(conn, provider, provider_token, params, declaration) do
     case ProviderAuth.authenticate(provider, provider_token, params) do
       {:ok, user} ->
-        token = Token.generate(user)
-        Auth.touch_last_seen(user)
+        with {:ok, user} <- AgeTerms.store(user, declaration) do
+          token = Token.generate(user)
+          Auth.touch_last_seen(user)
 
-        conn
-        |> put_view(UserJSON)
-        |> render(:show, %{user: user, token: token})
+          conn
+          |> put_view(UserJSON)
+          |> render(:show, %{user: user, token: token})
+        end
 
       {:classic_found, result} ->
         json(conn, %{data: Map.put(result, :classic_found, true)})
@@ -319,6 +335,7 @@ defmodule PidroServerWeb.API.AuthController do
     request_body: {"Guest creation data", "application/json", UserSchemas.GuestRequest},
     responses: [
       created: {"Guest created", "application/json", UserSchemas.GuestResponse},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       not_found: {"Unknown invite code", "application/json", ErrorSchemas.not_found_error()},
       conflict:
         {"Creation token belongs to an upgraded account", "application/json",
@@ -338,7 +355,8 @@ defmodule PidroServerWeb.API.AuthController do
   """
   @spec guest(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def guest(conn, params) do
-    with {:ok, platform} <- parse_platform(params["platform"]),
+    with {:ok, declaration} <- AgeTerms.parse(params),
+         {:ok, platform} <- parse_platform(params["platform"]),
          {:ok, invite} <- guest_invite(params),
          {:ok, creation_token} <- creation_token(params, invite),
          {:ok, state} <- guest_state(invite),
@@ -346,7 +364,8 @@ defmodule PidroServerWeb.API.AuthController do
            Auth.create_guest_user_once(
              guest_attrs(params, creation_token),
              taken_name_keys(invite)
-           ) do
+           ),
+         {:ok, user} <- AgeTerms.store(user, declaration) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 
@@ -377,6 +396,7 @@ defmodule PidroServerWeb.API.AuthController do
     responses: [
       ok: {"Upgraded", "application/json", UserSchemas.UserWithTokenResponse},
       unauthorized: {"Unauthorized", "application/json", ErrorSchemas.unauthorized_error()},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       conflict:
         {"Not a guest, or email or username taken", "application/json",
          ErrorSchemas.conflict_error()},
@@ -396,7 +416,9 @@ defmodule PidroServerWeb.API.AuthController do
   def upgrade(conn, params) do
     user = conn.assigns[:current_user]
 
-    with {:ok, upgraded} <- Auth.upgrade_guest(user, upgrade_attrs(params)) do
+    with {:ok, declaration} <- AgeTerms.parse(params),
+         {:ok, upgraded} <- Auth.upgrade_guest(user, upgrade_attrs(params)),
+         {:ok, upgraded} <- AgeTerms.store(upgraded, declaration) do
       record_upgrade(upgraded)
       Auth.touch_last_seen(upgraded)
       token = Token.generate(upgraded)
@@ -619,6 +641,35 @@ defmodule PidroServerWeb.API.AuthController do
     conn
     |> put_view(UserJSON)
     |> render(:show, %{user: user})
+  end
+
+  operation(:age,
+    summary: "Declare the calling user's age band and accepted terms",
+    description:
+      "Records the declaration once for an account whose age band is still unknown. The age band cannot be changed after it is stored.",
+    security: [%{"bearer_auth" => []}],
+    request_body: {"Age and terms declaration", "application/json", UserSchemas.AgeRequest},
+    responses: [
+      ok: {"Declaration stored", "application/json", UserSchemas.UserResponse},
+      unauthorized: {"Unauthorized", "application/json", ErrorSchemas.unauthorized_error()},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
+      conflict: {"Age already set", "application/json", ErrorSchemas.conflict_error()},
+      unprocessable_entity:
+        {"Validation errors", "application/json", ErrorSchemas.validation_error()},
+      too_many_requests:
+        {"Rate limit exceeded; see Retry-After", "application/json",
+         ErrorSchemas.too_many_requests_error()}
+    ]
+  )
+
+  @spec age(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def age(conn, params) do
+    with {:ok, declaration} <- AgeTerms.parse(params, required: true),
+         {:ok, user} <- AgeTerms.declare(conn.assigns.current_user, declaration) do
+      conn
+      |> put_view(UserJSON)
+      |> render(:show, %{user: user})
+    end
   end
 
   # ==================== Guest and upgrade helpers ====================

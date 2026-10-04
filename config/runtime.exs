@@ -102,6 +102,8 @@ rate_limit_overrides =
     {:room_join, :scale_ms, "RATE_LIMIT_ROOM_JOIN_SCALE_MS"},
     {:auth_upgrade, :limit, "RATE_LIMIT_AUTH_UPGRADE_LIMIT"},
     {:auth_upgrade, :scale_ms, "RATE_LIMIT_AUTH_UPGRADE_SCALE_MS"},
+    {:auth_age, :limit, "RATE_LIMIT_AUTH_AGE_LIMIT"},
+    {:auth_age, :scale_ms, "RATE_LIMIT_AUTH_AGE_SCALE_MS"},
     {:provider_auth, :limit, "RATE_LIMIT_PROVIDER_AUTH_LIMIT"},
     {:provider_auth, :scale_ms, "RATE_LIMIT_PROVIDER_AUTH_SCALE_MS"},
     {:classic_claim, :limit, "RATE_LIMIT_CLASSIC_CLAIM_LIMIT"},

@@ -4,7 +4,7 @@ defmodule PidroServerWeb.API.ClassicClaimController do
   use PidroServerWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias PidroServer.Accounts.{Auth, ClassicClaims, ClassicVerification, Token}
+  alias PidroServer.Accounts.{AgeTerms, Auth, ClassicClaims, ClassicVerification, Token}
   alias PidroServerWeb.API.UserJSON
   alias PidroServerWeb.Schemas.{ClassicClaimSchemas, ErrorSchemas, UserSchemas}
 
@@ -37,6 +37,7 @@ defmodule PidroServerWeb.API.ClassicClaimController do
       ok: {"Claim completed", "application/json", UserSchemas.UserWithTokenResponse},
       unauthorized:
         {"Invalid Bearer token", "application/json", ErrorSchemas.unauthorized_error()},
+      forbidden: {"Age is not eligible", "application/json", ErrorSchemas.error_response()},
       conflict:
         {"Classic account or provider already linked", "application/json",
          ErrorSchemas.conflict_error()},
@@ -53,7 +54,9 @@ defmodule PidroServerWeb.API.ClassicClaimController do
   end
 
   def create(conn, %{"ticket" => ticket} = params) do
-    with {:ok, user} <- ClassicClaims.redeem(ticket, conn.assigns[:current_user], params) do
+    with {:ok, declaration} <- AgeTerms.parse(params),
+         {:ok, user} <- ClassicClaims.redeem(ticket, conn.assigns[:current_user], params),
+         {:ok, user} <- AgeTerms.store(user, declaration) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 

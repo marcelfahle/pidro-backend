@@ -103,6 +103,8 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       type: :object,
       title: "Classic claim request",
       properties: %{
+        age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
+        terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         ticket: %Schema{
           type: :string,
           description: "Opaque ticket returned by Classic verification"
@@ -136,6 +138,8 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       type: :object,
       title: "Apple sign-in request",
       properties: %{
+        age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
+        terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         identity_token: %Schema{type: :string},
         install_id: %Schema{
           type: :string,
@@ -153,6 +157,8 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       type: :object,
       title: "Facebook sign-in request",
       properties: %{
+        age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
+        terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         access_token: %Schema{type: :string},
         install_id: %Schema{
           type: :string,

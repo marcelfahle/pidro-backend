@@ -23,6 +23,7 @@ defmodule PidroServerWeb.ApiSpecTest do
     {"/api/v1/classic/claim", ["post"]},
     {"/api/v1/classic/verify", ["post"]},
     {"/api/v1/auth/upgrade", ["post"]},
+    {"/api/v1/auth/age", ["post"]},
     {"/api/v1/auth/me", ["get", "delete"]}
   ]
 
@@ -55,7 +56,7 @@ defmodule PidroServerWeb.ApiSpecTest do
     for policy <-
           ~w(invite_mint invite_preview invite_capture invite_capture_code invite_deferred
              invite_deferred_install invite_redeem guest_create guest_create_daily
-             guest_create_install room_join auth_upgrade provider_auth classic_claim) do
+             guest_create_install room_join auth_upgrade auth_age provider_auth classic_claim) do
       assert description =~ "`#{policy}`"
     end
   end
@@ -85,6 +86,21 @@ defmodule PidroServerWeb.ApiSpecTest do
              UserSchemas.User.schema()
 
     assert registered_email.nullable == true
+  end
+
+  test "age and terms fields are documented only on the caller's user schema" do
+    user = UserSchemas.User.schema()
+    assert user.properties.age_band == UserSchemas.StoredAgeBand
+    assert user.properties.terms_version.nullable == true
+
+    age = UserSchemas.AgeRequest.schema()
+    assert :age_band in age.required
+    assert age.properties.age_band == UserSchemas.SubmittedAgeBand
+    assert age.properties.terms_version == UserSchemas.TermsVersion
+
+    room_seat = PidroServerWeb.Schemas.RoomSchemas.Seat.schema()
+    refute Map.has_key?(room_seat.properties, :age_band)
+    refute Map.has_key?(room_seat.properties, :terms_version)
   end
 
   test "provider sign-in documents its unavailable response" do
