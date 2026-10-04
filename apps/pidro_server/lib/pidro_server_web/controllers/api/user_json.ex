@@ -70,6 +70,8 @@ defmodule PidroServerWeb.API.UserJSON do
       display_name: user.display_name,
       avatar_url: avatar_url(user),
       guest: user.guest,
+      age_band: user.age_band,
+      terms_version: user.terms_version,
       inserted_at: DateTime.to_iso8601(user.inserted_at),
       updated_at: DateTime.to_iso8601(user.updated_at)
     }

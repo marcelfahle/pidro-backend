@@ -79,6 +79,10 @@ defmodule PidroServer.Accounts.User do
     field(:classic_claimed_at, :utc_datetime_usec)
     field(:apple_sub, :string)
     field(:facebook_id, :string)
+    field(:age_band, :string, default: "unknown")
+    field(:age_declared_at, :utc_datetime_usec)
+    field(:terms_version, :string)
+    field(:terms_accepted_at, :utc_datetime_usec)
     field(:avatar_url, :string, virtual: true)
 
     timestamps(type: :utc_datetime_usec)

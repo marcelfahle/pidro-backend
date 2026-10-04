@@ -13,6 +13,36 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
   require OpenApiSpex
   alias OpenApiSpex.Schema
 
+  defmodule SubmittedAgeBand do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :string,
+      title: "Submitted age band",
+      enum: ["under_13", "13_17", "18_plus"],
+      description: "Self-declared age range; under_13 is refused with AGE_NOT_ELIGIBLE"
+    })
+  end
+
+  defmodule StoredAgeBand do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :string,
+      title: "Stored age band",
+      enum: ["unknown", "13_17", "18_plus"]
+    })
+  end
+
+  defmodule TermsVersion do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :string,
+      title: "Terms version",
+      minLength: 1,
+      maxLength: 32,
+      example: "1"
+    })
+  end
+
   # ============================================================================
   # User Object Schemas
   # ============================================================================
@@ -64,6 +94,13 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             "Whether this is a guest account (upgradable in place with email and password)",
           example: false
         },
+        age_band: StoredAgeBand,
+        terms_version: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 32,
+          description: "Accepted terms version, or null when none has been accepted"
+        },
         inserted_at: %Schema{
           type: :string,
           format: "date-time",
@@ -77,13 +114,15 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           example: "2024-11-02T15:45:30Z"
         }
       },
-      required: [:id, :username, :guest, :inserted_at, :updated_at],
+      required: [:id, :username, :guest, :age_band, :terms_version, :inserted_at, :updated_at],
       example: %{
         "id" => "550e8400-e29b-41d4-a716-446655440000",
         "username" => "john_doe",
         "email" => "john@example.com",
         "display_name" => nil,
         "guest" => false,
+        "age_band" => "unknown",
+        "terms_version" => nil,
         "inserted_at" => "2024-11-02T10:30:00Z",
         "updated_at" => "2024-11-02T10:30:00Z"
       }
@@ -194,6 +233,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Register Request",
       description: "Request body for user registration",
       properties: %{
+        age_band: SubmittedAgeBand,
+        terms_version: TermsVersion,
         user: %Schema{
           type: :object,
           description: "User registration data",
@@ -256,6 +297,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Guest Request",
       description: "Request body for direct or invited guest creation",
       properties: %{
+        age_band: SubmittedAgeBand,
+        terms_version: TermsVersion,
         display_name: %Schema{
           type: :string,
           nullable: true,
@@ -336,6 +379,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           description: "Always true for this response",
           example: true
         },
+        age_band: StoredAgeBand,
+        terms_version: %Schema{type: :string, nullable: true, maxLength: 32},
         inserted_at: %Schema{
           type: :string,
           format: "date-time",
@@ -349,13 +394,24 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           example: "2026-09-02T10:30:00Z"
         }
       },
-      required: [:id, :username, :email, :guest, :inserted_at, :updated_at],
+      required: [
+        :id,
+        :username,
+        :email,
+        :guest,
+        :age_band,
+        :terms_version,
+        :inserted_at,
+        :updated_at
+      ],
       example: %{
         "id" => "550e8400-e29b-41d4-a716-446655440000",
         "username" => "guest_7KQ4M2XB",
         "email" => nil,
         "display_name" => "Anna",
         "guest" => true,
+        "age_band" => "unknown",
+        "terms_version" => nil,
         "inserted_at" => "2026-09-02T10:30:00Z",
         "updated_at" => "2026-09-02T10:30:00Z"
       }
@@ -424,6 +480,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Upgrade Request",
       description: "Request body for upgrading the calling guest in place",
       properties: %{
+        age_band: SubmittedAgeBand,
+        terms_version: TermsVersion,
         email: %Schema{
           type: :string,
           format: :email,
@@ -467,6 +525,8 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Login Request",
       description: "Request body for user login/authentication",
       properties: %{
+        age_band: SubmittedAgeBand,
+        terms_version: TermsVersion,
         username: %Schema{
           type: :string,
           description:
@@ -486,6 +546,21 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
         "username" => "john_doe",
         "password" => "secure_password_123"
       }
+    })
+  end
+
+  defmodule AgeRequest do
+    @moduledoc false
+
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Age and terms declaration request",
+      properties: %{
+        age_band: SubmittedAgeBand,
+        terms_version: TermsVersion
+      },
+      required: [:age_band],
+      example: %{"age_band" => "18_plus", "terms_version" => "1"}
     })
   end
 

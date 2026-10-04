@@ -107,6 +107,34 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "create/2" do
+    test "room payloads never expose another player's age or terms fields", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+
+      host =
+        host
+        |> Ecto.Changeset.change(%{
+          age_band: "18_plus",
+          age_declared_at: DateTime.utc_now(),
+          terms_version: "1",
+          terms_accepted_at: DateTime.utc_now()
+        })
+        |> PidroServer.Repo.update!()
+
+      room =
+        conn
+        |> as_user(host)
+        |> post(~p"/api/v1/rooms", %{})
+        |> data(201)
+        |> Map.fetch!("room")
+
+      north = room["seats"]["north"]
+      assert north["username"] == host.username
+      refute Map.has_key?(north, "age_band")
+      refute Map.has_key?(north, "terms_version")
+      refute Jason.encode!(room) =~ "age_band"
+      refute Jason.encode!(room) =~ "terms_version"
+    end
+
     test "a guest can host an open friends table", %{conn: conn} do
       guest = AccountsFixtures.guest_fixture()
 

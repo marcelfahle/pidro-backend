@@ -96,6 +96,78 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
     assert Repo.get!(User, guest.id).classic_user_id == 70_001
   end
 
+  test "stores a declaration on a newly created Classic account", %{conn: conn} do
+    {:ok, %{ticket: ticket}} =
+      ClassicClaims.issue_ticket(%{
+        classic_user_id: 70_101,
+        method: :facebook,
+        provider_id: "age-facebook-id",
+        install_id: "age-install",
+        legacy_data: %{
+          classic_user_id: 70_101,
+          classic_username: "Age Veteran",
+          classic_name_allowed: true,
+          xp: 75
+        }
+      })
+
+    user =
+      conn
+      |> post(~p"/api/v1/classic/claim", %{
+        ticket: ticket,
+        install_id: "age-install",
+        account: %{username: "age_veteran"},
+        age_band: "18_plus",
+        terms_version: "1"
+      })
+      |> json_response(200)
+      |> get_in(["data", "user"])
+
+    assert user["age_band"] == "18_plus"
+    assert user["terms_version"] == "1"
+
+    persisted = Repo.get!(User, user["id"])
+    assert persisted.age_band == "18_plus"
+    assert persisted.terms_version == "1"
+    assert %DateTime{} = persisted.age_declared_at
+    assert %DateTime{} = persisted.terms_accepted_at
+  end
+
+  test "refuses or validates a declaration without redeeming the Classic ticket", %{conn: conn} do
+    {:ok, %{ticket: ticket}} =
+      ClassicClaims.issue_ticket(%{
+        classic_user_id: 70_102,
+        method: :facebook,
+        provider_id: "blocked-facebook-id",
+        install_id: "blocked-install",
+        legacy_data: %{
+          classic_user_id: 70_102,
+          classic_username: "Blocked Veteran",
+          classic_name_allowed: true,
+          xp: 75
+        }
+      })
+
+    base = %{
+      ticket: ticket,
+      install_id: "blocked-install",
+      account: %{username: "must_stay_missing"}
+    }
+
+    assert %{"errors" => [%{"code" => "AGE_NOT_ELIGIBLE"}]} =
+             conn
+             |> post(~p"/api/v1/classic/claim", Map.put(base, :age_band, "under_13"))
+             |> json_response(403)
+
+    assert %{"errors" => [%{"code" => "terms_version"}]} =
+             build_conn()
+             |> post(~p"/api/v1/classic/claim", Map.put(base, :terms_version, ""))
+             |> json_response(422)
+
+    refute Repo.get_by(User, username: "must_stay_missing")
+    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 70_102).redeemed_by_id == nil
+  end
+
   test "rejects a malformed Bearer header before touching an install-bound ticket", %{conn: conn} do
     {:ok, %{ticket: ticket}} =
       ClassicClaims.issue_ticket(%{
