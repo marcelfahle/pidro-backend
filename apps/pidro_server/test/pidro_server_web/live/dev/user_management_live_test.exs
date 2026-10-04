@@ -148,7 +148,7 @@ defmodule PidroServerWeb.Dev.UserManagementLiveTest do
   end
 
   test "list shows level and skill tier cells", %{conn: conn} do
-    user = AccountsFixtures.user_fixture(%{username: "list_progression_player"})
+    user = AccountsFixtures.user_fixture(%{username: "list_level_player"})
 
     {:ok, _profile} = Profiles.import_legacy_progression(user.id, %{xp: 5000})
 

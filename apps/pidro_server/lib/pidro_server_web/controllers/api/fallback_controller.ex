@@ -51,18 +51,21 @@ defmodule PidroServerWeb.API.FallbackController do
   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
     errors =
       Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-        Enum.reduce(opts, msg, fn {key, value}, acc ->
-          String.replace(acc, "%{#{key}}", to_string(value))
-        end)
+        detail =
+          Enum.reduce(opts, msg, fn {key, value}, acc ->
+            String.replace(acc, "%{#{key}}", to_string(value))
+          end)
+
+        {detail, opts[:code]}
       end)
 
     formatted_errors =
       Enum.map(errors, fn {field, messages} ->
-        Enum.map(messages, fn message ->
+        Enum.map(messages, fn {detail, code} ->
           %{
-            code: to_string(field),
+            code: to_string(code || field),
             title: humanize_field(field),
-            detail: message
+            detail: detail
           }
         end)
       end)

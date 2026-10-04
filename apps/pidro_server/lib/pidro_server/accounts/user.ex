@@ -23,9 +23,10 @@ defmodule PidroServer.Accounts.User do
   ## Display names
 
   One rule for every account (KD11, R11), applied by each changeset that
-  casts `display_name`: the value is NFKC-normalized and trimmed, must not
-  contain control or format characters (Unicode `Cc` and `Cf`, which covers
-  the zero-width joiner and bidi overrides), and is 2 to 20 graphemes long.
+  casts `display_name`: the value is NFKC-normalized, trimmed and has separator
+  whitespace collapsed, must not contain control or format characters (Unicode
+  `Cc` and `Cf`, which covers the zero-width joiner and bidi overrides), and is
+  2 to 20 graphemes long.
   `name_key/1` derives the look-alike key guest creation compares against.
 
   `token_version` defaults to 0 both in the schema and in the database so a
@@ -45,6 +46,7 @@ defmodule PidroServer.Accounts.User do
   @display_name_max_graphemes 20
   @install_id_max_length 64
   @username_min_length 3
+  @username_max_length 20
   @password_min_length 8
   @email_format ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
   @bio_edge_whitespace ~r/^[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}-\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+|[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}-\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+$/u
@@ -52,6 +54,7 @@ defmodule PidroServer.Accounts.User do
   # Unicode categories Cc (control) and Cf (format). The `u` modifier makes
   # the property classes match codepoints rather than bytes.
   @forbidden_name_chars ~r/[\p{Cc}\p{Cf}]/u
+  @name_separators ~r/[\p{Zs}]+/u
   @combining_marks ~r/\p{Mn}/u
   @non_alphanumerics ~r/[^\p{L}\p{N}]/u
 
@@ -114,16 +117,38 @@ defmodule PidroServer.Accounts.User do
     user
     |> cast(attrs, [:username, :display_name])
     |> validate_required(:username)
-    |> validate_length(:username, min: @username_min_length)
+    |> validate_username()
     |> validate_display_name()
     |> unique_constraint(:username)
+  end
+
+  @doc "Builds an account for a verified provider identity."
+  def provider_registration_changeset(user, attrs, :apple, provider_id) do
+    user
+    |> social_registration_changeset(attrs)
+    |> put_change(:apple_sub, provider_id)
+    |> unique_constraint(:apple_sub)
+  end
+
+  def provider_registration_changeset(user, attrs, :facebook, provider_id) do
+    user
+    |> social_registration_changeset(attrs)
+    |> put_change(:facebook_id, provider_id)
+    |> unique_constraint(:facebook_id)
   end
 
   @doc false
   def classic_claim_changeset(user, attrs) do
     user
-    |> cast(attrs, [:classic_user_id, :classic_claimed_at, :apple_sub, :facebook_id])
+    |> cast(attrs, [
+      :classic_user_id,
+      :classic_claimed_at,
+      :apple_sub,
+      :facebook_id,
+      :display_name
+    ])
     |> validate_required([:classic_user_id, :classic_claimed_at])
+    |> validate_display_name()
     |> unique_constraint(:classic_user_id)
     |> unique_constraint(:apple_sub)
     |> unique_constraint(:facebook_id)
@@ -151,7 +176,7 @@ defmodule PidroServer.Accounts.User do
     user
     |> cast(attrs, [:username, :email, :password, :display_name])
     |> validate_required([:username])
-    |> validate_length(:username, min: @username_min_length)
+    |> validate_username()
     |> validate_format(:email, @email_format, message: "must be a valid email address")
     |> validate_display_name()
     |> unique_constraint(:username)
@@ -253,7 +278,7 @@ defmodule PidroServer.Accounts.User do
     user
     |> cast(attrs, [:email, :password, :username])
     |> validate_required([:username, :email, :password])
-    |> validate_length(:username, min: @username_min_length)
+    |> validate_username()
     |> validate_format(:email, @email_format, message: "must be a valid email address")
     |> validate_length(:password, min: @password_min_length)
     |> put_password_hash()
@@ -338,10 +363,17 @@ defmodule PidroServer.Accounts.User do
     end
   end
 
-  # The one display-name rule (KTD6): NFKC normalize and trim, reject control
-  # and format characters, then bound the grapheme count. Applied by every
-  # changeset that casts display_name. A blank name normalizes to nil, which
-  # clears the field.
+  @doc false
+  def public_name_changeset(name) do
+    %__MODULE__{}
+    |> cast(%{display_name: name}, [:display_name])
+    |> validate_display_name()
+  end
+
+  # The one display-name rule (KTD6): NFKC normalize, trim and collapse Unicode
+  # separator spaces, reject control and format characters, then bound the
+  # grapheme count. Applied by every changeset that casts display_name. A blank
+  # name normalizes to nil, which clears the field.
   defp validate_display_name(changeset) do
     changeset
     |> update_change(:display_name, &normalize_display_name/1)
@@ -352,20 +384,26 @@ defmodule PidroServer.Accounts.User do
     )
   end
 
+  defp validate_username(changeset) do
+    changeset
+    |> validate_length(:username, min: @username_min_length, max: @username_max_length)
+    |> validate_change(:username, &forbid_control_and_format/2)
+  end
+
   defp normalize_display_name(nil), do: nil
 
   defp normalize_display_name(name) when is_binary(name) do
-    case name |> nfkc() |> String.trim() do
+    case name |> nfkc() |> String.trim() |> String.replace(@name_separators, " ") do
       "" -> nil
       trimmed -> trimmed
     end
   end
 
-  defp forbid_control_and_format(:display_name, name) do
+  defp forbid_control_and_format(field, name) do
     if String.valid?(name) and not Regex.match?(@forbidden_name_chars, name) do
       []
     else
-      [display_name: "must not contain control or format characters"]
+      [{field, "must not contain control or format characters"}]
     end
   end
 

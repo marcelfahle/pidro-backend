@@ -50,26 +50,28 @@ defmodule PidroServer.Accounts.ProviderIdentity do
 
     case facebook_get("/me/ids_for_business", params) do
       {:ok, %{"data" => identities} = body} when is_list(identities) ->
-        ids = ids ++ Enum.flat_map(identities, &identity_id/1)
+        with {:ok, page_ids} <- identity_ids(identities) do
+          ids = ids ++ page_ids
 
-        case next_cursor(body) do
-          nil ->
-            {:ok, ids}
+          case next_cursor(body) do
+            nil ->
+              {:ok, ids}
 
-          cursor when is_binary(cursor) ->
-            if Map.has_key?(seen_cursors, cursor) do
+            cursor when is_binary(cursor) ->
+              if Map.has_key?(seen_cursors, cursor) do
+                {:error, :provider_unavailable}
+              else
+                facebook_business_ids_page(
+                  access_token,
+                  cursor,
+                  Map.put(seen_cursors, cursor, true),
+                  ids
+                )
+              end
+
+            :missing ->
               {:error, :provider_unavailable}
-            else
-              facebook_business_ids_page(
-                access_token,
-                cursor,
-                Map.put(seen_cursors, cursor, true),
-                ids
-              )
-            end
-
-          :missing ->
-            {:error, :provider_unavailable}
+          end
         end
 
       {:ok, _invalid} ->
@@ -183,15 +185,36 @@ defmodule PidroServer.Accounts.ProviderIdentity do
 
   defp json_body(_body), do: {:error, :provider_unavailable}
 
-  defp identity_id(%{"id" => id}) when is_binary(id), do: [id]
-  defp identity_id(_identity), do: []
+  defp identity_ids(identities) do
+    Enum.reduce_while(identities, {:ok, []}, fn
+      %{"id" => id}, {:ok, ids} when is_binary(id) and id != "" ->
+        {:cont, {:ok, [id | ids]}}
 
-  defp next_cursor(%{"paging" => %{"next" => next} = paging}) when is_binary(next) do
-    case get_in(paging, ["cursors", "after"]) do
-      cursor when is_binary(cursor) and cursor != "" -> cursor
-      _missing -> :missing
+      _invalid, _ids ->
+        {:halt, {:error, :provider_unavailable}}
+    end)
+    |> case do
+      {:ok, ids} -> {:ok, Enum.reverse(ids)}
+      error -> error
     end
   end
 
+  defp next_cursor(%{"paging" => paging}) when is_map(paging) do
+    case Map.fetch(paging, "next") do
+      :error ->
+        nil
+
+      {:ok, next} when is_binary(next) and next != "" ->
+        case get_in(paging, ["cursors", "after"]) do
+          cursor when is_binary(cursor) and cursor != "" -> cursor
+          _missing -> :missing
+        end
+
+      {:ok, _malformed} ->
+        :missing
+    end
+  end
+
+  defp next_cursor(%{"paging" => _malformed}), do: :missing
   defp next_cursor(_body), do: nil
 end

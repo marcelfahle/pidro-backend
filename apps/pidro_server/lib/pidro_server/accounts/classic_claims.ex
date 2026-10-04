@@ -8,6 +8,8 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   import Ecto.Query
 
+  alias Ecto.Changeset
+  alias PidroServer.Accounts
   alias PidroServer.Accounts.{ClassicClaimTicket, ClassicNameReservations, User}
   alias PidroServer.Profiles
   alias PidroServer.Profiles.{LegacyProgression, PlayerProfile}
@@ -80,10 +82,14 @@ defmodule PidroServer.Accounts.ClassicClaims do
                :ok <- validate_ticket_snapshot(preview, ticket, locked_user),
                :ok <- validate_binding(ticket, current_user, params),
                :ok <- validate_expiry(ticket, now),
+               :ok <- precheck_claim_owner(ticket, locked_user),
+               {:ok, params} <- validate_account(params),
+               {:ok, display_name} <- claim_display_name(ticket, locked_user, params),
+               params = put_account_display_name(params, display_name),
                :ok <- lock_claim_names(current_user, params),
                :ok <- lock_classic(ticket.classic_user_id),
                {:ok, user, mode} <- target_user(ticket, current_user, params, locked_user),
-               {:ok, user} <- redeem_for_user(ticket, user, mode, now) do
+               {:ok, user} <- redeem_for_user(ticket, user, mode, now, display_name) do
             user
           else
             nil -> Repo.rollback(:invalid_claim_ticket)
@@ -137,8 +143,119 @@ defmodule PidroServer.Accounts.ClassicClaims do
       else: {:error, :claim_ticket_expired}
   end
 
-  defp lock_claim_names(%User{} = user, _params),
-    do: ClassicNameReservations.lock_claim_names(user)
+  defp precheck_claim_owner(%{redeemed_by_id: id}, _user) when is_binary(id), do: :ok
+
+  defp precheck_claim_owner(ticket, locked_user) do
+    case Repo.get_by(User, classic_user_id: ticket.classic_user_id) do
+      nil -> :ok
+      %User{id: id} when not is_nil(locked_user) and id == locked_user.id -> :ok
+      owner -> {:error, {:already_claimed, sign_in_method(owner, ticket.method)}}
+    end
+  end
+
+  defp validate_account(params) do
+    cond do
+      not Map.has_key?(params, :account) and not Map.has_key?(params, "account") ->
+        {:ok, params}
+
+      is_nil(fetch(params, :account)) or is_map(fetch(params, :account)) ->
+        {:ok, params}
+
+      true ->
+        changeset =
+          %User{}
+          |> Changeset.change()
+          |> Changeset.add_error(:account, "must be an object")
+
+        {:error, changeset}
+    end
+  end
+
+  defp claim_display_name(%{redeemed_by_id: id}, _user, _params) when is_binary(id),
+    do: {:ok, nil}
+
+  defp claim_display_name(ticket, %User{classic_user_id: classic_user_id}, _params)
+       when classic_user_id == ticket.classic_user_id,
+       do: {:ok, nil}
+
+  defp claim_display_name(ticket, _user, params) do
+    case account_display_name(params) do
+      {:ok, name} ->
+        validate_claim_display_name(name)
+
+      :missing ->
+        case effective_name_allowed(ticket) do
+          true -> validate_claim_display_name(fetch(ticket.legacy_data, :classic_username))
+          false -> validate_claim_display_name(nil)
+          nil -> {:ok, nil}
+        end
+    end
+  end
+
+  defp account_display_name(params) do
+    case fetch(params, :account) do
+      account when is_map(account) ->
+        cond do
+          Map.has_key?(account, "display_name") -> {:ok, account["display_name"]}
+          Map.has_key?(account, :display_name) -> {:ok, account[:display_name]}
+          true -> :missing
+        end
+
+      _missing ->
+        :missing
+    end
+  end
+
+  defp effective_name_allowed(ticket) do
+    case fetch(ticket.legacy_data, :classic_name_allowed) do
+      allowed when is_boolean(allowed) ->
+        allowed
+
+      nil ->
+        # Tickets live for ten minutes. Re-evaluate older unredeemed tickets
+        # that carry a name; synthetic legacy tickets without one keep their
+        # prior behavior.
+        case fetch(ticket.legacy_data, :classic_username) do
+          name when is_binary(name) -> Accounts.public_name_allowed?(name)
+          _legacy_ticket_without_name -> nil
+        end
+    end
+  end
+
+  defp validate_claim_display_name(name) do
+    changeset =
+      name
+      |> User.public_name_changeset()
+      |> Changeset.validate_required(:display_name)
+      |> Accounts.validate_public_name_changes([:display_name])
+
+    if changeset.valid? do
+      {:ok, Changeset.get_field(changeset, :display_name)}
+    else
+      {:error, changeset}
+    end
+  end
+
+  defp put_account_display_name(params, nil), do: params
+
+  defp put_account_display_name(params, display_name) do
+    account = fetch(params, :account) || %{}
+
+    if Map.has_key?(params, "account") do
+      Map.put(params, "account", Map.put(account, "display_name", display_name))
+    else
+      Map.put(params, :account, Map.put(account, :display_name, display_name))
+    end
+  end
+
+  defp lock_claim_names(%User{} = user, params) do
+    account = fetch(params, :account) || %{}
+
+    ClassicNameReservations.lock_claim_names(%{
+      username: user.username,
+      display_name: fetch(account, :display_name) || user.display_name
+    })
+  end
 
   defp lock_claim_names(nil, params),
     do: ClassicNameReservations.lock_claim_names(fetch(params, :account) || %{})
@@ -184,6 +301,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
   defp create_user(%{method: :password, classic_user_id: classic_user_id}, attrs) do
     %User{}
     |> User.classic_password_registration_changeset(attrs)
+    |> Accounts.validate_public_name_changes([:username, :display_name])
     |> ClassicNameReservations.validate_changes(classic_user_id)
     |> Repo.insert()
     |> with_mode()
@@ -193,6 +311,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
        when method in [:apple, :facebook] do
     %User{}
     |> User.social_registration_changeset(attrs)
+    |> Accounts.validate_public_name_changes([:username, :display_name])
     |> ClassicNameReservations.validate_changes(classic_user_id)
     |> Repo.insert()
     |> with_mode()
@@ -201,18 +320,18 @@ defmodule PidroServer.Accounts.ClassicClaims do
   defp with_mode({:ok, user}), do: {:ok, user, :first}
   defp with_mode({:error, reason}), do: {:error, reason}
 
-  defp redeem_for_user(ticket, user, :retry, _now) do
+  defp redeem_for_user(ticket, user, :retry, _now, _display_name) do
     if user.classic_user_id == ticket.classic_user_id,
       do: {:ok, user},
       else: {:error, :already_claimed}
   end
 
-  defp redeem_for_user(ticket, user, :first, now) do
+  defp redeem_for_user(ticket, user, :first, now, display_name) do
     already_linked? = user.classic_user_id == ticket.classic_user_id
 
     with :ok <- ensure_link_available(ticket, user),
          :ok <- ensure_provider_available(ticket, user),
-         {:ok, linked} <- link_user(ticket, user, now),
+         {:ok, linked} <- link_user(ticket, user, now, display_name),
          :ok <- maybe_import_progression(already_linked?, linked, ticket),
          {:ok, _ticket} <-
            ticket |> ClassicClaimTicket.redeem_changeset(linked.id, now) |> Repo.update() do
@@ -238,8 +357,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
       owner =
         Repo.one(
           from u in User,
-            where: u.classic_user_id == ^ticket.classic_user_id,
-            lock: "FOR UPDATE"
+            where: u.classic_user_id == ^ticket.classic_user_id
         )
 
       if is_nil(owner) or owner.id == user.id,
@@ -265,19 +383,41 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   defp sign_in_method(_user, _attempted_method), do: nil
 
-  defp link_user(ticket, user, now) do
+  defp link_user(ticket, user, now, display_name) do
     attrs =
       %{
         classic_user_id: ticket.classic_user_id,
         classic_claimed_at: user.classic_claimed_at || now
       }
       |> put_provider(ticket.method, ticket.provider_id)
+      |> maybe_put_display_name(display_name)
 
-    user
-    |> User.classic_claim_changeset(attrs)
+    changeset =
+      user
+      |> User.classic_claim_changeset(attrs)
+      |> maybe_force_display_name(display_name)
+      |> Accounts.validate_public_name_changes([:display_name])
+      |> ClassicNameReservations.validate_changes(ticket.classic_user_id)
+
+    changeset
     |> Repo.update()
     |> map_link_error(ticket.method)
   end
+
+  defp maybe_put_display_name(attrs, name) when is_binary(name),
+    do: Map.put(attrs, :display_name, name)
+
+  defp maybe_put_display_name(attrs, _name), do: attrs
+
+  defp maybe_force_display_name(changeset, name) when is_binary(name) do
+    Changeset.force_change(
+      changeset,
+      :display_name,
+      Changeset.get_field(changeset, :display_name)
+    )
+  end
+
+  defp maybe_force_display_name(changeset, _name), do: changeset
 
   defp put_provider(attrs, :apple, provider_id), do: Map.put(attrs, :apple_sub, provider_id)
   defp put_provider(attrs, :facebook, provider_id), do: Map.put(attrs, :facebook_id, provider_id)

@@ -71,7 +71,8 @@ defmodule PidroServer.Accounts.Auth do
   require Logger
 
   alias Ecto.Changeset
-  alias PidroServer.Accounts.{Avatars, ClassicNameReservations, Token}
+  alias PidroServer.Accounts
+  alias PidroServer.Accounts.{Avatars, ClassicNameReservations, GuestNames, Token}
   alias PidroServer.Accounts.User
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -115,6 +116,7 @@ defmodule PidroServer.Accounts.Auth do
   def register_user(attrs) do
     %User{}
     |> User.registration_changeset(attrs)
+    |> Accounts.validate_public_name_changes([:username, :display_name])
     |> ClassicNameReservations.validate_changes()
     |> Repo.insert()
   end
@@ -122,8 +124,9 @@ defmodule PidroServer.Accounts.Auth do
   @doc """
   Creates a guest account (R10, R11).
 
-  Reads `display_name` (required) and `install_id` from `attrs` (atom or
-  string keys), generates the username as `guest_` plus a
+  Reads the optional `display_name` and `install_id` from `attrs` (atom or
+  string keys), generates a public name when none is supplied, and generates
+  the username as `guest_` plus a
   `PidroServer.Invites.Codes` code, inserts with `User.guest_changeset/2` and
   redraws once when the username is taken (KTD2). `taken_name_keys` are the
   `User.name_key/1` values of the players connected at the invite's table;
@@ -143,7 +146,10 @@ defmodule PidroServer.Accounts.Auth do
   def create_guest_user(attrs, taken_name_keys, opts \\ [])
       when is_map(attrs) and is_list(taken_name_keys) and is_list(opts) do
     generator = Keyword.get(opts, :generator, &Codes.generate/0)
-    insert_guest(guest_attrs(attrs), taken_name_keys, generator, @guest_username_attempts)
+
+    with {:ok, attrs} <- ensure_guest_display_name(guest_attrs(attrs)) do
+      insert_guest(attrs, taken_name_keys, generator, @guest_username_attempts)
+    end
   end
 
   @doc """
@@ -401,6 +407,7 @@ defmodule PidroServer.Accounts.Auth do
          :ok <- ensure_username_free(Map.get(attrs, :username), id) do
       guest
       |> User.upgrade_changeset(attrs)
+      |> Accounts.validate_public_name_changes([:username])
       |> ClassicNameReservations.validate_changes(guest.classic_user_id)
       |> update_and_bump_version()
       |> map_upgrade_result()
@@ -649,6 +656,7 @@ defmodule PidroServer.Accounts.Auth do
   def change_user(%User{} = user, attrs \\ %{}) do
     user
     |> User.admin_changeset(admin_user_attrs(attrs))
+    |> Accounts.validate_public_name_changes([:username])
   end
 
   @doc """
@@ -659,6 +667,7 @@ defmodule PidroServer.Accounts.Auth do
   def update_user(%User{} = user, attrs) do
     user
     |> User.admin_changeset(admin_user_attrs(attrs))
+    |> Accounts.validate_public_name_changes([:username])
     |> ClassicNameReservations.validate_changes(user.classic_user_id)
     |> Repo.update()
   end
@@ -825,6 +834,12 @@ defmodule PidroServer.Accounts.Auth do
     )
   end
 
+  defp ensure_guest_display_name(%{display_name: _name} = attrs), do: {:ok, attrs}
+
+  defp ensure_guest_display_name(attrs) do
+    with {:ok, name} <- GuestNames.generate(), do: {:ok, Map.put(attrs, :display_name, name)}
+  end
+
   defp creation_token_hash(attrs) do
     case fetch_attr(attrs, :creation_token) do
       token when is_binary(token) -> :crypto.hash(:sha256, token)
@@ -860,6 +875,7 @@ defmodule PidroServer.Accounts.Auth do
       %User{}
       |> User.guest_changeset(Map.put(attrs, :username, username))
       |> Changeset.validate_required(:display_name)
+      |> Accounts.validate_public_name_changes([:display_name])
       |> reject_taken_name(taken_name_keys)
       |> ClassicNameReservations.validate_changes()
 
