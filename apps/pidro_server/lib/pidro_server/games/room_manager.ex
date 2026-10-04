@@ -47,6 +47,7 @@ defmodule PidroServer.Games.RoomManager do
 
   alias Pidro.Core.SeatView
   alias Pidro.Game.Engine
+  alias PidroServer.Accounts.User
   alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
   alias PidroServer.Games.Room.Config
@@ -249,7 +250,7 @@ defmodule PidroServer.Games.RoomManager do
   ## Parameters
 
   - `room_code` - The unique room code (case-insensitive)
-  - `player_id` - User ID of the joining player
+  - `player` - The authenticated user, or a trusted internal user ID
   - `position` - Optional position preference (`:north`, `:east`, `:south`, `:west`, `:north_south`, `:east_west`, or `nil` for auto)
 
   ## Returns
@@ -266,6 +267,7 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :already_seated}` - Player already occupies a seat in this room
   - `{:error, :table_locked}` - The host locked the table (see `set_locked/3`)
   - `{:error, :kicked}` - The host kicked this player from the room (see `kick_player/3`)
+  - `{:error, :account_required}` - A guest tried to claim an ordinary open seat
 
   ## Examples
 
@@ -273,7 +275,7 @@ defmodule PidroServer.Games.RoomManager do
       {:ok, room, :south} = RoomManager.join_room("A1B2", "user789", :north_south)
       {:ok, room, :east} = RoomManager.join_room("A1B2", "user999")
   """
-  @spec join_room(String.t(), String.t(), Positions.choice()) ::
+  @spec join_room(String.t(), User.t() | String.t(), Positions.choice()) ::
           {:ok, Room.t(), Positions.position()}
           | {:error,
              :room_not_found
@@ -286,9 +288,15 @@ defmodule PidroServer.Games.RoomManager do
              | :no_vacant_seat
              | :already_seated
              | :table_locked
-             | :kicked}
-  def join_room(room_code, player_id, position \\ nil) do
-    GenServer.call(__MODULE__, {:join_room, String.upcase(room_code), player_id, position})
+             | :kicked
+             | :account_required}
+  def join_room(room_code, player, position \\ nil) do
+    {player_id, guest?} = admission_identity(player)
+
+    GenServer.call(
+      __MODULE__,
+      {:join_room, String.upcase(room_code), player_id, position, guest?}
+    )
   end
 
   @doc "Trusted server-only bot seating; unlike join_room/3 this records a bot occupant."
@@ -794,7 +802,7 @@ defmodule PidroServer.Games.RoomManager do
   ## Parameters
 
   - `room_code` - The unique room code
-  - `player_id` - The user ID of the joining player
+  - `player` - The authenticated user, or a trusted internal user ID
 
   ## Returns
 
@@ -804,22 +812,44 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :already_seated}` - Player is already in this room
   - `{:error, :room_not_playing}` - Room is not in `:playing` status
   - `{:error, :no_vacant_seat}` - No vacant seat available
+  - `{:error, :account_required}` - A guest tried to claim the open seat
 
   ## Examples
 
       {:ok, room, :east} = RoomManager.join_as_substitute("A1B2", "new-player-id")
   """
-  @spec join_as_substitute(String.t(), String.t()) ::
+  @spec join_as_substitute(String.t(), User.t() | String.t()) ::
           {:ok, Room.t(), Positions.position()}
           | {:error,
              :room_not_found
              | :already_in_room
              | :already_seated
              | :room_not_playing
-             | :no_vacant_seat}
-  def join_as_substitute(room_code, player_id) do
-    GenServer.call(__MODULE__, {:join_as_substitute, String.upcase(room_code), player_id})
+             | :no_vacant_seat
+             | :account_required}
+  def join_as_substitute(room_code, player) do
+    {player_id, guest?} = admission_identity(player)
+
+    GenServer.call(
+      __MODULE__,
+      {:join_as_substitute, String.upcase(room_code), player_id, guest?}
+    )
   end
+
+  defp admission_identity(%User{id: id, guest: guest?})
+       when is_binary(id) and is_boolean(guest?),
+       do: {id, guest?}
+
+  # String IDs are trusted internal callers such as bots, fixtures and admin tools.
+  defp admission_identity(id) when is_binary(id), do: {id, false}
+
+  defp ensure_ordinary_admission(%Room{} = room, player_id, true) do
+    if Positions.has_player?(room, player_id),
+      do: {:error, :already_seated},
+      else: {:error, :account_required}
+  end
+
+  defp ensure_ordinary_admission(%Room{}, _player_id, false), do: :ok
 
   @doc """
   Claims a seat in a room on behalf of an invite redemption.
@@ -1178,10 +1208,16 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:join_room, room_code, player_id, position}, _from, %State{} = state) do
-    case fetch_room(state, room_code) do
-      {:ok, %Room{status: :playing} = room} -> join_substitute(state, room, player_id)
-      {:ok, %Room{} = room} -> join_open_seat(state, room, player_id, position)
+  def handle_call(
+        {:join_room, room_code, player_id, position, guest?},
+        _from,
+        %State{} = state
+      ) do
+    with {:ok, %Room{} = room} <- fetch_room(state, room_code) do
+      if room.status == :playing,
+        do: join_substitute(state, room, player_id, guest?),
+        else: join_open_seat(state, room, player_id, position, guest?)
+    else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -1931,9 +1967,14 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:join_as_substitute, room_code, player_id}, _from, %State{} = state) do
-    case fetch_room(state, room_code) do
-      {:ok, room} -> join_substitute(state, room, player_id)
+  def handle_call(
+        {:join_as_substitute, room_code, player_id, guest?},
+        _from,
+        %State{} = state
+      ) do
+    with {:ok, room} <- fetch_room(state, room_code) do
+      join_substitute(state, room, player_id, guest?)
+    else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -2833,8 +2874,14 @@ defmodule PidroServer.Games.RoomManager do
   @doc false
   # Only explicit admission commands use this transition. Validate everything
   # before ending a watch, then commit ownership and both membership indexes together.
-  defp join_substitute(%State{} = state, %Room{code: room_code} = room, player_id) do
+  defp join_substitute(
+         %State{} = state,
+         %Room{code: room_code} = room,
+         player_id,
+         guest?
+       ) do
     with :ok <- ensure_not_in_other_room(state, player_id, room_code),
+         :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_playing(room),
          :ok <- ensure_not_locked(room),
          :ok <- ensure_not_kicked(room, player_id),
@@ -2916,8 +2963,15 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc false
   # Validate the target join before evicting a disconnected seat elsewhere.
-  defp join_open_seat(%State{} = state, %Room{code: room_code} = room, player_id, position) do
+  defp join_open_seat(
+         %State{} = state,
+         %Room{code: room_code} = room,
+         player_id,
+         position,
+         guest?
+       ) do
     with :ok <- ensure_room_joinable(room, player_id),
+         :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_can_leave_other_room(state, player_id, room_code),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
       next_state = maybe_evict_from_other_room(state, player_id, room_code)

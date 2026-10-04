@@ -23,8 +23,10 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     test "REST Join promotes a watcher only after an opened seat is explicitly claimed", %{
       conn: conn
     } do
-      [host, leaver, south, west, watcher] =
-        Enum.map(1..5, fn _ -> AccountsFixtures.guest_fixture() end)
+      [host, leaver, south, west] =
+        Enum.map(1..4, fn _ -> AccountsFixtures.guest_fixture() end)
+
+      watcher = AccountsFixtures.user_fixture()
 
       {:ok, room} = RoomManager.create_room(host.id)
 
@@ -48,6 +50,35 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       refute watcher.id in response["data"]["room"]["spectator_ids"]
       assert response["data"]["room"]["available_positions"] == []
       refute RoomManager.is_spectator?(room.code, watcher.id)
+    end
+
+    test "a guest watcher cannot claim an opened substitute seat", %{conn: conn} do
+      [host, leaver, south, west, watcher] =
+        Enum.map(1..5, fn _ -> AccountsFixtures.guest_fixture() end)
+
+      {:ok, room} = RoomManager.create_room(host.id)
+
+      for user <- [leaver, south, west],
+          do: assert({:ok, _, _} = RoomManager.join_room(room.code, user.id))
+
+      PidroServer.RoomFixtures.ready_room(room.code)
+      auth = as_user(conn, watcher)
+      assert json_response(post(auth, ~p"/api/v1/rooms/#{room.code}/watch"), 200)
+      :ok = RoomManager.leave_room(leaver.id)
+      {:ok, _} = RoomManager.open_seat(room.code, :east, host.id)
+
+      assert %{"errors" => [%{"code" => "ACCOUNT_REQUIRED"}]} =
+               auth
+               |> post(~p"/api/v1/rooms/#{room.code}/join")
+               |> json_response(403)
+
+      assert RoomManager.is_spectator?(room.code, watcher.id)
+      assert {:ok, updated} = RoomManager.get_room(room.code)
+      assert updated.seats.east.occupant_type == :vacant
+
+      state = :sys.get_state(RoomManager)
+      assert state.spectator_rooms[watcher.id] == room.code
+      refute Map.has_key?(state.player_rooms, watcher.id)
     end
   end
 
@@ -76,6 +107,21 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "create/2" do
+    test "a guest can host an open friends table", %{conn: conn} do
+      guest = AccountsFixtures.guest_fixture()
+
+      assert %{"code" => code, "room" => room} =
+               conn
+               |> as_user(guest)
+               |> post(~p"/api/v1/rooms", %{})
+               |> data(201)
+
+      assert room["host_id"] == guest.id
+      assert room["positions"]["north"] == guest.id
+      assert room["seats"]["north"]["user_id"] == guest.id
+      assert mapped_room_code(guest) == code
+    end
+
     test "AE3: three ai seats answer 201 with a solo config, three bot seats, and no lobby listing",
          %{conn: conn} do
       user = AccountsFixtures.user_fixture()
@@ -931,6 +977,41 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "join/2 contract" do
+    test "an already seated guest keeps the existing error", %{conn: conn} do
+      guest = AccountsFixtures.guest_fixture()
+      {:ok, room} = RoomManager.create_room(guest.id, %{name: "Friends"})
+
+      assert %{"errors" => [%{"code" => "ALREADY_SEATED"}]} =
+               conn
+               |> as_user(guest)
+               |> post(~p"/api/v1/rooms/#{room.code}/join")
+               |> json_response(422)
+    end
+
+    test "a guest cannot join an open table by room code", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      guest = AccountsFixtures.guest_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Open"})
+
+      assert %{
+               "errors" => [
+                 %{
+                   "code" => "ACCOUNT_REQUIRED",
+                   "title" => "Account required",
+                   "detail" => "Create an account to join an open seat"
+                 }
+               ]
+             } =
+               conn
+               |> as_user(guest)
+               |> post(~p"/api/v1/rooms/#{room.code}/join", %{"position" => "south"})
+               |> json_response(403)
+
+      assert {:ok, unchanged} = RoomManager.get_room(room.code)
+      assert unchanged.positions == %{north: host.id, east: nil, south: nil, west: nil}
+      assert mapped_room_code(guest) == nil
+    end
+
     test "a taken explicit seat still answers 422 SEAT_TAKEN", %{conn: conn} do
       host = AccountsFixtures.user_fixture()
       joiner = AccountsFixtures.user_fixture()

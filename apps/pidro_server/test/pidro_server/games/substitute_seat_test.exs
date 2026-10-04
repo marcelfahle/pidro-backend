@@ -8,6 +8,7 @@ defmodule PidroServer.Games.SubstituteSeatTest do
 
   use PidroServer.DataCase, async: false
 
+  alias PidroServer.AccountsFixtures
   alias PidroServer.Games.Room.Config
   alias PidroServer.Games.RoomManager
   alias PidroServer.RoomManagerCase
@@ -200,6 +201,19 @@ defmodule PidroServer.Games.SubstituteSeatTest do
   end
 
   describe "join_as_substitute — stranger joins a playing room with vacant seat" do
+    test "a guest cannot join as a substitute" do
+      {room, _positions} = create_playing_room()
+      {_room_with_bot, position} = make_seat_bot_substitute(room, "user2")
+      {:ok, _} = RoomManager.open_seat(room.code, position, "user1")
+      guest = AccountsFixtures.guest_fixture()
+
+      assert {:error, :account_required} = RoomManager.join_as_substitute(room.code, guest)
+
+      assert {:ok, unchanged} = RoomManager.get_room(room.code)
+      assert unchanged.seats[position].occupant_type == :vacant
+      refute Map.has_key?(:sys.get_state(RoomManager).player_rooms, guest.id)
+    end
+
     test "stranger can join a playing room with a vacant seat" do
       {room, _positions} = create_playing_room()
       {_room_with_bot, position} = make_seat_bot_substitute(room, "user2")

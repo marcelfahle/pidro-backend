@@ -245,6 +245,20 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :account_required}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{
+      errors: [
+        %{
+          code: "ACCOUNT_REQUIRED",
+          title: "Account required",
+          detail: "Create an account to join an open seat"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :already_in_room}) do
     conn
     |> put_status(:unprocessable_entity)
