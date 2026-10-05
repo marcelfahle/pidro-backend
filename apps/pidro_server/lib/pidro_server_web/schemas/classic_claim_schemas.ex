@@ -34,7 +34,18 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
         login: %Schema{type: :string, description: "Classic username or email"},
         password: %Schema{type: :string},
         identity_token: %Schema{type: :string},
-        access_token: %Schema{type: :string},
+        access_token: %Schema{
+          type: :string,
+          description: "Facebook Graph credential; mutually exclusive with Limited Login fields"
+        },
+        authentication_token: %Schema{
+          type: :string,
+          description: "Facebook Limited Login OIDC JWT; requires nonce"
+        },
+        nonce: %Schema{
+          type: :string,
+          description: "Raw nonce supplied to the Facebook Limited Login SDK"
+        },
         install_id: %Schema{
           type: :string,
           maxLength: 64,
@@ -151,11 +162,12 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
     })
   end
 
-  defmodule FacebookRequest do
+  defmodule FacebookGraphRequest do
     @moduledoc false
     OpenApiSpex.schema(%{
       type: :object,
-      title: "Facebook sign-in request",
+      title: "Facebook Graph sign-in request",
+      additionalProperties: false,
       properties: %{
         age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
         terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
@@ -167,6 +179,35 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
         }
       },
       required: [:access_token]
+    })
+  end
+
+  defmodule FacebookLimitedRequest do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Facebook Limited Login sign-in request",
+      additionalProperties: false,
+      properties: %{
+        age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
+        terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
+        authentication_token: %Schema{type: :string},
+        nonce: %Schema{type: :string},
+        install_id: %Schema{
+          type: :string,
+          maxLength: 64,
+          description: "Required only when a matching Classic account is found"
+        }
+      },
+      required: [:authentication_token, :nonce]
+    })
+  end
+
+  defmodule FacebookRequest do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "Facebook sign-in request",
+      oneOf: [FacebookGraphRequest, FacebookLimitedRequest]
     })
   end
 end

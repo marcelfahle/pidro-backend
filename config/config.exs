@@ -93,9 +93,11 @@ config :pidro_server, PidroServer.Accounts.ClassicNameReservations, cutoff_date:
 config :pidro_server, PidroServer.Accounts.ProviderIdentity,
   apple_jwks_url: "https://appleid.apple.com/auth/keys",
   apple_audience: ["com.oneapps.pidro", "com.oneapps.pidro.beta"],
+  facebook_jwks_url: "https://limited.facebook.com/.well-known/oauth/openid/jwks/",
   facebook_graph_url: "https://graph.facebook.com/v24.0",
   facebook_app_id: "345200965110578",
-  facebook_app_secret: ""
+  facebook_app_secret: "",
+  jwks_cache_ttl_ms: 300_000
 
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real

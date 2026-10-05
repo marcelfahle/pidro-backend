@@ -5,7 +5,7 @@ defmodule PidroServerWeb.ApiSpecTest do
 
   alias PidroServer.Games.Room.Config
   alias PidroServerWeb.ApiSpec
-  alias PidroServerWeb.Schemas.{ErrorSchemas, UserSchemas}
+  alias PidroServerWeb.Schemas.{ClassicClaimSchemas, ErrorSchemas, UserSchemas}
 
   @new_paths [
     {"/api/v1/invites/deferred", ["post"]},
@@ -110,6 +110,26 @@ defmodule PidroServerWeb.ApiSpecTest do
       operation = spec.paths |> Map.fetch!(path) |> Map.fetch!(:post)
       assert Map.has_key?(operation.responses, 503)
     end
+  end
+
+  test "Facebook sign-in documents Graph and Limited Login credential shapes" do
+    assert %OpenApiSpex.Schema{oneOf: [graph, limited]} =
+             ClassicClaimSchemas.FacebookRequest.schema()
+
+    assert graph == ClassicClaimSchemas.FacebookGraphRequest
+    assert limited == ClassicClaimSchemas.FacebookLimitedRequest
+
+    graph = ClassicClaimSchemas.FacebookGraphRequest.schema()
+    assert graph.required == [:access_token]
+    assert graph.additionalProperties == false
+
+    limited = ClassicClaimSchemas.FacebookLimitedRequest.schema()
+    assert Enum.sort(limited.required) == [:authentication_token, :nonce]
+    assert limited.additionalProperties == false
+
+    verify = ClassicClaimSchemas.VerifyRequest.schema()
+    assert Map.has_key?(verify.properties, :authentication_token)
+    assert Map.has_key?(verify.properties, :nonce)
   end
 
   describe "the room config contract" do

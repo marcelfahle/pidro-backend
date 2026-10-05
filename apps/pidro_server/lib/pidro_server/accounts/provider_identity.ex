@@ -2,6 +2,9 @@ defmodule PidroServer.Accounts.ProviderIdentity do
   @moduledoc "Validates Apple and Facebook credentials against their providers."
 
   @apple_issuer "https://appleid.apple.com"
+  @facebook_issuer "https://www.facebook.com"
+
+  alias PidroServer.Accounts.{FacebookNonce, JwksCache}
 
   def apple(identity_token) when is_binary(identity_token) do
     with {:ok, header, claims, signed, signature} <- decode_jwt(identity_token),
@@ -37,6 +40,27 @@ defmodule PidroServer.Accounts.ProviderIdentity do
   end
 
   def facebook(_access_token), do: {:error, :invalid_credentials}
+
+  def facebook_limited(authentication_token, nonce)
+      when is_binary(authentication_token) and is_binary(nonce) and nonce != "" do
+    with {:ok, header, claims, signed, signature} <- decode_jwt(authentication_token),
+         true <- header["alg"] == "RS256" or {:error, :invalid_credentials},
+         {:ok, key} <- provider_key(:facebook, header["kid"]),
+         true <- verify_signature(key, signed, signature) or {:error, :invalid_credentials},
+         {:ok, expires_at} <- validate_facebook_claims(claims, nonce),
+         :ok <- FacebookNonce.consume(nonce, expires_at) do
+      {:ok,
+       %{
+         subject: claims["sub"],
+         issuer_app: claims["aud"],
+         email: facebook_email(claims)
+       }}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def facebook_limited(_authentication_token, _nonce), do: {:error, :invalid_credentials}
 
   def facebook_business_ids(access_token) when is_binary(access_token) do
     facebook_business_ids_page(access_token, nil, %{}, [])
@@ -97,31 +121,38 @@ defmodule PidroServer.Accounts.ProviderIdentity do
   end
 
   defp apple_key(kid) when is_binary(kid) do
-    config = Application.fetch_env!(:pidro_server, __MODULE__)
-
-    case Req.get(
-           Keyword.fetch!(config, :apple_jwks_url),
-           Keyword.merge([receive_timeout: 5_000], Keyword.get(config, :req_options, []))
-         ) do
-      {:ok, %{status: 200, body: %{"keys" => keys}}} when is_list(keys) ->
-        case Enum.find(keys, fn
-               %{"kid" => key_kid, "kty" => "RSA"} -> key_kid == kid
-               _invalid -> false
-             end) do
-          %{"n" => modulus, "e" => exponent}
-          when is_binary(modulus) and is_binary(exponent) ->
-            rsa_key(modulus, exponent)
-
-          _missing ->
-            {:error, :invalid_credentials}
-        end
-
-      _response ->
-        {:error, :provider_unavailable}
-    end
+    provider_key(:apple, kid)
   end
 
   defp apple_key(_kid), do: {:error, :invalid_credentials}
+
+  defp provider_key(provider, kid) when provider in [:apple, :facebook] and is_binary(kid) do
+    config = Application.fetch_env!(:pidro_server, __MODULE__)
+
+    with {:ok, keys} <-
+           JwksCache.fetch(
+             Keyword.fetch!(config, jwks_url_key(provider)),
+             Keyword.get(config, :req_options, []),
+             Keyword.get(config, :jwks_cache_ttl_ms, 300_000)
+           ) do
+      case Enum.find(keys, fn
+             %{"kid" => key_kid, "kty" => "RSA"} -> key_kid == kid
+             _invalid -> false
+           end) do
+        %{"n" => modulus, "e" => exponent}
+        when is_binary(modulus) and is_binary(exponent) ->
+          rsa_key(modulus, exponent)
+
+        _missing ->
+          {:error, :invalid_credentials}
+      end
+    end
+  end
+
+  defp provider_key(_provider, _kid), do: {:error, :invalid_credentials}
+
+  defp jwks_url_key(:apple), do: :apple_jwks_url
+  defp jwks_url_key(:facebook), do: :facebook_jwks_url
 
   defp rsa_key(modulus, exponent) do
     with {:ok, modulus} <- Base.url_decode64(modulus, padding: false),
@@ -147,6 +178,20 @@ defmodule PidroServer.Accounts.ProviderIdentity do
          is_integer(claims["exp"]) and claims["exp"] > now and
          is_binary(claims["sub"]) and claims["sub"] != "" do
       :ok
+    else
+      {:error, :invalid_credentials}
+    end
+  end
+
+  defp validate_facebook_claims(claims, nonce) do
+    config = Application.fetch_env!(:pidro_server, __MODULE__)
+    audience = Keyword.fetch!(config, :facebook_app_id)
+    now = System.system_time(:second)
+
+    if claims["iss"] == @facebook_issuer and claims["aud"] == audience and
+         is_integer(claims["exp"]) and claims["exp"] > now and
+         is_binary(claims["sub"]) and claims["sub"] != "" and claims["nonce"] == nonce do
+      DateTime.from_unix(claims["exp"])
     else
       {:error, :invalid_credentials}
     end

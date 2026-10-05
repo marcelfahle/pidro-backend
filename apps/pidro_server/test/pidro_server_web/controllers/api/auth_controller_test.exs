@@ -30,6 +30,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     def apple(_token), do: {:error, :invalid_credentials}
 
     def facebook("facebook-linked"), do: facebook_identity("facebook-linked-id")
+    def facebook("facebook-linked-down"), do: facebook_identity("facebook-linked-id")
     def facebook("facebook-classic"), do: facebook_identity("facebook-current-id")
 
     def facebook("facebook-new"),
@@ -38,7 +39,21 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     def facebook("facebook-down"), do: facebook_identity("facebook-down-id")
     def facebook(_token), do: {:error, :invalid_credentials}
 
+    def facebook_limited(token, "limited-nonce")
+        when token in ["limited-new", "limited-sign-in"] do
+      facebook_identity("limited-new-id")
+    end
+
+    def facebook_limited("limited-classic", "limited-nonce"),
+      do: facebook_identity("limited-classic-id", "classic@example.com")
+
+    def facebook_limited("limited-same-account", "limited-nonce"),
+      do: facebook_identity("facebook-new-id", "facebook-new@example.com")
+
+    def facebook_limited(_token, _nonce), do: {:error, :invalid_credentials}
+
     def facebook_business_ids("facebook-linked"), do: {:ok, ["facebook-linked-old-id"]}
+    def facebook_business_ids("facebook-linked-down"), do: {:error, :provider_unavailable}
     def facebook_business_ids("facebook-classic"), do: {:ok, ["facebook-classic-id"]}
     def facebook_business_ids("facebook-new"), do: {:ok, ["facebook-new-old-id"]}
     def facebook_business_ids("facebook-down"), do: {:ok, ["facebook-old-id"]}
@@ -383,6 +398,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     test "Facebook stores a declaration on a newly created provider account", %{conn: conn} do
       expect_classic_not_found(:fbid, "facebook-new-id")
       expect_classic_not_found(:fbid, "facebook-new-old-id")
+      expect_classic_not_found(:email, "facebook-new@example.com")
 
       data =
         conn
@@ -439,6 +455,108 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       identity = Repo.get_by!(UserIdentity, provider: :facebook, subject: "facebook-linked-id")
       assert identity.issuer_app == "facebook-app"
       assert identity.business_ids == ["facebook-linked-old-id"]
+    end
+
+    test "Facebook returns a linked account when the optional business-ID lookup fails", %{
+      conn: conn
+    } do
+      user = provider_user!(:facebook_id, "facebook-linked-id")
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-linked-down"})
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data["user"]["id"] == user.id
+      assert is_binary(data["token"])
+
+      assert Repo.get_by!(UserIdentity, provider: :facebook, subject: "facebook-linked-id").business_ids ==
+               nil
+    end
+
+    test "Facebook Limited Login signs up and signs the same subject back in", %{conn: conn} do
+      expect_classic_not_found(:fbid, "limited-new-id")
+
+      first =
+        conn
+        |> post(~p"/api/v1/auth/facebook", %{
+          authentication_token: "limited-new",
+          nonce: "limited-nonce"
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      second =
+        build_conn()
+        |> post(~p"/api/v1/auth/facebook", %{
+          authentication_token: "limited-sign-in",
+          nonce: "limited-nonce"
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert second["user"]["id"] == first["user"]["id"]
+
+      identity = Repo.get_by!(UserIdentity, provider: :facebook, subject: "limited-new-id")
+      assert identity.business_ids == []
+    end
+
+    test "Facebook Limited Login reaches the Classic email match", %{conn: conn} do
+      expect_classic_not_found(:fbid, "limited-classic-id")
+      expect_classic_lookup(:email, "classic@example.com", classic_profile(71_005, "Disa"))
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/facebook", %{
+          authentication_token: "limited-classic",
+          nonce: "limited-nonce",
+          install_id: "limited-install"
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data["classic_found"]
+      assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 71_005).matched_on == :email
+    end
+
+    test "Android Graph and iPhone Limited Login land in the same account", %{conn: conn} do
+      expect_classic_not_found(:fbid, "facebook-new-id")
+      expect_classic_not_found(:fbid, "facebook-new-old-id")
+      expect_classic_not_found(:email, "facebook-new@example.com")
+
+      android =
+        conn
+        |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-new"})
+        |> json_response(200)
+        |> get_in(["data", "user"])
+
+      iphone =
+        build_conn()
+        |> post(~p"/api/v1/auth/facebook", %{
+          authentication_token: "limited-same-account",
+          nonce: "limited-nonce"
+        })
+        |> json_response(200)
+        |> get_in(["data", "user"])
+
+      assert iphone["id"] == android["id"]
+    end
+
+    test "Facebook rejects both credential shapes and neither" do
+      for params <- [
+            %{},
+            %{
+              access_token: "facebook-new",
+              authentication_token: "limited-new",
+              nonce: "limited-nonce"
+            }
+          ] do
+        assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} =
+                 build_conn()
+                 |> post(~p"/api/v1/auth/facebook", params)
+                 |> json_response(401)
+      end
     end
 
     test "Apple Classic match returns a redeemable install-bound ticket", %{conn: conn} do
@@ -593,6 +711,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     } do
       expect_classic_not_found(:fbid, "facebook-new-id")
       expect_classic_not_found(:fbid, "facebook-new-old-id")
+      expect_classic_not_found(:email, "facebook-new@example.com")
 
       assert %{
                "user" => %{
