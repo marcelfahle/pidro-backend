@@ -13,7 +13,13 @@ defmodule PidroServer.Accounts.ClassicClaimTicket do
     field :token_hash, :binary
     field :classic_user_id, :integer
     field :method, Ecto.Enum, values: [:password, :apple, :facebook]
+    field :matched_on, Ecto.Enum, values: [:password, :email, :facebook_id, :facebook_business_id]
+
     field :provider_id, :string
+    field :provider_issuer_app, :string
+    field :provider_email, :string
+    field :provider_email_is_relay, :boolean, default: false
+    field :provider_business_ids, {:array, :string}
     field :legacy_data, :map
     field :install_id, :string
     field :expires_at, :utc_datetime_usec
@@ -31,13 +37,25 @@ defmodule PidroServer.Accounts.ClassicClaimTicket do
       :token_hash,
       :classic_user_id,
       :method,
+      :matched_on,
       :provider_id,
+      :provider_issuer_app,
+      :provider_email,
+      :provider_email_is_relay,
+      :provider_business_ids,
       :legacy_data,
       :bound_user_id,
       :install_id,
       :expires_at
     ])
-    |> validate_required([:token_hash, :classic_user_id, :method, :legacy_data, :expires_at])
+    |> validate_required([
+      :token_hash,
+      :classic_user_id,
+      :method,
+      :matched_on,
+      :legacy_data,
+      :expires_at
+    ])
     |> validate_length(:install_id, max: 64)
     |> validate_binding()
     |> validate_provider()

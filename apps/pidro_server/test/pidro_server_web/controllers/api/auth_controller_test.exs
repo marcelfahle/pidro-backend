@@ -5,7 +5,16 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   import Ecto.Query
   import ExUnit.CaptureLog
 
-  alias PidroServer.Accounts.{Auth, ClassicClaimTicket, ClassicNameReservations, Token, User}
+  alias PidroServer.Accounts.{
+    Auth,
+    ClassicClaimTicket,
+    ClassicNameReservations,
+    Token,
+    User,
+    UserIdentities,
+    UserIdentity
+  }
+
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.RoomManager
   alias PidroServer.Invites
@@ -20,20 +29,32 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     def apple("apple-down"), do: apple_identity("apple-down-sub", "down@example.com")
     def apple(_token), do: {:error, :invalid_credentials}
 
-    def facebook("facebook-linked"), do: {:ok, "facebook-linked-id"}
-    def facebook("facebook-classic"), do: {:ok, "facebook-current-id"}
-    def facebook("facebook-new"), do: {:ok, "facebook-new-id"}
-    def facebook("facebook-down"), do: {:ok, "facebook-down-id"}
+    def facebook("facebook-linked"), do: facebook_identity("facebook-linked-id")
+    def facebook("facebook-classic"), do: facebook_identity("facebook-current-id")
+
+    def facebook("facebook-new"),
+      do: facebook_identity("facebook-new-id", "facebook-new@example.com")
+
+    def facebook("facebook-down"), do: facebook_identity("facebook-down-id")
     def facebook(_token), do: {:error, :invalid_credentials}
 
-    def facebook_business_ids("facebook-linked"), do: raise("linked user fetched business IDs")
+    def facebook_business_ids("facebook-linked"), do: {:ok, ["facebook-linked-old-id"]}
     def facebook_business_ids("facebook-classic"), do: {:ok, ["facebook-classic-id"]}
     def facebook_business_ids("facebook-new"), do: {:ok, ["facebook-new-old-id"]}
     def facebook_business_ids("facebook-down"), do: {:ok, ["facebook-old-id"]}
 
     defp apple_identity(subject, email) do
-      {:ok, %{"sub" => subject, "email" => email, "email_verified" => true}}
+      {:ok,
+       %{
+         "sub" => subject,
+         "aud" => "com.oneapps.pidro",
+         "email" => email,
+         "email_verified" => true
+       }}
     end
+
+    defp facebook_identity(subject, email \\ nil),
+      do: {:ok, %{subject: subject, issuer_app: "facebook-app", email: email}}
   end
 
   defmodule GuestNames do
@@ -322,6 +343,13 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert user_id == user.id
       assert is_binary(token)
       assert_token_user(conn, token, user_id)
+
+      identity = Repo.get_by!(UserIdentity, provider: :apple, subject: "apple-linked-sub")
+      assert identity.link_source == :backfill
+      assert identity.issuer_app == "com.oneapps.pidro"
+      assert identity.email == "linked@example.com"
+      assert identity.business_ids == []
+      assert DateTime.after?(identity.last_used_at, identity.linked_at)
     end
 
     test "linked provider sign-in fills an unknown band but never overwrites it", %{conn: conn} do
@@ -393,7 +421,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       refute Repo.get_by(User, facebook_id: "facebook-new-id")
     end
 
-    test "Facebook returns a linked account without fetching business IDs or Classic", %{
+    test "Facebook returns a linked account after refreshing business IDs", %{
       conn: conn
     } do
       user = provider_user!(:facebook_id, "facebook-linked-id")
@@ -407,6 +435,10 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert user_id == user.id
       assert is_binary(token)
       assert_token_user(conn, token, user_id)
+
+      identity = Repo.get_by!(UserIdentity, provider: :facebook, subject: "facebook-linked-id")
+      assert identity.issuer_app == "facebook-app"
+      assert identity.business_ids == ["facebook-linked-old-id"]
     end
 
     test "Apple Classic match returns a redeemable install-bound ticket", %{conn: conn} do
@@ -445,6 +477,15 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       claimed = Repo.get_by!(User, apple_sub: "apple-classic-sub")
       assert claimed.id == claimed_id
       assert claimed.classic_user_id == 71_001
+      assert claimed.classic_claim_method == :apple
+      assert claimed.classic_matched_on == :email
+      assert claimed.email == "classic@example.com"
+
+      identity = Repo.get_by!(UserIdentity, provider: :apple, subject: "apple-classic-sub")
+      assert identity.user_id == claimed.id
+      assert identity.issuer_app == "com.oneapps.pidro"
+      assert identity.email == "classic@example.com"
+      assert identity.link_source == :claim
       assert is_binary(claimed_token)
       assert_token_user(conn, claimed_token, claimed_id)
     end
@@ -506,6 +547,14 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       user = Repo.get!(User, user_id)
       assert user.apple_sub == "apple-new-sub"
       assert user.facebook_id == nil
+      assert user.email == "new@example.com"
+
+      identity = Repo.get_by!(UserIdentity, provider: :apple, subject: "apple-new-sub")
+      assert identity.user_id == user.id
+      assert identity.issuer_app == "com.oneapps.pidro"
+      assert identity.email == "new@example.com"
+      assert identity.business_ids == []
+      assert identity.link_source == :sign_up
       assert is_binary(token)
       assert_token_user(conn, token, user_id)
     end
@@ -562,6 +611,16 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       user = Repo.get!(User, user_id)
       assert user.facebook_id == "facebook-new-id"
       assert user.apple_sub == nil
+      assert user.email == "facebook-new@example.com"
+
+      identity =
+        Repo.get_by!(UserIdentity, provider: :facebook, subject: "facebook-new-id")
+
+      assert identity.user_id == user.id
+      assert identity.issuer_app == "facebook-app"
+      assert identity.email == "facebook-new@example.com"
+      assert identity.business_ids == ["facebook-new-old-id"]
+      assert identity.link_source == :sign_up
       assert is_binary(token)
       assert_token_user(conn, token, user_id)
     end
@@ -701,9 +760,29 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   end
 
   defp provider_user!(field, value) do
-    AccountsFixtures.user_fixture()
-    |> Ecto.Changeset.change(%{field => value})
-    |> Repo.update!()
+    provider = if field == :apple_sub, do: :apple, else: :facebook
+
+    user =
+      AccountsFixtures.user_fixture()
+      |> Ecto.Changeset.change(%{field => value})
+      |> Repo.update!()
+
+    {:ok, user} =
+      UserIdentities.link(
+        user,
+        %{
+          provider: provider,
+          subject: value,
+          issuer_app: nil,
+          email: nil,
+          email_is_relay: false,
+          business_ids: nil
+        },
+        :backfill,
+        user.inserted_at
+      )
+
+    user
   end
 
   defp expect_classic_lookup(field, value, profile) do

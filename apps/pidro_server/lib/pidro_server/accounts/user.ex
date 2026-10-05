@@ -77,6 +77,12 @@ defmodule PidroServer.Accounts.User do
     field(:guest_creation_token_hash, :binary)
     field(:classic_user_id, :integer)
     field(:classic_claimed_at, :utc_datetime_usec)
+    field(:classic_claim_method, Ecto.Enum, values: [:password, :apple, :facebook])
+
+    field(:classic_matched_on, Ecto.Enum,
+      values: [:password, :email, :facebook_id, :facebook_business_id]
+    )
+
     field(:apple_sub, :string)
     field(:facebook_id, :string)
     field(:age_band, :string, default: "unknown")
@@ -127,6 +133,8 @@ defmodule PidroServer.Accounts.User do
   end
 
   @doc "Builds an account for a verified provider identity."
+  # Keep the legacy provider columns dual-written for rollback safety. They
+  # go away in a later release once all readers use user_identities.
   def provider_registration_changeset(user, attrs, :apple, provider_id) do
     user
     |> social_registration_changeset(attrs)
@@ -147,6 +155,8 @@ defmodule PidroServer.Accounts.User do
     |> cast(attrs, [
       :classic_user_id,
       :classic_claimed_at,
+      :classic_claim_method,
+      :classic_matched_on,
       :apple_sub,
       :facebook_id,
       :display_name

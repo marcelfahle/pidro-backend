@@ -1,6 +1,8 @@
 defmodule PidroServer.Accounts.ClassicVerification do
   @moduledoc "Verifies Classic ownership and issues an account-bound claim ticket."
 
+  require Logger
+
   alias PidroServer.Accounts
   alias PidroServer.Accounts.{ClassicClaims, ClassicClient, ProviderIdentity}
   alias PidroServer.Profiles.LegacyProgression
@@ -13,8 +15,8 @@ defmodule PidroServer.Accounts.ClassicVerification do
 
     with {:ok, binding} <- binding(current_user, params),
          {:ok, method} <- method(params),
-         {:ok, profile, provider_id} <- verify_method(method, params, classic, providers),
-         {:ok, result} <- issue_ticket(binding, method, profile, provider_id) do
+         {:ok, profile, identity, matched_on} <- verify_method(method, params, classic, providers),
+         {:ok, result} <- issue_ticket(binding, method, profile, identity, matched_on) do
       {:ok, result}
     else
       {:error, :not_found} -> {:error, :invalid_credentials}
@@ -32,20 +34,19 @@ defmodule PidroServer.Accounts.ClassicVerification do
   sign-in can safely create a new account. Binding is checked only after a
   match, because a new provider user does not need an install-bound ticket.
   """
-  def verify_provider(provider, provider_id, lookup_ids, params, opts \\ [])
+  def verify_provider(identity, lookup_ids, params, opts \\ [])
 
-  def verify_provider(provider, provider_id, lookup_ids, params, opts)
-      when provider in [:apple, :facebook] and is_binary(provider_id) and
-             is_list(lookup_ids) and is_map(params) do
+  def verify_provider(%{provider: provider} = identity, lookup_ids, params, opts)
+      when provider in [:apple, :facebook] and is_list(lookup_ids) and is_map(params) do
     classic = Keyword.get(opts, :classic_client, ClassicClient)
 
-    with {:ok, profile} <- lookup_provider(classic, provider, lookup_ids),
+    with {:ok, profile, matched_on} <- lookup_provider(classic, provider, lookup_ids),
          {:ok, binding} <- binding(nil, params) do
-      issue_ticket(binding, provider, profile, provider_id)
+      issue_ticket(binding, provider, profile, identity, matched_on)
     end
   end
 
-  def verify_provider(_provider, _provider_id, _lookup_ids, _params, _opts),
+  def verify_provider(_identity, _lookup_ids, _params, _opts),
     do: {:error, :invalid_credentials}
 
   defp binding(%{id: user_id}, _params), do: {:ok, %{user_id: user_id}}
@@ -74,7 +75,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
     with login when is_binary(login) and login != "" <- fetch(params, :login),
          password when is_binary(password) and password != "" <- fetch(params, :password),
          {:ok, profile} <- classic.verify_password(login, password) do
-      {:ok, profile, nil}
+      {:ok, profile, nil, :password}
     else
       {:error, reason} -> {:error, reason}
       _invalid -> {:error, :invalid_credentials}
@@ -86,8 +87,17 @@ defmodule PidroServer.Accounts.ClassicVerification do
          {:ok, %{"sub" => subject, "email" => email} = claims} <- providers.apple(token),
          true <- claims["email_verified"] in [true, "true"] or {:error, :invalid_credentials},
          true <- (is_binary(email) and email != "") or {:error, :invalid_credentials},
-         {:ok, profile} <- classic.lookup(:email, email) do
-      {:ok, profile, subject}
+         {:ok, profile} <- logged_apple_lookup(classic, email) do
+      identity = %{
+        provider: :apple,
+        subject: subject,
+        issuer_app: apple_audience(claims["aud"]),
+        email: email,
+        email_is_relay: apple_relay?(claims, email),
+        business_ids: []
+      }
+
+      {:ok, profile, identity, :email}
     else
       {:error, reason} -> {:error, reason}
       _invalid -> {:error, :invalid_credentials}
@@ -96,34 +106,105 @@ defmodule PidroServer.Accounts.ClassicVerification do
 
   defp verify_method(:facebook, params, classic, providers) do
     with token when is_binary(token) <- fetch(params, :access_token),
-         {:ok, primary_id} <- providers.facebook(token),
-         {:ok, business_ids} <- providers.facebook_business_ids(token),
-         {:ok, profile} <- lookup_facebook(classic, [primary_id | business_ids]) do
-      {:ok, profile, primary_id}
+         {:ok, %{subject: primary_id, issuer_app: issuer_app, email: email}} <-
+           providers.facebook(token),
+         {:ok, business_ids} <- facebook_business_ids(providers, token),
+         {:ok, profile, matched_on} <- lookup_facebook(classic, primary_id, business_ids) do
+      identity = %{
+        provider: :facebook,
+        subject: primary_id,
+        issuer_app: issuer_app,
+        email: email,
+        email_is_relay: false,
+        business_ids: business_ids
+      }
+
+      {:ok, profile, identity, matched_on}
     else
       {:error, reason} -> {:error, reason}
       _invalid -> {:error, :invalid_credentials}
     end
   end
 
-  defp lookup_provider(_classic, _provider, []), do: {:error, :not_found}
-  defp lookup_provider(classic, :apple, [email]), do: classic.lookup(:email, email)
-  defp lookup_provider(classic, :facebook, ids), do: lookup_facebook(classic, ids)
+  defp lookup_provider(_classic, provider, []) do
+    log_provider_match(provider, :no_match)
+    {:error, :not_found}
+  end
+
+  defp lookup_provider(classic, :apple, [email]) do
+    case logged_apple_lookup(classic, email) do
+      {:ok, profile} -> {:ok, profile, :email}
+      error -> error
+    end
+  end
+
+  defp lookup_provider(classic, :facebook, [primary_id | business_ids]),
+    do: lookup_facebook(classic, primary_id, business_ids)
+
   defp lookup_provider(_classic, _provider, _lookup_ids), do: {:error, :invalid_credentials}
 
-  defp lookup_facebook(classic, ids) do
-    ids
+  defp lookup_facebook(classic, primary_id, business_ids) do
+    case classic.lookup(:fbid, primary_id) do
+      {:ok, profile} ->
+        log_provider_match(:facebook, :id_match)
+        {:ok, profile, :facebook_id}
+
+      {:error, :not_found} ->
+        lookup_facebook_business(classic, primary_id, business_ids)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp lookup_facebook_business(classic, primary_id, business_ids) do
+    business_ids
     |> Enum.uniq()
+    |> Enum.reject(&(&1 == primary_id))
     |> Enum.reduce_while({:error, :not_found}, fn id, _not_found ->
       case classic.lookup(:fbid, id) do
-        {:ok, profile} -> {:halt, {:ok, profile}}
+        {:ok, profile} -> {:halt, {:ok, profile, :facebook_business_id}}
         {:error, :not_found} -> {:cont, {:error, :not_found}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+    |> log_facebook_business_result()
   end
 
-  defp issue_ticket(binding, method, profile, provider_id) do
+  defp log_facebook_business_result({:ok, _profile, :facebook_business_id} = result) do
+    log_provider_match(:facebook, :business_id_match)
+    result
+  end
+
+  defp log_facebook_business_result({:error, :not_found} = result) do
+    log_provider_match(:facebook, :no_match)
+    result
+  end
+
+  defp log_facebook_business_result(result), do: result
+
+  defp logged_apple_lookup(classic, email) do
+    case classic.lookup(:email, email) do
+      {:ok, _profile} = result ->
+        log_provider_match(:apple, :email_match)
+        result
+
+      {:error, :not_found} = result ->
+        log_provider_match(:apple, :no_match)
+        result
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp log_provider_match(_provider, outcome) do
+    Logger.info("Classic provider match", outcome: outcome)
+  end
+
+  defp issue_ticket(binding, method, profile, identity, matched_on) do
+    provider_id = if identity, do: identity.subject
+
     with {:ok, classic_user_id} <- classic_user_id(profile),
          legacy = legacy_data(profile),
          {:ok, preview} <- preview(legacy),
@@ -133,11 +214,40 @@ defmodule PidroServer.Accounts.ClassicVerification do
              |> Map.merge(%{
                classic_user_id: classic_user_id,
                method: method,
+               matched_on: matched_on,
                provider_id: provider_id,
+               provider_identity: identity,
                legacy_data: legacy
              })
            ) do
       {:ok, Map.put(ticket, :classic, preview)}
+    end
+  end
+
+  defp apple_audience(audience) when is_binary(audience), do: audience
+  defp apple_audience([audience | _rest]) when is_binary(audience), do: audience
+  defp apple_audience(_audience), do: nil
+
+  defp apple_relay?(claims, email) do
+    claims["is_private_email"] in [true, "true"] or
+      String.ends_with?(String.downcase(email), "@privaterelay.appleid.com")
+  end
+
+  defp facebook_business_ids(providers, token) do
+    case providers.facebook_business_ids(token) do
+      {:ok, ids} when is_list(ids) and ids != [] ->
+        if Enum.all?(ids, &(is_binary(&1) and &1 != "")),
+          do: {:ok, ids},
+          else: {:error, :provider_unavailable}
+
+      {:ok, []} ->
+        {:ok, []}
+
+      {:ok, _malformed} ->
+        {:error, :provider_unavailable}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

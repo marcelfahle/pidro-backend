@@ -101,7 +101,8 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
           })
 
         "/v24.0/me" ->
-          Req.Test.json(conn, %{"id" => "current-id"})
+          assert conn.query_params["fields"] == "email"
+          Req.Test.json(conn, %{"id" => "current-id", "email" => "player@example.com"})
 
         "/v24.0/me/ids_for_business" ->
           case conn.query_params["after"] do
@@ -122,7 +123,12 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
       end
     end)
 
-    assert {:ok, "current-id"} = ProviderIdentity.facebook("facebook-token")
+    assert {:ok,
+            %{
+              subject: "current-id",
+              issuer_app: "345200965110578",
+              email: "player@example.com"
+            }} = ProviderIdentity.facebook("facebook-token")
 
     assert {:ok, ["first-page-id", "old-id", "current-id"]} =
              ProviderIdentity.facebook_business_ids("facebook-token")
@@ -165,7 +171,8 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
       |> Plug.Conn.send_resp(200, body)
     end)
 
-    assert {:ok, "fb-user"} = ProviderIdentity.facebook("user-token")
+    assert {:ok, %{subject: "fb-user", issuer_app: "345200965110578", email: nil}} =
+             ProviderIdentity.facebook("user-token")
   end
 
   test "an invalid Facebook token served as text/javascript is invalid, not an outage" do
