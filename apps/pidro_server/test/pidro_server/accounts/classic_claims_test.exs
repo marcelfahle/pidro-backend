@@ -8,7 +8,8 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     ClassicNameReservation,
     ClassicNameReservations,
     ProviderAuth,
-    User
+    User,
+    UserIdentity
   }
 
   alias PidroServer.AccountsFixtures
@@ -20,8 +21,12 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     def apple("valid-apple-token"), do: {:ok, %{"sub" => "apple-subject"}}
     def apple(_token), do: {:error, :invalid_credentials}
 
-    def facebook("valid-facebook-token"), do: {:ok, "facebook-subject"}
+    def facebook("valid-facebook-token") do
+      {:ok, %{subject: "facebook-subject", issuer_app: "facebook-app", email: nil}}
+    end
+
     def facebook(_token), do: {:error, :invalid_credentials}
+    def facebook_business_ids("valid-facebook-token"), do: {:ok, []}
   end
 
   test "an authenticated guest keeps its identity and progress, and retry is a no-op" do
@@ -38,8 +43,14 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert claimed.id == guest.id
     assert claimed.guest
     assert claimed.classic_user_id == 10_001
+    assert claimed.classic_claim_method == :apple
+    assert claimed.classic_matched_on == :email
     assert claimed.apple_sub == "apple-subject"
     assert %DateTime{} = claimed.classic_claimed_at
+
+    identity = Repo.get_by!(UserIdentity, provider: :apple, subject: "apple-subject")
+    assert identity.user_id == guest.id
+    assert identity.link_source == :claim
 
     imported = Repo.get_by!(PlayerProfile, user_id: guest.id)
     assert imported.veteran_xp == 525

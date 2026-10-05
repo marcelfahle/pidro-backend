@@ -26,9 +26,10 @@ defmodule PidroServer.Accounts.ProviderIdentity do
              input_token: access_token,
              access_token: app_id <> "|" <> Keyword.fetch!(config, :facebook_app_secret)
            ),
-         {:ok, %{"id" => id}} <- facebook_get("/me", access_token: access_token),
+         {:ok, %{"id" => id} = profile} <-
+           facebook_get("/me", access_token: access_token, fields: "email"),
          true <- (is_binary(id) and id == debug["user_id"]) or {:error, :invalid_credentials} do
-      {:ok, id}
+      {:ok, %{subject: id, issuer_app: app_id, email: facebook_email(profile)}}
     else
       {:ok, _invalid} -> {:error, :invalid_credentials}
       {:error, reason} -> {:error, reason}
@@ -184,6 +185,9 @@ defmodule PidroServer.Accounts.ProviderIdentity do
   end
 
   defp json_body(_body), do: {:error, :provider_unavailable}
+
+  defp facebook_email(%{"email" => email}) when is_binary(email) and email != "", do: email
+  defp facebook_email(_profile), do: nil
 
   defp identity_ids(identities) do
     Enum.reduce_while(identities, {:ok, []}, fn

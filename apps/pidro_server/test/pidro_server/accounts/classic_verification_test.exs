@@ -52,6 +52,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     @impl true
     def lookup(:email, "apple@example.com"), do: {:ok, profile()}
     def lookup(:fbid, "current-app-id"), do: {:error, :not_found}
+    def lookup(:fbid, "direct-current-app-id"), do: {:ok, profile()}
     def lookup(:fbid, "old-app-id"), do: {:ok, profile()}
     def lookup(:email, "sparse@example.com"), do: {:ok, %{"id" => 98_765}}
     def lookup(_field, _value), do: {:error, :not_found}
@@ -84,6 +85,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
         {:ok,
          %{
            "sub" => "apple-subject",
+           "aud" => "com.oneapps.pidro",
            "email" => "apple@example.com",
            "email_verified" => "true"
          }}
@@ -110,9 +112,18 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
          }}
 
     def apple(_token), do: {:error, :invalid_credentials}
-    def facebook("facebook-token"), do: {:ok, "current-app-id"}
+
+    def facebook("facebook-token") do
+      {:ok, %{subject: "current-app-id", issuer_app: "facebook-app", email: nil}}
+    end
+
+    def facebook("direct-facebook-token") do
+      {:ok, %{subject: "direct-current-app-id", issuer_app: "facebook-app", email: nil}}
+    end
+
     def facebook(_token), do: {:error, :invalid_credentials}
     def facebook_business_ids("facebook-token"), do: {:ok, ["old-app-id"]}
+    def facebook_business_ids("direct-facebook-token"), do: {:ok, ["unused-old-app-id"]}
   end
 
   test "a real Classic payload for a no-username veteran previews name and old games" do
@@ -162,6 +173,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.bound_user_id == user.id
     assert ticket.install_id == nil
     assert ticket.method == :password
+    assert ticket.matched_on == :password
     assert ticket.legacy_data["classic_username"] == "Old Timer"
     assert ticket.legacy_data["classic_name_allowed"] == true
     assert ticket.legacy_data["games_played_counter"] == 321
@@ -224,7 +236,10 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
     assert ticket.install_id == "apple-install"
     assert ticket.method == :apple
+    assert ticket.matched_on == :email
     assert ticket.provider_id == "apple-subject"
+    assert ticket.provider_issuer_app == "com.oneapps.pidro"
+    assert ticket.provider_email == "apple@example.com"
     refute inspect(ticket.legacy_data) =~ "apple@example.com"
   end
 
@@ -243,7 +258,25 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
 
     ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
     assert ticket.method == :facebook
+    assert ticket.matched_on == :facebook_business_id
     assert ticket.provider_id == "current-app-id"
+  end
+
+  test "Facebook records a match on the current app id" do
+    assert {:ok, _result} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "facebook",
+                 "access_token" => "direct-facebook-token",
+                 "install_id" => "facebook-install"
+               },
+               nil,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
+    assert ticket.matched_on == :facebook_id
   end
 
   test "Apple email must be verified before it can select a Classic account" do

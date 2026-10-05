@@ -2,7 +2,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   use PidroServerWeb.ConnCase, async: false
   use PidroServerWeb.RateLimitCase
 
-  alias PidroServer.Accounts.Token
+  alias PidroServer.Accounts.{Token, UserIdentities}
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.Bots.{BotManager, BotSupervisor}
   alias PidroServer.Games.{RoomCodes, RoomManager}
@@ -107,7 +107,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "create/2" do
-    test "room payloads never expose another player's age or terms fields", %{conn: conn} do
+    test "room payloads never expose private account fields", %{conn: conn} do
       host = AccountsFixtures.user_fixture()
 
       host =
@@ -116,9 +116,28 @@ defmodule PidroServerWeb.API.RoomControllerTest do
           age_band: "18_plus",
           age_declared_at: DateTime.utc_now(),
           terms_version: "1",
-          terms_accepted_at: DateTime.utc_now()
+          terms_accepted_at: DateTime.utc_now(),
+          classic_user_id: 987_654,
+          classic_claimed_at: DateTime.utc_now(),
+          classic_claim_method: :apple,
+          classic_matched_on: :email,
+          apple_sub: "private-apple-subject"
         })
         |> PidroServer.Repo.update!()
+
+      {:ok, _host} =
+        UserIdentities.link(
+          host,
+          %{
+            provider: :apple,
+            subject: "private-apple-subject",
+            issuer_app: "private-issuer-app",
+            email: "private-identity@example.com",
+            email_is_relay: false,
+            business_ids: []
+          },
+          :claim
+        )
 
       room =
         conn
@@ -133,6 +152,10 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       refute Map.has_key?(north, "terms_version")
       refute Jason.encode!(room) =~ "age_band"
       refute Jason.encode!(room) =~ "terms_version"
+      refute Jason.encode!(room) =~ "private-apple-subject"
+      refute Jason.encode!(room) =~ "private-issuer-app"
+      refute Jason.encode!(room) =~ "private-identity@example.com"
+      refute Jason.encode!(room) =~ "classic_matched_on"
     end
 
     test "a guest can host an open friends table", %{conn: conn} do

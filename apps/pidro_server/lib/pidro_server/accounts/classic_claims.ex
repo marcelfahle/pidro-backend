@@ -10,7 +10,14 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   alias Ecto.Changeset
   alias PidroServer.Accounts
-  alias PidroServer.Accounts.{ClassicClaimTicket, ClassicNameReservations, User}
+
+  alias PidroServer.Accounts.{
+    ClassicClaimTicket,
+    ClassicNameReservations,
+    User,
+    UserIdentities
+  }
+
   alias PidroServer.Profiles
   alias PidroServer.Profiles.{LegacyProgression, PlayerProfile}
   alias PidroServer.Repo
@@ -28,6 +35,8 @@ defmodule PidroServer.Accounts.ClassicClaims do
     token = @ticket_bytes |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
     now = DateTime.utc_now()
     classic_user_id = fetch(attrs, :classic_user_id)
+    method = fetch(attrs, :method)
+    identity = fetch(attrs, :provider_identity) || %{}
 
     legacy_data =
       attrs
@@ -39,8 +48,13 @@ defmodule PidroServer.Accounts.ClassicClaims do
     ticket_attrs = %{
       token_hash: hash_token(token),
       classic_user_id: classic_user_id,
-      method: fetch(attrs, :method),
+      method: method,
+      matched_on: fetch(attrs, :matched_on) || default_matched_on(method),
       provider_id: fetch(attrs, :provider_id),
+      provider_issuer_app: fetch(identity, :issuer_app),
+      provider_email: fetch(identity, :email),
+      provider_email_is_relay: fetch(identity, :email_is_relay) || false,
+      provider_business_ids: fetch(identity, :business_ids),
       legacy_data: legacy_data,
       bound_user_id: fetch(attrs, :user_id),
       install_id: fetch(attrs, :install_id),
@@ -332,6 +346,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
     with :ok <- ensure_link_available(ticket, user),
          :ok <- ensure_provider_available(ticket, user),
          {:ok, linked} <- link_user(ticket, user, now, display_name),
+         {:ok, linked} <- link_provider_identity(ticket, linked, now),
          :ok <- maybe_import_progression(already_linked?, linked, ticket),
          {:ok, _ticket} <-
            ticket |> ClassicClaimTicket.redeem_changeset(linked.id, now) |> Repo.update() do
@@ -387,7 +402,9 @@ defmodule PidroServer.Accounts.ClassicClaims do
     attrs =
       %{
         classic_user_id: ticket.classic_user_id,
-        classic_claimed_at: user.classic_claimed_at || now
+        classic_claimed_at: user.classic_claimed_at || now,
+        classic_claim_method: ticket.method,
+        classic_matched_on: ticket.matched_on
       }
       |> put_provider(ticket.method, ticket.provider_id)
       |> maybe_put_display_name(display_name)
@@ -419,9 +436,29 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   defp maybe_force_display_name(changeset, _name), do: changeset
 
+  # These legacy columns remain dual-written for rollback safety and will be
+  # removed in a later release after every consumer uses user_identities.
   defp put_provider(attrs, :apple, provider_id), do: Map.put(attrs, :apple_sub, provider_id)
   defp put_provider(attrs, :facebook, provider_id), do: Map.put(attrs, :facebook_id, provider_id)
   defp put_provider(attrs, :password, _provider_id), do: attrs
+
+  defp link_provider_identity(%{method: :password}, user, _now), do: {:ok, user}
+
+  defp link_provider_identity(ticket, user, now) do
+    UserIdentities.link(
+      user,
+      %{
+        provider: ticket.method,
+        subject: ticket.provider_id,
+        issuer_app: ticket.provider_issuer_app,
+        email: ticket.provider_email,
+        email_is_relay: ticket.provider_email_is_relay,
+        business_ids: ticket.provider_business_ids || []
+      },
+      :claim,
+      now
+    )
+  end
 
   defp map_link_error({:ok, user}, _method), do: {:ok, user}
 
@@ -465,6 +502,10 @@ defmodule PidroServer.Accounts.ClassicClaims do
   end
 
   defp hash_token(token), do: :crypto.hash(:sha256, token)
+
+  defp default_matched_on(:password), do: :password
+  defp default_matched_on(:apple), do: :email
+  defp default_matched_on(:facebook), do: :facebook_id
 
   defp fetch(map, key) do
     Map.get(map, key, Map.get(map, Atom.to_string(key)))
