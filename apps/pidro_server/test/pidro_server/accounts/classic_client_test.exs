@@ -84,6 +84,8 @@ defmodule PidroServer.Accounts.ClassicClientTest do
     assert profile["ended"] == 0
     assert profile["inserted_at"] == "2014-03-02T10:00:00"
     assert profile["premium_until"] == nil
+    assert profile["account_deleted"] == false
+    assert profile["account_visible"] == true
   end
 
   test "lookup unwraps the same payload" do
@@ -99,6 +101,14 @@ defmodule PidroServer.Accounts.ClassicClientTest do
     end)
 
     assert {:error, :account_inactive} = ClassicClient.verify_password("old", "secret")
+  end
+
+  test "an ambiguous Classic lookup is not accepted as a match" do
+    Req.Test.expect(ClassicClient, fn conn ->
+      conn |> Plug.Conn.put_status(409) |> Req.Test.json(%{"error" => "ambiguous"})
+    end)
+
+    assert {:error, :ambiguous} = ClassicClient.lookup(:email, "shared@example.com")
   end
 
   test "a wrong password is invalid credentials" do

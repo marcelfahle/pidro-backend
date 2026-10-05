@@ -5,7 +5,7 @@ defmodule PidroServer.Accounts.ClassicClient do
               {:ok, map()}
               | {:error, :invalid_credentials | :account_inactive | :provider_unavailable}
   @callback lookup(:email | :fbid, String.t()) ::
-              {:ok, map()} | {:error, :not_found | :provider_unavailable}
+              {:ok, map()} | {:error, :not_found | :ambiguous | :provider_unavailable}
 
   def verify_password(login, password) do
     request(:post, "/internal/claims/verify_password", json: %{login: login, password: password})
@@ -51,6 +51,7 @@ defmodule PidroServer.Accounts.ClassicClient do
     do: {:ok, normalize(profile)}
 
   defp lookup_result({:ok, %{status: 404}}), do: {:error, :not_found}
+  defp lookup_result({:ok, %{status: 409}}), do: {:error, :ambiguous}
   defp lookup_result(_response), do: {:error, :provider_unavailable}
 
   @doc """
@@ -81,6 +82,8 @@ defmodule PidroServer.Accounts.ClassicClient do
       "ended" => games["games_ended"],
       "inserted_at" => profile["member_since"],
       "premium_until" => premium["until"],
+      "account_deleted" => get_in(profile, ["account", "deleted"]),
+      "account_visible" => get_in(profile, ["account", "visible"]),
       "badges" => profile["badges"] || []
     }
   end

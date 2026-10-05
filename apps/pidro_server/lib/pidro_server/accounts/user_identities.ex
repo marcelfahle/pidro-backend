@@ -8,6 +8,13 @@ defmodule PidroServer.Accounts.UserIdentities do
   alias PidroServer.Accounts.{User, UserIdentity}
   alias PidroServer.Repo
 
+  def business_ids_missing?(provider, subject) do
+    Repo.exists?(
+      from i in UserIdentity,
+        where: i.provider == ^provider and i.subject == ^subject and is_nil(i.business_ids)
+    )
+  end
+
   def sign_in(%{provider: provider, subject: subject} = attrs) do
     now = DateTime.utc_now()
 

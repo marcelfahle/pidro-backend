@@ -54,6 +54,12 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     def lookup(:fbid, "current-app-id"), do: {:error, :not_found}
     def lookup(:fbid, "direct-current-app-id"), do: {:ok, profile()}
     def lookup(:fbid, "old-app-id"), do: {:ok, profile()}
+    def lookup(:email, "facebook@example.com"), do: {:ok, profile()}
+    def lookup(:email, "ambiguous@example.com"), do: {:error, :ambiguous}
+
+    def lookup(:email, "deleted@example.com"),
+      do: {:ok, Map.put(profile(), "account_deleted", true)}
+
     def lookup(:email, "sparse@example.com"), do: {:ok, %{"id" => 98_765}}
     def lookup(_field, _value), do: {:error, :not_found}
 
@@ -121,9 +127,47 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
       {:ok, %{subject: "direct-current-app-id", issuer_app: "facebook-app", email: nil}}
     end
 
+    def facebook("email-facebook-token") do
+      {:ok,
+       %{
+         subject: "email-current-app-id",
+         issuer_app: "facebook-app",
+         email: "facebook@example.com"
+       }}
+    end
+
     def facebook(_token), do: {:error, :invalid_credentials}
+
+    def facebook_limited("limited-token", "limited-nonce") do
+      {:ok,
+       %{
+         subject: "limited-current-app-id",
+         issuer_app: "facebook-app",
+         email: "facebook@example.com"
+       }}
+    end
+
+    def facebook_limited("ambiguous-token", "limited-nonce") do
+      {:ok,
+       %{
+         subject: "limited-current-app-id",
+         issuer_app: "facebook-app",
+         email: "ambiguous@example.com"
+       }}
+    end
+
+    def facebook_limited("deleted-token", "limited-nonce") do
+      {:ok,
+       %{
+         subject: "limited-current-app-id",
+         issuer_app: "facebook-app",
+         email: "deleted@example.com"
+       }}
+    end
+
     def facebook_business_ids("facebook-token"), do: {:ok, ["old-app-id"]}
     def facebook_business_ids("direct-facebook-token"), do: {:ok, ["unused-old-app-id"]}
+    def facebook_business_ids("email-facebook-token"), do: {:ok, []}
   end
 
   test "a real Classic payload for a no-username veteran previews name and old games" do
@@ -277,6 +321,80 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
 
     ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
     assert ticket.matched_on == :facebook_id
+  end
+
+  test "Facebook falls back to verified email" do
+    assert {:ok, _result} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "facebook",
+                 "access_token" => "email-facebook-token",
+                 "install_id" => "facebook-install"
+               },
+               nil,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345).matched_on == :email
+  end
+
+  test "Facebook Limited Login verifies a Classic claim by email" do
+    assert {:ok, _result} =
+             ClassicVerification.verify(
+               %{
+                 "method" => "facebook",
+                 "authentication_token" => "limited-token",
+                 "nonce" => "limited-nonce",
+                 "install_id" => "facebook-install"
+               },
+               nil,
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
+    assert ticket.provider_id == "limited-current-app-id"
+    assert ticket.provider_business_ids == []
+    assert ticket.matched_on == :email
+  end
+
+  test "ambiguous or deleted Facebook emails are not a Classic match" do
+    for token <- ["ambiguous-token", "deleted-token"] do
+      assert {:error, :invalid_credentials} =
+               ClassicVerification.verify(
+                 %{
+                   "method" => "facebook",
+                   "authentication_token" => token,
+                   "nonce" => "limited-nonce",
+                   "install_id" => "facebook-install"
+                 },
+                 nil,
+                 classic_client: Classic,
+                 provider_identity: Providers
+               )
+    end
+
+    assert Repo.aggregate(ClassicClaimTicket, :count) == 0
+  end
+
+  test "Facebook requires exactly one credential shape" do
+    for params <- [
+          %{"method" => "facebook", "install_id" => "facebook-install"},
+          %{
+            "method" => "facebook",
+            "access_token" => "facebook-token",
+            "authentication_token" => "limited-token",
+            "nonce" => "limited-nonce",
+            "install_id" => "facebook-install"
+          }
+        ] do
+      assert {:error, :invalid_credentials} =
+               ClassicVerification.verify(params, nil,
+                 classic_client: Classic,
+                 provider_identity: Providers
+               )
+    end
   end
 
   test "Apple email must be verified before it can select a Classic account" do

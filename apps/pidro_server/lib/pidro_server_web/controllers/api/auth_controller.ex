@@ -33,7 +33,7 @@ defmodule PidroServerWeb.API.AuthController do
   import Swoosh.Email
   require Logger
 
-  alias PidroServer.Accounts.{AgeTerms, Auth, ProviderAuth, Token, User}
+  alias PidroServer.Accounts.{AgeTerms, Auth, FacebookCredential, ProviderAuth, Token, User}
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -260,9 +260,9 @@ defmodule PidroServerWeb.API.AuthController do
   operation(:facebook,
     summary: "Sign in with Facebook",
     description:
-      "Signs in a linked account, returns an install-bound Classic claim when any verified business ID matches Classic, or creates a new provider account. `install_id` is required only for a Classic match.",
+      "Accepts either a Graph `access_token` or a Limited Login `authentication_token` plus `nonce`. Signs in a linked account, returns an install-bound Classic claim when the Facebook ID, business ID, or verified email matches Classic, or creates a new provider account. `install_id` is required only for a Classic match.",
     request_body:
-      {"Facebook access token", "application/json", ClassicClaimSchemas.FacebookRequest},
+      {"Facebook credential", "application/json", ClassicClaimSchemas.FacebookRequest},
     responses: [
       ok:
         {"Authentication successful or Classic account found", "application/json",
@@ -278,10 +278,11 @@ defmodule PidroServerWeb.API.AuthController do
     ]
   )
 
-  def facebook(conn, %{"access_token" => token} = params),
-    do: provider_login(conn, :facebook, token, params)
-
-  def facebook(_conn, _params), do: {:error, :invalid_credentials}
+  def facebook(conn, params) do
+    with {:ok, credential} <- FacebookCredential.parse(params) do
+      provider_login(conn, :facebook, credential, params)
+    end
+  end
 
   defp provider_login(conn, provider, provider_token, params) do
     with {:ok, declaration} <- AgeTerms.parse(params) do

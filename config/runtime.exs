@@ -162,6 +162,11 @@ if config_env() == :prod do
       System.get_env("APPLE_AUDIENCE", "com.oneapps.pidro,com.oneapps.pidro.beta")
       |> String.split(",", trim: true)
       |> Enum.map(&String.trim/1),
+    facebook_jwks_url:
+      System.get_env(
+        "FACEBOOK_JWKS_URL",
+        "https://limited.facebook.com/.well-known/oauth/openid/jwks/"
+      ),
     facebook_graph_url:
       System.get_env("FACEBOOK_GRAPH_URL", "https://graph.facebook.com/v24.0")
       |> String.trim_trailing("/"),

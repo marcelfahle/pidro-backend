@@ -1,5 +1,5 @@
 defmodule PidroServer.Accounts.ProviderIdentityTest do
-  use ExUnit.Case, async: true
+  use PidroServer.DataCase, async: true
 
   alias PidroServer.Accounts.ProviderIdentity
 
@@ -79,6 +79,59 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
     end)
 
     assert {:error, :invalid_credentials} = ProviderIdentity.apple(token)
+  end
+
+  test "accepts a correctly signed Facebook Limited Login token" do
+    private_key = :public_key.generate_key({:rsa, 1024, 65_537})
+    nonce = String.duplicate("a", 32)
+    token = facebook_token(private_key, %{"nonce" => nonce})
+    expect_jwks(private_key)
+
+    assert {:ok,
+            %{
+              subject: "facebook-sub",
+              issuer_app: "345200965110578",
+              email: "limited@example.com"
+            }} = ProviderIdentity.facebook_limited(token, nonce)
+  end
+
+  test "rejects invalid Facebook Limited Login signatures and claims" do
+    private_key = :public_key.generate_key({:rsa, 1024, 65_537})
+    other_key = :public_key.generate_key({:rsa, 1024, 65_537})
+    nonce = String.duplicate("b", 32)
+
+    invalid_tokens = [
+      facebook_token(other_key, %{"nonce" => nonce}),
+      facebook_token(private_key, %{"nonce" => nonce, "aud" => "wrong-app"}),
+      facebook_token(private_key, %{"nonce" => nonce, "iss" => "https://evil.example"}),
+      facebook_token(private_key, %{
+        "nonce" => nonce,
+        "exp" => System.system_time(:second) - 1
+      }),
+      facebook_token(private_key, %{"nonce" => "different-nonce"})
+    ]
+
+    Req.Test.expect(ProviderIdentity, length(invalid_tokens), fn conn ->
+      assert conn.request_path == "/.well-known/oauth/openid/jwks/"
+      Req.Test.json(conn, %{"keys" => [public_jwk(private_key)]})
+    end)
+
+    for token <- invalid_tokens do
+      assert {:error, :invalid_credentials} = ProviderIdentity.facebook_limited(token, nonce)
+    end
+  end
+
+  test "rejects reuse of a Facebook Limited Login nonce" do
+    private_key = :public_key.generate_key({:rsa, 1024, 65_537})
+    nonce = String.duplicate("c", 32)
+    token = facebook_token(private_key, %{"nonce" => nonce})
+
+    Req.Test.expect(ProviderIdentity, 2, fn conn ->
+      Req.Test.json(conn, %{"keys" => [public_jwk(private_key)]})
+    end)
+
+    assert {:ok, _identity} = ProviderIdentity.facebook_limited(token, nonce)
+    assert {:error, :invalid_credentials} = ProviderIdentity.facebook_limited(token, nonce)
   end
 
   test "Facebook requires the configured app and returns all business-scoped ids" do
@@ -214,6 +267,33 @@ defmodule PidroServer.Accounts.ProviderIdentityTest do
     signed = encode(header) <> "." <> encode(claims)
     signature = :public_key.sign(signed, :sha256, private_key)
     signed <> "." <> Base.url_encode64(signature, padding: false)
+  end
+
+  defp facebook_token(private_key, overrides) do
+    header = %{"alg" => "RS256", "kid" => "test-key"}
+
+    claims =
+      Map.merge(
+        %{
+          "iss" => "https://www.facebook.com",
+          "aud" => "345200965110578",
+          "exp" => System.system_time(:second) + 300,
+          "sub" => "facebook-sub",
+          "email" => "limited@example.com"
+        },
+        overrides
+      )
+
+    signed = encode(header) <> "." <> encode(claims)
+    signature = :public_key.sign(signed, :sha256, private_key)
+    signed <> "." <> Base.url_encode64(signature, padding: false)
+  end
+
+  defp expect_jwks(private_key) do
+    Req.Test.expect(ProviderIdentity, fn conn ->
+      assert conn.request_path == "/.well-known/oauth/openid/jwks/"
+      Req.Test.json(conn, %{"keys" => [public_jwk(private_key)]})
+    end)
   end
 
   defp public_jwk({:RSAPrivateKey, _, modulus, exponent, _, _, _, _, _, _, _}) do

@@ -4,7 +4,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
   require Logger
 
   alias PidroServer.Accounts
-  alias PidroServer.Accounts.{ClassicClaims, ClassicClient, ProviderIdentity}
+  alias PidroServer.Accounts.{ClassicClaims, ClassicClient, FacebookCredential, ProviderIdentity}
   alias PidroServer.Profiles.LegacyProgression
 
   def verify(params, current_user, opts \\ [])
@@ -34,19 +34,19 @@ defmodule PidroServer.Accounts.ClassicVerification do
   sign-in can safely create a new account. Binding is checked only after a
   match, because a new provider user does not need an install-bound ticket.
   """
-  def verify_provider(identity, lookup_ids, params, opts \\ [])
+  def verify_provider(identity, params, opts \\ [])
 
-  def verify_provider(%{provider: provider} = identity, lookup_ids, params, opts)
-      when provider in [:apple, :facebook] and is_list(lookup_ids) and is_map(params) do
+  def verify_provider(%{provider: provider} = identity, params, opts)
+      when provider in [:apple, :facebook] and is_map(params) do
     classic = Keyword.get(opts, :classic_client, ClassicClient)
 
-    with {:ok, profile, matched_on} <- lookup_provider(classic, provider, lookup_ids),
+    with {:ok, profile, matched_on} <- lookup_provider(classic, identity),
          {:ok, binding} <- binding(nil, params) do
       issue_ticket(binding, provider, profile, identity, matched_on)
     end
   end
 
-  def verify_provider(_identity, _lookup_ids, _params, _opts),
+  def verify_provider(_identity, _params, _opts),
     do: {:error, :invalid_credentials}
 
   defp binding(%{id: user_id}, _params), do: {:ok, %{user_id: user_id}}
@@ -105,11 +105,34 @@ defmodule PidroServer.Accounts.ClassicVerification do
   end
 
   defp verify_method(:facebook, params, classic, providers) do
-    with token when is_binary(token) <- fetch(params, :access_token),
-         {:ok, %{subject: primary_id, issuer_app: issuer_app, email: email}} <-
-           providers.facebook(token),
-         {:ok, business_ids} <- facebook_business_ids(providers, token),
-         {:ok, profile, matched_on} <- lookup_facebook(classic, primary_id, business_ids) do
+    with {:ok, credential} <- FacebookCredential.parse(params) do
+      verify_facebook(credential, classic, providers)
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp verify_facebook({:access_token, token}, classic, providers) do
+    with {:ok, provider_identity} <- providers.facebook(token),
+         {:ok, business_ids} <- facebook_business_ids(providers, token) do
+      verify_facebook_identity(classic, provider_identity, business_ids)
+    end
+  end
+
+  defp verify_facebook({:authentication_token, token, nonce}, classic, providers) do
+    with {:ok, provider_identity} <- providers.facebook_limited(token, nonce) do
+      verify_facebook_identity(classic, provider_identity, [])
+    end
+  end
+
+  defp verify_facebook_identity(
+         classic,
+         %{subject: primary_id, issuer_app: issuer_app, email: email},
+         business_ids
+       ) do
+    with true <- (is_binary(primary_id) and primary_id != "") or {:error, :invalid_credentials},
+         {:ok, profile, matched_on} <-
+           lookup_facebook(classic, primary_id, business_ids, email) do
       identity = %{
         provider: :facebook,
         subject: primary_id,
@@ -120,78 +143,117 @@ defmodule PidroServer.Accounts.ClassicVerification do
       }
 
       {:ok, profile, identity, matched_on}
-    else
-      {:error, reason} -> {:error, reason}
-      _invalid -> {:error, :invalid_credentials}
     end
   end
 
-  defp lookup_provider(_classic, provider, []) do
-    log_provider_match(provider, :no_match)
-    {:error, :not_found}
-  end
-
-  defp lookup_provider(classic, :apple, [email]) do
+  defp lookup_provider(classic, %{provider: :apple, email: email}) when is_binary(email) do
     case logged_apple_lookup(classic, email) do
       {:ok, profile} -> {:ok, profile, :email}
       error -> error
     end
   end
 
-  defp lookup_provider(classic, :facebook, [primary_id | business_ids]),
-    do: lookup_facebook(classic, primary_id, business_ids)
+  defp lookup_provider(classic, %{
+         provider: :facebook,
+         subject: primary_id,
+         business_ids: business_ids,
+         email: email
+       }),
+       do: lookup_facebook(classic, primary_id, business_ids || [], email)
 
-  defp lookup_provider(_classic, _provider, _lookup_ids), do: {:error, :invalid_credentials}
+  defp lookup_provider(_classic, %{provider: provider}) do
+    log_provider_match(provider, :no_match)
+    {:error, :not_found}
+  end
 
-  defp lookup_facebook(classic, primary_id, business_ids) do
+  defp lookup_facebook(classic, primary_id, business_ids, email) do
     case classic.lookup(:fbid, primary_id) do
       {:ok, profile} ->
-        log_provider_match(:facebook, :id_match)
-        {:ok, profile, :facebook_id}
+        if deleted_profile?(profile) do
+          lookup_facebook_business(classic, primary_id, business_ids, email)
+        else
+          log_provider_match(:facebook, :id_match)
+          {:ok, profile, :facebook_id}
+        end
 
       {:error, :not_found} ->
-        lookup_facebook_business(classic, primary_id, business_ids)
+        lookup_facebook_business(classic, primary_id, business_ids, email)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp lookup_facebook_business(classic, primary_id, business_ids) do
+  defp lookup_facebook_business(classic, primary_id, business_ids, email) do
     business_ids
     |> Enum.uniq()
     |> Enum.reject(&(&1 == primary_id))
     |> Enum.reduce_while({:error, :not_found}, fn id, _not_found ->
       case classic.lookup(:fbid, id) do
-        {:ok, profile} -> {:halt, {:ok, profile, :facebook_business_id}}
-        {:error, :not_found} -> {:cont, {:error, :not_found}}
-        {:error, reason} -> {:halt, {:error, reason}}
+        {:ok, profile} ->
+          if deleted_profile?(profile),
+            do: {:cont, {:error, :not_found}},
+            else: {:halt, {:ok, profile, :facebook_business_id}}
+
+        {:error, :not_found} ->
+          {:cont, {:error, :not_found}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
       end
     end)
-    |> log_facebook_business_result()
+    |> case do
+      {:ok, _profile, :facebook_business_id} = result ->
+        log_provider_match(:facebook, :business_id_match)
+        result
+
+      {:error, :not_found} ->
+        lookup_facebook_email(classic, email)
+
+      error ->
+        error
+    end
   end
 
-  defp log_facebook_business_result({:ok, _profile, :facebook_business_id} = result) do
-    log_provider_match(:facebook, :business_id_match)
-    result
+  defp lookup_facebook_email(classic, email) when is_binary(email) and email != "" do
+    case classic.lookup(:email, email) do
+      {:ok, profile} ->
+        if deleted_profile?(profile) do
+          log_provider_match(:facebook, :no_match)
+          {:error, :not_found}
+        else
+          log_provider_match(:facebook, :email_match)
+          {:ok, profile, :email}
+        end
+
+      {:error, reason} when reason in [:not_found, :ambiguous] ->
+        log_provider_match(:facebook, :no_match)
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
-  defp log_facebook_business_result({:error, :not_found} = result) do
+  defp lookup_facebook_email(_classic, _email) do
     log_provider_match(:facebook, :no_match)
-    result
+    {:error, :not_found}
   end
-
-  defp log_facebook_business_result(result), do: result
 
   defp logged_apple_lookup(classic, email) do
     case classic.lookup(:email, email) do
-      {:ok, _profile} = result ->
-        log_provider_match(:apple, :email_match)
-        result
+      {:ok, profile} ->
+        if deleted_profile?(profile) do
+          log_provider_match(:apple, :no_match)
+          {:error, :not_found}
+        else
+          log_provider_match(:apple, :email_match)
+          {:ok, profile}
+        end
 
-      {:error, :not_found} = result ->
+      {:error, reason} when reason in [:not_found, :ambiguous] ->
         log_provider_match(:apple, :no_match)
-        result
+        {:error, :not_found}
 
       {:error, reason} ->
         {:error, reason}
@@ -201,6 +263,10 @@ defmodule PidroServer.Accounts.ClassicVerification do
   defp log_provider_match(_provider, outcome) do
     Logger.info("Classic provider match", outcome: outcome)
   end
+
+  defp deleted_profile?(profile),
+    do:
+      fetch(profile, :account_deleted) == true or get_in(profile, ["account", "deleted"]) == true
 
   defp issue_ticket(binding, method, profile, identity, matched_on) do
     provider_id = if identity, do: identity.subject

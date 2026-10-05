@@ -14,7 +14,7 @@ defmodule PidroServerWeb.API.ClassicClaimController do
   operation(:verify,
     summary: "Verify ownership of a Classic account",
     description:
-      "Validates a Classic password, Apple identity token or Facebook access token and returns a short-lived claim ticket.",
+      "Validates a Classic password, Apple identity token, Facebook Graph access token, or Facebook Limited Login authentication token and returns a short-lived claim ticket.",
     request_body: {"Classic verification", "application/json", ClassicClaimSchemas.VerifyRequest},
     responses: [
       ok: {"Classic account verified", "application/json", ClassicClaimSchemas.VerifyResponse},

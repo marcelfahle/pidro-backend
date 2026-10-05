@@ -1,9 +1,12 @@
 defmodule PidroServer.Accounts.ProviderAuth do
   @moduledoc "Apple and Facebook sign-in, Classic discovery, and first-time registration."
 
+  require Logger
+
   alias PidroServer.Accounts.{
     ClassicNameReservations,
     ClassicVerification,
+    FacebookCredential,
     GuestNames,
     ProviderIdentity,
     User,
@@ -17,26 +20,32 @@ defmodule PidroServer.Accounts.ProviderAuth do
   @type provider :: :apple | :facebook
   @type result :: {:ok, User.t()} | {:classic_found, map()}
 
-  @spec authenticate(provider(), String.t(), map(), keyword()) ::
+  @spec authenticate(provider(), String.t() | tuple() | map(), map(), keyword()) ::
           result()
           | {:error,
              :invalid_credentials | :provider_unavailable | :claim_binding_required | term()}
   def authenticate(provider, token, params \\ %{}, opts \\ [])
 
-  def authenticate(provider, token, params, opts)
-      when provider in [:apple, :facebook] and is_binary(token) and is_map(params) do
+  def authenticate(:facebook, token, params, opts) when is_binary(token),
+    do: authenticate(:facebook, {:access_token, token}, params, opts)
+
+  def authenticate(provider, credential, params, opts)
+      when provider in [:apple, :facebook] and is_map(params) do
     providers =
       Keyword.get_lazy(opts, :provider_identity, fn ->
         Application.get_env(:pidro_server, :provider_identity, ProviderIdentity)
       end)
 
-    with {:ok, identity, lookup_ids} <- verify(provider, token, providers) do
+    with {:ok, identity, lookup_context} <- verify(provider, credential, providers) do
       case UserIdentities.sign_in(identity) do
         {:ok, %User{} = user} ->
+          maybe_heal_business_ids(identity, lookup_context, providers)
           {:ok, user}
 
         {:error, :not_found} ->
-          find_classic_or_create(identity, lookup_ids, params, opts)
+          with {:ok, identity} <- complete_identity(identity, lookup_context, providers) do
+            find_classic_or_create(identity, params, opts)
+          end
 
         {:error, reason} ->
           {:error, reason}
@@ -46,7 +55,7 @@ defmodule PidroServer.Accounts.ProviderAuth do
 
   def authenticate(_provider, _token, _params, _opts), do: {:error, :invalid_credentials}
 
-  defp verify(:apple, token, providers) do
+  defp verify(:apple, token, providers) when is_binary(token) do
     with {:ok, %{"sub" => provider_id} = claims} <- providers.apple(token),
          true <- valid_id?(provider_id) or {:error, :invalid_credentials} do
       email = verified_apple_email(claims)
@@ -60,39 +69,92 @@ defmodule PidroServer.Accounts.ProviderAuth do
         business_ids: []
       }
 
-      {:ok, identity, if(email, do: [email], else: [])}
+      {:ok, identity, :complete}
     else
       {:error, reason} -> {:error, reason}
       _invalid -> {:error, :invalid_credentials}
     end
   end
 
-  defp verify(:facebook, token, providers) do
+  defp verify(:facebook, params, providers) when is_map(params) do
+    with {:ok, credential} <- FacebookCredential.parse(params) do
+      verify(:facebook, credential, providers)
+    end
+  end
+
+  defp verify(:facebook, {:access_token, token}, providers) do
     with {:ok, %{subject: provider_id, issuer_app: issuer_app, email: email}} <-
            providers.facebook(token),
-         true <- valid_id?(provider_id) or {:error, :invalid_credentials},
-         {:ok, business_ids} <- facebook_business_ids(providers, token) do
+         true <- valid_id?(provider_id) or {:error, :invalid_credentials} do
       identity = %{
         provider: :facebook,
         subject: provider_id,
         issuer_app: issuer_app,
         email: email,
         email_is_relay: false,
-        business_ids: business_ids
+        business_ids: nil
       }
 
-      {:ok, identity, [provider_id | business_ids]}
+      {:ok, identity, {:facebook_graph, token}}
     else
       {:error, reason} -> {:error, reason}
       _invalid -> {:error, :invalid_credentials}
     end
   end
 
-  defp find_classic_or_create(identity, lookup_ids, params, opts) do
+  defp verify(:facebook, {:authentication_token, token, nonce}, providers) do
+    with {:ok, %{subject: provider_id, issuer_app: issuer_app, email: email}} <-
+           providers.facebook_limited(token, nonce),
+         true <- valid_id?(provider_id) or {:error, :invalid_credentials} do
+      {:ok,
+       %{
+         provider: :facebook,
+         subject: provider_id,
+         issuer_app: issuer_app,
+         email: email,
+         email_is_relay: false,
+         business_ids: []
+       }, :complete}
+    else
+      {:error, reason} -> {:error, reason}
+      _invalid -> {:error, :invalid_credentials}
+    end
+  end
+
+  defp verify(_provider, _credential, _providers), do: {:error, :invalid_credentials}
+
+  defp complete_identity(identity, {:facebook_graph, token}, providers) do
+    with {:ok, business_ids} <- facebook_business_ids(providers, token) do
+      {:ok, %{identity | business_ids: business_ids}}
+    end
+  end
+
+  defp complete_identity(identity, :complete, _providers), do: {:ok, identity}
+
+  defp maybe_heal_business_ids(
+         %{provider: :facebook, subject: subject} = identity,
+         {:facebook_graph, token},
+         providers
+       ) do
+    if UserIdentities.business_ids_missing?(:facebook, subject) do
+      with {:ok, business_ids} <- facebook_business_ids(providers, token),
+           {:ok, _user} <- UserIdentities.sign_in(%{identity | business_ids: business_ids}) do
+        :ok
+      else
+        _failure ->
+          Logger.warning("Could not refresh Facebook business IDs for a linked identity")
+          :ok
+      end
+    end
+  end
+
+  defp maybe_heal_business_ids(_identity, _lookup_context, _providers), do: :ok
+
+  defp find_classic_or_create(identity, params, opts) do
     verification = Keyword.get(opts, :classic_verification, ClassicVerification)
     classic = Keyword.get(opts, :classic_client, PidroServer.Accounts.ClassicClient)
 
-    case verification.verify_provider(identity, lookup_ids, params, classic_client: classic) do
+    case verification.verify_provider(identity, params, classic_client: classic) do
       {:ok, result} -> {:classic_found, result}
       {:error, :not_found} -> create_user(identity, opts, @name_attempts)
       {:error, reason} -> {:error, reason}
