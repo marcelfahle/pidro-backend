@@ -841,14 +841,24 @@ defmodule PidroServerWeb.API.AuthController do
       <p>This link expires in 1 hour.</p>
       """)
 
-    case Mailer.deliver(email) do
-      {:ok, _metadata} ->
-        :ok
+    # The answer must not depend on whether the mail went out, whatever the adapter does.
+    try do
+      case Mailer.deliver(email) do
+        {:ok, _metadata} ->
+          :ok
 
-      {:error, reason} ->
-        Logger.warning("Password reset email delivery failed: #{inspect(reason)}")
-        :ok
+        {:error, reason} ->
+          Logger.error("Password reset email delivery failed: #{inspect(reason)}")
+      end
+    catch
+      kind, reason ->
+        Logger.error(
+          "Password reset email delivery failed: " <>
+            Exception.format(kind, reason, __STACKTRACE__)
+        )
     end
+
+    :ok
   end
 
   defp maybe_deliver_password_reset(_reset), do: :ok

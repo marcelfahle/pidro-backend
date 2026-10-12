@@ -291,21 +291,32 @@ if config_env() == :prod do
 
   # ## Configuring the mailer
   #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
-  #
-  #     config :pidro_server, PidroServer.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
+  # Plain SMTP, so any provider works (SES, Postmark, ...). Without the three
+  # credentials the app still boots, but password reset emails cannot be sent.
+  smtp_env = Enum.map(~w(SMTP_RELAY SMTP_USERNAME SMTP_PASSWORD), &System.get_env/1)
+  smtp_port = Integer.parse(System.get_env("SMTP_PORT") || "587")
+
+  case {smtp_env, smtp_port} do
+    {[relay, username, password], {port, ""}}
+    when relay not in [nil, ""] and username not in [nil, ""] and password not in [nil, ""] ->
+      config :pidro_server, PidroServer.Mailer,
+        adapter: Swoosh.Adapters.SMTP,
+        relay: relay,
+        username: username,
+        password: password,
+        port: port,
+        ssl: false,
+        tls: :always,
+        auth: :always
+
+    _ ->
+      require Logger
+
+      Logger.error(
+        "Mail is not configured: set SMTP_RELAY, SMTP_USERNAME, SMTP_PASSWORD and a numeric SMTP_PORT. " <>
+          "Password reset emails will not be delivered."
+      )
+  end
 end
 
 # ---------------------------------------------------------------------------
