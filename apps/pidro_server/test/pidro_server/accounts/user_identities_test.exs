@@ -3,9 +3,13 @@ defmodule PidroServer.Accounts.UserIdentitiesTest do
 
   import ExUnit.CaptureLog
 
-  alias PidroServer.Accounts.{Auth, User, UserIdentities, UserIdentity}
+  alias PidroServer.Accounts.{Auth, ProviderAuth, User, UserIdentities, UserIdentity}
   alias PidroServer.AccountsFixtures
   alias PidroServer.Repo
+
+  defmodule AppleStub do
+    def apple("token"), do: {:ok, %{"sub" => "apple-subject"}}
+  end
 
   test "a backfilled identity heals missing metadata and advances last_used_at" do
     user = AccountsFixtures.guest_fixture()
@@ -82,6 +86,22 @@ defmodule PidroServer.Accounts.UserIdentitiesTest do
 
     assert {:ok, _deleted} = Auth.delete_user(user)
     refute Repo.get_by(UserIdentity, user_id: user.id)
+  end
+
+  test "after deletion the same Apple account signs in as a first sign-in" do
+    apple = fn ->
+      ProviderAuth.authenticate(:apple, "token", %{}, provider_identity: AppleStub)
+    end
+
+    assert {:ok, first} = apple.()
+    assert {:ok, _deleted} = Auth.delete_user(first)
+    refute Repo.get_by(UserIdentity, user_id: first.id)
+
+    assert {:ok, second} = apple.()
+    assert second.id != first.id
+
+    assert Repo.get_by!(UserIdentity, provider: :apple, subject: "apple-subject").user_id ==
+             second.id
   end
 
   test "provider lookup does not fall back to legacy user columns" do
