@@ -29,6 +29,41 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     def facebook_business_ids("valid-facebook-token"), do: {:ok, []}
   end
 
+  describe "already_claimed/3" do
+    test "is nil for a free Classic account and for the caller's own" do
+      user = AccountsFixtures.user_fixture()
+      assert ClassicClaims.already_claimed(10_900, :password, user.id) == nil
+
+      link!(user, 10_900, %{})
+      assert ClassicClaims.already_claimed(10_900, :password, user.id) == nil
+    end
+
+    test "names how another player signs in, and nothing else" do
+      for {id, method, fields} <- [
+            {10_901, :password, %{password_hash: "hash"}},
+            {10_902, :apple, %{password_hash: nil, apple_sub: "owner-apple"}},
+            {10_903, :facebook, %{password_hash: nil, facebook_id: "owner-facebook"}}
+          ] do
+        link!(AccountsFixtures.user_fixture(), id, fields)
+
+        assert ClassicClaims.already_claimed(id, :password, Ecto.UUID.generate()) ==
+                 %{sign_in_method: method}
+      end
+    end
+  end
+
+  defp link!(user, classic_user_id, fields) do
+    user
+    |> User.classic_claim_changeset(
+      Map.merge(
+        %{classic_user_id: classic_user_id, classic_claimed_at: DateTime.utc_now()},
+        Map.take(fields, [:apple_sub, :facebook_id])
+      )
+    )
+    |> Ecto.Changeset.change(Map.take(fields, [:password_hash]))
+    |> Repo.update!()
+  end
+
   test "an authenticated guest keeps its identity and progress, and retry is a no-op" do
     guest = AccountsFixtures.guest_fixture()
     {:ok, profile} = Profiles.get_or_create_profile(guest.id)

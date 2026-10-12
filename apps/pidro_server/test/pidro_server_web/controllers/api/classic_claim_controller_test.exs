@@ -42,6 +42,7 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
 
     assert is_binary(data["ticket"])
     assert is_binary(data["expires_at"])
+    assert Map.fetch!(data, "already_claimed") == nil
 
     assert data["classic"] == %{
              "name" => "Veteran",
@@ -53,6 +54,62 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
 
     assert Repo.get_by!(PidroServer.Accounts.ClassicClaimTicket, classic_user_id: 70_000).bound_user_id ==
              guest.id
+  end
+
+  describe "verify of a Classic account that is already linked" do
+    defp expect_classic_password(classic_id) do
+      Req.Test.expect(PidroServer.Accounts.ClassicClient, fn classic_conn ->
+        Req.Test.json(classic_conn, %{
+          "classic" => %{
+            "id" => classic_id,
+            "username" => "Veteran",
+            "member_since" => "2011-01-02T00:00:00Z",
+            "xp" => 500,
+            "level" => 14,
+            "games" => %{"legacy_played_games" => 0, "total_game" => 88}
+          }
+        })
+      end)
+    end
+
+    defp verify_password(conn, user) do
+      conn
+      |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+      |> post(~p"/api/v1/classic/verify", %{method: "password", login: "a", password: "b"})
+      |> json_response(200)
+      |> get_in(["data", "already_claimed"])
+    end
+
+    defp link_classic!(user, classic_id, fields) do
+      user
+      |> User.classic_claim_changeset(
+        Map.merge(%{classic_user_id: classic_id, classic_claimed_at: DateTime.utc_now()}, fields)
+      )
+      |> Ecto.Changeset.change(password_hash: fields[:password_hash])
+      |> Repo.update!()
+    end
+
+    test "names how the owner signs in, for password, Apple and Facebook", %{conn: conn} do
+      for {classic_id, fields, method} <- [
+            {70_101, %{password_hash: "hash"}, "password"},
+            {70_102, %{apple_sub: "owner-apple"}, "apple"},
+            {70_103, %{facebook_id: "owner-facebook"}, "facebook"}
+          ] do
+        link_classic!(AccountsFixtures.user_fixture(), classic_id, fields)
+        expect_classic_password(classic_id)
+
+        assert verify_password(conn, AccountsFixtures.guest_fixture()) ==
+                 %{"sign_in_method" => method}
+      end
+    end
+
+    test "is null when the caller owns it", %{conn: conn} do
+      caller = AccountsFixtures.user_fixture()
+      link_classic!(caller, 70_104, %{password_hash: "hash"})
+      expect_classic_password(70_104)
+
+      assert verify_password(conn, caller) == nil
+    end
   end
 
   test "a malformed Apple token is a retryable authentication failure", %{conn: conn} do

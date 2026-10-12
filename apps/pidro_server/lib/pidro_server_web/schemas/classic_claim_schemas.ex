@@ -56,6 +56,25 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
     })
   end
 
+  defmodule AlreadyClaimed do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Classic account already linked",
+      description:
+        "Present when another player owns the Classic account; names how that player signs in.",
+      nullable: true,
+      required: [:sign_in_method],
+      properties: %{
+        sign_in_method: %Schema{
+          type: :string,
+          enum: ["password", "apple", "facebook"],
+          nullable: true
+        }
+      }
+    })
+  end
+
   defmodule VerifyResponse do
     @moduledoc false
     OpenApiSpex.schema(%{
@@ -68,7 +87,8 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
           properties: %{
             ticket: %Schema{type: :string},
             expires_at: %Schema{type: :string, format: :"date-time"},
-            classic: ClassicPreview
+            classic: ClassicPreview,
+            already_claimed: AlreadyClaimed
           }
         }
       },
@@ -89,7 +109,8 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
             classic_found: %Schema{type: :boolean, enum: [true]},
             ticket: %Schema{type: :string},
             expires_at: %Schema{type: :string, format: :"date-time"},
-            classic: ClassicPreview
+            classic: ClassicPreview,
+            already_claimed: AlreadyClaimed
           }
         }
       },
