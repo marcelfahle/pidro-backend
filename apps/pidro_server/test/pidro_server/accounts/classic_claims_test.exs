@@ -349,6 +349,18 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     refute Repo.get_by(User, username: "never_created")
   end
 
+  test "a ticket expires after the configured lifetime" do
+    key = PidroServer.Accounts.ClassicClaims
+    original = Application.fetch_env!(:pidro_server, key)
+    on_exit(fn -> Application.put_env(:pidro_server, key, original) end)
+    Application.put_env(:pidro_server, key, ticket_ttl_seconds: 0)
+
+    guest = AccountsFixtures.user_fixture()
+    ticket = issue_ticket!(guest, 40_001, :password, nil, %{xp: 1})
+
+    assert {:error, :claim_ticket_expired} = ClassicClaims.redeem(ticket, guest, %{})
+  end
+
   defp issue_ticket!(user, classic_user_id, method, provider_id, legacy_data) do
     {:ok, %{ticket: ticket}} =
       ClassicClaims.issue_ticket(%{

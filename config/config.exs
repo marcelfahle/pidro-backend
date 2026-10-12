@@ -99,6 +99,11 @@ config :pidro_server, PidroServer.Accounts.ProviderIdentity,
   facebook_app_secret: "",
   jwks_cache_ttl_ms: 300_000
 
+# Lifetimes in seconds, read when used. config/runtime.exs can shorten them
+# outside production (CLASSIC_CLAIM_TICKET_TTL_SECONDS, PASSWORD_RESET_TTL_SECONDS).
+config :pidro_server, PidroServer.Accounts.ClassicClaims, ticket_ttl_seconds: 10 * 60
+config :pidro_server, :password_reset_ttl_seconds, 60 * 60
+
 # Skill-tier thresholds (PID-48). Bands are read off Rating.ordinal/1 (mu - 3*sigma).
 # Launch defaults, tunable — NOT finely calibrated; recalibrate against the real
 # ordinal distribution.

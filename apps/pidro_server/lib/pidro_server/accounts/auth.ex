@@ -83,7 +83,6 @@ defmodule PidroServer.Accounts.Auth do
 
   @default_user_page_size 30
   @password_reset_token_bytes 32
-  @password_reset_max_age_seconds 60 * 60
   @guest_username_prefix "guest_"
   @guest_username_attempts 2
   @last_seen_min_interval_seconds 60 * 60
@@ -525,7 +524,13 @@ defmodule PidroServer.Accounts.Auth do
   """
   def reset_user_password(token, password) when is_binary(token) and is_binary(password) do
     token_hash = hash_password_reset_token(token)
-    cutoff = DateTime.add(DateTime.utc_now(), -@password_reset_max_age_seconds, :second)
+
+    cutoff =
+      DateTime.add(
+        DateTime.utc_now(),
+        -Application.fetch_env!(:pidro_server, :password_reset_ttl_seconds),
+        :second
+      )
 
     query =
       from u in User,

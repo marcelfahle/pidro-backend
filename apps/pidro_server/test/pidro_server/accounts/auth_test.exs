@@ -733,6 +733,22 @@ defmodule PidroServer.Accounts.AuthTest do
   end
 
   describe "reset_user_password/2" do
+    test "a reset token expires after the configured lifetime" do
+      original = Application.fetch_env!(:pidro_server, :password_reset_ttl_seconds)
+      on_exit(fn -> Application.put_env(:pidro_server, :password_reset_ttl_seconds, original) end)
+
+      user = AccountsFixtures.user_fixture()
+      {:ok, %{token: token}} = Auth.request_password_reset(user.username)
+
+      assert {:ok, %User{}} = Auth.reset_user_password(token, "new password!")
+
+      {:ok, %{token: token}} = Auth.request_password_reset(user.username)
+      Application.put_env(:pidro_server, :password_reset_ttl_seconds, 0)
+
+      assert {:error, :invalid_or_expired_password_reset_token} =
+               Auth.reset_user_password(token, "another password!")
+    end
+
     test "changes the password, bumps token_version and clears the reset fields together" do
       user = AccountsFixtures.user_fixture(%{username: "reset_me"})
       {:ok, %{token: reset_token}} = Auth.request_password_reset(user.username)
