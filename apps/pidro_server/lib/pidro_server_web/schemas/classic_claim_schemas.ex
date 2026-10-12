@@ -83,7 +83,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       properties: %{
         data: %Schema{
           type: :object,
-          required: [:ticket, :expires_at, :classic],
+          required: [:ticket, :expires_at, :classic, :already_claimed],
           properties: %{
             ticket: %Schema{type: :string},
             expires_at: %Schema{type: :string, format: :"date-time"},
@@ -104,7 +104,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       properties: %{
         data: %Schema{
           type: :object,
-          required: [:classic_found, :ticket, :expires_at, :classic],
+          required: [:classic_found, :ticket, :expires_at, :classic, :already_claimed],
           properties: %{
             classic_found: %Schema{type: :boolean, enum: [true]},
             ticket: %Schema{type: :string},
