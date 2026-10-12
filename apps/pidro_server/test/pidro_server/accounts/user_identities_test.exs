@@ -84,6 +84,19 @@ defmodule PidroServer.Accounts.UserIdentitiesTest do
     refute Repo.get_by(UserIdentity, user_id: user.id)
   end
 
+  test "after deletion the same provider account signs in as a first sign-in" do
+    user = AccountsFixtures.guest_fixture()
+    assert {:ok, _user} = UserIdentities.link(user, identity_attrs(%{}), :sign_up)
+    assert {:ok, _deleted} = Auth.delete_user(user)
+
+    assert {:error, :not_found} = UserIdentities.sign_in(identity_attrs(%{}))
+
+    fresh = AccountsFixtures.guest_fixture()
+    assert {:ok, _user} = UserIdentities.link(fresh, identity_attrs(%{}), :sign_up)
+    assert {:ok, signed_in} = UserIdentities.sign_in(identity_attrs(%{}))
+    assert signed_in.id == fresh.id
+  end
+
   test "provider lookup does not fall back to legacy user columns" do
     user = AccountsFixtures.guest_fixture()
     user |> Ecto.Changeset.change(apple_sub: "legacy-only") |> Repo.update!()

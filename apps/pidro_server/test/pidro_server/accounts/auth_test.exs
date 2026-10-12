@@ -461,6 +461,19 @@ defmodule PidroServer.Accounts.AuthTest do
       assert room_after.invite_live_until == later
     end
 
+    test "a guest creation token is free again once its guest is deleted" do
+      attrs = %{display_name: "Ben", install_id: "install-1", creation_token: "token-1"}
+
+      assert {:ok, guest, :created} = Auth.create_guest_user_once(attrs, [])
+      assert {:ok, %User{id: id}, :existing} = Auth.create_guest_user_once(attrs, [])
+      assert id == guest.id
+      assert {:ok, _deleted} = Auth.delete_user(guest)
+
+      assert {:ok, again, :created} = Auth.create_guest_user_once(attrs, [])
+      assert again.id != guest.id
+      assert again.guest
+    end
+
     test "succeeds for a user in no room with no personal rows" do
       user = AccountsFixtures.user_fixture()
       subscribe_to_socket(user)

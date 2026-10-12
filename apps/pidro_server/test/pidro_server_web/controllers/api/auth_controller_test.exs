@@ -7,7 +7,9 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
   alias PidroServer.Accounts.{
     Auth,
+    ClassicClaims,
     ClassicClaimTicket,
+    ClassicNameReservation,
     ClassicNameReservations,
     Token,
     User,
@@ -19,6 +21,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   alias PidroServer.Games.RoomManager
   alias PidroServer.Invites
   alias PidroServer.Invites.Event
+  alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Repo
 
   defmodule ErrorMailer do
@@ -1780,6 +1783,68 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert updated.seats[position].occupant_type == :bot
       assert Process.alive?(updated.seats[position].bot_pid)
       assert updated.seats[position].reserved_for == nil
+    end
+
+    test "a Classic account can be claimed again by a new account after deletion", %{conn: conn} do
+      {:ok, _} = ClassicNameReservations.import([%{id: 71_000, username: "Veteran"}])
+      old = AccountsFixtures.user_fixture()
+
+      {:ok, %{ticket: ticket}} =
+        ClassicClaims.issue_ticket(%{
+          classic_user_id: 71_000,
+          method: :password,
+          user_id: old.id,
+          legacy_data: %{classic_user_id: 71_000, xp: 300}
+        })
+
+      {:ok, claimed} = ClassicClaims.redeem(ticket, old, %{})
+      assert claimed.classic_user_id == 71_000
+
+      assert conn
+             |> put_req_header("authorization", "Bearer #{Token.generate(claimed)}")
+             |> delete(~p"/api/v1/auth/me")
+             |> response(204)
+
+      Req.Test.expect(PidroServer.Accounts.ClassicClient, fn classic_conn ->
+        Req.Test.json(classic_conn, %{
+          "classic" => %{
+            "id" => 71_000,
+            "username" => "Veteran",
+            "member_since" => "2011-01-02T00:00:00Z",
+            "xp" => 300,
+            "level" => 5,
+            "games" => %{"legacy_played_games" => 0, "total_game" => 10}
+          }
+        })
+      end)
+
+      fresh = AccountsFixtures.user_fixture()
+      auth = "Bearer #{Token.generate(fresh)}"
+
+      data =
+        build_conn()
+        |> put_req_header("authorization", auth)
+        |> post(~p"/api/v1/classic/verify", %{method: "password", login: "a", password: "b"})
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data["already_claimed"] == nil
+      assert data["classic"]["name"] == "Veteran"
+
+      assert %{"user" => %{"id" => id}} =
+               build_conn()
+               |> put_req_header("authorization", auth)
+               |> post(~p"/api/v1/classic/claim", %{ticket: data["ticket"]})
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      assert id == fresh.id
+      assert Repo.get!(User, fresh.id).classic_user_id == 71_000
+      assert Repo.get_by!(PlayerProfile, user_id: fresh.id).veteran_xp == 300
+      assert ClassicNameReservations.reserved?("Veteran")
+
+      assert %{classic_user_id: 71_000, username: "Veteran"} =
+               Repo.get!(ClassicNameReservation, 71_000)
     end
 
     test "AE10: 204, the token is dead afterwards and the seat is vacant", %{conn: conn} do
