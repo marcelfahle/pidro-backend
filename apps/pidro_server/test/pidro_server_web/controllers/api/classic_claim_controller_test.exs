@@ -96,6 +96,86 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
     assert Repo.get!(User, guest.id).classic_user_id == 70_001
   end
 
+  describe "a guest claiming with a Classic password" do
+    setup %{conn: conn} do
+      guest = AccountsFixtures.guest_fixture()
+
+      {:ok, %{ticket: ticket}} =
+        ClassicClaims.issue_ticket(%{
+          classic_user_id: 70_201,
+          method: :password,
+          user_id: guest.id,
+          legacy_data: %{classic_user_id: 70_201, xp: 75}
+        })
+
+      conn = put_req_header(conn, "authorization", "Bearer #{Token.generate(guest)}")
+      {:ok, conn: conn, guest: guest, ticket: ticket}
+    end
+
+    test "answers 422 without email and password, and the ticket stays usable", ctx do
+      %{conn: conn, guest: guest, ticket: ticket} = ctx
+
+      errors =
+        conn |> post(~p"/api/v1/classic/claim", %{ticket: ticket}) |> json_response(422)
+
+      assert Enum.sort(Enum.map(errors["errors"], & &1["code"])) == ["email", "password"]
+      assert Enum.all?(errors["errors"], &(&1["detail"] =~ "Classic account"))
+      assert Repo.get!(User, guest.id).guest
+      assert Repo.get!(User, guest.id).classic_user_id == nil
+
+      account = %{email: "guest-claim@example.com", password: "secret123"}
+
+      assert %{"data" => _} =
+               conn
+               |> post(~p"/api/v1/classic/claim", %{ticket: ticket, account: account})
+               |> json_response(200)
+    end
+
+    test "saves the guest with a token that works", ctx do
+      %{conn: conn, guest: guest, ticket: ticket} = ctx
+      account = %{email: "guest-claim@example.com", password: "secret123"}
+
+      data =
+        conn
+        |> post(~p"/api/v1/classic/claim", %{ticket: ticket, account: account})
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data["user"]["id"] == guest.id
+      refute Repo.get!(User, guest.id).guest
+
+      assert %{"data" => %{"user" => %{"id" => id}}} =
+               build_conn()
+               |> put_req_header("authorization", "Bearer #{data["token"]}")
+               |> get(~p"/api/v1/auth/me")
+               |> json_response(200)
+
+      assert id == guest.id
+
+      # The same ticket again answers the existing link without the account.
+      assert %{"data" => %{"user" => %{"id" => ^id}}} =
+               build_conn()
+               |> put_req_header("authorization", "Bearer #{data["token"]}")
+               |> post(~p"/api/v1/classic/claim", %{ticket: ticket})
+               |> json_response(200)
+    end
+
+    test "refuses a taken email and links nothing", ctx do
+      %{conn: conn, guest: guest, ticket: ticket} = ctx
+      other = AccountsFixtures.user_fixture()
+      account = %{email: other.email, password: "secret123"}
+
+      errors =
+        conn
+        |> post(~p"/api/v1/classic/claim", %{ticket: ticket, account: account})
+        |> json_response(422)
+
+      assert [%{"code" => "email"}] = errors["errors"]
+      assert Repo.get!(User, guest.id).guest
+      assert Repo.get!(User, guest.id).classic_user_id == nil
+    end
+  end
+
   test "stores a declaration on a newly created Classic account", %{conn: conn} do
     {:ok, %{ticket: ticket}} =
       ClassicClaims.issue_ticket(%{

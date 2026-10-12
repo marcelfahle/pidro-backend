@@ -92,7 +92,13 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert Repo.get_by(PlayerProfile, user_id: guest.id) == nil
 
     assert {:ok, claimed} =
-             ClassicClaims.redeem(ticket, guest, %{account: %{display_name: "Kind Player"}})
+             ClassicClaims.redeem(ticket, guest, %{
+               account: %{
+                 display_name: "Kind Player",
+                 email: "kind@example.com",
+                 password: "secret123"
+               }
+             })
 
     assert claimed.id == guest.id
     assert claimed.display_name == "Kind Player"
@@ -359,6 +365,84 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     ticket = issue_ticket!(guest, 40_001, :password, nil, %{xp: 1})
 
     assert {:error, :claim_ticket_expired} = ClassicClaims.redeem(ticket, guest, %{})
+  end
+
+  describe "a guest claiming by password" do
+    setup do
+      {:ok, guest: AccountsFixtures.guest_fixture()}
+    end
+
+    test "must set an email and password, and nothing is linked without them", %{guest: guest} do
+      ticket = issue_ticket!(guest, 50_001, :password, nil, %{xp: 90})
+
+      assert {:error, changeset} = ClassicClaims.redeem(ticket, guest, %{})
+      assert %{email: [_], password: [_]} = errors_on(changeset)
+
+      assert {:error, changeset} =
+               ClassicClaims.redeem(ticket, guest, %{account: %{email: "a@example.com"}})
+
+      assert %{password: [_]} = errors_on(changeset)
+      refute Map.has_key?(errors_on(changeset), :email)
+
+      unchanged = Repo.get!(User, guest.id)
+      assert unchanged.guest
+      assert is_nil(unchanged.classic_user_id)
+      assert is_nil(unchanged.email)
+      assert Repo.get_by(PlayerProfile, user_id: guest.id) == nil
+
+      account = %{email: "a@example.com", password: "secret123"}
+      assert {:ok, _claimed} = ClassicClaims.redeem(ticket, guest, %{account: account})
+    end
+
+    test "is saved in place and signs in with the new credentials", %{guest: guest} do
+      ticket = issue_ticket!(guest, 50_002, :password, nil, %{xp: 90})
+      account = %{"email" => "Saved@Example.com", "password" => "secret123"}
+
+      assert {:ok, claimed} = ClassicClaims.redeem(ticket, guest, %{"account" => account})
+      assert claimed.id == guest.id
+      refute claimed.guest
+      assert claimed.username == guest.username
+      assert claimed.token_version == guest.token_version + 1
+      assert claimed.classic_user_id == 50_002
+
+      assert {:ok, signed_in} = Auth.authenticate_user("Saved@Example.com", "secret123")
+      assert signed_in.id == guest.id
+      assert Repo.get_by!(PlayerProfile, user_id: guest.id).veteran_xp == 90
+
+      assert {:ok, retried} = ClassicClaims.redeem(ticket, claimed, %{})
+      assert retried.id == guest.id
+      assert Repo.aggregate(PlayerProfile, :count) == 1
+    end
+
+    test "is refused when the email is taken", %{guest: guest} do
+      other = AccountsFixtures.user_fixture()
+      ticket = issue_ticket!(guest, 50_003, :password, nil, %{xp: 90})
+      account = %{email: String.upcase(other.email), password: "secret123"}
+
+      assert {:error, changeset} = ClassicClaims.redeem(ticket, guest, %{account: account})
+      assert %{email: ["has already been taken"]} = errors_on(changeset)
+
+      unchanged = Repo.get!(User, guest.id)
+      assert unchanged.guest
+      assert is_nil(unchanged.classic_user_id)
+    end
+
+    test "is unchanged for an Apple ticket", %{guest: guest} do
+      ticket = issue_ticket!(guest, 50_004, :apple, "apple-50004", %{xp: 90})
+
+      assert {:ok, claimed} = ClassicClaims.redeem(ticket, guest, %{})
+      assert claimed.guest
+      assert is_nil(claimed.email)
+    end
+  end
+
+  test "a saved account claiming by password is unchanged" do
+    user = AccountsFixtures.user_fixture()
+    ticket = issue_ticket!(user, 50_005, :password, nil, %{xp: 90})
+
+    assert {:ok, claimed} = ClassicClaims.redeem(ticket, user, %{})
+    assert claimed.email == user.email
+    assert claimed.password_hash == user.password_hash
   end
 
   defp issue_ticket!(user, classic_user_id, method, provider_id, legacy_data) do
