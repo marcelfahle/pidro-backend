@@ -141,9 +141,11 @@ config :pidro_server,
     System.get_env("TRUST_PROXY_HEADERS", trust_proxy_default) in ~w(true TRUE 1 yes YES)
 
 # ---------------------------------------------------------------------------
-# Non-production overrides. Never read in production (the :prod block above
-# does not use them). Each variable replaces its default only when set, so an
-# end-to-end suite can point this server at stand-in Classic, Apple and
+# Non-production overrides. This block only runs outside production; the
+# :prod block below reads its own set (CLASSIC_API_URL, CLASSIC_CLAIM_SECRET,
+# APPLE_AUDIENCE, FACEBOOK_*) and none of the others (APPLE_JWKS_URL, the TTLs,
+# PASSWORD_RESET_*). Each variable here replaces its default only when set, so
+# an end-to-end suite can point this server at stand-in Classic, Apple and
 # Facebook services. Tokens are still verified exactly as in production.
 # ---------------------------------------------------------------------------
 if config_env() != :prod do
