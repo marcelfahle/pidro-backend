@@ -574,6 +574,59 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       end
     end
 
+    test "classic_found says when the Classic account is already linked", %{conn: conn} do
+      for {classic_id, fields, method} <- [
+            {71_101, %{password_hash: "hash"}, "password"},
+            {71_102, %{apple_sub: "owner-apple"}, "apple"},
+            {71_103, %{facebook_id: "owner-facebook"}, "facebook"}
+          ] do
+        AccountsFixtures.user_fixture()
+        |> User.classic_claim_changeset(
+          Map.merge(
+            %{classic_user_id: classic_id, classic_claimed_at: DateTime.utc_now()},
+            fields
+          )
+        )
+        |> Ecto.Changeset.change(password_hash: fields[:password_hash])
+        |> Repo.update!()
+
+        expect_classic_lookup(:email, "classic@example.com", classic_profile(classic_id, "Owned"))
+
+        data =
+          conn
+          |> recycle()
+          |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-classic", install_id: "i"})
+          |> json_response(200)
+          |> Map.fetch!("data")
+
+        assert data["already_claimed"] == %{"sign_in_method" => method}
+
+        expect_classic_not_found(:fbid, "facebook-current-id")
+        expect_classic_lookup(:fbid, "facebook-classic-id", classic_profile(classic_id, "Owned"))
+
+        data =
+          conn
+          |> recycle()
+          |> post(~p"/api/v1/auth/facebook", %{access_token: "facebook-classic", install_id: "i"})
+          |> json_response(200)
+          |> Map.fetch!("data")
+
+        assert data["already_claimed"] == %{"sign_in_method" => method}
+      end
+    end
+
+    test "classic_found has no already_claimed for a free Classic account", %{conn: conn} do
+      expect_classic_lookup(:email, "classic@example.com", classic_profile(71_104, "Free"))
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/apple", %{identity_token: "apple-classic", install_id: "i"})
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert Map.fetch!(data, "already_claimed") == nil
+    end
+
     test "Apple Classic match returns a redeemable install-bound ticket", %{conn: conn} do
       expect_classic_lookup(:email, "classic@example.com", classic_profile(71_001, "Bengt"))
 

@@ -286,7 +286,13 @@ defmodule PidroServer.Accounts.ClassicVerification do
                legacy_data: legacy
              })
            ) do
-      {:ok, Map.put(ticket, :classic, preview)}
+      {:ok,
+       ticket
+       |> Map.put(:classic, preview)
+       |> Map.put(
+         :already_claimed,
+         ClassicClaims.already_claimed(classic_user_id, method, binding[:user_id])
+       )}
     end
   end
 

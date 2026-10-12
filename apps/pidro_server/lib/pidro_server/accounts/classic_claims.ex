@@ -69,6 +69,20 @@ defmodule PidroServer.Accounts.ClassicClaims do
     end
   end
 
+  @doc """
+  Says whether a Classic account is linked to someone other than `user_id`.
+
+  Returns nil when it is free or linked to that user, otherwise the way its
+  owner signs in, chosen as the claim's 409 chooses it.
+  """
+  def already_claimed(classic_user_id, method, user_id) do
+    case Repo.get_by(User, classic_user_id: classic_user_id) do
+      nil -> nil
+      %User{id: ^user_id} -> nil
+      owner -> %{sign_in_method: sign_in_method(owner, method)}
+    end
+  end
+
   @doc "Redeems a ticket for the current user, or creates a user for an install-bound claim."
   def redeem(token, current_user, params)
       when is_binary(token) and (is_nil(current_user) or is_struct(current_user, User)) and
