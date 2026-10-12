@@ -139,6 +139,11 @@ defmodule PidroServerWeb.Router do
 
     post "/classic/claim", ClassicClaimController, :create,
       private: %{rate_limit: [:classic_claim]}
+
+    # `log: false` keeps the message out of Phoenix's parameter logging.
+    post "/classic/help", ClassicHelpController, :create,
+      log: false,
+      private: %{rate_limit: [:classic_help]}
   end
 
   scope "/api/v1", PidroServerWeb.API do
