@@ -140,6 +140,75 @@ config :pidro_server,
   trust_proxy_headers:
     System.get_env("TRUST_PROXY_HEADERS", trust_proxy_default) in ~w(true TRUE 1 yes YES)
 
+# ---------------------------------------------------------------------------
+# Non-production overrides. Never read in production (the :prod block above
+# does not use them). Each variable replaces its default only when set, so an
+# end-to-end suite can point this server at stand-in Classic, Apple and
+# Facebook services. Tokens are still verified exactly as in production.
+# ---------------------------------------------------------------------------
+if config_env() != :prod do
+  env = fn var -> System.get_env(var) |> then(&if &1 in [nil, ""], do: nil, else: &1) end
+
+  put = fn opts, key, var, parse ->
+    if v = env.(var), do: [{key, parse.(v)} | opts], else: opts
+  end
+
+  ids = fn v -> v |> String.split(",", trim: true) |> Enum.map(&String.trim/1) end
+  trim = &String.trim_trailing(&1, "/")
+
+  classic_client_overrides =
+    []
+    |> put.(:base_url, "CLASSIC_API_URL", trim)
+    |> put.(:secret, "CLASSIC_CLAIM_SECRET", & &1)
+
+  provider_overrides =
+    []
+    |> put.(:apple_jwks_url, "APPLE_JWKS_URL", & &1)
+    |> put.(:apple_audience, "APPLE_AUDIENCE", ids)
+    |> put.(:facebook_jwks_url, "FACEBOOK_JWKS_URL", & &1)
+    |> put.(:facebook_graph_url, "FACEBOOK_GRAPH_URL", trim)
+    |> put.(:facebook_app_id, "FACEBOOK_APP_ID", & &1)
+
+  if classic_client_overrides != [] do
+    existing = Application.get_env(:pidro_server, PidroServer.Accounts.ClassicClient, [])
+
+    config :pidro_server,
+           PidroServer.Accounts.ClassicClient,
+           Keyword.merge(existing, classic_client_overrides)
+  end
+
+  if provider_overrides != [] do
+    existing = Application.get_env(:pidro_server, PidroServer.Accounts.ProviderIdentity, [])
+
+    config :pidro_server,
+           PidroServer.Accounts.ProviderIdentity,
+           Keyword.merge(existing, provider_overrides)
+  end
+
+  if v = env.("CLASSIC_CLAIM_TICKET_TTL_SECONDS") do
+    existing = Application.get_env(:pidro_server, PidroServer.Accounts.ClassicClaims, [])
+
+    config :pidro_server,
+           PidroServer.Accounts.ClassicClaims,
+           Keyword.put(existing, :ticket_ttl_seconds, String.to_integer(v))
+  end
+
+  if v = env.("PASSWORD_RESET_TTL_SECONDS") do
+    config :pidro_server, :password_reset_ttl_seconds, String.to_integer(v)
+  end
+
+  # Only meaningful where config/dev.exs defines :password_reset.
+  reset_overrides =
+    []
+    |> put.(:debug_tokens, "PASSWORD_RESET_DEBUG_TOKENS", &(&1 in ~w(true TRUE 1 yes YES)))
+    |> put.(:reset_url_base, "PASSWORD_RESET_URL_BASE", & &1)
+
+  if reset_overrides != [] do
+    existing = Application.get_env(:pidro_server, :password_reset, [])
+    config :pidro_server, :password_reset, Keyword.merge(existing, reset_overrides)
+  end
+end
+
 if config_env() == :prod do
   classic_api_url =
     System.get_env("CLASSIC_API_URL") || raise "environment variable CLASSIC_API_URL is missing"

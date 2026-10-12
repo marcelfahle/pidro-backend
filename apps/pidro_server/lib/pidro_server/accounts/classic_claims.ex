@@ -23,7 +23,6 @@ defmodule PidroServer.Accounts.ClassicClaims do
   alias PidroServer.Repo
 
   @ticket_bytes 32
-  @ticket_lifetime_seconds 10 * 60
 
   @doc """
   Stores a verified claim and returns its one-time opaque token.
@@ -58,7 +57,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
       legacy_data: legacy_data,
       bound_user_id: fetch(attrs, :user_id),
       install_id: fetch(attrs, :install_id),
-      expires_at: DateTime.add(now, @ticket_lifetime_seconds, :second)
+      expires_at: DateTime.add(now, ticket_ttl_seconds(), :second)
     }
 
     case %ClassicClaimTicket{}
@@ -218,6 +217,12 @@ defmodule PidroServer.Accounts.ClassicClaims do
       _missing ->
         :missing
     end
+  end
+
+  defp ticket_ttl_seconds do
+    :pidro_server
+    |> Application.fetch_env!(__MODULE__)
+    |> Keyword.fetch!(:ticket_ttl_seconds)
   end
 
   defp effective_name_allowed(ticket) do
