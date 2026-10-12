@@ -12,6 +12,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
   alias PidroServer.Accounts
 
   alias PidroServer.Accounts.{
+    Auth,
     ClassicClaimTicket,
     ClassicNameReservations,
     User,
@@ -102,7 +103,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
                :ok <- lock_claim_names(current_user, params),
                :ok <- lock_classic(ticket.classic_user_id),
                {:ok, user, mode} <- target_user(ticket, current_user, params, locked_user),
-               {:ok, user} <- redeem_for_user(ticket, user, mode, now, display_name) do
+               {:ok, user} <- redeem_for_user(ticket, user, mode, now, display_name, params) do
             user
           else
             nil -> Repo.rollback(:invalid_claim_ticket)
@@ -339,24 +340,66 @@ defmodule PidroServer.Accounts.ClassicClaims do
   defp with_mode({:ok, user}), do: {:ok, user, :first}
   defp with_mode({:error, reason}), do: {:error, reason}
 
-  defp redeem_for_user(ticket, user, :retry, _now, _display_name) do
+  defp redeem_for_user(ticket, user, :retry, _now, _display_name, _params) do
     if user.classic_user_id == ticket.classic_user_id,
       do: {:ok, user},
       else: {:error, :already_claimed}
   end
 
-  defp redeem_for_user(ticket, user, :first, now, display_name) do
+  defp redeem_for_user(ticket, user, :first, now, display_name, params) do
     already_linked? = user.classic_user_id == ticket.classic_user_id
 
     with :ok <- ensure_link_available(ticket, user),
          :ok <- ensure_provider_available(ticket, user),
          {:ok, linked} <- link_user(ticket, user, now, display_name),
+         {:ok, linked} <- save_guest(ticket, linked, params),
          {:ok, linked} <- link_provider_identity(ticket, linked, now),
          :ok <- maybe_import_progression(already_linked?, linked, ticket),
          {:ok, _ticket} <-
            ticket |> ClassicClaimTicket.redeem_changeset(linked.id, now) |> Repo.update() do
       {:ok, linked}
     end
+  end
+
+  # A guest who claims by password must leave with a way back in: the same
+  # upgrade as POST /auth/upgrade, in this transaction, after the link so the
+  # Classic name is reserved for this claim.
+  defp save_guest(%{method: :password}, %User{guest: true} = guest, params) do
+    account = fetch(params, :account) || %{}
+
+    with :ok <- require_credentials(account) do
+      guest |> Auth.upgrade_guest(account) |> taken_as_changeset()
+    end
+  end
+
+  defp save_guest(_ticket, user, _params), do: {:ok, user}
+
+  defp require_credentials(account) do
+    changeset =
+      Enum.reduce(
+        [
+          email: "Add an email address to claim your Classic account",
+          password: "Add a password to claim your Classic account"
+        ],
+        Changeset.change(%User{}),
+        fn {field, message}, changeset ->
+          if present?(fetch(account, field)),
+            do: changeset,
+            else: Changeset.add_error(changeset, field, message)
+        end
+      )
+
+    if changeset.valid?, do: :ok, else: {:error, changeset}
+  end
+
+  defp present?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp taken_as_changeset({:error, :email_taken}), do: taken_error(:email)
+  defp taken_as_changeset({:error, :username_taken}), do: taken_error(:username)
+  defp taken_as_changeset(result), do: result
+
+  defp taken_error(field) do
+    {:error, Changeset.add_error(Changeset.change(%User{}), field, "has already been taken")}
   end
 
   defp ensure_provider_available(%{method: :password}, _user), do: :ok
