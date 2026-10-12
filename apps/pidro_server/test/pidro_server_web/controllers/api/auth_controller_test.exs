@@ -21,6 +21,21 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   alias PidroServer.Invites.Event
   alias PidroServer.Repo
 
+  defmodule ErrorMailer do
+    use Swoosh.Adapter
+    def deliver(_email, _config), do: {:error, :provider_down}
+  end
+
+  defmodule RaiseMailer do
+    use Swoosh.Adapter
+    def deliver(_email, _config), do: raise("smtp exploded")
+  end
+
+  defmodule ExitMailer do
+    use Swoosh.Adapter
+    def deliver(_email, _config), do: exit({:noproc, {GenServer, :call, [:mail_storage, :push]}})
+  end
+
   defmodule ProviderIdentity do
     def apple("apple-linked"), do: apple_identity("apple-linked-sub", "linked@example.com")
     def apple("apple-classic"), do: apple_identity("apple-classic-sub", "classic@example.com")
@@ -1033,6 +1048,39 @@ defmodule PidroServerWeb.API.AuthControllerTest do
              } = json_response(conn, 200)["data"]
 
       refute Map.has_key?(json_response(conn, 200)["data"], "reset_token")
+    end
+
+    for {failure, mailer} <- [
+          {"returns an error", ErrorMailer},
+          {"raises", RaiseMailer},
+          {"exits", ExitMailer}
+        ] do
+      test "a mailer that #{failure} answers a known address like an unknown one", %{conn: conn} do
+        user = AccountsFixtures.user_fixture(%{username: "mfahle", email: "mfahle@example.com"})
+
+        mailer_env = Application.fetch_env!(:pidro_server, PidroServer.Mailer)
+        reset_env = Application.fetch_env!(:pidro_server, :password_reset)
+
+        Application.put_env(:pidro_server, PidroServer.Mailer, adapter: unquote(mailer))
+        Application.put_env(:pidro_server, :password_reset, debug_tokens: false)
+
+        on_exit(fn ->
+          Application.put_env(:pidro_server, PidroServer.Mailer, mailer_env)
+          Application.put_env(:pidro_server, :password_reset, reset_env)
+        end)
+
+        log =
+          capture_log(fn ->
+            known = post(conn, ~p"/api/v1/auth/password-reset", %{"identifier" => user.username})
+            send(self(), {:known, json_response(known, 200)})
+          end)
+
+        unknown = post(conn, ~p"/api/v1/auth/password-reset", %{"identifier" => "missing"})
+
+        assert_received {:known, known_body}
+        assert known_body == json_response(unknown, 200)
+        assert log =~ "Password reset email delivery failed"
+      end
     end
 
     test "confirm resets password and signs user in", %{conn: conn} do
