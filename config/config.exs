@@ -76,6 +76,7 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   auth_age: %{limit: 10, scale_ms: 600_000, key: :user},
   provider_auth: %{limit: 10, scale_ms: 60_000, key: :ip},
   classic_claim: %{limit: 10, scale_ms: 600_000, key: :ip},
+  classic_help: %{limit: 5, scale_ms: 3_600_000, key: :ip},
   avatar_upload: %{limit: 10, scale_ms: 600_000, key: :user},
   avatar_read: %{limit: 300, scale_ms: 60_000, key: :ip}
 

@@ -24,6 +24,20 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
     })
   end
 
+  defmodule HelpRequest do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Classic account help request",
+      required: [:name, :email],
+      properties: %{
+        name: %Schema{type: :string, minLength: 1, maxLength: 60},
+        email: %Schema{type: :string, format: :email, maxLength: 160},
+        details: %Schema{type: :string, maxLength: 600}
+      }
+    })
+  end
+
   defmodule VerifyRequest do
     @moduledoc false
     OpenApiSpex.schema(%{

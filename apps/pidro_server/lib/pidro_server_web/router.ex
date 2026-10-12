@@ -139,6 +139,8 @@ defmodule PidroServerWeb.Router do
 
     post "/classic/claim", ClassicClaimController, :create,
       private: %{rate_limit: [:classic_claim]}
+
+    post "/classic/help", ClassicHelpController, :create, private: %{rate_limit: [:classic_help]}
   end
 
   scope "/api/v1", PidroServerWeb.API do

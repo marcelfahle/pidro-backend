@@ -90,6 +90,20 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :mail_unavailable}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> json(%{
+      errors: [
+        %{
+          code: "MAIL_UNAVAILABLE",
+          title: "Mail unavailable",
+          detail: "Your message could not be sent right now"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :provider_unavailable}) do
     conn
     |> put_status(:service_unavailable)

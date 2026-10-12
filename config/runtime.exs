@@ -108,6 +108,8 @@ rate_limit_overrides =
     {:provider_auth, :scale_ms, "RATE_LIMIT_PROVIDER_AUTH_SCALE_MS"},
     {:classic_claim, :limit, "RATE_LIMIT_CLASSIC_CLAIM_LIMIT"},
     {:classic_claim, :scale_ms, "RATE_LIMIT_CLASSIC_CLAIM_SCALE_MS"},
+    {:classic_help, :limit, "RATE_LIMIT_CLASSIC_HELP_LIMIT"},
+    {:classic_help, :scale_ms, "RATE_LIMIT_CLASSIC_HELP_SCALE_MS"},
     {:avatar_upload, :limit, "RATE_LIMIT_AVATAR_UPLOAD_LIMIT"},
     {:avatar_upload, :scale_ms, "RATE_LIMIT_AVATAR_UPLOAD_SCALE_MS"},
     {:avatar_read, :limit, "RATE_LIMIT_AVATAR_READ_LIMIT"},
