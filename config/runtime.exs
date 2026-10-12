@@ -293,15 +293,18 @@ if config_env() == :prod do
   #
   # Plain SMTP, so any provider works (SES, Postmark, ...). Without the three
   # credentials the app still boots, but password reset emails cannot be sent.
-  case Enum.map(~w(SMTP_RELAY SMTP_USERNAME SMTP_PASSWORD), &System.get_env/1) do
-    [relay, username, password]
+  smtp_env = Enum.map(~w(SMTP_RELAY SMTP_USERNAME SMTP_PASSWORD), &System.get_env/1)
+  smtp_port = Integer.parse(System.get_env("SMTP_PORT") || "587")
+
+  case {smtp_env, smtp_port} do
+    {[relay, username, password], {port, ""}}
     when relay not in [nil, ""] and username not in [nil, ""] and password not in [nil, ""] ->
       config :pidro_server, PidroServer.Mailer,
         adapter: Swoosh.Adapters.SMTP,
         relay: relay,
         username: username,
         password: password,
-        port: String.to_integer(System.get_env("SMTP_PORT") || "587"),
+        port: port,
         ssl: false,
         tls: :always,
         auth: :always
@@ -310,7 +313,7 @@ if config_env() == :prod do
       require Logger
 
       Logger.error(
-        "Mail is not configured: set SMTP_RELAY, SMTP_USERNAME and SMTP_PASSWORD. " <>
+        "Mail is not configured: set SMTP_RELAY, SMTP_USERNAME, SMTP_PASSWORD and a numeric SMTP_PORT. " <>
           "Password reset emails will not be delivered."
       )
   end
