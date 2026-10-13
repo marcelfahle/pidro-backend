@@ -380,14 +380,26 @@ if config_env() == :prod do
         port: port,
         ssl: false,
         tls: :always,
-        auth: :always
+        auth: :always,
+        # gen_smtp's defaults carry no CA certificates (OTP 26+ refuses to
+        # connect) and allow no intermediate certificate (depth 0), so without
+        # these STARTTLS fails on every send.
+        tls_options: [
+          verify: :verify_peer,
+          cacerts: :public_key.cacerts_get(),
+          depth: 10,
+          server_name_indication: String.to_charlist(relay),
+          customize_hostname_check: [
+            match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
+          ]
+        ]
 
     _ ->
-      require Logger
-
-      Logger.error(
+      # Logger output is dropped while a release evaluates this file; stderr is not.
+      IO.warn(
         "Mail is not configured: set SMTP_RELAY, SMTP_USERNAME, SMTP_PASSWORD and a numeric SMTP_PORT. " <>
-          "Password reset emails will not be delivered."
+          "Password reset emails will not be delivered.",
+        []
       )
   end
 end
