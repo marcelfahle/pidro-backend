@@ -381,6 +381,9 @@ if config_env() == :prod do
         ssl: false,
         tls: :always,
         auth: :always,
+        # Submit to the relay itself, never to its MX hosts: the certificate
+        # check below is for the relay's name.
+        no_mx_lookups: true,
         # gen_smtp's defaults carry no CA certificates (OTP 26+ refuses to
         # connect) and allow no intermediate certificate (depth 0), so without
         # these STARTTLS fails on every send.
