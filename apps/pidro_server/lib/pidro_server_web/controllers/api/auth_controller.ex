@@ -842,22 +842,7 @@ defmodule PidroServerWeb.API.AuthController do
       """)
 
     # The answer must not depend on whether the mail went out, whatever the adapter does.
-    try do
-      case Mailer.deliver(email) do
-        {:ok, _metadata} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.error("Password reset email delivery failed: #{inspect(reason)}")
-      end
-    catch
-      kind, reason ->
-        Logger.error(
-          "Password reset email delivery failed: " <>
-            Exception.format(kind, reason, __STACKTRACE__)
-        )
-    end
-
+    Mailer.deliver_logged(email, "Password reset")
     :ok
   end
 

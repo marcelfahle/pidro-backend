@@ -14,7 +14,8 @@ defmodule PidroServerWeb.API.ClassicHelpControllerTest do
 
   defmodule ExitMailer do
     use Swoosh.Adapter
-    def deliver(_email, _config), do: exit({:noproc, {GenServer, :call, [:mail_storage, :push]}})
+    # Like Swoosh.Adapters.Local without its storage: the exit reason holds the email.
+    def deliver(email, _config), do: GenServer.call({:global, :no_mail_storage}, {:push, email})
   end
 
   @valid %{"name" => "Old Hand", "email" => "old@example.com", "details" => "Played in 2012"}
