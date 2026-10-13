@@ -31,6 +31,8 @@ defmodule PidroServer.Application do
       # Privacy-bounded, node-local deferred invite hints. This must remain a
       # single owner unless the deployment adopts a first-party shared store.
       PidroServer.Invites.DeferredMatcher,
+      # Work that outlives the request, such as the password reset mail
+      {Task.Supervisor, name: PidroServer.TaskSupervisor},
       # Start to serve requests, typically the last entry
       PidroServerWeb.Endpoint
     ]

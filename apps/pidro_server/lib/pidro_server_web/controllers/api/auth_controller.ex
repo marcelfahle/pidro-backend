@@ -420,7 +420,7 @@ defmodule PidroServerWeb.API.AuthController do
     with {:ok, declaration} <- AgeTerms.parse(params),
          {:ok, upgraded} <- Auth.upgrade_guest(user, upgrade_attrs(params)),
          {:ok, upgraded} <- AgeTerms.store(upgraded, declaration) do
-      record_upgrade(upgraded)
+      Invites.record_upgrade(upgraded.id)
       Auth.touch_last_seen(upgraded)
       token = Token.generate(upgraded)
 
@@ -463,7 +463,8 @@ defmodule PidroServerWeb.API.AuthController do
     summary: "Request a password reset link",
     description: """
     Sends a password reset link when an account matches the identifier (username
-    or email). The response is identical whether or not the account exists.
+    or email). The response is identical whether or not the account exists, and
+    the mail goes out after it.
 
     Rate limited per client IP and, additionally, per normalized identifier.
     """,
@@ -790,18 +791,6 @@ defmodule PidroServerWeb.API.AuthController do
     {:error, changeset}
   end
 
-  # `guest_upgraded` on the invite of the user's latest redemption (R8); a
-  # failure is logged, never surfaced.
-  defp record_upgrade(%User{id: id}) do
-    case Invites.record_upgrade(id) do
-      {:ok, _event_or_nil} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.error("guest_upgraded event failed for #{id}: #{inspect(reason)}")
-    end
-  end
-
   defp password_reset_request_response(reset) do
     response = %{
       message: "If an account exists for that username or email, a reset link has been sent."
@@ -841,8 +830,13 @@ defmodule PidroServerWeb.API.AuthController do
       <p>This link expires in 1 hour.</p>
       """)
 
-    # The answer must not depend on whether the mail went out, whatever the adapter does.
-    Mailer.deliver_logged(email, "Password reset")
+    # Sent after the answer: neither its time nor its outcome may tell a known
+    # address from an unknown one. `deliver_logged/2` catches every failure, so
+    # the task never crashes with the mail in its exit reason.
+    Task.Supervisor.start_child(PidroServer.TaskSupervisor, fn ->
+      Mailer.deliver_logged(email, "Password reset")
+    end)
+
     :ok
   end
 

@@ -1,6 +1,9 @@
 defmodule PidroServer.Accounts.ClassicClaimsTest do
   use PidroServer.DataCase, async: false
 
+  import Ecto.Query
+  import ExUnit.CaptureLog
+
   alias PidroServer.Accounts.{
     Auth,
     ClassicClaims,
@@ -13,6 +16,8 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
   }
 
   alias PidroServer.AccountsFixtures
+  alias PidroServer.Invites
+  alias PidroServer.Invites.Event
   alias PidroServer.Profiles
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Repo
@@ -261,6 +266,7 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
 
     assert {:ok, created} = ClassicClaims.redeem(ticket, nil, params)
     refute created.guest
+    assert upgrades() == []
     assert created.display_name == "Returning Veteran"
     assert created.classic_user_id == 40_001
     assert {:ok, signed_in} = Auth.authenticate_user("veteran@example.com", "password123")
@@ -449,6 +455,35 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
       assert Repo.aggregate(PlayerProfile, :count) == 1
     end
 
+    test "counts once as an upgrade on the invite the guest came through", %{guest: guest} do
+      invite = invite_redeemed_by!(guest)
+      ticket = issue_ticket!(guest, 50_010, :password, nil, %{xp: 90})
+      account = %{email: "saved@example.com", password: "secret123"}
+
+      assert {:ok, claimed} = ClassicClaims.redeem(ticket, guest, %{account: account})
+      assert {:ok, _retried} = ClassicClaims.redeem(ticket, claimed, %{})
+
+      assert [%Event{invite_id: invite_id, user_id: user_id}] = upgrades()
+      assert {invite_id, user_id} == {invite.id, guest.id}
+    end
+
+    test "is not failed by a failed upgrade event", %{guest: guest} do
+      invite_redeemed_by!(guest)
+      fail_event_inserts!()
+      ticket = issue_ticket!(guest, 50_011, :password, nil, %{xp: 90})
+      account = %{email: "saved@example.com", password: "secret123"}
+
+      log =
+        capture_log(fn ->
+          assert {:ok, claimed} = ClassicClaims.redeem(ticket, guest, %{account: account})
+          refute claimed.guest
+        end)
+
+      assert log =~ "guest_upgraded event failed for #{guest.id}"
+      assert upgrades() == []
+      refute Repo.get!(User, guest.id).guest
+    end
+
     test "is refused when the email is taken", %{guest: guest} do
       other = AccountsFixtures.user_fixture()
       ticket = issue_ticket!(guest, 50_003, :password, nil, %{xp: 90})
@@ -456,6 +491,7 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
 
       assert {:error, changeset} = ClassicClaims.redeem(ticket, guest, %{account: account})
       assert %{email: ["has already been taken"]} = errors_on(changeset)
+      assert upgrades() == []
 
       unchanged = Repo.get!(User, guest.id)
       assert unchanged.guest
@@ -538,6 +574,37 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     assert {:ok, claimed} = ClassicClaims.redeem(ticket, user, %{})
     assert claimed.email == user.email
     assert claimed.password_hash == user.password_hash
+  end
+
+  defp invite_redeemed_by!(user) do
+    {:ok, invite} =
+      Invites.create_invite(%{
+        room_id: Ecto.UUID.generate(),
+        room_code: "K7QP",
+        host_user_id: Ecto.UUID.generate()
+      })
+
+    {:ok, _redemption} = Invites.record_redemption(invite, %{user_id: user.id, position: "south"})
+    invite
+  end
+
+  defp upgrades, do: Repo.all(from(e in Event, where: e.kind == "guest_upgraded"))
+
+  # Every invite event insert fails as if its invite were gone; the sandbox
+  # rolls the trigger back with the test.
+  defp fail_event_inserts! do
+    Repo.query!("""
+    CREATE FUNCTION fail_invite_event() RETURNS trigger AS $$
+    BEGIN
+      RAISE foreign_key_violation USING CONSTRAINT = 'invite_events_invite_id_fkey';
+    END
+    $$ LANGUAGE plpgsql
+    """)
+
+    Repo.query!(
+      "CREATE TRIGGER fail_invite_event BEFORE INSERT ON invite_events " <>
+        "FOR EACH ROW EXECUTE FUNCTION fail_invite_event()"
+    )
   end
 
   defp issue_ticket!(user, classic_user_id, method, provider_id, legacy_data) do

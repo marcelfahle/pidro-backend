@@ -495,16 +495,14 @@ defmodule PidroServer.InvitesTest do
       {:ok, _} = Invites.record_redemption(first, %{user_id: user_id, position: "south"})
       {:ok, _} = Invites.record_redemption(latest, %{user_id: user_id, position: "north"})
 
-      assert {:ok, %Event{kind: "guest_upgraded", user_id: ^user_id, invite_id: invite_id}} =
-               Invites.record_upgrade(user_id)
+      assert Invites.record_upgrade(user_id) == :ok
 
-      assert invite_id == latest.id
       assert events(first) == []
-      assert [%Event{kind: "guest_upgraded"}] = events(latest)
+      assert [%Event{kind: "guest_upgraded", user_id: ^user_id}] = events(latest)
     end
 
     test "is a no-op for a user without redemptions" do
-      assert Invites.record_upgrade(Ecto.UUID.generate()) == {:ok, nil}
+      assert Invites.record_upgrade(Ecto.UUID.generate()) == :ok
       assert Repo.aggregate(Event, :count) == 0
     end
   end

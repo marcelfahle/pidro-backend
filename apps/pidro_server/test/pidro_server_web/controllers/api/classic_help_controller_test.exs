@@ -78,6 +78,18 @@ defmodule PidroServerWeb.API.ClassicHelpControllerTest do
       assert [%{"code" => "email"}] = json_response(conn, 422)["errors"]
     end
 
+    test "an address the mailer cannot write is an invalid email, not a mail failure", %{
+      conn: conn
+    } do
+      for char <- [",", ";", "\"", "<", "("] do
+        email = "old#{char}hand@example.com"
+        conn = post(build_conn(), ~p"/api/v1/classic/help", %{@valid | "email" => email})
+        assert [%{"code" => "email"}] = json_response(conn, 422)["errors"]
+      end
+
+      assert response(post(conn, ~p"/api/v1/classic/help", @valid), 204)
+    end
+
     test "details are at most 600 characters", %{conn: conn} do
       conn =
         post(conn, ~p"/api/v1/classic/help", %{@valid | "details" => String.duplicate("a", 601)})

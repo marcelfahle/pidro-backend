@@ -37,6 +37,7 @@ defmodule PidroServer.Invites do
   """
 
   import Ecto.Query
+  require Logger
 
   alias PidroServer.Games.Room.Positions
   alias PidroServer.Games.RoomManager.Room
@@ -289,18 +290,19 @@ defmodule PidroServer.Invites do
   end
 
   @doc """
-  Writes `guest_upgraded` on the invite of the user's latest redemption;
-  answers `{:ok, nil}` when the user never redeemed one.
+  Writes `guest_upgraded` on the invite of the user's latest redemption, for
+  either way a guest becomes a saved player: the upgrade or a Classic claim.
+  Nothing is written when the user never redeemed one; a failed write is
+  logged, never surfaced.
   """
-  @spec record_upgrade(Ecto.UUID.t()) :: {:ok, Event.t() | nil} | {:error, Ecto.Changeset.t()}
+  @spec record_upgrade(Ecto.UUID.t()) :: :ok
   def record_upgrade(user_id) do
-    case latest_redemption(user_id) do
-      nil ->
-        {:ok, nil}
-
-      %Redemption{invite_id: invite_id} ->
-        insert_event(invite_id, %{kind: "guest_upgraded", user_id: user_id})
+    with %Redemption{invite_id: invite_id} <- latest_redemption(user_id),
+         {:error, reason} <- insert_event(invite_id, %{kind: "guest_upgraded", user_id: user_id}) do
+      Logger.error("guest_upgraded event failed for #{user_id}: #{inspect(reason)}")
     end
+
+    :ok
   end
 
   @doc """

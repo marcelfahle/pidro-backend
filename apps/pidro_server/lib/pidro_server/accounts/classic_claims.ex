@@ -19,6 +19,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
     UserIdentities
   }
 
+  alias PidroServer.Invites
   alias PidroServer.Profiles
   alias PidroServer.Profiles.{LegacyProgression, PlayerProfile}
   alias PidroServer.Repo
@@ -87,10 +88,14 @@ defmodule PidroServer.Accounts.ClassicClaims do
   def redeem(token, current_user, params)
       when is_binary(token) and (is_nil(current_user) or is_struct(current_user, User)) and
              is_map(params) do
-    case redeem_once(token, current_user, params) do
-      {:error, :claim_state_changed} -> redeem_once(token, current_user, params)
-      result -> result
-    end
+    result =
+      case redeem_once(token, current_user, params) do
+        {:error, :claim_state_changed} -> redeem_once(token, current_user, params)
+        result -> result
+      end
+
+    record_upgrade(current_user, result)
+    result
   end
 
   def redeem(_token, _current_user, _params), do: {:error, :invalid_claim_ticket}
@@ -126,6 +131,13 @@ defmodule PidroServer.Accounts.ClassicClaims do
       end
     end)
   end
+
+  # A guest the claim saved counts as upgraded, as through POST /auth/upgrade.
+  # After the commit: a failed event write must not undo the claim.
+  defp record_upgrade(%User{guest: true}, {:ok, %User{guest: false, id: id}}),
+    do: Invites.record_upgrade(id)
+
+  defp record_upgrade(_current_user, _result), do: :ok
 
   defp find_ticket(token),
     do: Repo.get_by(ClassicClaimTicket, token_hash: hash_token(token))
