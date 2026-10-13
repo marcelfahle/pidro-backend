@@ -216,6 +216,23 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       assert %{"user" => %{"display_name" => "Anna"}} = json_response(conn, 201)["data"]
     end
 
+    test "refuses an address the mailer cannot write as an invalid email", %{conn: conn} do
+      conn =
+        post(conn, ~p"/api/v1/auth/register", %{
+          "user" => %{
+            "username" => "register_comma",
+            "email" => "anna,ben@example.com",
+            "password" => "password123"
+          }
+        })
+
+      assert %{
+               "errors" => [
+                 %{"code" => "email", "detail" => "must be a valid email address"}
+               ]
+             } = json_response(conn, 422)
+    end
+
     test "rejects a 21-character display_name with a validation error", %{conn: conn} do
       conn =
         post(conn, ~p"/api/v1/auth/register", %{

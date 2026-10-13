@@ -382,4 +382,37 @@ defmodule PidroServer.Accounts.UserTest do
       assert Repo.get!(User, user.id).token_version == 0
     end
   end
+
+  describe "validate_email/1" do
+    # The SMTP encoder raises on these before the `@`, so no mail could reach them.
+    for char <- [",", ";", "\"", "<", "("] do
+      test "refuses #{char} before the @" do
+        changeset = email_changeset("anna#{unquote(char)}ben@example.com")
+
+        assert %{email: ["must be a valid email address"]} = errors_on(changeset)
+      end
+    end
+
+    test "keeps ordinary addresses" do
+      for email <- [
+            "anna@example.com",
+            "anna+pidro@example.com",
+            "anna.ben@example.com",
+            "anna@mail.example.co.uk",
+            "o'hara_1-2@example.ie",
+            "Anna.Ben@Example.COM"
+          ] do
+        assert email_changeset(email).valid?, email
+      end
+    end
+
+    test "leaves an unchanged stored address alone" do
+      user = %User{username: "anna", email: "anna,ben@example.com"}
+
+      assert User.changeset(user, %{display_name: "Anna"}).valid?
+    end
+  end
+
+  defp email_changeset(email),
+    do: User.changeset(%User{}, %{username: "anna", email: email})
 end

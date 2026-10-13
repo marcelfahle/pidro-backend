@@ -20,6 +20,23 @@ defmodule PidroServer.Mailer do
     kind, reason -> failed(label, {kind, summary(reason)})
   end
 
+  @doc """
+  Whether the SMTP encoder can write `address` into a mail. It raises or exits
+  on any it cannot, such as one with `,` `;` `"` `<` or `(` before the `@` or a
+  domain IDNA refuses, so this asks it rather than copying its rules.
+
+  `Swoosh.Adapters.SMTP.Helpers.body/2` is internal to Swoosh, but it is what
+  `Swoosh.Adapters.SMTP.deliver/2` sends. Should a Swoosh upgrade change it,
+  every address turns unsendable and the user tests for ordinary addresses fail.
+  """
+  def sendable?(address) when is_binary(address) do
+    mail = Swoosh.Email.new(to: address, from: "check@pidro.online", subject: "", text_body: "")
+    Swoosh.Adapters.SMTP.Helpers.body(mail, [])
+    true
+  catch
+    _kind, _reason -> false
+  end
+
   defp failed(label, reason) do
     Logger.error("#{label} email delivery failed: #{inspect(reason)}")
     {:error, reason}

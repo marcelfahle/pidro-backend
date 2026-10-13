@@ -39,6 +39,8 @@ defmodule PidroServer.Accounts.User do
   use Ecto.Schema
   import Ecto.Changeset
 
+  alias PidroServer.Mailer
+
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
@@ -191,7 +193,7 @@ defmodule PidroServer.Accounts.User do
     |> cast(attrs, [:username, :email, :password, :display_name])
     |> validate_required([:username])
     |> validate_username()
-    |> validate_format(:email, @email_format, message: "must be a valid email address")
+    |> validate_email()
     |> validate_display_name()
     |> unique_constraint(:username)
     |> unique_constraint(:email)
@@ -293,7 +295,7 @@ defmodule PidroServer.Accounts.User do
     |> cast(attrs, [:email, :password, :username])
     |> validate_required([:username, :email, :password])
     |> validate_username()
-    |> validate_format(:email, @email_format, message: "must be a valid email address")
+    |> validate_email()
     |> validate_length(:password, min: @password_min_length)
     |> put_password_hash()
     |> put_change(:guest, false)
@@ -382,6 +384,18 @@ defmodule PidroServer.Accounts.User do
     %__MODULE__{}
     |> cast(%{display_name: name}, [:display_name])
     |> validate_display_name()
+  end
+
+  @doc """
+  The one rule for an email address, on any changeset with an `email` field:
+  a plain `name@domain.tld` shape that our mailer can also send to.
+  """
+  def validate_email(changeset) do
+    validate_change(changeset, :email, fn :email, email ->
+      if email =~ @email_format and Mailer.sendable?(email),
+        do: [],
+        else: [email: {"must be a valid email address", validation: :format}]
+    end)
   end
 
   # The one display-name rule (KTD6): NFKC normalize, trim and collapse Unicode

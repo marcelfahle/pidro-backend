@@ -9,6 +9,7 @@ defmodule PidroServer.Accounts.ClassicHelp do
   import Ecto.Changeset
   import Swoosh.Email
 
+  alias PidroServer.Accounts.User
   alias PidroServer.Mailer
 
   @types %{name: :string, email: :string, details: :string}
@@ -33,7 +34,7 @@ defmodule PidroServer.Accounts.ClassicHelp do
     |> validate_length(:name, max: 60)
     |> validate_format(:name, ~r/\A[^[:cntrl:]]+\z/u, message: "has invalid characters")
     |> validate_length(:email, max: 160)
-    |> validate_format(:email, ~r/\A[^\s@]+@[^\s@]+\.[^\s@]+\z/, message: "must be a valid email")
+    |> User.validate_email()
     |> validate_length(:details, max: 600)
     |> apply_action(:insert)
   end
