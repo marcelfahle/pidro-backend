@@ -536,11 +536,13 @@ defmodule PidroServer.Profiles do
 
   ## Lifetime counters (PID-44)
 
-  Increments `games_played` and either `wins` or `losses` for every valid-UUID
-  key in `player_results` (counters count ALL human participation, including
-  `:abandoned` reserved-for ids). Bots never appear (the caller skips them). Ids
-  that are not valid UUIDs are logged and skipped rather than crashing the
-  surrounding transaction.
+  Increments `games_played` and either `wins` or `losses` for every key in
+  `player_results` that has a user (counters count ALL human participation,
+  including `:abandoned` reserved-for ids). Bots never appear (the caller skips
+  them). An id with no user, such as a player who deleted their account
+  mid-game or a non-UUID, gets no profile or achievement row (KD9); every
+  "participant" below means a participant with a user. Rating still sees the
+  whole table.
 
   ## Veteran XP (PID-49) — every completed game, NOT rated-gated
 
@@ -780,7 +782,8 @@ defmodule PidroServer.Profiles do
   Rebuilds every known user's profile from history.
 
   Collects the distinct set of user ids appearing in `game_stats.player_ids`
-  and rebuilds each. Returns `{:ok, count}` with the number of profiles rebuilt.
+  and rebuilds each that still has a user. Returns `{:ok, count}` with the
+  number of profiles rebuilt.
   """
   @spec rebuild_all() :: {:ok, non_neg_integer()}
   def rebuild_all do
