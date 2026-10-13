@@ -420,7 +420,7 @@ defmodule PidroServerWeb.API.AuthController do
     with {:ok, declaration} <- AgeTerms.parse(params),
          {:ok, upgraded} <- Auth.upgrade_guest(user, upgrade_attrs(params)),
          {:ok, upgraded} <- AgeTerms.store(upgraded, declaration) do
-      record_upgrade(upgraded)
+      Invites.record_upgrade(upgraded.id)
       Auth.touch_last_seen(upgraded)
       token = Token.generate(upgraded)
 
@@ -789,18 +789,6 @@ defmodule PidroServerWeb.API.AuthController do
       |> Ecto.Changeset.validate_inclusion(:platform, @platforms)
 
     {:error, changeset}
-  end
-
-  # `guest_upgraded` on the invite of the user's latest redemption (R8); a
-  # failure is logged, never surfaced.
-  defp record_upgrade(%User{id: id}) do
-    case Invites.record_upgrade(id) do
-      {:ok, _event_or_nil} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.error("guest_upgraded event failed for #{id}: #{inspect(reason)}")
-    end
   end
 
   defp password_reset_request_response(reset) do
