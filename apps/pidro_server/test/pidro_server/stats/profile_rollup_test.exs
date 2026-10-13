@@ -5,13 +5,15 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
   use PidroServer.DataCase, async: false
 
+  alias PidroServer.Accounts.{Auth, User}
+  alias PidroServer.AccountsFixtures
   alias PidroServer.Games.RoomManager
   alias PidroServer.Profiles
-  alias PidroServer.Profiles.PlayerProfile
+  alias PidroServer.Profiles.{Achievement, PlayerProfile}
   alias PidroServer.Progression
   alias PidroServer.Rating
   alias PidroServer.Stats
-  alias PidroServer.Stats.GameStats
+  alias PidroServer.Stats.{AbandonmentEvent, GameStats}
 
   @delta 1.0e-9
   @base ~U[2026-06-07 12:00:00Z]
@@ -34,10 +36,10 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   end
 
   test "completing a game inserts game_stats and bumps each participant's profile" do
-    user1 = Ecto.UUID.generate()
-    user2 = Ecto.UUID.generate()
-    user3 = Ecto.UUID.generate()
-    user4 = Ecto.UUID.generate()
+    user1 = player_id()
+    user2 = player_id()
+    user3 = player_id()
+    user4 = player_id()
 
     {:ok, room} = RoomManager.create_room(user1, %{name: "Rollup"})
     {:ok, _, _} = RoomManager.join_room(room.code, user2)
@@ -63,10 +65,10 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   end
 
   test "re-running completion does not double-increment profiles" do
-    user1 = Ecto.UUID.generate()
-    user2 = Ecto.UUID.generate()
-    user3 = Ecto.UUID.generate()
-    user4 = Ecto.UUID.generate()
+    user1 = player_id()
+    user2 = player_id()
+    user3 = player_id()
+    user4 = player_id()
 
     {:ok, room} = RoomManager.create_room(user1, %{name: "Idempotent"})
     {:ok, _, _} = RoomManager.join_room(room.code, user2)
@@ -91,8 +93,45 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
   end
 
+  test "a player who deletes their account mid-game gets no profile row when it finishes" do
+    [n, e, s, w] = for _ <- 1..4, do: player_id()
+
+    {:ok, room} = RoomManager.create_room(n, %{name: "Deleted"})
+    {:ok, _, _} = RoomManager.join_room(room.code, e)
+    {:ok, _, _} = RoomManager.join_room(room.code, s)
+    {:ok, _, _} = RoomManager.join_room(room.code, w)
+    PidroServer.RoomFixtures.ready_room(room.code)
+
+    {:ok, _deleted} = Auth.delete_user(Repo.get!(User, e))
+
+    game_over = {:game_over, room.code, :north_south, %{north_south: 62, east_west: 45}}
+    send(GenServer.whereis(RoomManager), game_over)
+
+    saved = wait_until(fn -> Repo.get_by(GameStats, room_code: room.code) end)
+
+    # The bare id stays in game_stats and abandonment_events (KD9) ...
+    assert e in saved.player_ids
+    assert [%AbandonmentEvent{}] = Repo.all(from a in AbandonmentEvent, where: a.user_id == ^e)
+
+    # ... but nothing else is written for it.
+    assert is_nil(Repo.get_by(PlayerProfile, user_id: e))
+    assert is_nil(Repo.get_by(Achievement, user_id: e))
+
+    # The other three are rated as a full four-player game.
+    assert {:rated, ratings} = Profiles.rate_game(saved.player_results, :north_south, %{})
+
+    for id <- [n, s, w] do
+      p = Repo.get_by!(PlayerProfile, user_id: id)
+      {mu, sigma} = Map.fetch!(ratings, id)
+      assert p.games_played == 1
+      assert p.rating_games_count == 1
+      assert_in_delta p.rating_mu, mu, @delta
+      assert_in_delta p.rating_sigma, sigma, @delta
+    end
+  end
+
   test "a forced stats-insert failure leaves no profile changes (rollback)" do
-    user_id = Ecto.UUID.generate()
+    user_id = player_id()
 
     player_results = %{
       user_id => %{participation: :played, result: :win, team: :north_south, position: :north}
@@ -112,7 +151,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
   describe "live rating update (PID-47)" do
     test "a 4-human game moves all four ratings (winners up, losers down, sigma shrinks)" do
-      [n, e, s, w] = ids = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = ids = for _ <- 1..4, do: player_id()
       {dmu, dsig} = Rating.default()
 
       # north/south win, east/west lose.
@@ -132,7 +171,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "single-player / bots-only game leaves ratings at default (counters still move)" do
-      human = Ecto.UUID.generate()
+      human = player_id()
 
       # Only one human seat recorded (rest are pure bots, never in player_results).
       results = %{human => result_for(:north_south, :north_south, :north)}
@@ -149,7 +188,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a 3-human game leaves ratings untouched but bumps counters" do
-      [a, b, c] = ids = for _ <- 1..3, do: Ecto.UUID.generate()
+      [a, b, c] = ids = for _ <- 1..3, do: player_id()
 
       results = %{
         a => result_for(:north_south, :north_south, :north),
@@ -170,7 +209,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "idempotent re-fire does not double-move ratings" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       {:ok, room} = RoomManager.create_room(n, %{name: "RatingIdempotent"})
       {:ok, _, _} = RoomManager.join_room(room.code, e)
@@ -199,7 +238,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a forced stats-insert failure rolls back the rating move" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       results = %{
         n => result_for(:north_south, :north_south, :north),
@@ -219,7 +258,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "real completion path equals a fresh rerate_all/0 (acceptance c)" do
-      [a, b, c, d, e, f] = for _ <- 1..6, do: Ecto.UUID.generate()
+      [a, b, c, d, e, f] = for _ <- 1..6, do: player_id()
 
       # Drive N rated 4-human games through the real Stats save path, with
       # strictly increasing completed_at so arrival order == the rebuild's total
@@ -244,7 +283,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
   describe "veteran XP (PID-49)" do
     test "awards XP to ALL participants of a 4-human game, incl. losers" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       results = %{
         n => result_for(:north_south, :north_south, :north),
@@ -272,7 +311,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "single-player / bot-filled game still pays XP (NOT rated-gated)" do
-      human = Ecto.UUID.generate()
+      human = player_id()
       results = %{human => result_for(:north_south, :north_south, :north)}
       scores = %{north_south: 62, east_west: 45}
 
@@ -288,7 +327,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "an :abandoned seat earns XP like the counters credit it" do
-      user_id = Ecto.UUID.generate()
+      user_id = player_id()
 
       results = %{
         user_id => %{
@@ -308,7 +347,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "live completion XP/level == rebuild_all/0 XP/level (parity)" do
-      [a, b, c, d, e, f] = for _ <- 1..6, do: Ecto.UUID.generate()
+      [a, b, c, d, e, f] = for _ <- 1..6, do: player_id()
 
       complete_4human_xp("PG1", {a, b, c, d}, :north_south, %{north_south: 62, east_west: 30})
       complete_4human_xp("PG2", {a, c, e, b}, :east_west, %{north_south: 40, east_west: 62})
@@ -328,8 +367,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "rebuild tolerates legacy string-keyed final_scores and missing team score" do
-      u1 = Ecto.UUID.generate()
-      u2 = Ecto.UUID.generate()
+      u1 = player_id()
+      u2 = player_id()
 
       results = %{
         u1 => result_for(:north_south, :north_south, :north),
@@ -361,7 +400,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     alias PidroServer.Profiles.Achievement
 
     test "10th game awards :player exactly at the threshold, not before" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       for n <- 1..9 do
         complete_solo("PLAYER#{n}", u, :north_south, DateTime.add(@base, n))
@@ -374,7 +413,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "5th win awards :winner exactly at the threshold" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       # 4 wins, then a loss, then the 5th win.
       for n <- 1..4 do
@@ -391,7 +430,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "3 straight wins award :winstreak; a prior loss does not block it" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       complete_solo("WS_L", u, :east_west, DateTime.add(@base, 1))
       complete_solo("WS_W1", u, :north_south, DateTime.add(@base, 2))
@@ -403,7 +442,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "an opponent-shutout win awards :ace" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       complete_solo("ACE_NO", u, :north_south, DateTime.add(@base, 1), %{
         north_south: 62,
@@ -421,7 +460,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a negative-finish game awards :the_loser" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       # User sits on north_south, loses (east_west wins), and finishes negative.
       complete_solo("LOSER", u, :east_west, DateTime.add(@base, 1), %{
@@ -434,7 +473,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
     test ":partnership earns at 10 wins with the SAME partner; 9 does not" do
       # n + s are fixed partners on north_south; they win 9 games together.
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       for i <- 1..9 do
         complete_4human("PART_SAME#{i}", {n, e, s, w}, :north_south, DateTime.add(@base, i))
@@ -456,12 +495,12 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     test ":partnership does NOT earn when 10 wins are spread across DIFFERENT partners" do
       # `hero` wins 10 north_south games, but with a DIFFERENT partner each time,
       # so no single partner reaches the threshold.
-      hero = Ecto.UUID.generate()
+      hero = player_id()
 
       for i <- 1..10 do
-        partner = Ecto.UUID.generate()
-        e = Ecto.UUID.generate()
-        w = Ecto.UUID.generate()
+        partner = player_id()
+        e = player_id()
+        w = player_id()
         # hero sits north, the fresh partner sits south — both win.
         complete_4human(
           "PART_DIFF#{i}",
@@ -475,7 +514,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test ":partnership does not count a solo / bot-filled win (no real partner)" do
-      solo = Ecto.UUID.generate()
+      solo = player_id()
 
       for i <- 1..12 do
         complete_solo("PART_SOLO#{i}", solo, :north_south, DateTime.add(@base, i))
@@ -485,7 +524,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "awards are permanent + idempotent (no dup rows, no downgrade on rebuild)" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       complete_solo("PERM_W1", u, :north_south, DateTime.add(@base, 1))
       complete_solo("PERM_W2", u, :north_south, DateTime.add(@base, 2))
@@ -512,7 +551,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "achievements live in the summary's achievements_unlocked; not re-reported next game" do
-      u = Ecto.UUID.generate()
+      u = player_id()
 
       for n <- 1..9 do
         complete_solo("RET#{n}", u, :north_south, DateTime.add(@base, n))
@@ -536,7 +575,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "live award set == rebuild award set (headline parity guard)" do
-      [a, b, c, d] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
 
       # A scripted sequence exercising counters, streaks, shutouts, partnered wins.
       complete_4human("P1", {a, b, c, d}, :north_south, DateTime.add(@base, 1), %{
@@ -557,7 +596,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test ":partnership live award == rebuild award (parity at the threshold)" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       for i <- 1..10 do
         complete_4human("PARTPAR#{i}", {n, e, s, w}, :north_south, DateTime.add(@base, i))
@@ -574,7 +613,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "rebuild is idempotent (running it twice awards nothing the second time)" do
-      u = Ecto.UUID.generate()
+      u = player_id()
       complete_solo("IDEM1", u, :north_south, DateTime.add(@base, 1))
       complete_solo("IDEM2", u, :north_south, DateTime.add(@base, 2))
       complete_solo("IDEM3", u, :north_south, DateTime.add(@base, 3))
@@ -589,7 +628,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "dormant achievements never appear after completions or a rebuild" do
-      [a, b, c, d] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       complete_4human("DORM", {a, b, c, d}, :north_south, DateTime.add(@base, 1))
       assert {:ok, _} = Profiles.rebuild_all()
 
@@ -608,7 +647,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
       on_exit(fn -> Application.delete_env(:pidro_server, PidroServer.Achievements.Catalog) end)
 
-      u = Ecto.UUID.generate()
+      u = player_id()
       complete_solo("TRIV", u, :north_south, DateTime.add(@base, 1))
       assert "player" in earned_keys(u)
 
@@ -619,7 +658,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
   describe "post-game summary (PID-52)" do
     test "a 4-human rated game returns a summary per participant (rated, rating, xp)" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       results = %{
         n => result_for(:north_south, :north_south, :north),
@@ -644,7 +683,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a single-player / bot-filled game returns rated: false, rating: nil, full Veteran block" do
-      human = Ecto.UUID.generate()
+      human = player_id()
       results = %{human => result_for(:north_south, :north_south, :north)}
       scores = %{north_south: 62, east_west: 45}
 
@@ -661,7 +700,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a rolled-back completion leaves no profile changes and emits no summary" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       results = %{
         n => result_for(:north_south, :north_south, :north),
@@ -684,7 +723,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "idempotent re-fire produces no second progression_summary broadcast" do
-      [n, e, s, w] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [n, e, s, w] = for _ <- 1..4, do: player_id()
 
       {:ok, room} = RoomManager.create_room(n, %{name: "SummaryIdempotent"})
       {:ok, _, _} = RoomManager.join_room(room.code, e)
@@ -711,8 +750,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
 
   describe "playstyle accumulation (PID-51)" do
     test "live accumulation across two games; second game adds to the first" do
-      a = Ecto.UUID.generate()
-      b = Ecto.UUID.generate()
+      a = player_id()
+      b = player_id()
 
       results = %{
         a => result_for(:north_south, :north_south, :north),
@@ -752,7 +791,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "single-player / bot-filled game still accumulates the human's bidding facts" do
-      human = Ecto.UUID.generate()
+      human = player_id()
       results = %{human => result_for(:north_south, :north_south, :north)}
       # 5 hands, the human won 2 (sum 15); bots never appear in the map.
       bidding = %{human => %{"attempts" => 5, "wins" => 2, "won_bid_sum" => 15}}
@@ -768,7 +807,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "live == rebuild parity for the four accumulators" do
-      [a, b, c, d] = for _ <- 1..4, do: Ecto.UUID.generate()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
 
       complete_4human_ps("PSP1", {a, b, c, d}, :north_south, DateTime.add(@base, 1), %{
         a => %{"attempts" => 4, "wins" => 2, "won_bid_sum" => 13},
@@ -797,7 +836,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a nil player_bidding row contributes zero on rebuild (no crash, no negative)" do
-      u = Ecto.UUID.generate()
+      u = player_id()
       results = %{u => result_for(:north_south, :north_south, :north)}
 
       # Row written WITHOUT player_bidding (pre-column / events unavailable).
@@ -820,7 +859,7 @@ defmodule PidroServer.Stats.ProfileRollupTest do
     end
 
     test "a forced failure rolls back playstyle accumulation (no partial inc)" do
-      u = Ecto.UUID.generate()
+      u = player_id()
       results = %{u => result_for(:north_south, :north_south, :north)}
       bidding = %{u => %{"attempts" => 3, "wins" => 2, "won_bid_sum" => 13}}
 
@@ -982,6 +1021,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
         player_results: results
       })
   end
+
+  defp player_id, do: AccountsFixtures.user_fixture().id
 
   defp profile(user_id) do
     {:ok, p} = Profiles.get_or_create_profile(user_id)
