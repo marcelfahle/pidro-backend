@@ -462,6 +462,66 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
       assert is_nil(unchanged.classic_user_id)
     end
 
+    test "may take its own Classic name as username, not another's", %{guest: guest} do
+      assert {:ok, _result} =
+               ClassicNameReservations.import([
+                 %{id: 50_006, username: "Own Name"},
+                 %{id: 50_007, username: "Other Name"}
+               ])
+
+      ticket = issue_ticket!(guest, 50_006, :password, nil, %{xp: 90})
+      account = %{email: "own@example.com", password: "secret123"}
+
+      assert {:error, changeset} =
+               ClassicClaims.redeem(ticket, guest, %{
+                 account: Map.put(account, :username, "Other Name")
+               })
+
+      assert %{username: [_]} = errors_on(changeset)
+
+      assert {:ok, claimed} =
+               ClassicClaims.redeem(ticket, guest, %{
+                 account: Map.put(account, :username, "Own Name")
+               })
+
+      assert claimed.username == "Own Name"
+    end
+
+    test "waits for the name lock on a new username", %{guest: guest} do
+      assert {:ok, _result} =
+               ClassicNameReservations.import([
+                 %{id: 50_008, username: "Shared Name"},
+                 %{id: 50_009, username: "shared name"}
+               ])
+
+      ticket = issue_ticket!(guest, 50_008, :password, nil, %{xp: 90})
+      test_pid = self()
+
+      # Another claim holds the lock on this name in its own transaction.
+      holder =
+        spawn_link(fn ->
+          :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+
+          Repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+            "classic-name:shared name"
+          ])
+
+          send(test_pid, :locked)
+          receive do: (:release -> :ok)
+        end)
+
+      assert_receive :locked
+      Repo.query!("SET LOCAL lock_timeout = '100ms'")
+
+      assert_raise Postgrex.Error, ~r/lock timeout/, fn ->
+        ClassicClaims.redeem(ticket, guest, %{
+          account: %{email: "shared@example.com", password: "secret123", username: "Shared Name"}
+        })
+      end
+
+      send(holder, :release)
+    end
+
     test "is unchanged for an Apple ticket", %{guest: guest} do
       ticket = issue_ticket!(guest, 50_004, :apple, "apple-50004", %{xp: 90})
 
