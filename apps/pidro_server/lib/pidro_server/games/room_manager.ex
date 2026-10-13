@@ -1494,13 +1494,7 @@ defmodule PidroServer.Games.RoomManager do
       with {:ok, room} <- fetch_room(state, room_code),
            %Seat{occupant_type: :human, status: :connected, user_id: ^user_id} <-
              Map.get(room.seats, position) do
-        try do
-          GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
-        catch
-          :exit, reason ->
-            Logger.error("Player action failed in room #{room_code}: #{inspect(reason)}")
-            {:error, :game_unavailable}
-        end
+        GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
       else
         {:error, reason} -> {:error, reason}
         _ -> {:error, :seat_not_controlled}
@@ -1517,13 +1511,7 @@ defmodule PidroServer.Games.RoomManager do
              Map.get(room.seats, position) do
         # Keep admission and engine application serialized with seat transitions.
         # Never retry an ambiguous engine timeout: its action may have committed.
-        try do
-          GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
-        catch
-          :exit, reason ->
-            Logger.error("Substitute action failed in room #{room_code}: #{inspect(reason)}")
-            {:error, :game_unavailable}
-        end
+        GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
       else
         _ -> {:error, :seat_not_controlled}
       end
@@ -4167,11 +4155,11 @@ defmodule PidroServer.Games.RoomManager do
     Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
     case GameSupervisor.start_game(room.code) do
-      {:ok, pid} ->
-        finish_game_start(room, pid, state)
+      {:ok, _pid} ->
+        finish_game_start(room, state)
 
-      {:error, {:already_started, pid}} ->
-        finish_game_start(room, pid, state)
+      {:error, {:already_started, _pid}} ->
+        finish_game_start(room, state)
 
       {:error, reason} ->
         Logger.error("Failed to start game for room #{room.code}: #{inspect(reason)}")
@@ -4179,7 +4167,7 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  defp finish_game_start(%Room{} = room, pid, %State{} = state) do
+  defp finish_game_start(%Room{} = room, %State{} = state) do
     Logger.info("Game started successfully for room #{room.code}")
 
     %Room{} =
@@ -4200,32 +4188,27 @@ defmodule PidroServer.Games.RoomManager do
       new_state =
       %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
       |> subscribe_to_game_topic(room.code)
-      |> put_active_game_instance(room.code, pid)
+      |> put_active_game_instance(room.code)
 
     broadcast_room(room.code, updated_room)
     broadcast_readiness(updated_room)
     broadcast_lobby_event({:room_updated, updated_room})
     broadcast_seat_lifecycle(updated_room)
-    broadcast_initial_game_state(room.code, pid)
+    broadcast_initial_game_state(room.code)
     new_state
   end
 
-  @spec broadcast_initial_game_state(String.t(), pid()) :: :ok
-  defp broadcast_initial_game_state(room_code, pid) do
-    try do
-      snapshot = Pidro.Server.get_snapshot(pid)
-
-      Phoenix.PubSub.broadcast(
-        PidroServer.PubSub,
-        "game:#{room_code}",
-        {:state_update, room_code, Map.put(snapshot, :transition_delay_ms, 0)}
-      )
-    rescue
-      e ->
-        Logger.error(
-          "Failed to broadcast initial game state for room #{room_code}: #{Exception.message(e)}"
+  @spec broadcast_initial_game_state(String.t()) :: :ok
+  defp broadcast_initial_game_state(room_code) do
+    case GameAdapter.get_snapshot(room_code) do
+      {:ok, snapshot} ->
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "game:#{room_code}",
+          {:state_update, room_code, Map.put(snapshot, :transition_delay_ms, 0)}
         )
 
+      {:error, _reason} ->
         :ok
     end
   end
@@ -4279,12 +4262,19 @@ defmodule PidroServer.Games.RoomManager do
 
   defp put_game_snapshot_cursor(state, _room_code, _game_instance_id, _state_revision), do: state
 
-  defp put_active_game_instance(state, room_code, pid) do
-    instance_id = Pidro.Server.get_snapshot(pid).game_instance_id
+  defp put_active_game_instance(state, room_code) do
+    active_game_instances =
+      case GameAdapter.get_snapshot(room_code) do
+        {:ok, %{game_instance_id: instance_id}} ->
+          Map.put(state.active_game_instances, room_code, instance_id)
+
+        {:error, _reason} ->
+          Map.delete(state.active_game_instances, room_code)
+      end
 
     %{
       state
-      | active_game_instances: Map.put(state.active_game_instances, room_code, instance_id),
+      | active_game_instances: active_game_instances,
         game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code)
     }
   end

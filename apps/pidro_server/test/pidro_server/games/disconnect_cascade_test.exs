@@ -254,6 +254,39 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       assert Process.alive?(recovered.seats[position].bot_pid)
     end
 
+    test "a reconnect to a stopped game that is still registered costs only its own table" do
+      {room, _positions} = create_playing_room()
+      {:ok, other_room} = RoomManager.create_room("other-user")
+      manager = Process.whereis(RoomManager)
+      position = position_for(room, "user2")
+      :ok = RoomManager.handle_player_disconnect(room.code, "user2")
+      {:ok, game_pid} = PidroServer.Games.GameSupervisor.get_game(room.code)
+
+      # Hold the registry's cleanup so the stopped game stays registered: the
+      # window between lookup and call that a reconnect otherwise hits by chance.
+      partition = PidroServer.Games.GameRegistry.PIDPartition0
+      :sys.suspend(partition)
+
+      try do
+        ref = Process.monitor(game_pid)
+        Process.exit(game_pid, :kill)
+        assert_receive {:DOWN, ^ref, :process, ^game_pid, :killed}
+        assert {:ok, ^game_pid} = PidroServer.Games.GameSupervisor.get_game(room.code)
+
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            assert {:ok, reconnected} = RoomManager.handle_player_reconnect(room.code, "user2")
+            assert reconnected.seats[position].status == :connected
+          end)
+
+        assert log =~ room.code
+        assert Process.whereis(RoomManager) == manager
+        assert {:ok, ^other_room} = RoomManager.get_room(other_room.code)
+      after
+        :sys.resume(partition)
+      end
+    end
+
     test "an engine exit during an action does not take down other rooms" do
       {room, positions} = create_playing_room()
       bidding = start_bidding(room.code)
