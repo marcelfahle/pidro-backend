@@ -1316,9 +1316,9 @@ defmodule PidroServer.Profiles do
   # bare id, so profile and achievement rows are written only for the ids that
   # still have a user.
   defp with_user(ids) do
-    uuids = Enum.filter(ids, &match?({:ok, _}, Ecto.UUID.cast(&1)))
-    known = Repo.all(from u in User, where: u.id in ^uuids, select: u.id)
-    Enum.filter(uuids, &(&1 in known))
+    uuids = for id <- ids, {:ok, uuid} <- [Ecto.UUID.cast(id)], into: %{}, do: {id, uuid}
+    known = MapSet.new(Repo.all(from u in User, where: u.id in ^Map.values(uuids), select: u.id))
+    for {id, uuid} <- uuids, MapSet.member?(known, uuid), do: id
   end
 
   # --- Cursor ---

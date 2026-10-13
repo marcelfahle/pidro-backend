@@ -297,6 +297,15 @@ defmodule PidroServer.ProfilesTest do
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(valid)
       assert Repo.aggregate(PlayerProfile, :count) == 1
     end
+
+    test "matches a user whose id arrives in upper case" do
+      user = insert_user()
+      player_results = %{String.upcase(user.id) => result_for(:north_south, :north_south, :north)}
+
+      assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
+
+      assert %PlayerProfile{wins: 1} = Repo.get_by(PlayerProfile, user_id: user.id)
+    end
   end
 
   describe "win% edge cases" do
