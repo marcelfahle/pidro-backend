@@ -4154,20 +4154,25 @@ defmodule PidroServer.Games.RoomManager do
     player_ids = Positions.player_ids(room)
     Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
-    case GameSupervisor.start_game(room.code) do
-      {:ok, _pid} ->
-        finish_game_start(room, state)
+    started =
+      case GameSupervisor.start_game(room.code) do
+        {:error, {:already_started, pid}} -> {:ok, pid}
+        result -> result
+      end
 
-      {:error, {:already_started, _pid}} ->
-        finish_game_start(room, state)
-
+    # A game that cannot give its first snapshot has not started: without its
+    # instance id every later update from it would be discarded as stale.
+    with {:ok, _pid} <- started,
+         {:ok, snapshot} <- GameAdapter.get_snapshot(room.code) do
+      finish_game_start(room, snapshot, state)
+    else
       {:error, reason} ->
         Logger.error("Failed to start game for room #{room.code}: #{inspect(reason)}")
         state
     end
   end
 
-  defp finish_game_start(%Room{} = room, %State{} = state) do
+  defp finish_game_start(%Room{} = room, snapshot, %State{} = state) do
     Logger.info("Game started successfully for room #{room.code}")
 
     %Room{} =
@@ -4188,29 +4193,23 @@ defmodule PidroServer.Games.RoomManager do
       new_state =
       %State{state | rooms: Map.put(state.rooms, room.code, updated_room)}
       |> subscribe_to_game_topic(room.code)
-      |> put_active_game_instance(room.code)
+      |> put_active_game_instance(room.code, snapshot)
 
     broadcast_room(room.code, updated_room)
     broadcast_readiness(updated_room)
     broadcast_lobby_event({:room_updated, updated_room})
     broadcast_seat_lifecycle(updated_room)
-    broadcast_initial_game_state(room.code)
+    broadcast_initial_game_state(room.code, snapshot)
     new_state
   end
 
-  @spec broadcast_initial_game_state(String.t()) :: :ok
-  defp broadcast_initial_game_state(room_code) do
-    case GameAdapter.get_snapshot(room_code) do
-      {:ok, snapshot} ->
-        Phoenix.PubSub.broadcast(
-          PidroServer.PubSub,
-          "game:#{room_code}",
-          {:state_update, room_code, Map.put(snapshot, :transition_delay_ms, 0)}
-        )
-
-      {:error, _reason} ->
-        :ok
-    end
+  @spec broadcast_initial_game_state(String.t(), map()) :: :ok
+  defp broadcast_initial_game_state(room_code, snapshot) do
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "game:#{room_code}",
+      {:state_update, room_code, Map.put(snapshot, :transition_delay_ms, 0)}
+    )
   end
 
   defp normalize_state_update_payload(
@@ -4262,19 +4261,10 @@ defmodule PidroServer.Games.RoomManager do
 
   defp put_game_snapshot_cursor(state, _room_code, _game_instance_id, _state_revision), do: state
 
-  defp put_active_game_instance(state, room_code) do
-    active_game_instances =
-      case GameAdapter.get_snapshot(room_code) do
-        {:ok, %{game_instance_id: instance_id}} ->
-          Map.put(state.active_game_instances, room_code, instance_id)
-
-        {:error, _reason} ->
-          Map.delete(state.active_game_instances, room_code)
-      end
-
+  defp put_active_game_instance(state, room_code, %{game_instance_id: instance_id}) do
     %{
       state
-      | active_game_instances: active_game_instances,
+      | active_game_instances: Map.put(state.active_game_instances, room_code, instance_id),
         game_snapshot_cursors: Map.delete(state.game_snapshot_cursors, room_code)
     }
   end
