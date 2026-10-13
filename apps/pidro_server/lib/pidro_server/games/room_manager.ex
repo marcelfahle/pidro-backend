@@ -329,6 +329,22 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
+  Removes a player from `room_code`, only if that is the room they are in.
+
+  A leave that names a room the player has since left does nothing, so it
+  cannot close the room they are in now. Otherwise it behaves as `leave_room/1`.
+
+  ## Returns
+
+  - `:ok` - Successfully left room
+  - `{:error, :not_in_room}` - Player is not in `room_code`
+  """
+  @spec leave_room(String.t(), String.t()) :: :ok | {:error, :not_in_room}
+  def leave_room(room_code, player_id) do
+    GenServer.call(__MODULE__, {:leave_room, String.upcase(room_code), player_id})
+  end
+
+  @doc """
   Lists all rooms, optionally filtered by status.
 
   ## Parameters
@@ -1364,6 +1380,13 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:leave_room, room_code, player_id}, from, %State{} = state) do
+    case Map.get(state.player_rooms, player_id) do
+      ^room_code -> handle_call({:leave_room, player_id}, from, state)
+      _other -> {:reply, {:error, :not_in_room}, state}
+    end
+  end
+
   def handle_call({:leave_room, player_id}, _from, %State{} = state) do
     case Map.get(state.player_rooms, player_id) do
       nil ->

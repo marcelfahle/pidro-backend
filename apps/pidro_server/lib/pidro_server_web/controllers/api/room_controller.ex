@@ -654,9 +654,11 @@ defmodule PidroServerWeb.API.RoomController do
     %Operation{
       summary: "Leave a room",
       description: """
-      Leaves the room that the player is currently in. If the player is the host,
-      the entire room is closed and all players are removed. The response indicates
-      success without returning room details.
+      Leaves the room named by `code` (case-insensitive). If the player is in
+      another room or in none, nothing is left and the answer is 404 NOT_IN_ROOM.
+      `current` in place of a code leaves whichever room the player is in. If the
+      player is the host, the entire room is closed and all players are removed.
+      The response indicates success without returning room details.
 
       Requires authentication via Bearer token.
       """,
@@ -669,11 +671,9 @@ defmodule PidroServerWeb.API.RoomController do
           :path,
           %OpenApiSpex.Schema{
             type: :string,
-            minLength: 4,
-            maxLength: 4,
-            description: "Unique 4-character room code"
+            description: "Unique 4-character room code, or `current`"
           },
-          "The unique room code",
+          "The room code, or `current` for whichever room the player is in",
           required: true
         )
       ],
@@ -1084,11 +1084,14 @@ defmodule PidroServerWeb.API.RoomController do
   defp parse_position_strict(_), do: {:error, :invalid_position}
 
   @doc """
-  Removes the authenticated player from their current room.
+  Removes the authenticated player from the room named by `code`.
 
-  Leaves the room that the player is currently in. If the player is the host,
-  the entire room is closed and all players are removed. The response indicates
-  success without returning room details.
+  If the player is in another room or in none, nothing is left and the answer is
+  the 404 NOT_IN_ROOM below, so a late leave for a finished table cannot close
+  the table the player has moved on to. `current` in place of a code leaves
+  whichever room the player is in. If the player is the host, the entire room is
+  closed and all players are removed. The response indicates success without
+  returning room details.
 
   Requires authentication via Bearer token.
 
@@ -1098,7 +1101,7 @@ defmodule PidroServerWeb.API.RoomController do
 
     * `conn` - The Plug.Conn connection struct (must have :current_user assigned)
     * `params` - Request parameters, must include:
-      - `code` - The unique room code (case-insensitive)
+      - `code` - The unique room code (case-insensitive), or `current`
 
   ## Headers Required
 
@@ -1107,6 +1110,7 @@ defmodule PidroServerWeb.API.RoomController do
   ## Route Example
 
       DELETE /api/v1/rooms/A1B2/leave
+      DELETE /api/v1/rooms/current/leave
 
   ## Response Example (Success)
 
@@ -1137,15 +1141,18 @@ defmodule PidroServerWeb.API.RoomController do
       }
   """
   @spec leave(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def leave(conn, %{"code" => _code}) do
+  def leave(conn, %{"code" => code}) do
     user = conn.assigns[:current_user]
 
-    with :ok <- RoomManager.leave_room(user.id) do
+    with :ok <- leave_room(code, user.id) do
       conn
       |> put_status(:no_content)
       |> send_resp(:no_content, "")
     end
   end
+
+  defp leave_room("current", user_id), do: RoomManager.leave_room(user_id)
+  defp leave_room(code, user_id), do: RoomManager.leave_room(code, user_id)
 
   @doc """
   Opens a bot-filled seat for a human substitute.
