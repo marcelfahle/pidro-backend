@@ -36,7 +36,8 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
   defmodule ExitMailer do
     use Swoosh.Adapter
-    def deliver(_email, _config), do: exit({:noproc, {GenServer, :call, [:mail_storage, :push]}})
+    # Like Swoosh.Adapters.Local without its storage: the exit reason holds the email.
+    def deliver(email, _config), do: GenServer.call({:global, :no_mail_storage}, {:push, email})
   end
 
   defmodule ProviderIdentity do
@@ -1136,6 +1137,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
         assert_received {:known, known_body}
         assert known_body == json_response(unknown, 200)
         assert log =~ "Password reset email delivery failed"
+        refute log =~ "reset-password?token="
       end
     end
 

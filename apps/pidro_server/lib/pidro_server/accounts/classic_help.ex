@@ -11,8 +11,6 @@ defmodule PidroServer.Accounts.ClassicHelp do
 
   alias PidroServer.Mailer
 
-  require Logger
-
   @types %{name: :string, email: :string, details: :string}
 
   @doc """
@@ -57,18 +55,10 @@ defmodule PidroServer.Accounts.ClassicHelp do
   defp user_line(%{id: id}), do: "Signed in as player: #{id}"
   defp user_line(_user), do: ""
 
-  # Local and unconfigured adapters can raise or exit rather than return an error.
   defp deliver(email) do
-    case Mailer.deliver(email) do
+    case Mailer.deliver_logged(email, "Classic help") do
       {:ok, _metadata} -> :ok
-      {:error, reason} -> mail_failed(inspect(reason))
+      {:error, _reason} -> {:error, :mail_unavailable}
     end
-  catch
-    kind, reason -> mail_failed(Exception.format(kind, reason, __STACKTRACE__))
-  end
-
-  defp mail_failed(reason) do
-    Logger.error("Classic help email delivery failed: #{reason}")
-    {:error, :mail_unavailable}
   end
 end
