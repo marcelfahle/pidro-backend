@@ -236,6 +236,36 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
   end
 
+  describe "leave_room/2" do
+    test "leaves the named room when the player is in it, in any case" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+      {:ok, _, _} = RoomManager.join_room(room.code, "user2")
+
+      :ok = RoomManager.leave_room(String.downcase(room.code), "user2")
+
+      {:ok, updated_room} = RoomManager.get_room(room.code)
+      assert Positions.player_ids(updated_room) == ["user1"]
+    end
+
+    test "leaves nothing when the player has moved on to another room" do
+      {:ok, finished} = RoomManager.create_room("other", %{})
+      {:ok, _, _} = RoomManager.join_room(finished.code, "user1")
+      :ok = RoomManager.update_room_status(finished.code, :finished)
+      :ok = RoomManager.leave_room("user1")
+      {:ok, room} = RoomManager.create_room("user1", %{solo: true})
+
+      assert {:error, :not_in_room} = RoomManager.leave_room(finished.code, "user1")
+      assert {:ok, %{host_id: "user1"}} = RoomManager.get_room(room.code)
+      assert :sys.get_state(RoomManager).player_rooms["user1"] == room.code
+    end
+
+    test "returns error when player is in no room" do
+      {:ok, room} = RoomManager.create_room("user1", %{})
+
+      assert {:error, :not_in_room} = RoomManager.leave_room(room.code, "nobody")
+    end
+  end
+
   describe "leave_room/1" do
     test "removes player from room" do
       {:ok, room} = RoomManager.create_room("user1", %{})

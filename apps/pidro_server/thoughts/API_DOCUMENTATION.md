@@ -395,7 +395,7 @@ http://localhost:4000/api/v1
 - `GET /rooms/:code/state` - Get current game state for a room (requires auth)
 - `POST /rooms` - Create a new room (requires auth)
 - `POST /rooms/:code/join` - Join a room with optional seat selection (requires auth)
-- `DELETE /rooms/:code/leave` - Leave a room (requires auth)
+- `DELETE /rooms/:code/leave` - Leave that room; 404 NOT_IN_ROOM if not in it. `current` leaves whichever room the player is in (requires auth)
 - `POST /rooms/:code/watch` - Join as spectator (requires auth)
 - `DELETE /rooms/:code/unwatch` - Leave spectating (requires auth)
 - `POST /rooms/:code/open-seat` - Open a bot seat for substitute (requires auth)

@@ -93,7 +93,7 @@ re-running the same seed command.
 | `GET /api/v1/users/me/stats` | Get user stats |
 | `POST /api/v1/rooms` | Create a room |
 | `POST /api/v1/rooms/:code/join` | Join a room |
-| `DELETE /api/v1/rooms/:code/leave` | Leave a room |
+| `DELETE /api/v1/rooms/:code/leave` | Leave that room (`current`: whichever room you are in) |
 | `POST /api/v1/rooms/:code/watch` | Spectate a room |
 | `DELETE /api/v1/rooms/:code/unwatch` | Stop spectating |
 

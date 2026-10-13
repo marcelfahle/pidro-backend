@@ -104,6 +104,63 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert updated.seats[position].status == :bot_substitute
       assert Process.alive?(updated.seats[position].bot_pid)
     end
+
+    test "a late leave for a finished table leaves the player's new table alone",
+         %{conn: conn} do
+      [player, other] = Enum.map(1..2, fn _ -> AccountsFixtures.guest_fixture() end)
+      {:ok, finished} = RoomManager.create_room(other.id, %{})
+      {:ok, _, _} = RoomManager.join_room(finished.code, player.id)
+      :ok = RoomManager.update_room_status(finished.code, :finished)
+      :ok = RoomManager.leave_room(player.id)
+      {:ok, room} = RoomManager.create_room(player.id, %{solo: true})
+
+      conn = leave(conn, player, finished.code)
+
+      assert json_response(conn, 404) == %{
+               "errors" => [
+                 %{
+                   "code" => "NOT_IN_ROOM",
+                   "title" => "Not in room",
+                   "detail" => "Player is not in any room"
+                 }
+               ]
+             }
+
+      assert {:ok, _} = RoomManager.get_room(room.code)
+      assert :sys.get_state(RoomManager).player_rooms[player.id] == room.code
+    end
+
+    test "current leaves whichever table the player is at", %{conn: conn} do
+      player = AccountsFixtures.guest_fixture()
+      {:ok, room} = RoomManager.create_room(player.id, %{})
+
+      assert response(leave(conn, player, "current"), 204)
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+    end
+
+    test "current with no table answers not in room", %{conn: conn} do
+      player = AccountsFixtures.guest_fixture()
+
+      conn = leave(conn, player, "current")
+
+      assert %{"errors" => [%{"code" => "NOT_IN_ROOM"}]} = json_response(conn, 404)
+    end
+
+    test "the player's own table by code, in any case", %{conn: conn} do
+      [host, player] = Enum.map(1..2, fn _ -> AccountsFixtures.guest_fixture() end)
+      {:ok, room} = RoomManager.create_room(host.id, %{})
+      {:ok, _, _} = RoomManager.join_room(room.code, player.id)
+
+      assert response(leave(conn, player, String.downcase(room.code)), 204)
+      refute Map.has_key?(:sys.get_state(RoomManager).player_rooms, player.id)
+      assert {:ok, _} = RoomManager.get_room(room.code)
+    end
+
+    defp leave(conn, user, code) do
+      conn
+      |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
+      |> delete(~p"/api/v1/rooms/#{code}/leave")
+    end
   end
 
   describe "create/2" do
