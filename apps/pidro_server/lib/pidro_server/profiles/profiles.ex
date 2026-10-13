@@ -14,7 +14,6 @@ defmodule PidroServer.Profiles do
   them.
   """
 
-  require Logger
   import Ecto.Query, warn: false
 
   alias PidroServer.Accounts.User
@@ -615,41 +614,32 @@ defmodule PidroServer.Profiles do
       when is_map(player_results) do
     player_bidding = if is_map(player_bidding), do: player_bidding, else: %{}
     rated? = match?({:ok, _}, rated_game?(player_results))
+    players = Map.take(player_results, with_user(Map.keys(player_results)))
 
     # 1. Lifetime counters (PID-44) + veteran XP (PID-49) + playstyle (PID-51):
-    #    every valid-UUID participant, regardless of rated status. Capture a
+    #    every participant with a user, regardless of rated status. Capture a
     #    single coherent BEFORE snapshot per participant (one read at the top of
     #    the loop body, before the writers run) and the XP delta the writer
     #    already computes — both threaded into the summary later.
     {before_snapshots, xp_deltas} =
-      Enum.reduce(player_results, {%{}, %{}}, fn {user_id, result}, {befores, xp} ->
-        case Ecto.UUID.cast(user_id) do
-          {:ok, valid_id} ->
-            {:ok, before} = get_or_create_profile(valid_id)
+      Enum.reduce(players, {%{}, %{}}, fn {user_id, result}, {befores, xp} ->
+        {:ok, before} = get_or_create_profile(user_id)
 
-            apply_one(valid_id, win_from_result?(result))
-            xp_delta = apply_xp(valid_id, result, scores)
-            apply_playstyle(valid_id, bidding_facts_for(player_bidding, user_id))
+        apply_one(user_id, win_from_result?(result))
+        xp_delta = apply_xp(user_id, result, scores)
+        apply_playstyle(user_id, bidding_facts_for(player_bidding, user_id))
 
-            {Map.put(befores, valid_id, before_snapshot(before)), Map.put(xp, valid_id, xp_delta)}
-
-          :error ->
-            Logger.warning(
-              "Profiles.apply_completed_game skipping non-UUID id #{inspect(user_id)}"
-            )
-
-            {befores, xp}
-        end
+        {Map.put(befores, user_id, before_snapshot(before)), Map.put(xp, user_id, xp_delta)}
       end)
 
     # 2. Ratings (PID-47): rated 4-human games only, priors from stored rows.
     #    Surfaces the per-user before/after μ/σ + counts (empty on :unrated).
     rating_deltas = apply_live_rating(player_results, winner)
 
-    # 3. Achievements (PID-50): per valid-UUID participant, evaluate active defs
+    # 3. Achievements (PID-50): per participant with a user, evaluate active defs
     #    against the post-update aggregates + this game + ordered history, and
     #    idempotent-upsert. Returns the per-user newly-earned keys.
-    newly_earned = apply_live_achievements(player_results, scores)
+    newly_earned = apply_live_achievements(players, player_results, scores)
 
     # 4. Assemble the ephemeral per-player summary from the deltas just computed.
     summaries =
@@ -799,6 +789,7 @@ defmodule PidroServer.Profiles do
       |> Repo.all()
       |> List.flatten()
       |> Enum.uniq()
+      |> with_user()
 
     Enum.each(user_ids, &rebuild_from_history/1)
 
@@ -1156,8 +1147,8 @@ defmodule PidroServer.Profiles do
   # the user's ordered history (incl. this game — already inserted earlier in
   # this transaction), evaluate active defs, and idempotent-upsert. Returns the
   # per-user newly-earned keys as `%{user_id => [key]}`.
-  defp apply_live_achievements(player_results, scores) do
-    player_results
+  defp apply_live_achievements(players, player_results, scores) do
+    players
     |> Enum.reduce(%{}, fn {user_id, result}, acc ->
       case Ecto.UUID.cast(user_id) do
         {:ok, valid_id} ->
@@ -1297,7 +1288,9 @@ defmodule PidroServer.Profiles do
   # Overwrite each touched user's μ/σ; either overwrite the count (full rebuild)
   # or increment it (incremental). Lazily creates a profile row if absent.
   defp persist_ratings(acc, counts, count_mode) do
-    Enum.each(acc, fn {user_id, {mu, sigma}} ->
+    acc
+    |> Map.take(with_user(Map.keys(acc)))
+    |> Enum.each(fn {user_id, {mu, sigma}} ->
       {:ok, _profile} = get_or_create_profile(user_id)
       count = Map.get(counts, user_id, 0)
 
@@ -1314,6 +1307,15 @@ defmodule PidroServer.Profiles do
         :increment_count -> Repo.update_all(query, set: set, inc: [rating_games_count: count])
       end
     end)
+  end
+
+  # KD9: of a deleted player only `game_stats` and `abandonment_events` keep the
+  # bare id, so profile and achievement rows are written only for the ids that
+  # still have a user.
+  defp with_user(ids) do
+    uuids = Enum.filter(ids, &match?({:ok, _}, Ecto.UUID.cast(&1)))
+    known = Repo.all(from u in User, where: u.id in ^uuids, select: u.id)
+    Enum.filter(uuids, &(&1 in known))
   end
 
   # --- Cursor ---

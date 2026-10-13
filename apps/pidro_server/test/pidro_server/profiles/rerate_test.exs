@@ -1,6 +1,7 @@
 defmodule PidroServer.RerateTest do
   use PidroServer.DataCase, async: true
 
+  alias PidroServer.AccountsFixtures
   alias PidroServer.Profiles
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Profiles.RatingState
@@ -210,7 +211,7 @@ defmodule PidroServer.RerateTest do
 
   describe "rerate_all/0 (parity)" do
     test "from-scratch replay equals sequential live application (acceptance c)" do
-      [a, b, c, d, e, f] = for _ <- 1..6, do: uuid()
+      [a, b, c, d, e, f] = for _ <- 1..6, do: player_id()
       base = ~U[2026-06-07 12:00:00Z]
 
       games = [
@@ -237,7 +238,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "is idempotent (two full runs yield identical results)" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       base = ~U[2026-06-07 12:00:00Z]
       complete_game("R1", {a, b, c, d}, :north_south, at(base, 0))
       complete_game("R2", {a, c, b, d}, :east_west, at(base, 1))
@@ -251,8 +252,8 @@ defmodule PidroServer.RerateTest do
     end
 
     test "overwrites drifted ratings; zero-rated-game user reset to default" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
-      lonely = uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
+      lonely = player_id()
       complete_game("R1", {a, b, c, d}, :north_south, ~U[2026-06-07 12:00:00Z])
 
       # Pre-corrupt a participant and create a user with no rated games.
@@ -278,7 +279,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "deterministic ordering under same-second completed_at ties" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       tie = ~U[2026-06-07 12:00:00Z]
       # Three games share the same completed_at (distinct inserted_at/id by
       # insertion order).
@@ -295,8 +296,8 @@ defmodule PidroServer.RerateTest do
     end
 
     test "unrated games leave ratings and counts untouched" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
-      bot_only = uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
+      bot_only = player_id()
       base = ~U[2026-06-07 12:00:00Z]
 
       # One rated 4-human game.
@@ -338,7 +339,7 @@ defmodule PidroServer.RerateTest do
 
   describe "rerate_incremental/0" do
     test "incremental equals full rebuild (headline correctness)" do
-      [a, b, c, d, e, f] = for _ <- 1..6, do: uuid()
+      [a, b, c, d, e, f] = for _ <- 1..6, do: player_id()
       base = ~U[2026-06-07 12:00:00Z]
 
       # Batch A.
@@ -364,7 +365,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "empty batch (cursor at latest) applies 0 games, changes nothing" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       complete_game("R1", {a, b, c, d}, :north_south, ~U[2026-06-07 12:00:00Z])
 
       assert {:ok, _} = Profiles.rerate_all()
@@ -375,7 +376,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "first-ever incremental (null cursor) processes all games" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       base = ~U[2026-06-07 12:00:00Z]
       complete_game("R1", {a, b, c, d}, :north_south, at(base, 0))
       complete_game("R2", {a, c, b, d}, :east_west, at(base, 1))
@@ -388,7 +389,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "cursor advances to the last processed game" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       complete_game("R1", {a, b, c, d}, :north_south, ~U[2026-06-07 12:00:01Z])
 
       assert {:ok, _} = Profiles.rerate_incremental()
@@ -404,7 +405,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "composite-cursor boundary: same-second games after the cursor are picked up" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       tie = ~U[2026-06-07 12:00:00Z]
 
       # Three games all share `completed_at == tie`.
@@ -436,7 +437,7 @@ defmodule PidroServer.RerateTest do
     end
 
     test "--all resets the cursor so a following incremental applies 0 games" do
-      [a, b, c, d] = for _ <- 1..4, do: uuid()
+      [a, b, c, d] = for _ <- 1..4, do: player_id()
       base = ~U[2026-06-07 12:00:00Z]
       complete_game("R1", {a, b, c, d}, :north_south, at(base, 0))
       complete_game("R2", {a, c, b, d}, :east_west, at(base, 1))
@@ -449,6 +450,7 @@ defmodule PidroServer.RerateTest do
   # --- local helpers ---
 
   defp uuid, do: Ecto.UUID.generate()
+  defp player_id, do: AccountsFixtures.user_fixture().id
 
   defp at(%DateTime{} = base, seconds), do: DateTime.add(base, seconds, :second)
 

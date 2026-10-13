@@ -5,6 +5,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
 
   use PidroServer.DataCase, async: false
 
+  alias PidroServer.AccountsFixtures
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
   alias PidroServer.RoomManagerCase
@@ -137,7 +138,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
     end
 
     test "completed bot games only persist human player ids" do
-      host_id = Ecto.UUID.generate()
+      host_id = AccountsFixtures.user_fixture().id
       bot_east = "bot_BOTS_east"
       bot_south = "bot_BOTS_south"
       bot_west = "bot_BOTS_west"

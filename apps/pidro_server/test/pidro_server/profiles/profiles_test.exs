@@ -228,7 +228,7 @@ defmodule PidroServer.ProfilesTest do
 
   describe "apply_completed_game/2" do
     test "winner gets games_played +1 and wins +1" do
-      user_id = Ecto.UUID.generate()
+      user_id = insert_user().id
       player_results = %{user_id => result_for(:north_south, :north_south, :north)}
 
       assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
@@ -240,7 +240,7 @@ defmodule PidroServer.ProfilesTest do
     end
 
     test "loser gets games_played +1 and losses +1" do
-      user_id = Ecto.UUID.generate()
+      user_id = insert_user().id
       player_results = %{user_id => result_for(:east_west, :north_south, :east)}
 
       assert {:ok, _} = Profiles.apply_completed_game(player_results, :north_south)
@@ -252,8 +252,8 @@ defmodule PidroServer.ProfilesTest do
     end
 
     test "creates profiles lazily for previously-unknown users" do
-      u1 = Ecto.UUID.generate()
-      u2 = Ecto.UUID.generate()
+      u1 = insert_user().id
+      u2 = insert_user().id
 
       player_results = %{
         u1 => result_for(:north_south, :north_south, :north),
@@ -267,7 +267,7 @@ defmodule PidroServer.ProfilesTest do
     end
 
     test "abandoned-but-on-winning-team user counts as a win" do
-      user_id = Ecto.UUID.generate()
+      user_id = insert_user().id
 
       player_results = %{
         user_id => %{
@@ -285,7 +285,7 @@ defmodule PidroServer.ProfilesTest do
     end
 
     test "skips non-UUID ids without crashing" do
-      valid = Ecto.UUID.generate()
+      valid = insert_user().id
 
       player_results = %{
         valid => result_for(:north_south, :north_south, :north),
@@ -333,8 +333,8 @@ defmodule PidroServer.ProfilesTest do
     end
 
     test "reproduces the same counters as incremental application (DB round-trip)" do
-      u1 = Ecto.UUID.generate()
-      u2 = Ecto.UUID.generate()
+      u1 = insert_user().id
+      u2 = insert_user().id
 
       results1 = %{
         u1 => result_for(:north_south, :north_south, :north),
@@ -419,9 +419,9 @@ defmodule PidroServer.ProfilesTest do
 
   describe "rebuild_all/0" do
     test "rebuilds every user appearing in player_ids and returns the count" do
-      u1 = Ecto.UUID.generate()
-      u2 = Ecto.UUID.generate()
-      u3 = Ecto.UUID.generate()
+      u1 = insert_user().id
+      u2 = insert_user().id
+      u3 = insert_user().id
 
       {:ok, _} =
         Stats.save_game_result(%{
@@ -451,6 +451,30 @@ defmodule PidroServer.ProfilesTest do
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(u1)
       assert {:ok, %{losses: 1}} = Profiles.get_or_create_profile(u2)
       assert {:ok, %{wins: 1}} = Profiles.get_or_create_profile(u3)
+    end
+
+    test "creates no row for a deleted player" do
+      kept = insert_user().id
+      deleted = insert_user()
+
+      {:ok, _} =
+        Stats.save_game_result(%{
+          room_code: "ROOMH",
+          winner: :north_south,
+          completed_at: DateTime.utc_now(),
+          duration_seconds: 100,
+          player_ids: [kept, deleted.id],
+          player_results: %{
+            kept => result_for(:north_south, :north_south, :north),
+            deleted.id => result_for(:east_west, :north_south, :east)
+          }
+        })
+
+      Repo.delete!(deleted)
+
+      assert {:ok, 1} = Profiles.rebuild_all()
+      assert %PlayerProfile{wins: 1} = Repo.get_by(PlayerProfile, user_id: kept)
+      assert is_nil(Repo.get_by(PlayerProfile, user_id: deleted.id))
     end
   end
 
