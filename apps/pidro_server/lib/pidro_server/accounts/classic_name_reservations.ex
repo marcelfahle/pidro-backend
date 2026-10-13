@@ -97,9 +97,7 @@ defmodule PidroServer.Accounts.ClassicNameReservations do
   end
 
   @doc false
-  def lock_claim_names(%User{} = user) do
-    lock_names([user.username, user.display_name])
-  end
+  def lock_claim_names(names) when is_list(names), do: lock_names(names)
 
   def lock_claim_names(account) when is_map(account) do
     lock_names([fetch(account, :username), fetch(account, :display_name)])

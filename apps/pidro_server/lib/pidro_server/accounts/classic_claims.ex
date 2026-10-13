@@ -174,10 +174,9 @@ defmodule PidroServer.Accounts.ClassicClaims do
   defp precheck_claim_owner(%{redeemed_by_id: id}, _user) when is_binary(id), do: :ok
 
   defp precheck_claim_owner(ticket, locked_user) do
-    case Repo.get_by(User, classic_user_id: ticket.classic_user_id) do
+    case already_claimed(ticket.classic_user_id, ticket.method, locked_user && locked_user.id) do
       nil -> :ok
-      %User{id: id} when not is_nil(locked_user) and id == locked_user.id -> :ok
-      owner -> {:error, {:already_claimed, sign_in_method(owner, ticket.method)}}
+      %{sign_in_method: method} -> {:error, {:already_claimed, method}}
     end
   end
 
@@ -282,13 +281,15 @@ defmodule PidroServer.Accounts.ClassicClaims do
     end
   end
 
+  # A guest's password claim may also take a new username (save_guest/3).
   defp lock_claim_names(%User{} = user, params) do
     account = fetch(params, :account) || %{}
 
-    ClassicNameReservations.lock_claim_names(%{
-      username: user.username,
-      display_name: fetch(account, :display_name) || user.display_name
-    })
+    ClassicNameReservations.lock_claim_names([
+      user.username,
+      fetch(account, :username),
+      fetch(account, :display_name) || user.display_name
+    ])
   end
 
   defp lock_claim_names(nil, params),
