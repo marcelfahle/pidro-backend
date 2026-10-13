@@ -22,7 +22,7 @@ defmodule PidroServer.StandInsConfigTest do
     "APPLE_JWKS_URL" => "http://127.0.0.1:4555/auth/keys",
     "CLASSIC_CLAIM_TICKET_TTL_SECONDS" => "1",
     "PASSWORD_RESET_TTL_SECONDS" => "1",
-    "PASSWORD_RESET_DEBUG_TOKENS" => "true",
+    "PASSWORD_RESET_DEBUG_TOKENS" => "false",
     "PASSWORD_RESET_URL_BASE" => "http://127.0.0.1:5173"
   }
 
@@ -62,6 +62,7 @@ defmodule PidroServer.StandInsConfigTest do
     assert config[PidroServer.Accounts.ClassicClaims][:ticket_ttl_seconds] == 1
     assert config[:password_reset_ttl_seconds] == 1
     assert config[:password_reset][:reset_url_base] == "http://127.0.0.1:5173"
+    assert config[:password_reset][:debug_tokens] == false
   end
 
   defp runtime_config(env) do
