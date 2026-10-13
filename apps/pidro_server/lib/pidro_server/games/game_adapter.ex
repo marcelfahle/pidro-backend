@@ -52,6 +52,7 @@ defmodule PidroServer.Games.GameAdapter do
 
     - `{:ok, new_state}` on success
     - `{:error, :not_found}` if the game doesn't exist
+    - `{:error, :game_unavailable}` if the game stopped or stalled during the call
     - `{:error, reason}` for invalid actions
 
   ## Examples
@@ -88,6 +89,8 @@ defmodule PidroServer.Games.GameAdapter do
           )
 
           {:error, Exception.message(e)}
+      catch
+        :exit, reason -> game_exit(room_code, reason, :game_unavailable)
       end
     end
   end
@@ -114,10 +117,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec get_state(String.t()) :: {:ok, term()} | {:error, :not_found}
   def get_state(room_code) do
-    with {:ok, pid} <- GameRegistry.lookup(room_code) do
-      state = Pidro.Server.get_state(pid)
-      {:ok, state}
-    end
+    call_game(room_code, &Pidro.Server.get_state/1)
   end
 
   @doc """
@@ -151,9 +151,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec get_snapshot(String.t()) :: {:ok, map()} | {:error, :not_found}
   def get_snapshot(room_code) do
-    with {:ok, pid} <- GameRegistry.lookup(room_code) do
-      {:ok, Pidro.Server.get_snapshot(pid)}
-    end
+    call_game(room_code, &Pidro.Server.get_snapshot/1)
   end
 
   @doc """
@@ -179,10 +177,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec get_legal_actions(String.t(), atom()) :: {:ok, list()} | {:error, :not_found}
   def get_legal_actions(room_code, position) do
-    with {:ok, pid} <- GameRegistry.lookup(room_code) do
-      actions = Pidro.Server.legal_actions(pid, position)
-      {:ok, actions}
-    end
+    call_game(room_code, &Pidro.Server.legal_actions(&1, position))
   end
 
   @doc """
@@ -316,11 +311,38 @@ defmodule PidroServer.Games.GameAdapter do
           )
 
           {:error, Exception.message(e)}
+      catch
+        :exit, reason -> game_exit(room_code, reason, :not_found)
       end
     end
   end
 
   ## Private Functions
+
+  # The registry can still name a game that has stopped, and a stopped or
+  # stalled game exits whoever calls it. Answer as if the game were gone so the
+  # exit costs only this room, not the caller (often the RoomManager).
+  defp call_game(room_code, fun) do
+    with {:ok, pid} <- GameRegistry.lookup(room_code) do
+      try do
+        {:ok, fun.(pid)}
+      catch
+        :exit, reason -> game_exit(room_code, reason, :not_found)
+      end
+    end
+  end
+
+  # Logs only the exit's kind: the full reason can carry the call's arguments.
+  defp game_exit(room_code, reason, error) do
+    kind =
+      case reason do
+        {kind, {GenServer, :call, _}} when is_atom(kind) -> kind
+        _ -> :crashed
+      end
+
+    Logger.warning("Game for room #{room_code} did not answer: #{kind}")
+    {:error, error}
+  end
 
   @doc false
   @spec broadcast_state_update(String.t(), map(), map()) :: :ok | {:error, term()}
