@@ -463,7 +463,8 @@ defmodule PidroServerWeb.API.AuthController do
     summary: "Request a password reset link",
     description: """
     Sends a password reset link when an account matches the identifier (username
-    or email). The response is identical whether or not the account exists.
+    or email). The response is identical whether or not the account exists, and
+    the mail goes out after it.
 
     Rate limited per client IP and, additionally, per normalized identifier.
     """,
@@ -841,8 +842,13 @@ defmodule PidroServerWeb.API.AuthController do
       <p>This link expires in 1 hour.</p>
       """)
 
-    # The answer must not depend on whether the mail went out, whatever the adapter does.
-    Mailer.deliver_logged(email, "Password reset")
+    # Sent after the answer: neither its time nor its outcome may tell a known
+    # address from an unknown one. `deliver_logged/2` catches every failure, so
+    # the task never crashes with the mail in its exit reason.
+    Task.Supervisor.start_child(PidroServer.TaskSupervisor, fn ->
+      Mailer.deliver_logged(email, "Password reset")
+    end)
+
     :ok
   end
 

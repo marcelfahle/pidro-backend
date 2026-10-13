@@ -40,6 +40,20 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     def deliver(email, _config), do: GenServer.call({:global, :no_mail_storage}, {:push, email})
   end
 
+  defmodule BlockingMailer do
+    use Swoosh.Adapter
+
+    # Holds the mail until the test lets it go, then delivers it as the test adapter does.
+    def deliver(email, config) do
+      [test | _] = Process.get(:"$callers")
+      send(test, {:mail_waiting, self()})
+
+      receive do
+        :deliver -> Swoosh.Adapters.Test.deliver(email, config)
+      end
+    end
+  end
+
   defmodule ProviderIdentity do
     def apple("apple-linked"), do: apple_identity("apple-linked-sub", "linked@example.com")
     def apple("apple-classic"), do: apple_identity("apple-classic-sub", "classic@example.com")
@@ -1071,6 +1085,13 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
   defp data(conn, status), do: json_response(conn, status)["data"]
 
+  defp await_background_mail do
+    for pid <- Task.Supervisor.children(PidroServer.TaskSupervisor) do
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+    end
+  end
+
   describe "password reset" do
     test "request returns a generic response and debug reset url for existing users", %{
       conn: conn
@@ -1091,6 +1112,27 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert is_binary(token)
       assert reset_url =~ "/reset-password?token="
+
+      assert_receive {:email, %{to: [{"mfahle", "mfahle@example.com"}]} = email}
+      assert email.text_body =~ reset_url
+    end
+
+    test "request answers before the mail is delivered, and the mail follows", %{conn: conn} do
+      user = AccountsFixtures.user_fixture(%{username: "mfahle", email: "mfahle@example.com"})
+      mailer_env = Application.fetch_env!(:pidro_server, PidroServer.Mailer)
+      Application.put_env(:pidro_server, PidroServer.Mailer, adapter: BlockingMailer)
+      on_exit(fn -> Application.put_env(:pidro_server, PidroServer.Mailer, mailer_env) end)
+
+      conn = post(conn, ~p"/api/v1/auth/password-reset", %{"identifier" => user.username})
+
+      assert %{"reset_token" => token} = json_response(conn, 200)["data"]
+      assert_receive {:mail_waiting, sender}
+      refute_received {:email, _email}
+
+      send(sender, :deliver)
+
+      assert_receive {:email, email}
+      assert email.text_body =~ URI.encode_www_form(token)
     end
 
     test "request does not reveal missing users", %{conn: conn} do
@@ -1130,6 +1172,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
           capture_log(fn ->
             known = post(conn, ~p"/api/v1/auth/password-reset", %{"identifier" => user.username})
             send(self(), {:known, json_response(known, 200)})
+            await_background_mail()
           end)
 
         unknown = post(conn, ~p"/api/v1/auth/password-reset", %{"identifier" => "missing"})
