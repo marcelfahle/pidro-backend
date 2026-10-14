@@ -18,6 +18,8 @@ defmodule PidroServerWeb.GameChannelTest do
   alias PidroServer.Accounts
   alias PidroServer.Accounts.UserAvatar
   alias PidroServer.Games.{GameAdapter, RoomManager}
+  alias PidroServer.Profiles
+  alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Repo
   alias PidroServerWeb.GameChannel
   alias PidroServerWeb.Serializers.GameStateSerializer
@@ -388,6 +390,8 @@ defmodule PidroServerWeb.GameChannelTest do
       assert departed.seats.east.username == "Bot"
       assert departed.seats.east.display_name == "Bot"
       assert departed.seats.east.avatar_url == nil
+      assert departed.seats.east.level == nil
+      assert departed.seats.east.pin == nil
       assert decision.player_name == context.user2.username
       assert is_binary(decision.id)
 
@@ -416,6 +420,8 @@ defmodule PidroServerWeb.GameChannelTest do
                username: nil,
                display_name: nil,
                avatar_url: nil,
+               level: nil,
+               pin: nil,
                decision: nil
              }
 
@@ -436,6 +442,34 @@ defmodule PidroServerWeb.GameChannelTest do
       {:ok, promoted} = RoomManager.get_seat_lifecycle(context.room_code)
       assert promoted.owner_id == context.user4.id
       assert promoted.seats.north.decision.player_name == context.user1.username
+    end
+
+    test "every seat payload carries the occupant's level and Classic pin", context do
+      {:ok, _profile} = Profiles.get_or_create_profile(context.user1.id)
+
+      from(p in PlayerProfile, where: p.user_id == ^context.user1.id)
+      |> PidroServer.Repo.update_all(
+        set: [veteran_xp: 5_000, heritage_flags: %{"played_pidro_one" => true}]
+      )
+
+      veteran_level = PidroServer.Progression.level_for_xp(5_000)
+      assert veteran_level > 1
+
+      {:ok, join_reply, _socket} =
+        subscribe_and_join(
+          context.sockets[context.user1.id],
+          GameChannel,
+          "game:#{context.room_code}"
+        )
+
+      lifecycle = join_reply.seat_lifecycle.seats
+      readiness = join_reply.readiness.seats
+
+      for seats <- [lifecycle, readiness] do
+        assert %{level: ^veteran_level, pin: "classic"} = seats.north
+        # A player who has not finished a game yet has no profile row.
+        assert %{level: 1, pin: nil} = seats.east
+      end
     end
 
     test "uses stable usernames and IDs while returning display names unchanged", context do

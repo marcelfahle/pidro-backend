@@ -3,6 +3,7 @@ defmodule PidroServer.ProfilesTest do
 
   alias PidroServer.Profiles
   alias PidroServer.Profiles.Achievement
+  alias PidroServer.Profiles.GameXp
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Progression
   alias PidroServer.Stats
@@ -683,11 +684,14 @@ defmodule PidroServer.ProfilesTest do
       # Fresh import leaves skill at default + count 0 → provisional.
       assert veteran_summary.tier == :provisional
       assert veteran_summary.provisional == true
+      # A Classic import marks the profile, so the seat shows the Classic pin.
+      assert veteran_summary.pin == "classic"
 
       assert summaries[rookie.id] == %{
                veteran_level: 1,
                tier: :provisional,
-               provisional: true
+               provisional: true,
+               pin: nil
              }
     end
 
@@ -700,5 +704,55 @@ defmodule PidroServer.ProfilesTest do
     test "returns an empty map for an empty list" do
       assert Profiles.summaries_for([]) == %{}
     end
+  end
+
+  describe "xp_periods/2 (PID-198)" do
+    # Each case is a fresh player: the XP rows earned at those times, the moment
+    # the periods are read, and the expected sum.
+    test "a week runs from Monday 00:00 to Sunday 24:00 UTC" do
+      for {earned, now, this_week} <- [
+            # Monday 00:00 and the last second of Sunday are the same week.
+            {[{~U[2026-10-05 00:00:00Z], 1}, {~U[2026-10-11 23:59:59Z], 2}],
+             ~U[2026-10-11 23:59:59Z], 3},
+            # At Monday 00:00 the Sunday game belongs to last week.
+            {[{~U[2026-10-11 23:59:59Z], 2}, {~U[2026-10-12 00:00:00Z], 4}],
+             ~U[2026-10-12 00:00:00Z], 4}
+          ] do
+        user = insert_user()
+        for {at, xp} <- earned, do: earn_xp(user.id, xp, at)
+
+        assert Profiles.xp_periods(user.id, now).this_week == this_week
+      end
+    end
+
+    test "a month is the calendar month in UTC" do
+      for {earned, now, this_month} <- [
+            {[{~U[2026-09-01 00:00:00Z], 1}, {~U[2026-09-30 23:59:59Z], 2}],
+             ~U[2026-09-30 23:59:59Z], 3},
+            {[{~U[2026-09-30 23:59:59Z], 2}, {~U[2026-10-01 00:00:00Z], 4}],
+             ~U[2026-10-01 00:00:00Z], 4}
+          ] do
+        user = insert_user()
+        for {at, xp} <- earned, do: earn_xp(user.id, xp, at)
+
+        assert Profiles.xp_periods(user.id, now).this_month == this_month
+      end
+    end
+
+    test "only the player's own rows count, and no rows sum to zero" do
+      user = insert_user()
+      other = insert_user()
+      earn_xp(other.id, 50, ~U[2026-10-12 10:00:00Z])
+
+      assert Profiles.xp_periods(user.id, ~U[2026-10-14 12:00:00Z]) ==
+               %{this_week: 0, this_month: 0}
+    end
+  end
+
+  defp earn_xp(user_id, xp, at) do
+    {:ok, game} =
+      Stats.save_game_result(%{room_code: "XP", completed_at: at, player_ids: [user_id]})
+
+    Repo.insert!(%GameXp{user_id: user_id, game_stats_id: game.id, xp: xp, earned_at: at})
   end
 end

@@ -272,7 +272,9 @@ defmodule PidroServerWeb.LobbyChannel do
           username: user.username,
           display_name: user.display_name,
           is_bot: false,
-          avatar_url: user.avatar_url
+          avatar_url: user.avatar_url,
+          level: user.level,
+          pin: user.pin
         }
 
       nil ->
@@ -282,7 +284,9 @@ defmodule PidroServerWeb.LobbyChannel do
           username: "Bot/User #{String.slice(player_id, 0..5)}",
           display_name: nil,
           is_bot: true,
-          avatar_url: nil
+          avatar_url: nil,
+          level: nil,
+          pin: nil
         }
     end
   end

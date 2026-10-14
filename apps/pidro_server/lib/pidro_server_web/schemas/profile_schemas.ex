@@ -141,6 +141,34 @@ defmodule PidroServerWeb.Schemas.ProfileSchemas do
               },
               required: [:level, :xp, :title, :progress]
             },
+            xp: %Schema{
+              type: :object,
+              description:
+                "XP earned this week (from Monday 00:00) and this calendar month, both UTC. All-time XP is `veteran.xp`.",
+              properties: %{
+                this_week: %Schema{type: :integer, minimum: 0, example: 240},
+                this_month: %Schema{type: :integer, minimum: 0, example: 910}
+              },
+              required: [:this_week, :this_month]
+            },
+            record: %Schema{
+              type: :object,
+              description:
+                "One record where Classic games and Pidro 2 games add up; Pidro 2 alone without a Classic account",
+              properties: %{
+                games: %Schema{type: :integer, minimum: 0, example: 35_321},
+                wins: %Schema{type: :integer, minimum: 0, example: 18_265},
+                losses: %Schema{type: :integer, minimum: 0, example: 17_056},
+                win_rate: %Schema{
+                  type: :number,
+                  format: :double,
+                  minimum: 0.0,
+                  maximum: 1.0,
+                  example: 0.517
+                }
+              },
+              required: [:games, :wins, :losses, :win_rate]
+            },
             heritage: %Schema{
               type: :array,
               description:
@@ -286,6 +314,8 @@ defmodule PidroServerWeb.Schemas.ProfileSchemas do
             :account_age_days,
             :skill,
             :veteran,
+            :xp,
+            :record,
             :heritage,
             :classic,
             :playstyle,
@@ -310,6 +340,13 @@ defmodule PidroServerWeb.Schemas.ProfileSchemas do
             "xp" => 1480,
             "title" => "Seasoned",
             "progress" => [120, 210]
+          },
+          "xp" => %{"this_week" => 240, "this_month" => 910},
+          "record" => %{
+            "games" => 35_321,
+            "wins" => 18_265,
+            "losses" => 17_056,
+            "win_rate" => 0.517
           },
           "heritage" => [
             %{"key" => "played_pidro_one", "label" => "Played Pidro 1", "value" => true},

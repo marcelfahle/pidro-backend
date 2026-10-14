@@ -78,7 +78,9 @@ defmodule PidroServer.Accounts.Auth do
   alias PidroServer.Games.RoomManager.Room
   alias PidroServer.Invites
   alias PidroServer.Invites.{Codes, Event, Invite, Redemption}
-  alias PidroServer.Profiles.{Achievement, PlayerProfile}
+  alias PidroServer.Profiles
+  alias PidroServer.Profiles.{Achievement, GameXp, PlayerProfile}
+  alias PidroServer.Progression
   alias PidroServer.Repo
 
   @default_user_page_size 30
@@ -563,7 +565,9 @@ defmodule PidroServer.Accounts.Auth do
   Fetches a map of users by their IDs.
 
   Returns a map where keys are user IDs and values are user structs.
-  Only returns users that exist.
+  Only returns users that exist. Each user carries the seat badges: `level`
+  (all-time, from XP) and `pin` (`"classic"` or nil), looked up for all users
+  in one more query.
 
   ## Examples
 
@@ -593,8 +597,20 @@ defmodule PidroServer.Accounts.Auth do
         }
       )
       |> Repo.all()
+      |> with_badges()
       |> Map.new(&{&1.id, &1})
     end
+  end
+
+  defp with_badges(users) do
+    summaries = users |> Enum.map(& &1.id) |> Profiles.summaries_for()
+
+    Enum.map(users, fn user ->
+      case Map.get(summaries, user.id) do
+        %{veteran_level: level, pin: pin} -> %{user | level: level, pin: pin}
+        nil -> %{user | level: Progression.level_for_xp(0), pin: nil}
+      end
+    end)
   end
 
   @doc """
@@ -820,6 +836,7 @@ defmodule PidroServer.Accounts.Auth do
 
     Repo.delete_all(from p in PlayerProfile, where: p.user_id == ^id)
     Repo.delete_all(from a in Achievement, where: a.user_id == ^id)
+    Repo.delete_all(from x in GameXp, where: x.user_id == ^id)
     Repo.delete_all(from r in Redemption, where: r.user_id == ^id)
     Repo.delete_all(from e in Event, where: e.user_id == ^id)
 

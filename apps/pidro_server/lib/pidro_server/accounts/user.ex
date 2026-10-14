@@ -92,6 +92,8 @@ defmodule PidroServer.Accounts.User do
     field(:terms_version, :string)
     field(:terms_accepted_at, :utc_datetime_usec)
     field(:avatar_url, :string, virtual: true)
+    field(:level, :integer, virtual: true)
+    field(:pin, :string, virtual: true)
 
     timestamps(type: :utc_datetime_usec)
   end

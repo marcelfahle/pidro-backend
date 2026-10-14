@@ -9,7 +9,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.RoomManager
   alias PidroServer.Profiles
-  alias PidroServer.Profiles.{Achievement, PlayerProfile}
+  alias PidroServer.Games.Room.Seat
+  alias PidroServer.Profiles.{Achievement, GameXp, PlayerProfile}
   alias PidroServer.Progression
   alias PidroServer.Rating
   alias PidroServer.Stats
@@ -356,6 +357,101 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       assert {:ok, %{games: 5}} = Profiles.rerate_all()
 
       assert_profiles_match(live, snapshot())
+    end
+  end
+
+  describe "XP per game (PID-198)" do
+    test "a game with four humans writes one row each, from the same XP as the total" do
+      ids = for _ <- 1..4, do: player_id()
+      seats = Map.new(Enum.zip([:north, :east, :south, :west], ids), &human_seat/1)
+      room = %{code: "XP4ROWS", created_at: DateTime.utc_now(), seats: seats}
+
+      assert {:ok, _} =
+               Stats.save_completed_game(
+                 room,
+                 :north_south,
+                 %{north_south: 62, east_west: 45},
+                 nil,
+                 game_instance_id: "xp-4-rows"
+               )
+
+      game = Repo.get_by!(GameStats, game_instance_id: "xp-4-rows")
+      rows = Repo.all(GameXp)
+
+      assert Enum.sort(Enum.map(rows, & &1.user_id)) == Enum.sort(ids)
+
+      for row <- rows do
+        assert row.game_stats_id == game.id
+        assert row.earned_at == game.completed_at
+        assert row.xp == profile(row.user_id).veteran_xp
+      end
+
+      # Winners 62 + 50 bonus, losers 45.
+      assert rows |> Enum.map(& &1.xp) |> Enum.sort() == [45, 45, 112, 112]
+
+      # The same game saved again writes nothing new.
+      assert :ok =
+               Stats.save_completed_game(
+                 room,
+                 :north_south,
+                 %{north_south: 62, east_west: 45},
+                 nil,
+                 game_instance_id: "xp-4-rows"
+               )
+
+      assert Repo.aggregate(GameXp, :count) == 4
+    end
+
+    test "bots get no rows; the humans at their table do" do
+      [north, south] = for _ <- 1..2, do: player_id()
+
+      seats = %{
+        north: Seat.new_human(:north, north),
+        east: Seat.new_bot(:east, self()),
+        south: Seat.new_human(:south, south),
+        west: Seat.new_bot(:west, self())
+      }
+
+      room = %{code: "XPBOTS", created_at: DateTime.utc_now(), seats: seats}
+
+      assert {:ok, _} =
+               Stats.save_completed_game(room, :east_west, %{north_south: 20, east_west: 62})
+
+      assert GameXp |> Repo.all() |> Enum.map(& &1.user_id) |> Enum.sort() ==
+               Enum.sort([north, south])
+    end
+
+    test "one game never counts twice for a player, even if applied again" do
+      user_id = player_id()
+      results = %{user_id => result_for(:north_south, :north_south, :north)}
+      scores = %{north_south: 62, east_west: 45}
+      {:ok, game} = seed_completed("XPTWICE", :north_south, results)
+
+      for _ <- 1..2,
+          do:
+            {:ok, _} =
+              Profiles.apply_completed_game(results, :north_south, scores, %{}, game: game)
+
+      assert [%GameXp{xp: 112}] = Repo.all(GameXp)
+    end
+
+    test "the Classic import writes no rows" do
+      user_id = player_id()
+      {:ok, _} = Profiles.import_legacy_progression(user_id, %{xp: 5_000})
+
+      assert profile(user_id).veteran_xp == 5_000
+      assert Repo.all(GameXp) == []
+    end
+
+    test "deleting the account deletes the player's rows" do
+      [user_id, other_id] = for _ <- 1..2, do: player_id()
+      seats = %{north: Seat.new_human(:north, user_id), east: Seat.new_human(:east, other_id)}
+      room = %{code: "XPDEL", created_at: DateTime.utc_now(), seats: seats}
+      {:ok, _} = Stats.save_completed_game(room, :north_south, %{north_south: 62, east_west: 45})
+
+      {:ok, _} = user_id |> Auth.get_user() |> Auth.delete_user()
+
+      assert [%GameXp{user_id: ^other_id}] = Repo.all(GameXp)
     end
   end
 
@@ -1101,6 +1197,8 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   end
 
   defp player_id, do: AccountsFixtures.user_fixture().id
+
+  defp human_seat({position, user_id}), do: {position, Seat.new_human(position, user_id)}
 
   defp profile(user_id) do
     {:ok, p} = Profiles.get_or_create_profile(user_id)

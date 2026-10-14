@@ -28,12 +28,16 @@ defmodule PidroServer.Games.SeatLifecycle do
             |> Map.put(:username, username(users, seat.player_id))
             |> Map.put(:display_name, display_name(users, seat.player_id))
             |> Map.put(:avatar_url, avatar_url(users, seat.player_id))
+            |> Map.put(:level, user_field(users, seat.player_id, :level))
+            |> Map.put(:pin, user_field(users, seat.player_id, :pin))
           else
             # Preserve the lifecycle's own bot name rather than attempting an
             # account lookup for vacant and permanent-bot seats.
             seat
             |> Map.put(:display_name, seat.username)
             |> Map.put(:avatar_url, nil)
+            |> Map.put(:level, nil)
+            |> Map.put(:pin, nil)
           end
 
         {position, %{resolved_seat | decision: decision}}
@@ -60,6 +64,13 @@ defmodule PidroServer.Games.SeatLifecycle do
     case Map.get(users, user_id) do
       nil -> nil
       user -> user.avatar_url
+    end
+  end
+
+  defp user_field(users, user_id, field) do
+    case Map.get(users, user_id) do
+      nil -> nil
+      user -> Map.fetch!(user, field)
     end
   end
 end

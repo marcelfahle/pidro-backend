@@ -185,6 +185,8 @@ defmodule PidroServerWeb.API.RoomJSON do
     |> Map.put(:username, seat_username(seat, user))
     |> Map.put(:display_name, seat_display_name(seat, user))
     |> Map.put(:avatar_url, if(user, do: user.avatar_url, else: nil))
+    |> Map.put(:level, if(user, do: user.level, else: nil))
+    |> Map.put(:pin, if(user, do: user.pin, else: nil))
   end
 
   # The user row behind a human seat; nil for bots, vacant seats and ids that
