@@ -63,7 +63,8 @@ defmodule PidroServerWeb.GameChannelTest do
       end)
 
     # Create a room with 4 players
-    {:ok, room} = RoomManager.create_room(user1.id, %{name: "Test Game"})
+    rule_set = if tags[:louisiana], do: :louisiana, else: :finnish
+    {:ok, room} = RoomManager.create_room(user1.id, %{name: "Test Game", rule_set: rule_set})
     room_code = room.code
 
     {:ok, _, _} = RoomManager.join_room(room_code, user2.id)
@@ -93,6 +94,18 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "PID-79 spectator isolation" do
+    @tag :louisiana
+    test "first channel snapshot carries Louisiana and its minimum bid", ctx do
+      {:ok, reply, _} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}")
+
+      assert reply.state.variant == :louisiana
+      assert reply.state.config.min_bid == 7
+      wire = reply.state |> Jason.encode!() |> Jason.decode!()
+      assert wire["variant"] == "louisiana"
+      assert wire["config"]["min_bid"] == 7
+    end
+
     test "two departures, delayed decisions and watcher reconnect never claim an open seat",
          ctx do
       {:ok, _, host} =

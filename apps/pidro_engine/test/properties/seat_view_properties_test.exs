@@ -12,32 +12,38 @@ defmodule Pidro.Properties.SeatViewPropertiesTest do
 
   @positions [:north, :east, :south, :west]
 
-  @tag :property
-  property "no hidden card appears anywhere in any seat's view" do
-    check all(
-            seed <- StreamData.integer(1..1_000_000),
-            auto_rob <- StreamData.boolean(),
-            max_runs: 200
-          ) do
-      for state <- GameTrace.states(seed, auto_dealer_rob: auto_rob),
-          position <- @positions do
-        view = SeatView.for_seat(state, position)
-        leaked = MapSet.intersection(hidden_cards(state, position), visible_cards(view))
+  for variant <- [:finnish, :louisiana] do
+    @tag :property
+    property "#{variant}: no hidden card appears anywhere in any seat's view" do
+      check all(
+              seed <- StreamData.integer(1..1_000_000),
+              auto_rob <- StreamData.boolean(),
+              max_runs: 200
+            ) do
+        for state <- GameTrace.states(seed, auto_dealer_rob: auto_rob, variant: unquote(variant)),
+            position <- @positions do
+          view = SeatView.for_seat(state, position)
+          leaked = MapSet.intersection(hidden_cards(state, position), visible_cards(view))
 
-        assert MapSet.size(leaked) == 0,
-               "#{position} sees #{inspect(MapSet.to_list(leaked))} in #{state.phase}"
+          assert MapSet.size(leaked) == 0,
+                 "#{position} sees #{inspect(MapSet.to_list(leaked))} in #{state.phase}"
+        end
       end
     end
-  end
 
-  @tag :property
-  property "states that differ only in hidden cards give equal views" do
-    check all(seed <- StreamData.integer(1..1_000_000), max_runs: 200) do
-      for state <- GameTrace.states(seed, auto_dealer_rob: rem(seed, 2) == 0),
-          position <- @positions do
-        reshuffled = reshuffle_hidden(state, position)
+    @tag :property
+    property "#{variant}: states that differ only in hidden cards give equal views" do
+      check all(seed <- StreamData.integer(1..1_000_000), max_runs: 200) do
+        for state <-
+              GameTrace.states(seed,
+                auto_dealer_rob: rem(seed, 2) == 0,
+                variant: unquote(variant)
+              ),
+            position <- @positions do
+          reshuffled = reshuffle_hidden(state, position)
 
-        assert SeatView.for_seat(state, position) == SeatView.for_seat(reshuffled, position)
+          assert SeatView.for_seat(state, position) == SeatView.for_seat(reshuffled, position)
+        end
       end
     end
   end

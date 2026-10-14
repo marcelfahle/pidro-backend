@@ -100,6 +100,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       """,
       type: :object,
       properties: %{
+        rule_set: %Schema{type: :string, enum: Config.rule_sets(), default: "finnish"},
         name: %Schema{
           type: :string,
           nullable: true,
@@ -122,10 +123,11 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           example: false
         }
       },
-      required: [:name, :bot_difficulty, :solo],
+      required: [:name, :bot_difficulty, :rule_set, :solo],
       example: %{
         "name" => "Fun Game Night",
         "bot_difficulty" => "basic",
+        "rule_set" => "finnish",
         "solo" => false
       }
     })
@@ -148,6 +150,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       type: :object,
       additionalProperties: false,
       properties: %{
+        rule_set: %Schema{type: :string, enum: Config.rule_sets(), default: "finnish"},
         name: %Schema{
           type: :string,
           maxLength: Config.max_name_length(),
@@ -327,6 +330,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         "config" => %{
           "name" => "Fun Game Night",
           "bot_difficulty" => "basic",
+          "rule_set" => "finnish",
           "solo" => false
         },
         "seats" => %{
@@ -413,6 +417,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "config" => %{
               "name" => "Fun Game Night",
               "bot_difficulty" => "basic",
+              "rule_set" => "finnish",
               "solo" => false
             },
             "seats" => %{
@@ -476,6 +481,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
               "config" => %{
                 "name" => "Fun Game Night",
                 "bot_difficulty" => "basic",
+                "rule_set" => "finnish",
                 "solo" => false
               },
               "seats" => %{},
@@ -501,6 +507,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
               "config" => %{
                 "name" => nil,
                 "bot_difficulty" => "basic",
+                "rule_set" => "finnish",
                 "solo" => false
               },
               "seats" => %{},
@@ -557,6 +564,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
             "config" => %{
               "name" => "Fun Game Night",
               "bot_difficulty" => "basic",
+              "rule_set" => "finnish",
               "solo" => false
             },
             "seats" => %{
@@ -627,10 +635,10 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         amount: %Schema{
           oneOf: [
-            %Schema{type: :integer, minimum: 8, maximum: 13, description: "Numeric bid"},
+            %Schema{type: :integer, minimum: 6, maximum: 14, description: "Numeric bid"},
             %Schema{type: :string, enum: ["pass"], description: "Pass indicator"}
           ],
-          description: "Bid amount (8-13) or 'pass' to pass",
+          description: "Bid amount (Finnish 6-14, Louisiana 7-14) or 'pass' to pass",
           example: 8
         }
       },
@@ -882,8 +890,14 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                 variant: %Schema{
                   type: :string,
                   description: "Game variant being played",
-                  example: "standard",
+                  enum: Config.rule_sets(),
+                  example: "finnish",
                   nullable: true
+                },
+                config: %Schema{
+                  type: :object,
+                  description: "Engine configuration for the selected rule set",
+                  properties: %{min_bid: %Schema{type: :integer, enum: [6, 7]}}
                 },
                 current_turn: %Schema{
                   type: :string,
@@ -933,8 +947,8 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                     },
                     amount: %Schema{
                       type: :integer,
-                      minimum: 8,
-                      maximum: 13,
+                      minimum: 6,
+                      maximum: 14,
                       description: "Highest bid amount",
                       example: 10
                     }
@@ -1020,7 +1034,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
               example: %{
                 "phase" => "bidding",
                 "hand_number" => 1,
-                "variant" => "standard",
+                "variant" => "finnish",
                 "current_turn" => "north",
                 "current_dealer" => "west",
                 "players" => %{
@@ -1066,7 +1080,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           "state" => %{
             "phase" => "bidding",
             "hand_number" => 1,
-            "variant" => "standard",
+            "variant" => "finnish",
             "current_turn" => "north",
             "current_dealer" => "west",
             "players" => %{

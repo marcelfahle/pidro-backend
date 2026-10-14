@@ -7,7 +7,7 @@ defmodule PidroServerWeb.API.InviteJSON do
     * `invite/1` - the host's view after a mint, an in-place update or a
       regenerate: `code`, `url`, `share_text`, `seat_hint`, `label`,
       `expires_at` and the derived `state`.
-    * `preview/1` - the public landing view: `code`, `state`, `host`,
+    * `preview/1` - the public landing view: `code`, `state`, `host`, `config`,
       `seats_taken`, `seats_total`, `seat_hint`, `label`, `expires_at` and, only
       when the state is `moved`, `next_code`. The room code never appears here
       (KD2).
@@ -15,6 +15,7 @@ defmodule PidroServerWeb.API.InviteJSON do
       `PidroServerWeb.API.RoomJSON` renders it, `position` and `hint_honored`.
   """
 
+  alias PidroServer.Games.Room.Config
   alias PidroServer.Invites
   alias PidroServer.Invites.Invite
   alias PidroServerWeb.API.RoomJSON
@@ -44,11 +45,15 @@ defmodule PidroServerWeb.API.InviteJSON do
   Renders the public preview. `host` is the host's display name or username
   (nil once the account is gone); `seats_taken` is 0 when the table is closed.
   """
-  def preview(%{invite: %Invite{} = invite, state: state, host: host, seats_taken: seats_taken}) do
+  def preview(
+        %{invite: %Invite{} = invite, state: state, host: host, seats_taken: seats_taken} =
+          assigns
+      ) do
     preview = %{
       code: invite.code,
       state: state,
       host: host,
+      config: Config.serialize(assigns.config),
       seats_taken: seats_taken,
       seats_total: @seats_total,
       seat_hint: invite.seat_hint,

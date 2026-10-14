@@ -322,8 +322,15 @@ defmodule Pidro.Server do
     # `fresh_seed/0` unevaluated when a seed was supplied.
     initial_state =
       case Keyword.fetch(opts, :initial_state) do
-        {:ok, game_state} -> game_state
-        :error -> GS.new(seed: Keyword.get_lazy(opts, :seed, &fresh_seed/0))
+        {:ok, game_state} ->
+          game_state
+
+        :error ->
+          GS.new(
+            seed: Keyword.get_lazy(opts, :seed, &fresh_seed/0),
+            variant: Keyword.get(opts, :variant, :finnish),
+            config: Keyword.get(opts, :config, %{})
+          )
       end
 
     dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
@@ -398,7 +405,14 @@ defmodule Pidro.Server do
 
   @impl true
   def handle_call(:reset, _from, state) do
-    new_state = replace_game_state(state, GS.new(seed: reset_seed(state)))
+    game =
+      GS.new(
+        seed: reset_seed(state),
+        variant: state.game_state.variant,
+        config: state.game_state.config
+      )
+
+    new_state = replace_game_state(state, game)
     {:reply, :ok, new_state}
   end
 

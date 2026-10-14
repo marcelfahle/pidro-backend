@@ -272,7 +272,10 @@ defmodule Pidro.Game.Play do
     if card in legal_plays(state, position) do
       :ok
     else
-      {:error, {:cannot_play_non_trump, card, state.trump_suit}}
+      case state.variant do
+        :finnish -> {:error, {:cannot_play_non_trump, card, state.trump_suit}}
+        :louisiana -> {:error, {:invalid_action, {:play_card, card}, :playing}}
+      end
     end
   end
 

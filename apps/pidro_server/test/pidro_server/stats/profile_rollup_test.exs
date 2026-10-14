@@ -18,6 +18,84 @@ defmodule PidroServer.Stats.ProfileRollupTest do
   @delta 1.0e-9
   @base ~U[2026-06-07 12:00:00Z]
 
+  test "Louisiana persists and skips live, full and incremental ratings for four real users" do
+    ids = for _ <- 1..4, do: player_id()
+    [n, e, s, w] = ids
+
+    results =
+      Map.new(Enum.zip(ids, [:north, :east, :south, :west]), fn {id, position} ->
+        won = position in [:north, :south]
+
+        {id,
+         %{
+           participation: :played,
+           result: if(won, do: :win, else: :loss),
+           team: if(won, do: :north_south, else: :east_west),
+           position: position
+         }}
+      end)
+
+    assert {:rated, _} = Profiles.rate_game(results, :north_south, %{})
+    assert :unrated = Profiles.rate_game(results, :north_south, %{}, :louisiana)
+
+    # A prior Finnish row gives non-default ratings and a cursor. Skipping a
+    # Louisiana row must preserve these, not reset them to defaults.
+    for id <- ids, do: Profiles.get_or_create_profile(id)
+
+    {:ok, finnish} =
+      Stats.save_game_result(%{
+        room_code: "FINN",
+        winner: :north_south,
+        completed_at: @base,
+        player_ids: ids,
+        player_results: results,
+        final_scores: %{north_south: 62, east_west: 40}
+      })
+
+    assert finnish.rule_set == "finnish"
+    assert {:ok, %{games: 1}} = Profiles.rerate_all()
+
+    priors =
+      Map.new(ids, fn id ->
+        p = Repo.get_by!(PlayerProfile, user_id: id)
+        {id, {p.rating_mu, p.rating_sigma}}
+      end)
+
+    refute priors[n] == Rating.default()
+
+    {:ok, room} = RoomManager.create_room(n, %{rule_set: :louisiana})
+    for id <- [e, s, w], do: {:ok, _, _} = RoomManager.join_room(room.code, id)
+    {:ok, room} = RoomManager.get_room(room.code)
+
+    assert {:ok, _} =
+             Stats.save_completed_game(room, :north_south, %{north_south: 62, east_west: 40})
+
+    saved = Repo.get_by!(GameStats, room_code: room.code)
+    assert saved.rule_set == "louisiana"
+    assert map_size(saved.player_results) == 4
+
+    for {rerate, expected} <- [
+          {fn -> {:ok, %{games: 0}} end, 0},
+          {&Profiles.rerate_incremental/0, 0},
+          {&Profiles.rerate_all/0, 1}
+        ] do
+      assert {:ok, %{games: ^expected}} = rerate.()
+
+      for id <- ids do
+        p = Repo.get_by!(PlayerProfile, user_id: id)
+        {mu, sigma} = priors[id]
+        assert p.rating_mu == mu
+        assert p.rating_sigma == sigma
+        assert p.rating_games_count == 1
+        assert p.games_played == 1
+        assert p.wins == if(id in [n, s], do: 1, else: 0)
+        assert p.losses == if(id in [e, w], do: 1, else: 0)
+        won = id in [n, s]
+        assert p.veteran_xp == Progression.xp_for_game(if(won, do: 62, else: 40), won)
+      end
+    end
+  end
+
   setup do
     case GenServer.whereis(RoomManager) do
       nil -> start_supervised!(RoomManager)

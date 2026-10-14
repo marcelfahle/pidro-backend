@@ -7,6 +7,49 @@ defmodule PidroServer.Games.Room.ConfigTest do
 
   @all_open %{east: :open, south: :open, west: :open}
 
+  test "game-state bid schemas accept both variants' boundaries" do
+    alias PidroServerWeb.Schemas.RoomSchemas.{Bid, GameStateResponse}
+
+    highest =
+      GameStateResponse.schema().properties.data.properties.state.properties.highest_bid
+
+    for schema <- [Bid.schema().properties.amount, highest.properties.amount] do
+      for amount <- [6, 7, 14],
+          do: assert({:ok, ^amount} = OpenApiSpex.cast_value(amount, schema))
+
+      for amount <- [5, 15], do: assert({:error, _} = OpenApiSpex.cast_value(amount, schema))
+    end
+  end
+
+  test "rule sets default to Finnish, validate without atom conversion, and serialize" do
+    assert {:ok, %Config{rule_set: :finnish}, @all_open} = Config.parse_create_params(%{})
+
+    for {wire, atom} <- [{"finnish", :finnish}, {"louisiana", :louisiana}] do
+      assert {:ok, config, @all_open} = Config.parse_create_params(%{"rule_set" => wire})
+      assert config.rule_set == atom
+      assert Config.serialize(config).rule_set == wire
+      assert Config.new(rule_set: atom) == {:ok, config}
+    end
+
+    garbage = "unknown_rules_#{System.unique_integer([:positive])}"
+
+    for invalid <- [garbage, nil, 7, "Louisiana"] do
+      assert {:error, {:invalid_room_params, [%{field: "rule_set"}]}} =
+               Config.parse_create_params(%{"rule_set" => invalid})
+    end
+
+    assert_raise ArgumentError, fn -> String.to_existing_atom(garbage) end
+
+    for module <- [
+          PidroServerWeb.Schemas.RoomSchemas.RoomConfig,
+          PidroServerWeb.Schemas.RoomSchemas.RoomCreateRequest
+        ] do
+      schema = module.schema()
+      assert schema.properties.rule_set.enum == Config.rule_sets()
+      assert schema.properties.rule_set.default == "finnish"
+    end
+  end
+
   defp fields({:error, {:invalid_room_params, errors}}), do: Enum.map(errors, & &1.field)
 
   describe "default config" do
@@ -435,29 +478,44 @@ defmodule PidroServer.Games.Room.ConfigTest do
   end
 
   describe "serialization" do
-    test "serialize/1 emits the difficulty as a string and the three fields only" do
+    test "serialize/1 emits difficulty and rule set as strings and the four fields only" do
       {:ok, config} = Config.new(name: "Friday", bot_difficulty: :smart, solo: true)
 
-      assert Config.serialize(config) == %{name: "Friday", bot_difficulty: "smart", solo: true}
+      assert Config.serialize(config) == %{
+               name: "Friday",
+               bot_difficulty: "smart",
+               rule_set: "finnish",
+               solo: true
+             }
     end
 
     test "serialize/1 of the default config" do
       {:ok, config} = Config.new()
 
-      assert Config.serialize(config) == %{name: nil, bot_difficulty: "basic", solo: false}
+      assert Config.serialize(config) == %{
+               name: nil,
+               bot_difficulty: "basic",
+               rule_set: "finnish",
+               solo: false
+             }
     end
 
     test "serialize/1 is JSON-encodable" do
       {:ok, config} = Config.new(bot_difficulty: :random)
 
       assert config |> Config.serialize() |> Jason.encode!() |> Jason.decode!() ==
-               %{"name" => nil, "bot_difficulty" => "random", "solo" => false}
+               %{
+                 "name" => nil,
+                 "bot_difficulty" => "random",
+                 "rule_set" => "finnish",
+                 "solo" => false
+               }
     end
   end
 
   describe "accepted_fields/0" do
     test "lists the accepted top-level request fields" do
-      assert Config.accepted_fields() == ["name", "seats", "bot_difficulty"]
+      assert Config.accepted_fields() == ["name", "seats", "bot_difficulty", "rule_set"]
     end
 
     test "every accepted field is accepted and nothing else is" do

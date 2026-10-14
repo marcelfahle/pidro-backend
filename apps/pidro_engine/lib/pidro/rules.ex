@@ -10,9 +10,12 @@ defmodule Pidro.Rules do
   @doc "Resolves a game's variant to its rules module."
   @spec for_variant(atom()) :: module()
   def for_variant(:finnish), do: Pidro.Rules.Finnish
+  def for_variant(:louisiana), do: Pidro.Rules.Louisiana
 
   @doc "Default config for a variant, before caller overrides."
   @spec defaults(atom()) :: map()
+  def defaults(:louisiana), do: %{defaults(:finnish) | min_bid: 7}
+
   def defaults(:finnish) do
     %{
       min_bid: 6,

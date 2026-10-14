@@ -66,7 +66,14 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
       assert %{rooms: rooms} = reply
       created_room = Enum.find(rooms, fn r -> r.code == room.code end)
-      assert created_room.config == %{name: "Epic Game", bot_difficulty: "basic", solo: false}
+
+      assert created_room.config == %{
+               name: "Epic Game",
+               bot_difficulty: "basic",
+               rule_set: "finnish",
+               solo: false
+             }
+
       refute Map.has_key?(created_room, :metadata)
     end
 
@@ -266,7 +273,14 @@ defmodule PidroServerWeb.LobbyChannelTest do
       assert serialized_room.status == :waiting
       assert serialized_room.locked == true
       assert is_binary(serialized_room.created_at)
-      assert serialized_room.config == %{name: "Test Room", bot_difficulty: "basic", solo: false}
+
+      assert serialized_room.config == %{
+               name: "Test Room",
+               bot_difficulty: "basic",
+               rule_set: "finnish",
+               solo: false
+             }
+
       refute Map.has_key?(serialized_room, :metadata)
     end
 
@@ -282,7 +296,13 @@ defmodule PidroServerWeb.LobbyChannelTest do
       lobby_room = Enum.find(rooms, &(&1.code == room.code))
       rest_room = RoomJSON.room(room)
 
-      assert lobby_room.config == %{name: "Friday", bot_difficulty: "smart", solo: false}
+      assert lobby_room.config == %{
+               name: "Friday",
+               bot_difficulty: "smart",
+               rule_set: "finnish",
+               solo: false
+             }
+
       assert rest_room.config == lobby_room.config
 
       # Same shape on the wire, not only in Elixir terms.
@@ -311,7 +331,14 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
       assert_push "room_created", %{room: pushed}, 1000
       assert pushed.code == room.code
-      assert pushed.config == %{name: "Pushed", bot_difficulty: "basic", solo: false}
+
+      assert pushed.config == %{
+               name: "Pushed",
+               bot_difficulty: "basic",
+               rule_set: "finnish",
+               solo: false
+             }
+
       refute Map.has_key?(pushed, :metadata)
     end
 

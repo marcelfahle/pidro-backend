@@ -134,6 +134,7 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
           example: "7KQ4M2XB"
         },
         state: PidroServerWeb.Schemas.InviteSchemas.State,
+        config: PidroServerWeb.Schemas.RoomSchemas.RoomConfig,
         host: %Schema{
           type: :string,
           nullable: true,
@@ -165,6 +166,7 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         :code,
         :state,
         :host,
+        :config,
         :seats_taken,
         :seats_total,
         :seat_hint,

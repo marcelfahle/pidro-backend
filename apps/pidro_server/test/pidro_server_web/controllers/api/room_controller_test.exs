@@ -164,6 +164,32 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   end
 
   describe "create/2" do
+    test "rule_set grammar and serialized payload", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+
+      for {body, expected} <- [
+            {%{}, "finnish"},
+            {%{"rule_set" => "finnish"}, "finnish"},
+            {%{"rule_set" => "louisiana"}, "louisiana"}
+          ] do
+        response = conn |> as_user(user) |> post(~p"/api/v1/rooms", body) |> data(201)
+        assert response["room"]["config"]["rule_set"] == expected
+        RoomManager.reset_for_test()
+      end
+
+      response =
+        conn
+        |> as_user(user)
+        |> post(~p"/api/v1/rooms", %{"rule_set" => "garbage"})
+        |> json_response(422)
+
+      assert %{
+               "errors" => [
+                 %{"code" => "rule_set", "detail" => "must be one of: finnish, louisiana"}
+               ]
+             } = response
+    end
+
     test "room payloads never expose private account fields", %{conn: conn} do
       host = AccountsFixtures.user_fixture()
 
@@ -263,6 +289,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert data["room"]["config"] == %{
                "name" => "Solo Table",
                "bot_difficulty" => "basic",
+               "rule_set" => "finnish",
                "solo" => true
              }
 
@@ -339,7 +366,13 @@ defmodule PidroServerWeb.API.RoomControllerTest do
         |> json_response(201)
         |> Map.fetch!("data")
 
-      expected = %{"name" => "Friday", "bot_difficulty" => "smart", "solo" => false}
+      expected = %{
+        "name" => "Friday",
+        "bot_difficulty" => "smart",
+        "rule_set" => "finnish",
+        "solo" => false
+      }
+
       assert data["room"]["config"] == expected
       refute Map.has_key?(data["room"], "metadata")
 
@@ -511,6 +544,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert data(conn, 201)["room"]["config"] == %{
                "name" => nil,
                "bot_difficulty" => "basic",
+               "rule_set" => "finnish",
                "solo" => false
              }
 
@@ -557,6 +591,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert data["room"]["config"] == %{
                "name" => "Raw",
                "bot_difficulty" => "random",
+               "rule_set" => "finnish",
                "solo" => false
              }
 
@@ -702,6 +737,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert open_table["config"] == %{
                "name" => "Public",
                "bot_difficulty" => "basic",
+               "rule_set" => "finnish",
                "solo" => false
              }
     end
