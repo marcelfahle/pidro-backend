@@ -108,7 +108,7 @@ defmodule Pidro.Bot.Knowledge do
   """
   @spec current_winner(view()) :: {position(), card()} | nil
   def current_winner(%SeatView{current_trick: %Trick{plays: [_ | _]} = trick} = view) do
-    {:ok, winner, _points} = Play.determine_trick_winner(trick, view.trump_suit)
+    {:ok, winner, _points} = Play.determine_trick_winner(trick, view.trump_suit, view.variant)
     {winner, trick.plays |> List.keyfind!(winner, 0) |> elem(1)}
   end
 

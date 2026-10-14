@@ -459,10 +459,7 @@ defmodule Pidro.Game.Engine do
     player = state.players[position]
 
     if player && state.trump_suit && not player.eliminated? do
-      # Get only trump cards from player's hand
-      trump_cards = Trump.get_trump_cards(player.hand, state.trump_suit)
-      # Return play_card actions for each trump card
-      Enum.map(trump_cards, &{:play_card, &1})
+      Enum.map(Play.legal_plays(state, position), &{:play_card, &1})
     else
       []
     end
@@ -796,7 +793,9 @@ defmodule Pidro.Game.Engine do
   # Scores the hand: calculates trick points, updates hand scores, and applies bid results
   @spec score_hand(Types.GameState.t()) :: Types.GameState.t()
   defp score_hand(%Types.GameState{} = state) do
-    scored_tricks = Enum.map(state.tricks, &Scorer.score_trick(&1, state.trump_suit))
+    scored_tricks =
+      Enum.map(state.tricks, &Scorer.score_trick(&1, state.trump_suit, state.variant))
+
     hand_points = Scorer.aggregate_team_scores(scored_tricks)
 
     state

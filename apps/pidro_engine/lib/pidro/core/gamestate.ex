@@ -42,6 +42,8 @@ defmodule Pidro.Core.GameState do
     either an integer or a `{a, b, c}` triple. It is converted once, here, via
     `Pidro.Core.Chance.from_seed/1`, and every random draw the engine makes
     for this game derives from it.
+  - `:variant` — rule set (default `:finnish`).
+  - `:config` — map of explicit overrides for the rule set's defaults.
 
   There is no default and no `new/0`: a game's randomness is an input, and the
   caller has to say where it comes from. `Pidro.Server` generates fresh
@@ -81,11 +83,13 @@ defmodule Pidro.Core.GameState do
   @spec new(keyword()) :: GameState.t()
   def new(opts) when is_list(opts) do
     chance = opts |> Keyword.fetch!(:seed) |> Chance.from_seed()
+    variant = Keyword.get(opts, :variant, :finnish)
+    config = Map.merge(Pidro.Rules.defaults(variant), Keyword.get(opts, :config, %{}))
 
     %GameState{
       phase: :dealer_selection,
       hand_number: 1,
-      variant: :finnish,
+      variant: variant,
       players: %{
         north: %Player{
           position: :north,
@@ -135,14 +139,7 @@ defmodule Pidro.Core.GameState do
       cumulative_scores: %{north_south: 0, east_west: 0},
       winner: nil,
       events: [],
-      config: %{
-        min_bid: 6,
-        max_bid: 14,
-        winning_score: 62,
-        initial_deal_count: 9,
-        final_hand_size: 6,
-        allow_negative_scores: true
-      },
+      config: config,
       chance: chance,
       cache: %{}
     }
