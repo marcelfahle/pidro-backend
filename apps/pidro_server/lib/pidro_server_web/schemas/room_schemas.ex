@@ -635,10 +635,10 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         amount: %Schema{
           oneOf: [
-            %Schema{type: :integer, minimum: 8, maximum: 13, description: "Numeric bid"},
+            %Schema{type: :integer, minimum: 6, maximum: 14, description: "Numeric bid"},
             %Schema{type: :string, enum: ["pass"], description: "Pass indicator"}
           ],
-          description: "Bid amount (8-13) or 'pass' to pass",
+          description: "Bid amount (Finnish 6-14, Louisiana 7-14) or 'pass' to pass",
           example: 8
         }
       },
@@ -947,8 +947,8 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                     },
                     amount: %Schema{
                       type: :integer,
-                      minimum: 8,
-                      maximum: 13,
+                      minimum: 6,
+                      maximum: 14,
                       description: "Highest bid amount",
                       example: 10
                     }

@@ -7,6 +7,20 @@ defmodule PidroServer.Games.Room.ConfigTest do
 
   @all_open %{east: :open, south: :open, west: :open}
 
+  test "game-state bid schemas accept both variants' boundaries" do
+    alias PidroServerWeb.Schemas.RoomSchemas.{Bid, GameStateResponse}
+
+    highest =
+      GameStateResponse.schema().properties.data.properties.state.properties.highest_bid
+
+    for schema <- [Bid.schema().properties.amount, highest.properties.amount] do
+      for amount <- [6, 7, 14],
+          do: assert({:ok, ^amount} = OpenApiSpex.cast_value(amount, schema))
+
+      for amount <- [5, 15], do: assert({:error, _} = OpenApiSpex.cast_value(amount, schema))
+    end
+  end
+
   test "rule sets default to Finnish, validate without atom conversion, and serialize" do
     assert {:ok, %Config{rule_set: :finnish}, @all_open} = Config.parse_create_params(%{})
 
