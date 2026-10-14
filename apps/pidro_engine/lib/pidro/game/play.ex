@@ -231,12 +231,30 @@ defmodule Pidro.Game.Play do
   @spec validate_play(game_state(), position(), card()) :: :ok | {:error, error()}
   def validate_play(%Types.GameState{} = state, position, card) do
     player = state.players[position]
-    trump_suit = state.trump_suit
 
     with :ok <- validate_card_in_hand(player, card),
-         :ok <- validate_trump_card(card, trump_suit) do
+         :ok <- validate_legal_card(state, position, card) do
       :ok
     end
+  end
+
+  @doc "Legal cards in hand order, using the game's rules and the trick's effective led suit."
+  @spec legal_plays(game_state(), position()) :: [card()]
+  def legal_plays(state, position) do
+    led_suit =
+      case state.current_trick do
+        %Trick{plays: [{_leader, {_rank, suit} = card} | _]} ->
+          if Card.is_trump?(card, state.trump_suit), do: state.trump_suit, else: suit
+
+        _ ->
+          nil
+      end
+
+    Pidro.Rules.for_variant(state.variant).legal_plays(
+      state.players[position].hand,
+      state.trump_suit,
+      led_suit
+    )
   end
 
   # Validates card is in player's hand
@@ -249,13 +267,12 @@ defmodule Pidro.Game.Play do
     end
   end
 
-  # Validates card is a trump card
-  @spec validate_trump_card(card(), suit()) :: :ok | {:error, error()}
-  defp validate_trump_card(card, trump_suit) do
-    if Card.is_trump?(card, trump_suit) do
+  @spec validate_legal_card(game_state(), position(), card()) :: :ok | {:error, error()}
+  defp validate_legal_card(state, position, card) do
+    if card in legal_plays(state, position) do
       :ok
     else
-      {:error, {:cannot_play_non_trump, card, trump_suit}}
+      {:error, {:cannot_play_non_trump, card, state.trump_suit}}
     end
   end
 
@@ -310,7 +327,7 @@ defmodule Pidro.Game.Play do
   end
 
   def complete_trick(%Types.GameState{current_trick: trick, trump_suit: trump_suit} = state) do
-    with {:ok, winner, points} <- determine_trick_winner(trick, trump_suit),
+    with {:ok, winner, points} <- determine_trick_winner(trick, trump_suit, state.variant),
          {:ok, state} <- award_trick_points(state, winner, points),
          {:ok, state} <- record_trick_won_event(state, winner, points),
          {:ok, state} <- move_trick_to_history(state),
@@ -342,15 +359,16 @@ defmodule Pidro.Game.Play do
   """
   @spec determine_trick_winner(Trick.t(), suit()) ::
           {:ok, position(), non_neg_integer()} | {:error, error()}
-  def determine_trick_winner(%Trick{plays: []}, _trump_suit) do
+  @spec determine_trick_winner(Trick.t(), suit(), atom()) ::
+          {:ok, position(), non_neg_integer()} | {:error, error()}
+  def determine_trick_winner(trick, trump_suit, variant \\ :finnish)
+
+  def determine_trick_winner(%Trick{plays: []}, _trump_suit, _variant) do
     {:error, :trick_has_no_plays}
   end
 
-  def determine_trick_winner(%Trick{plays: plays}, trump_suit) do
-    # Find the highest card and its player
-    {winner_position, _winning_card} =
-      plays
-      |> Enum.max_by(fn {_pos, card} -> card_sort_value(card, trump_suit) end)
+  def determine_trick_winner(%Trick{plays: plays}, trump_suit, variant) do
+    winner_position = Pidro.Rules.for_variant(variant).winner(plays, trump_suit)
 
     # Calculate total points in the trick
     points =
@@ -359,49 +377,6 @@ defmodule Pidro.Game.Play do
       |> Enum.sum()
 
     {:ok, winner_position, points}
-  end
-
-  # Helper to get a sortable value for a card (for finding highest trump)
-  # Uses trump_ranking logic from Card module
-  @spec card_sort_value(card(), suit()) :: float()
-  defp card_sort_value({rank, card_suit}, trump_suit) do
-    cond do
-      # Not a trump card: very low value
-      not Card.is_trump?({rank, card_suit}, trump_suit) ->
-        -1000.0
-
-      # Ace of trump: highest rank
-      rank == 14 and card_suit == trump_suit ->
-        14.0
-
-      # King, Queen, Jack, 10, 9, 8, 7, 6 of trump: standard ranks
-      rank in [13, 12, 11, 10, 9, 8, 7, 6] and card_suit == trump_suit ->
-        rank * 1.0
-
-      # Right 5 (5 of trump suit): ranks between 6 and 4
-      rank == 5 and card_suit == trump_suit ->
-        5.0
-
-      # Wrong 5 (5 of same-color suit): ranks just below Right 5
-      rank == 5 and card_suit == Card.same_color_suit(trump_suit) ->
-        4.5
-
-      # 4 of trump: ranks below Wrong 5
-      rank == 4 and card_suit == trump_suit ->
-        4.0
-
-      # 3 of trump
-      rank == 3 and card_suit == trump_suit ->
-        3.0
-
-      # 2 of trump: lowest rank
-      rank == 2 and card_suit == trump_suit ->
-        2.0
-
-      # Default case
-      true ->
-        0.0
-    end
   end
 
   # =============================================================================
@@ -596,15 +571,11 @@ defmodule Pidro.Game.Play do
     player = state.players[position]
     trump_suit = state.trump_suit
 
-    # Check if player has no more trump cards
-    has_trumps = Trump.has_trump?(player.hand, trump_suit)
-
-    if has_trumps or player.eliminated? do
-      # Player still has trumps or is already eliminated
-      {:ok, state}
-    else
-      # Player is out of trumps, eliminate them
+    if not player.eliminated? and
+         Pidro.Rules.for_variant(state.variant).eliminate?(player.hand, trump_suit) do
       eliminate_player(state, position)
+    else
+      {:ok, state}
     end
   end
 
@@ -618,7 +589,10 @@ defmodule Pidro.Game.Play do
         is_nil(player) or player.eliminated? ->
           acc_state
 
-        Trump.has_trump?(player.hand, acc_state.trump_suit) ->
+        not Pidro.Rules.for_variant(acc_state.variant).eliminate?(
+          player.hand,
+          acc_state.trump_suit
+        ) ->
           acc_state
 
         true ->

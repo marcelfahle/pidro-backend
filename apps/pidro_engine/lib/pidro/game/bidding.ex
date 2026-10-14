@@ -104,17 +104,20 @@ defmodule Pidro.Game.Bidding do
   """
   @spec validate_bid(game_state(), position(), integer()) :: :ok | {:error, error()}
   def validate_bid(%Types.GameState{} = state, position, amount) do
-    with :ok <- validate_bid_amount(amount),
+    with :ok <- validate_bid_amount(amount, state.config),
          :ok <- validate_not_already_acted(state, position),
          :ok <- validate_bid_higher_than_current(state, amount) do
       :ok
     end
   end
 
-  # Validates bid amount is in range 6-14
-  @spec validate_bid_amount(integer()) :: :ok | {:error, error()}
-  defp validate_bid_amount(amount) when amount >= 6 and amount <= 14, do: :ok
-  defp validate_bid_amount(amount), do: {:error, {:invalid_bid_amount, amount}}
+  # Validates bid amount against the game's configured bounds
+  @spec validate_bid_amount(integer(), map()) :: :ok | {:error, error()}
+  defp validate_bid_amount(amount, %{min_bid: min, max_bid: max})
+       when amount >= min and amount <= max,
+       do: :ok
+
+  defp validate_bid_amount(amount, _config), do: {:error, {:invalid_bid_amount, amount}}
 
   # Validates player hasn't already acted (bid or passed)
   @spec validate_not_already_acted(game_state(), position()) :: :ok | {:error, error()}
@@ -347,11 +350,11 @@ defmodule Pidro.Game.Bidding do
       # Get valid bid amounts
       min_bid =
         case state.highest_bid do
-          nil -> 6
+          nil -> state.config.min_bid
           {_pos, amount} -> amount + 1
         end
 
-      max_bid = 14
+      max_bid = state.config.max_bid
 
       # Build list of valid bids
       bid_actions =

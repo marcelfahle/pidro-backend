@@ -175,12 +175,14 @@ defmodule Pidro.Finnish.Scorer do
       }
   """
   @spec score_trick(Types.Trick.t(), suit()) :: trick_score()
-  def score_trick(%Types.Trick{plays: plays, leader: leader}, trump_suit) when plays != [] do
+  @spec score_trick(Types.Trick.t(), suit(), atom()) :: trick_score()
+  def score_trick(%Types.Trick{plays: plays, leader: leader}, trump_suit, variant \\ :finnish)
+      when plays != [] do
     # Convert to Pidro.Core.Trick struct to use existing winner logic
     core_trick = %Pidro.Core.Trick{leader: leader, plays: plays}
 
     # Find the winner using existing Trick logic
-    {:ok, winner} = Pidro.Core.Trick.winner(core_trick, trump_suit)
+    {:ok, winner} = Pidro.Core.Trick.winner(core_trick, trump_suit, variant)
 
     # Find if 2 of trump was played and by whom
     two_of_trump_info = find_two_of_trump(plays, trump_suit)
@@ -356,8 +358,8 @@ defmodule Pidro.Finnish.Scorer do
       See test suite for examples.
   """
   @spec game_over?(Types.GameState.t()) :: boolean()
-  def game_over?(%Types.GameState{cumulative_scores: scores}) do
-    Enum.any?(scores, fn {_team, score} -> score >= 62 end)
+  def game_over?(%Types.GameState{cumulative_scores: scores, config: config}) do
+    Enum.any?(scores, fn {_team, score} -> score >= config.winning_score end)
   end
 
   @doc """
@@ -387,18 +389,19 @@ defmodule Pidro.Finnish.Scorer do
     if game_over?(state) do
       ns_score = scores.north_south
       ew_score = scores.east_west
+      target = state.config.winning_score
 
       winner =
         cond do
           # Both teams at 62+ - bidding team wins
-          ns_score >= 62 and ew_score >= 62 ->
+          ns_score >= target and ew_score >= target ->
             bidding_team
 
           # Only one team at 62+
-          ns_score >= 62 ->
+          ns_score >= target ->
             :north_south
 
-          ew_score >= 62 ->
+          ew_score >= target ->
             :east_west
         end
 

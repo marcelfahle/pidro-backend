@@ -182,20 +182,15 @@ defmodule Pidro.Core.Trick do
       {:ok, :south}  # 4 beats 2
   """
   @spec winner(t(), suit()) :: {:ok, position()} | {:error, :incomplete_trick}
-  def winner(%__MODULE__{plays: []}, _trump_suit) do
+  @spec winner(t(), suit(), atom()) :: {:ok, position()} | {:error, :incomplete_trick}
+  def winner(trick, trump_suit, variant \\ :finnish)
+
+  def winner(%__MODULE__{plays: []}, _trump_suit, _variant) do
     {:error, :incomplete_trick}
   end
 
-  def winner(%__MODULE__{plays: plays}, trump_suit) do
-    {winning_position, _winning_card} =
-      plays
-      |> Enum.max_by(fn {_position, card} ->
-        # Use Card.compare to determine the highest card
-        # We need a numeric ranking for max_by
-        card_ranking(card, trump_suit)
-      end)
-
-    {:ok, winning_position}
+  def winner(%__MODULE__{plays: plays}, trump_suit, variant) do
+    {:ok, Pidro.Rules.for_variant(variant).winner(plays, trump_suit)}
   end
 
   @doc """
@@ -368,51 +363,6 @@ defmodule Pidro.Core.Trick do
   # =============================================================================
   # Private Helper Functions
   # =============================================================================
-
-  # Returns a numeric ranking for a card to use with Enum.max_by
-  # Higher numbers mean better cards
-  @spec card_ranking(card(), suit()) :: float()
-  defp card_ranking(card, trump_suit) do
-    {rank, card_suit} = card
-
-    cond do
-      # Not a trump card: very low ranking
-      not Card.is_trump?(card, trump_suit) ->
-        -1000.0
-
-      # Ace of trump: highest rank
-      rank == 14 and card_suit == trump_suit ->
-        14.0
-
-      # King, Queen, Jack, 10, 9, 8, 7, 6 of trump: standard ranks
-      rank in [13, 12, 11, 10, 9, 8, 7, 6] and card_suit == trump_suit ->
-        rank * 1.0
-
-      # Right 5 (5 of trump suit): ranks between 6 and wrong 5
-      rank == 5 and card_suit == trump_suit ->
-        5.0
-
-      # Wrong 5 (5 of same-color suit): ranks just below Right 5
-      rank == 5 and card_suit == Card.same_color_suit(trump_suit) ->
-        4.5
-
-      # 4 of trump: ranks below Wrong 5
-      rank == 4 and card_suit == trump_suit ->
-        4.0
-
-      # 3 of trump
-      rank == 3 and card_suit == trump_suit ->
-        3.0
-
-      # 2 of trump: lowest rank
-      rank == 2 and card_suit == trump_suit ->
-        2.0
-
-      # Default case
-      true ->
-        0.0
-    end
-  end
 
   # Subtracts 1 point if the 2 of trump was played in this trick
   # The player who played the 2 keeps that point, not the trick winner
