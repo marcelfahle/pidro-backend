@@ -21,6 +21,7 @@ defmodule PidroServer.Profiles do
   alias PidroServer.Achievements.Catalog
   alias PidroServer.Playstyle
   alias PidroServer.Profiles.Achievement
+  alias PidroServer.Profiles.GameXp
   alias PidroServer.Profiles.LegacyProgression
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Profiles.PostGameSummary
@@ -252,11 +253,13 @@ defmodule PidroServer.Profiles do
   Bulk progression summaries for a list of user ids, in ONE query.
 
   Returns `%{user_id => %{veteran_level: pos_integer(), tier: Rating.Tier.tier(),
-  provisional: boolean()}}`. Each value carries the canonical level (recomputed
-  from stored XP, so a stale `veteran_level` cache can never surface) and the
-  skill tier classified in memory via `Rating.Tier.classify/1`. Users without a
-  `player_profiles` row are simply absent from the map; the caller renders sane
-  defaults (level 1 / provisional) for them.
+  provisional: boolean(), pin: "classic" | nil}}`. Each value carries the
+  canonical level (recomputed from stored XP, so a stale `veteran_level` cache
+  can never surface), the skill tier classified in memory via
+  `Rating.Tier.classify/1`, and the pin shown on a seat (`"classic"` for a
+  claimed Classic account). Users without a `player_profiles` row are simply
+  absent from the map; the caller renders sane defaults (level 1 / provisional)
+  for them.
 
   This is the no-N+1 companion to the per-row list view: one indexed `IN` scan
   over `player_profiles`, tier classification done in Elixir.
@@ -266,7 +269,8 @@ defmodule PidroServer.Profiles do
             optional(Ecto.UUID.t()) => %{
               veteran_level: pos_integer(),
               tier: atom(),
-              provisional: boolean()
+              provisional: boolean(),
+              pin: String.t() | nil
             }
           }
   def summaries_for([]), do: %{}
@@ -274,20 +278,54 @@ defmodule PidroServer.Profiles do
   def summaries_for(user_ids) when is_list(user_ids) do
     from(p in PlayerProfile,
       where: p.user_id in ^user_ids,
-      select: {p.user_id, p.veteran_xp, p.rating_mu, p.rating_sigma, p.rating_games_count}
+      select:
+        {p.user_id, p.veteran_xp, p.rating_mu, p.rating_sigma, p.rating_games_count,
+         p.heritage_flags}
     )
     |> Repo.all()
-    |> Map.new(fn {user_id, veteran_xp, mu, sigma, games_count} ->
+    |> Map.new(fn {user_id, veteran_xp, mu, sigma, games_count, heritage_flags} ->
       %{tier: tier, provisional: provisional} = Rating.Tier.classify(mu, sigma, games_count)
 
       {user_id,
        %{
          veteran_level: Progression.level_for_xp(veteran_xp),
          tier: tier,
-         provisional: provisional
+         provisional: provisional,
+         pin: if(heritage_value(heritage_flags, :played_pidro_one) == true, do: "classic")
        }}
     end)
   end
+
+  @doc """
+  The XP a user earned in completed games since `since` (inclusive), from their
+  `GameXp` rows.
+  """
+  @spec xp_since(Ecto.UUID.t(), DateTime.t()) :: non_neg_integer()
+  def xp_since(user_id, %DateTime{} = since) do
+    from(x in GameXp,
+      where: x.user_id == ^user_id and x.earned_at >= ^since,
+      select: coalesce(sum(x.xp), 0)
+    )
+    |> Repo.one()
+  end
+
+  @doc """
+  XP earned this week (since Monday 00:00) and this calendar month, both UTC.
+  """
+  @spec xp_periods(Ecto.UUID.t(), DateTime.t()) :: %{
+          this_week: non_neg_integer(),
+          this_month: non_neg_integer()
+        }
+  def xp_periods(user_id, now \\ DateTime.utc_now()) do
+    today = DateTime.to_date(now)
+
+    %{
+      this_week: xp_since(user_id, start_of_day(Date.beginning_of_week(today))),
+      this_month: xp_since(user_id, start_of_day(Date.beginning_of_month(today)))
+    }
+  end
+
+  defp start_of_day(date), do: DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
 
   @doc """
   Projects the public, client-facing profile payload (PID-54).
@@ -317,6 +355,7 @@ defmodule PidroServer.Profiles do
     |> public_profile()
     |> put_classic_claimed_at(user)
     |> Map.merge(%{
+      xp: xp_periods(user_id),
       username: user.username,
       display_name: user.display_name,
       bio: user.bio,
@@ -330,6 +369,7 @@ defmodule PidroServer.Profiles do
 
   def public_profile(%{} = screen) do
     %{tier: tier, provisional: provisional} = Rating.Tier.classify(screen)
+    classic = classic_profile(screen.heritage_flags, Map.get(screen, :classic_claimed_at))
 
     %{
       user_id: screen.user_id,
@@ -361,7 +401,10 @@ defmodule PidroServer.Profiles do
 
       # Classic career. Raw source counters stay private; missing display values
       # are omitted rather than turned into zeroes.
-      classic: classic_profile(screen.heritage_flags, Map.get(screen, :classic_claimed_at)),
+      classic: classic,
+
+      # One record where Classic and Pidro 2 games add up (PID-198).
+      record: record(screen, classic || %{}),
 
       # Playstyle (display view; raw counters NOT carried)
       playstyle: %{
@@ -376,6 +419,14 @@ defmodule PidroServer.Profiles do
       achievements: screen.achievements,
       achievements_catalog: screen.achievements_catalog
     }
+  end
+
+  defp record(screen, classic) do
+    games = screen.games_played + Map.get(classic, :games_played, 0)
+    wins = screen.wins + Map.get(classic, :wins, 0)
+    losses = screen.losses + Map.get(classic, :losses, 0)
+
+    %{games: games, wins: wins, losses: losses, win_rate: win_rate(wins, games)}
   end
 
   # Veteran progress is `{into, span} | :max`. JSON cannot encode a tuple, so the
@@ -575,6 +626,10 @@ defmodule PidroServer.Profiles do
   matches a fresh `rerate_all/0`. This path does NOT advance the `rating_state`
   cursor — see the cursor-coherence contract in `rerate_incremental/0`'s `@doc`.
 
+  `opts[:game]` is the `GameStats` row just inserted. With it, each participant
+  also gets one `GameXp` row for this game (PID-198); without it (older callers
+  and tests) only the running total moves.
+
   `opts[:rule_set]` defaults to `:finnish`. Louisiana games still earn counters
   and XP, but neither live completion nor rerating changes their ratings.
 
@@ -617,6 +672,7 @@ defmodule PidroServer.Profiles do
       when is_map(player_results) do
     player_bidding = if is_map(player_bidding), do: player_bidding, else: %{}
     rule_set = Keyword.get(opts, :rule_set, :finnish)
+    game = Keyword.get(opts, :game)
     rated? = match?({:ok, _}, rated_game?(player_results, rule_set))
     players = Map.take(player_results, with_user(Map.keys(player_results)))
 
@@ -630,7 +686,7 @@ defmodule PidroServer.Profiles do
         {:ok, before} = get_or_create_profile(user_id)
 
         apply_one(user_id, win_from_result?(result))
-        xp_delta = apply_xp(user_id, result, scores)
+        xp_delta = apply_xp(user_id, result, scores, game)
         apply_playstyle(user_id, bidding_facts_for(player_bidding, user_id))
 
         {Map.put(befores, user_id, before_snapshot(before)), Map.put(xp, user_id, xp_delta)}
@@ -1396,8 +1452,9 @@ defmodule PidroServer.Profiles do
   # Increments veteran_xp by the per-game award, then recomputes the
   # veteran_level cache from the post-inc total. The XP inc is commutative; the
   # level set is a pure function of the new XP. Surfaces the per-game delta +
-  # after-total so the summary (PID-52) needs no re-read.
-  defp apply_xp(user_id, result, scores) do
+  # after-total so the summary (PID-52) needs no re-read. With the game row, the
+  # same delta is also recorded per game (PID-198).
+  defp apply_xp(user_id, result, scores, game) do
     won? = win_from_result?(result)
     team_score = team_score_for(result, scores)
     delta = Progression.xp_for_game(team_score, won?)
@@ -1412,7 +1469,21 @@ defmodule PidroServer.Profiles do
     from(p in PlayerProfile, where: p.user_id == ^user_id)
     |> Repo.update_all(set: [veteran_level: Progression.level_for_xp(new_xp)])
 
+    record_game_xp(user_id, delta, game)
+
     %{xp_earned: delta, veteran_xp_after: new_xp}
+  end
+
+  defp record_game_xp(_user_id, _delta, nil), do: :ok
+
+  defp record_game_xp(user_id, delta, %GameStats{id: game_id, completed_at: completed_at}) do
+    Repo.insert!(
+      %GameXp{user_id: user_id, game_stats_id: game_id, xp: delta, earned_at: completed_at},
+      on_conflict: :nothing,
+      conflict_target: [:user_id, :game_stats_id]
+    )
+
+    :ok
   end
 
   # Live playstyle writer (PID-51), inside the surrounding completion

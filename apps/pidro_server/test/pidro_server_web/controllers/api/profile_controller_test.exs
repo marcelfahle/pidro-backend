@@ -1,10 +1,14 @@
 defmodule PidroServerWeb.API.ProfileControllerTest do
   use PidroServerWeb.ConnCase, async: false
 
+  import Ecto.Query, only: [from: 2]
+
   alias PidroServer.Accounts.Token
   alias PidroServer.Accounts.Auth
   alias PidroServer.AccountsFixtures
+  alias PidroServer.Games.Room.Seat
   alias PidroServer.Profiles
+  alias PidroServer.Stats
   alias PidroServer.Repo
 
   defp auth(conn, user) do
@@ -89,6 +93,8 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
 
       assert data["games_played"] == 0
       assert data["win_rate"] == 0.0
+      assert data["xp"] == %{"this_week" => 0, "this_month" => 0}
+      assert data["record"] == %{"games" => 0, "wins" => 0, "losses" => 0, "win_rate" => 0.0}
       assert data["skill"] == %{"tier" => "provisional", "provisional" => true}
       assert data["heritage"] == []
       assert data["classic"] == nil
@@ -141,6 +147,66 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
 
       # Importing Classic history does not seed rating, so skill stays provisional.
       assert data["skill"]["provisional"] == true
+    end
+
+    test "the record adds Classic games to Pidro 2 games; Classic XP is lifetime only", %{
+      conn: conn
+    } do
+      classic = AccountsFixtures.user_fixture()
+      newcomer = AccountsFixtures.user_fixture()
+
+      {:ok, _profile} =
+        Profiles.import_legacy_progression(classic, %{
+          xp: 9_999,
+          legacy_played_games: 100,
+          legacy_victories: 61,
+          legacy_losses: 39
+        })
+
+      for user <- [classic, newcomer] do
+        {:ok, _profile} = Profiles.get_or_create_profile(user.id)
+
+        from(p in PidroServer.Profiles.PlayerProfile, where: p.user_id == ^user.id)
+        |> Repo.update_all(set: [games_played: 5, wins: 2, losses: 3])
+      end
+
+      data = conn |> auth(classic) |> get(~p"/api/v1/profile") |> json_response(200)
+      data = data["data"]
+
+      assert data["record"] == %{
+               "games" => 105,
+               "wins" => 63,
+               "losses" => 42,
+               "win_rate" => 63 / 105
+             }
+
+      assert data["veteran"]["xp"] == 9_999
+      assert data["xp"] == %{"this_week" => 0, "this_month" => 0}
+
+      data = build_conn() |> auth(newcomer) |> get(~p"/api/v1/profile") |> json_response(200)
+
+      assert data["data"]["record"] == %{
+               "games" => 5,
+               "wins" => 2,
+               "losses" => 3,
+               "win_rate" => 0.4
+             }
+    end
+
+    test "this week's and this month's XP come from completed games", %{conn: conn} do
+      user = AccountsFixtures.user_fixture()
+      other = AccountsFixtures.user_fixture()
+      seats = %{north: Seat.new_human(:north, user.id), east: Seat.new_human(:east, other.id)}
+      room = %{code: "XPWK", created_at: DateTime.utc_now(), seats: seats}
+
+      {:ok, _summaries} =
+        Stats.save_completed_game(room, :north_south, %{north_south: 62, east_west: 45})
+
+      data = conn |> auth(user) |> get(~p"/api/v1/profile") |> json_response(200)
+      earned = data["data"]["veteran"]["xp"]
+
+      assert earned > 0
+      assert data["data"]["xp"] == %{"this_week" => earned, "this_month" => earned}
     end
   end
 

@@ -428,13 +428,14 @@ defmodule PidroServer.Stats do
       result =
         Repo.transaction(fn ->
           case save_game_result(stats_attrs) do
-            {:ok, _stats} ->
+            {:ok, stats} ->
               # PID-52: apply_completed_game returns the per-user ephemeral
               # post-game summaries; carry them out of the transaction so the
               # caller can push them per-player after the commit.
               {:ok, summaries} =
                 Profiles.apply_completed_game(player_results, winner, scores, player_bidding,
-                  rule_set: stats_attrs.rule_set
+                  rule_set: stats_attrs.rule_set,
+                  game: stats
                 )
 
               summaries

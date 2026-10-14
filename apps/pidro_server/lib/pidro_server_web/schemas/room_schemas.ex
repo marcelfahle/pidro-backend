@@ -47,6 +47,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           description:
             "Occupant's display name; \"Bot\" for bots, null when unset or when the id resolves to nobody"
         },
+        level: %Schema{
+          type: :integer,
+          nullable: true,
+          minimum: 1,
+          description:
+            "Occupant's all-time level; null for bots, vacant seats and ids that resolve to nobody"
+        },
+        pin: %Schema{
+          type: :string,
+          enum: ["classic"],
+          nullable: true,
+          description: "\"classic\" for a claimed Classic account, else null"
+        },
         status: %Schema{
           type: :string,
           enum: [:connected, :reconnecting, :grace, :bot_substitute],
