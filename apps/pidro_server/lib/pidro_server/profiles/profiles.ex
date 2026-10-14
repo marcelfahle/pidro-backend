@@ -555,9 +555,9 @@ defmodule PidroServer.Profiles do
 
   ## Ratings (PID-47) — bot-seat policy (authoritative, v1)
 
-  Rates ONLY a game that started 4 distinct human seats (a full 2v2 of real
+  Rates ONLY Finnish games that started 4 distinct human seats (a full 2v2 of real
   users). Reads each participant's CURRENT stored `{mu, sigma}` as priors via
-  `load_priors/1`, calls the shared `rate_game/3`, and on `{:rated, updated}`
+  `load_priors/1`, calls the shared `rate_game/4`, and on `{:rated, updated}`
   overwrites each participant's `rating_mu`/`rating_sigma` and increments
   `rating_games_count` by 1; on `:unrated` leaves every rating column untouched.
 
@@ -575,7 +575,8 @@ defmodule PidroServer.Profiles do
   matches a fresh `rerate_all/0`. This path does NOT advance the `rating_state`
   cursor — see the cursor-coherence contract in `rerate_incremental/0`'s `@doc`.
 
-  The `opts` keyword is a forward seam only; pass `[]` (no options read in v1).
+  `opts[:rule_set]` defaults to `:finnish`. Louisiana games still earn counters
+  and XP, but neither live completion nor rerating changes their ratings.
 
   ## Achievements (PID-50) + the newly-earned-keys return (PID-52 seam)
 
@@ -612,10 +613,11 @@ defmodule PidroServer.Profiles do
           {:ok, %{optional(Ecto.UUID.t()) => map()}}
   def apply_completed_game(player_results, winner, scores, player_bidding \\ %{}, opts \\ [])
 
-  def apply_completed_game(player_results, winner, scores, player_bidding, _opts)
+  def apply_completed_game(player_results, winner, scores, player_bidding, opts)
       when is_map(player_results) do
     player_bidding = if is_map(player_bidding), do: player_bidding, else: %{}
-    rated? = match?({:ok, _}, rated_game?(player_results))
+    rule_set = Keyword.get(opts, :rule_set, :finnish)
+    rated? = match?({:ok, _}, rated_game?(player_results, rule_set))
     players = Map.take(player_results, with_user(Map.keys(player_results)))
 
     # 1. Lifetime counters (PID-44) + veteran XP (PID-49) + playstyle (PID-51):
@@ -636,7 +638,7 @@ defmodule PidroServer.Profiles do
 
     # 2. Ratings (PID-47): rated 4-human games only, priors from stored rows.
     #    Surfaces the per-user before/after μ/σ + counts (empty on :unrated).
-    rating_deltas = apply_live_rating(player_results, winner)
+    rating_deltas = apply_live_rating(player_results, winner, rule_set)
 
     # 3. Achievements (PID-50): per participant with a user, evaluate active defs
     #    against the post-update aggregates + this game + ordered history, and
@@ -872,7 +874,8 @@ defmodule PidroServer.Profiles do
   `%{user_id => {mu, sigma}}` for the participating users, returns
   `{:rated, updated_ratings}` where `updated_ratings` is `prior_ratings` with the
   four participants replaced by their new `{mu, sigma}`; or `:unrated` if the game
-  does not satisfy `rated_game?/1`.
+  is not Finnish or does not satisfy the four-human predicate. The optional
+  rule set accepts its internal atom or stored string, defaulting to Finnish.
 
   Pure: no DB. Tolerates atom- or string-keyed JSONB `player_results`. Missing
   priors default to `Rating.default/0`. The caller owns where priors come from
@@ -883,8 +886,15 @@ defmodule PidroServer.Profiles do
   """
   @spec rate_game(map(), atom() | String.t(), %{optional(String.t()) => rating()}) ::
           {:rated, %{optional(String.t()) => rating()}} | :unrated
-  def rate_game(player_results, winner, prior_ratings) do
-    case rated_game?(player_results) do
+  @spec rate_game(
+          map(),
+          atom() | String.t(),
+          %{optional(String.t()) => rating()},
+          atom() | String.t()
+        ) ::
+          {:rated, %{optional(String.t()) => rating()}} | :unrated
+  def rate_game(player_results, winner, prior_ratings, rule_set \\ :finnish) do
+    case rated_game?(player_results, rule_set) do
       {:ok, {{team_a, members_a}, {_team_b, members_b}}} ->
         winner_str = normalize_team(winner)
 
@@ -1024,7 +1034,12 @@ defmodule PidroServer.Profiles do
   # PID-47 owns the FINAL policy and may tighten this (e.g. exclude games with
   # any :abandoned / :substitute seat, or guest seats). It is a shared predicate:
   # both the live path and the rebuild must use the same one.
-  defp rated_game?(player_results) when is_map(player_results) do
+  defp rated_game?(player_results, rule_set \\ :finnish)
+
+  defp rated_game?(_player_results, rule_set) when rule_set not in [:finnish, "finnish"],
+    do: :error
+
+  defp rated_game?(player_results, _rule_set) when is_map(player_results) do
     valid =
       Enum.flat_map(player_results, fn {user_id, result} ->
         case Ecto.UUID.cast(user_id) do
@@ -1048,7 +1063,7 @@ defmodule PidroServer.Profiles do
     end
   end
 
-  defp rated_game?(_player_results), do: :error
+  defp rated_game?(_player_results, _rule_set), do: :error
 
   defp team_of(%{team: team}), do: normalize_team(team)
   defp team_of(%{"team" => team}), do: normalize_team(team)
@@ -1086,7 +1101,7 @@ defmodule PidroServer.Profiles do
   # Apply one game through the shared step, bumping per-user counts on a rated
   # game and leaving acc/counts untouched on an unrated one.
   defp replay_game(game, acc, counts) do
-    case rate_game(game.player_results, game.winner, acc) do
+    case rate_game(game.player_results, game.winner, acc, game.rule_set) do
       {:rated, updated} ->
         counts =
           game
@@ -1102,7 +1117,7 @@ defmodule PidroServer.Profiles do
 
   # The valid-UUID participant ids of a rated game (empty list for unrated).
   defp participant_ids(game) do
-    case rated_game?(game.player_results) do
+    case rated_game?(game.player_results, Map.get(game, :rule_set, :finnish)) do
       {:ok, {{_team_a, members_a}, {_team_b, members_b}}} -> members_a ++ members_b
       :error -> []
     end
@@ -1116,11 +1131,11 @@ defmodule PidroServer.Profiles do
   # Surfaces (PID-52) the per-user after-rating + after-count as
   # `%{user_id => %{after: {mu, sigma}, count_after: n}}` (empty map on
   # :unrated) so the summary can classify the tier move without re-reading.
-  defp apply_live_rating(player_results, winner) do
-    ids = participant_ids(%{player_results: player_results})
+  defp apply_live_rating(player_results, winner, rule_set) do
+    ids = participant_ids(%{player_results: player_results, rule_set: rule_set})
     priors = load_priors(ids)
 
-    case rate_game(player_results, winner, priors) do
+    case rate_game(player_results, winner, priors, rule_set) do
       {:rated, updated} ->
         # Restrict the persist to the four rated participants so rate_game/3's
         # carried-through non-participant priors are never re-written.

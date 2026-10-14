@@ -3160,6 +3160,7 @@ defmodule PidroServer.Games.RoomManager do
       ready_epoch: room.ready_epoch,
       snapshot_revision: room.snapshot_revision,
       status: room.status,
+      config: Config.serialize(room.config),
       positions: room.positions,
       seats: Map.new(room.seats, fn {position, seat} -> {position, Seat.serialize(seat)} end),
       ready_players: ready_players
@@ -4178,7 +4179,7 @@ defmodule PidroServer.Games.RoomManager do
     Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
     started =
-      case GameSupervisor.start_game(room.code) do
+      case GameSupervisor.start_game(room.code, room.config.rule_set) do
         {:error, {:already_started, pid}} -> {:ok, pid}
         result -> result
       end

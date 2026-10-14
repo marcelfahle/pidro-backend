@@ -38,6 +38,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       phase: state.phase,
       hand_number: Map.get(state, :hand_number),
       variant: Map.get(state, :variant),
+      config: Map.get(state, :config, %{}),
       current_turn: Map.get(state, :current_turn),
       current_dealer: Map.get(state, :current_dealer),
       players: serialize_players(Map.get(state, :players, %{}), position),

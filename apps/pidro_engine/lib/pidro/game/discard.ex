@@ -240,6 +240,8 @@ defmodule Pidro.Game.Discard do
   def second_deal(%Types.GameState{} = state) do
     with :ok <- validate_second_deal_phase(state),
          :ok <- validate_dealer_exists(state) do
+      state = replenish_louisiana_deck(state)
+
       # Determine dealing order: start left of dealer, go clockwise
       # IMPORTANT: Exclude the dealer - they don't get dealt to, they rob the pack
       first_player = Types.next_position(state.current_dealer)
@@ -312,6 +314,28 @@ defmodule Pidro.Game.Discard do
   # =============================================================================
   # Dealer Rob Pack
   # =============================================================================
+
+  # Finnish can finish with short hands; Louisiana needs six cards at every
+  # seat. Use the undealt pack first, then only enough shuffled non-trump
+  # discards to cover a shortage, without changing the dealer's selection.
+  defp replenish_louisiana_deck(%Types.GameState{variant: :louisiana} = state) do
+    needed =
+      Enum.sum(for {_position, player} <- state.players, do: max(0, 6 - length(player.hand)))
+
+    shortage = needed - length(state.deck)
+
+    if shortage > 0 do
+      {shuffled, chance} =
+        Pidro.Core.Chance.shuffle(Enum.sort(state.discarded_cards), state.chance)
+
+      {fillers, discards} = Enum.split(shuffled, shortage)
+      %{state | deck: state.deck ++ fillers, discarded_cards: discards, chance: chance}
+    else
+      state
+    end
+  end
+
+  defp replenish_louisiana_deck(state), do: state
 
   @doc """
   Dealer takes remaining cards and selects their final 6 cards.

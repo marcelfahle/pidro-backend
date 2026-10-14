@@ -22,12 +22,13 @@ defmodule PidroServer.Games.Room.Config do
 
   ## Create request grammar
 
-      body            := { name?, seats?, bot_difficulty? }
+      body            := { name?, seats?, bot_difficulty?, rule_set? }
       name            := string, trimmed, at most 60 chars; missing or blank -> none
                          at most 4096 bytes as sent, whatever the char count
       seats           := { seat_2?, seat_3?, seat_4? }      any other key -> error "seats.<key>"
       seat            := "ai" | "open"                      missing -> "open"
       bot_difficulty  := "random" | "basic" | "smart"       missing -> "basic"
+      rule_set        := "finnish" | "louisiana"             missing -> "finnish"
 
       solo            := seat_2 = seat_3 = seat_4 = "ai"
       seat_plan       := { east <- seat_2, south <- seat_3, west <- seat_4 }
@@ -51,10 +52,11 @@ defmodule PidroServer.Games.Room.Config do
   @type t :: %__MODULE__{
           name: String.t() | nil,
           bot_difficulty: bot_difficulty(),
+          rule_set: :finnish | :louisiana,
           solo: boolean()
         }
 
-  defstruct name: nil, bot_difficulty: :basic, solo: false
+  defstruct name: nil, bot_difficulty: :basic, rule_set: :finnish, solo: false
 
   @max_name_length 60
 
@@ -70,10 +72,16 @@ defmodule PidroServer.Games.Room.Config do
   @difficulty_wire_values Enum.map(@difficulties, &Atom.to_string/1)
 
   # Validation and error order for the config's own fields.
-  @fields [:name, :bot_difficulty, :solo]
-  @field_by_wire %{"name" => :name, "bot_difficulty" => :bot_difficulty, "solo" => :solo}
+  @fields [:name, :bot_difficulty, :rule_set, :solo]
+  @field_by_wire %{
+    "name" => :name,
+    "bot_difficulty" => :bot_difficulty,
+    "rule_set" => :rule_set,
+    "solo" => :solo
+  }
+  @rule_set_by_wire %{"finnish" => :finnish, "louisiana" => :louisiana}
 
-  @accepted_fields ["name", "seats", "bot_difficulty"]
+  @accepted_fields ["name", "seats", "bot_difficulty", "rule_set"]
 
   # Seat order for the plan and for seat errors.
   @seats [{"seat_2", :east}, {"seat_3", :south}, {"seat_4", :west}]
@@ -87,7 +95,7 @@ defmodule PidroServer.Games.Room.Config do
   # Constructors
   # ---------------------------------------------------------------------------
 
-  @doc "Returns the default config: no name, `:basic` difficulty, not solo."
+  @doc "Returns the default config: no name, `:basic` difficulty, Finnish rules, not solo."
   @spec new() :: {:ok, t()}
   def new, do: {:ok, %__MODULE__{}}
 
@@ -96,7 +104,7 @@ defmodule PidroServer.Games.Room.Config do
 
   Accepts a keyword list or a map with atom or string keys, or an existing
   config, which is validated and returned. The recognised keys are `name`,
-  `bot_difficulty` (an atom or its wire string) and `solo`. A missing key takes
+  `bot_difficulty` and `rule_set` (atoms or wire strings), and `solo`. A missing key takes
   its default. Any other key is rejected, as is a key given more than once.
 
   ## Examples
@@ -128,7 +136,7 @@ defmodule PidroServer.Games.Room.Config do
   The name and difficulty then go through the same validation as `new/1`.
 
   Errors are ordered: `name`, then `seats` (known seats in seat order, then
-  unknown seat keys sorted), then `bot_difficulty`, then unknown top-level keys
+  unknown seat keys sorted), then `bot_difficulty`, then `rule_set`, then unknown top-level keys
   sorted.
 
   ## Examples
@@ -146,7 +154,7 @@ defmodule PidroServer.Games.Room.Config do
 
     {config, config_errors} =
       body
-      |> Map.take(["name", "bot_difficulty"])
+      |> Map.take(["name", "bot_difficulty", "rule_set"])
       |> Map.put("solo", solo_plan?(seat_plan))
       |> build()
       |> split_result()
@@ -182,6 +190,10 @@ defmodule PidroServer.Games.Room.Config do
   @spec difficulties() :: [String.t()]
   def difficulties, do: @difficulty_wire_values
 
+  @doc "Returns the accepted rule-set wire strings."
+  @spec rule_sets() :: [String.t()]
+  def rule_sets, do: ["finnish", "louisiana"]
+
   @doc "Returns the keys a create request's `seats` object may contain, in seat order."
   @spec seat_keys() :: [String.t()]
   def seat_keys, do: @seat_keys
@@ -199,14 +211,19 @@ defmodule PidroServer.Games.Room.Config do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Converts a config to a JSON-safe map. The difficulty is emitted as its wire
-  string.
+  Converts a config to a JSON-safe map. Difficulty and rule set are emitted as wire strings.
   """
-  @spec serialize(t()) :: %{name: String.t() | nil, bot_difficulty: String.t(), solo: boolean()}
+  @spec serialize(t()) :: %{
+          name: String.t() | nil,
+          bot_difficulty: String.t(),
+          rule_set: String.t(),
+          solo: boolean()
+        }
   def serialize(%__MODULE__{} = config) do
     %{
       name: config.name,
       bot_difficulty: Atom.to_string(config.bot_difficulty),
+      rule_set: Atom.to_string(config.rule_set),
       solo: config.solo
     }
   end
@@ -293,6 +310,15 @@ defmodule PidroServer.Games.Room.Config do
 
   defp validate(:solo, solo) when is_boolean(solo), do: {:ok, solo}
   defp validate(:solo, _other), do: {:error, "must be a boolean"}
+
+  defp validate(:rule_set, value) when value in [:finnish, :louisiana], do: {:ok, value}
+
+  defp validate(:rule_set, value) do
+    case Map.fetch(@rule_set_by_wire, value) do
+      {:ok, known} -> {:ok, known}
+      :error -> {:error, "must be one of: #{Enum.join(rule_sets(), ", ")}"}
+    end
+  end
 
   defp name_length_message, do: "must be at most #{@max_name_length} characters"
 

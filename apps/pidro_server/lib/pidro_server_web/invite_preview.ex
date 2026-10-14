@@ -8,7 +8,7 @@ defmodule PidroServerWeb.InvitePreview do
   """
 
   alias PidroServer.Accounts.Auth
-  alias PidroServer.Games.Room.Positions
+  alias PidroServer.Games.Room.{Config, Positions}
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
   alias PidroServer.Invites
@@ -18,6 +18,7 @@ defmodule PidroServerWeb.InvitePreview do
           invite: Invite.t(),
           state: Invites.state(),
           host: String.t() | nil,
+          config: Config.t(),
           seats_taken: non_neg_integer()
         }
 
@@ -32,11 +33,18 @@ defmodule PidroServerWeb.InvitePreview do
   @doc "Builds the public projection for an already-loaded invite."
   @spec from_invite(Invite.t()) :: t()
   def from_invite(%Invite{} = invite) do
+    {seats_taken, config} =
+      case live_room(invite.room_code, invite.room_id) do
+        {:ok, room} -> {Positions.count(room), room.config}
+        {:error, _reason} -> {0, %Config{}}
+      end
+
     %{
       invite: invite,
       state: state(invite),
       host: host_name(invite),
-      seats_taken: seats_taken(invite)
+      config: config,
+      seats_taken: seats_taken
     }
   end
 
@@ -56,13 +64,6 @@ defmodule PidroServerWeb.InvitePreview do
     case Auth.get_user(host_user_id) do
       nil -> nil
       user -> user.username
-    end
-  end
-
-  defp seats_taken(%Invite{room_code: room_code, room_id: room_id}) do
-    case live_room(room_code, room_id) do
-      {:ok, room} -> Positions.count(room)
-      {:error, _reason} -> 0
     end
   end
 

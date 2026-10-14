@@ -16,17 +16,14 @@ defmodule Pidro.Bot.Rulebook do
   `:second_deal` the `{:select_hand, :choose_6_cards}` marker is returned
   unchanged for the caller to resolve.
 
-  ## Supported variant
-
-  Finnish Pidro only, the one rule set the engine implements. The bot takes
-  ranking, trump membership and scoring from the engine and keeps only
-  tactical preferences and bidding estimates of its own (see
-  `Pidro.Bot.Knowledge`). A second rule set needs its own policy, not a
-  branch in the server.
+  Finnish and Louisiana share bidding estimates and trump tactics. Louisiana
+  uses the Finnish policy when a legal trump exists; otherwise it throws the
+  lowest legal non-point card, then the lowest legal card. The engine owns
+  legality, trump membership and scoring; the bot owns only preferences.
   """
 
   alias Pidro.Bot.{Bidding, Play}
-  alias Pidro.Core.{SeatView, Types}
+  alias Pidro.Core.{Card, SeatView, Types}
 
   @type decision :: {Types.action(), String.t()}
 
@@ -96,6 +93,25 @@ defmodule Pidro.Bot.Rulebook do
 
   defp dispatch(view, :bidding, legal), do: Bidding.decide_bid(view, legal)
   defp dispatch(view, :declaring, legal), do: Bidding.decide_trump(view, legal)
+
+  defp dispatch(%SeatView{variant: :louisiana} = view, :playing, legal) do
+    trumps =
+      Enum.filter(legal, fn {:play_card, card} -> Card.is_trump?(card, view.trump_suit) end)
+
+    case trumps do
+      [] ->
+        action =
+          Enum.min_by(legal, fn {:play_card, {rank, suit} = card} ->
+            {Card.is_point_card?(card, view.trump_suit), rank, suit}
+          end)
+
+        {action, "I play my lowest legal non-point card, or my lowest card if all score."}
+
+      [_ | _] ->
+        Play.decide(view, trumps)
+    end
+  end
+
   defp dispatch(view, :playing, legal), do: Play.decide(view, legal)
   defp dispatch(view, _phase, legal), do: fallback(view, legal)
 

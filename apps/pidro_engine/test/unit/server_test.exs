@@ -6,6 +6,18 @@ defmodule Pidro.ServerTest do
   alias Pidro.Core.Types.GameState, as: GameStateType
 
   describe "start_link/1" do
+    test "Louisiana and explicit config survive server startup and reset" do
+      pid =
+        start_supervised!({Server, seed: 1, variant: :louisiana, config: %{winning_score: 80}})
+
+      state = Server.get_state(pid)
+      assert state.variant == :louisiana
+      assert state.config.min_bid == 7
+      assert state.config.winning_score == 80
+      assert :ok = Server.reset(pid)
+      assert Server.get_state(pid) == state
+    end
+
     test "starts server with default options" do
       assert {:ok, pid} = Server.start_link()
       assert Process.alive?(pid)

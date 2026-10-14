@@ -412,6 +412,7 @@ defmodule PidroServer.Stats do
 
       stats_attrs = %{
         room_code: room_code,
+        rule_set: get_in(room, [Access.key(:config, %{}), Access.key(:rule_set, :finnish)]),
         game_instance_id: game_instance_id,
         winner: winner,
         final_scores: scores,
@@ -432,7 +433,9 @@ defmodule PidroServer.Stats do
               # post-game summaries; carry them out of the transaction so the
               # caller can push them per-player after the commit.
               {:ok, summaries} =
-                Profiles.apply_completed_game(player_results, winner, scores, player_bidding)
+                Profiles.apply_completed_game(player_results, winner, scores, player_bidding,
+                  rule_set: stats_attrs.rule_set
+                )
 
               summaries
 

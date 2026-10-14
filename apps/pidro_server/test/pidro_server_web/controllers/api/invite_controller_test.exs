@@ -216,6 +216,19 @@ defmodule PidroServerWeb.API.InviteControllerTest do
   # ==================== Preview ====================
 
   describe "GET /invites/:code" do
+    test "Louisiana config survives public preview and redeem", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{rule_set: :louisiana})
+      invite = mint!(room, host)
+      preview = preview(conn, invite.code)["data"]["invite"]
+      assert preview["config"]["rule_set"] == "louisiana"
+      refute Map.has_key?(preview, "room_code")
+
+      guest = AccountsFixtures.guest_fixture()
+      redeemed = build_conn() |> redeem(guest, invite.code) |> data(200)
+      assert redeemed["room"]["config"]["rule_set"] == "louisiana"
+    end
+
     test "open: the R4 fields without a room code", %{conn: conn} do
       {host, room} = host_and_room(%{display_name: "Marcel"})
       invite = mint!(room, host, %{seat_hint: "partner", label: "Anna"})
@@ -381,6 +394,7 @@ defmodule PidroServerWeb.API.InviteControllerTest do
       assert room_json["config"] == %{
                "name" => "Invited",
                "bot_difficulty" => "basic",
+               "rule_set" => "finnish",
                "solo" => false
              }
 

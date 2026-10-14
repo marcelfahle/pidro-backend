@@ -13,6 +13,27 @@ defmodule Pidro.Integration.SelfPlayTest do
 
   @moduletag :integration
 
+  for variant <- [:finnish, :louisiana] do
+    test "#{variant}: mixed and four-rulebook self-play finish without illegal moves" do
+      for opponent <- [SelfPlay.random_policy(), SelfPlay.rulebook_policy()] do
+        summary =
+          SelfPlay.run(
+            games: 200,
+            seed: 196,
+            variant: unquote(variant),
+            a: {:a, SelfPlay.rulebook_policy()},
+            b: {:b, opponent}
+          )
+
+        assert summary.complete == 200, inspect(summary.failures)
+        assert summary.illegal == 0
+        assert summary.crashed == 0
+        assert summary.stalled == 0
+        assert summary.capped == 0
+      end
+    end
+  end
+
   test "over 2000 games the rulebook team beats random, makes its bids, and every game finishes" do
     summary = SelfPlay.run(games: 2000, seed: 1)
     rulebook = summary.teams.rulebook

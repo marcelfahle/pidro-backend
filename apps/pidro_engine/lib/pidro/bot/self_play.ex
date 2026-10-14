@@ -77,6 +77,7 @@ defmodule Pidro.Bot.SelfPlay do
   - `policies` - `%{north_south: policy, east_west: policy}`
   - `opts`
     - `:seed` - integer seed for the deal and any random policy (default 0)
+    - `:variant` - game rules (default `:finnish`)
     - `:max_actions` - action cap (default #{@default_max_actions})
 
   ## Returns
@@ -94,7 +95,8 @@ defmodule Pidro.Bot.SelfPlay do
     # depends on this line.
     :rand.seed(:exsss, {seed, 0x5EED, 0xB07})
 
-    {:ok, cut} = Dealing.select_dealer(GameState.new(seed: seed))
+    variant = Keyword.get(opts, :variant, :finnish)
+    {:ok, cut} = Dealing.select_dealer(GameState.new(seed: seed, variant: variant))
     {:ok, state} = Engine.advance_from_dealer_selection(cut)
 
     acc = %{actions: 0, decision_us: %{north_south: [], east_west: []}}
@@ -118,6 +120,7 @@ defmodule Pidro.Bot.SelfPlay do
   - `:games` - number of unpaired games (default 100)
   - `:pairs` - play each seed twice with teams swapped; mutually exclusive with `:games`
   - `:seed` - base seed (default 1); game `i` uses seed `seed * 100_000 + i`
+  - `:variant` - game rules (default `:finnish`)
   - `:a`, `:b` - `{label, policy}` for each team (default rulebook vs random)
   - `:max_actions` - per-game action cap
   - `:max_concurrency` - games played at once (default: online schedulers)
@@ -150,7 +153,7 @@ defmodule Pidro.Bot.SelfPlay do
     {label_b, policy_b} = Keyword.get(opts, :b, {:random, random_policy()})
     if label_a == label_b, do: raise(ArgumentError, "team labels must differ")
     concurrency = positive!(Keyword.get(opts, :max_concurrency, System.schedulers_online()))
-    game_opts = Keyword.take(opts, [:max_actions])
+    game_opts = Keyword.take(opts, [:max_actions, :variant])
 
     jobs =
       for i <- 1..count,

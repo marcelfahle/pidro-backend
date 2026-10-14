@@ -17,6 +17,7 @@ defmodule Pidro.Test.GameTrace do
 
   Options:
   - `:auto_dealer_rob` - `false` makes the dealer rob manually (default `true`)
+  - `:variant` - game rules (default `:finnish`)
   """
   @spec states(integer(), keyword()) :: [Pidro.Core.Types.GameState.t()]
   def states(seed, opts \\ []) do
@@ -25,7 +26,7 @@ defmodule Pidro.Test.GameTrace do
     # unaffected by this line.
     :rand.seed(:exsss, {seed, seed + 1, seed + 2})
 
-    base = GameState.new(seed: seed)
+    base = GameState.new(seed: seed, variant: Keyword.get(opts, :variant, :finnish))
     rob? = Keyword.get(opts, :auto_dealer_rob, true)
     initial = %{base | config: Map.put(base.config, :auto_dealer_rob, rob?)}
 

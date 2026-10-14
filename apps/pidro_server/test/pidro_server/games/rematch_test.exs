@@ -459,6 +459,54 @@ defmodule PidroServer.Games.RematchTest do
   end
 
   describe "solo with bots" do
+    @tag timeout: 120_000
+    test "Louisiana solo production bots complete a real game to 62 and rematch preserves rules" do
+      previous = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.merge(previous,
+          dealer_selection_delay_ms: 1,
+          trick_transition_delay_ms: 1,
+          hand_transition_delay_ms: 1,
+          bot_delay_ms: 1,
+          bot_delay_variance_ms: 0,
+          bot_min_delay_ms: 1
+        )
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, previous) end)
+
+      user = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(user.id, %{solo: true, rule_set: :louisiana})
+
+      for position <- [:east, :south, :west] do
+        {:ok, _} = BotManager.start_bot(room.code, position, :basic, 1)
+      end
+
+      assert RoomFixtures.ready_room(room.code).status == :playing
+      {:ok, state} = GameAdapter.get_state(room.code)
+      assert state.variant == :louisiana
+      assert state.config.min_bid == 7
+
+      drive_louisiana(room.code, System.monotonic_time(:millisecond) + 90_000)
+      {:ok, finished} = RoomManager.get_room(room.code)
+      assert finished.status == :finished
+      {:ok, state} = GameAdapter.get_state(room.code)
+      assert Enum.max(Map.values(state.cumulative_scores)) >= 62
+      assert Repo.get_by!(GameStats, room_code: room.code).rule_set == "louisiana"
+
+      [started] = ask_for_rematch(room, [user.id])
+      assert started.status == :playing
+      assert started.config.rule_set == "louisiana"
+      {:ok, rematch} = RoomManager.get_room(room.code)
+      assert rematch.config.rule_set == :louisiana
+      {:ok, next} = GameAdapter.get_state(room.code)
+      assert next.variant == :louisiana
+      assert next.config.min_bid == 7
+    end
+
     test "the bots stay seated after game over and the rematch starts on the human's word" do
       user = AccountsFixtures.user_fixture(%{display_name: "Solo"})
       {:ok, room} = RoomManager.create_room(user.id, %{name: "Solo", bot_difficulty: :smart})
@@ -509,6 +557,29 @@ defmodule PidroServer.Games.RematchTest do
       {:ok, reattached} = RoomManager.get_room(room.code)
       assert reattached.seats.east.bot_pid == replacement
       assert {:ok, ^before} = RoomManager.readiness(room.code)
+    end
+  end
+
+  defp drive_louisiana(code, deadline) do
+    assert System.monotonic_time(:millisecond) < deadline, "real Louisiana game timed out"
+    {:ok, room} = RoomManager.get_room(code)
+
+    if room.status != :finished do
+      {:ok, state} = GameAdapter.get_state(code)
+      {:ok, actions} = GameAdapter.get_legal_actions(code, :north)
+
+      if actions != [] do
+        view = Pidro.Core.SeatView.for_seat(state, :north)
+
+        {:ok, action, _} =
+          PidroServer.Games.Bots.Strategies.RulebookStrategy.pick_action(actions, view)
+
+        action = PidroServer.Games.Bots.BotBrain.resolve_action(action, state, :north)
+        assert {:ok, _} = GameAdapter.apply_action(code, :north, action)
+      end
+
+      Process.sleep(2)
+      drive_louisiana(code, deadline)
     end
   end
 

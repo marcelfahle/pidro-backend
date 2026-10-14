@@ -11,6 +11,7 @@ defmodule PidroServer.Stats.GameStats do
 
   schema "game_stats" do
     field :room_code, :string
+    field :rule_set, :string, default: "finnish"
     field :game_instance_id, :string
     field :winner, :string
     field :final_scores, :map
@@ -32,6 +33,7 @@ defmodule PidroServer.Stats.GameStats do
     game_stats
     |> cast(attrs, [
       :room_code,
+      :rule_set,
       :game_instance_id,
       :winner,
       :final_scores,
@@ -44,6 +46,8 @@ defmodule PidroServer.Stats.GameStats do
       :player_bidding
     ])
     |> validate_required([:room_code, :completed_at])
+    |> validate_required([:rule_set])
+    |> validate_inclusion(:rule_set, ["finnish", "louisiana"])
     |> validate_inclusion(:winner, ["north_south", "east_west"],
       message: "must be north_south or east_west"
     )
@@ -55,6 +59,7 @@ defmodule PidroServer.Stats.GameStats do
 
   defp normalize_enum_fields(attrs) when is_map(attrs) do
     attrs
+    |> normalize_enum_field(:rule_set)
     |> normalize_enum_field(:winner)
     |> normalize_enum_field(:bid_team)
   end
