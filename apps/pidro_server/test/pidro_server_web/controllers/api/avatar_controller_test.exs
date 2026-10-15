@@ -45,22 +45,53 @@ defmodule PidroServerWeb.API.AvatarControllerTest do
     invalid = Path.join(dir, "invalid.png")
     File.write!(invalid, "not an image")
 
-    assert build_conn()
-           |> auth(user)
-           |> post(~p"/api/v1/profile/avatar", %{"avatar" => upload(invalid)})
-           |> response(422)
+    invalid_response =
+      build_conn()
+      |> auth(user)
+      |> post(~p"/api/v1/profile/avatar", %{"avatar" => upload(invalid)})
+      |> json_response(422)
+
+    assert invalid_response ==
+             avatar_error(
+               "avatar_unsupported_type",
+               "unsupported avatar type; upload JPEG or PNG"
+             )
 
     assert Repo.get!(UserAvatar, user.id).version == old.version
 
     oversized = Path.join(dir, "oversized.png")
     File.write!(oversized, <<0x89, "PNG\r\n", 0x1A, 0x0A, 0::size(5_242_881 * 8)>>)
 
-    assert build_conn()
-           |> auth(user)
-           |> post(~p"/api/v1/profile/avatar", %{"avatar" => upload(oversized)})
-           |> response(422)
+    oversized_response =
+      build_conn()
+      |> auth(user)
+      |> post(~p"/api/v1/profile/avatar", %{"avatar" => upload(oversized)})
+      |> json_response(422)
+
+    assert oversized_response == avatar_error("avatar_too_large", "avatar must be at most 5 MiB")
 
     assert Repo.get!(UserAvatar, user.id).version == old.version
+  end
+
+  test "missing avatar has a field-required contract and keeps its English error", %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+    conn = conn |> auth(user) |> post(~p"/api/v1/profile/avatar", %{})
+
+    assert json_response(conn, 422) ==
+             avatar_error("field_required", "multipart field avatar is required")
+
+    assert get_resp_header(conn, "cache-control") == ["no-store"]
+  end
+
+  test "corrupt supported images use avatar_invalid", %{conn: conn, dir: dir} do
+    user = AccountsFixtures.user_fixture()
+    corrupt = Path.join(dir, "corrupt.png")
+    File.write!(corrupt, <<0x89, "PNG\r\n", 0x1A, 0x0A, "corrupt">>)
+
+    assert conn
+           |> auth(user)
+           |> post(~p"/api/v1/profile/avatar", %{"avatar" => upload(corrupt)})
+           |> json_response(422) == avatar_error("avatar_invalid", "invalid avatar image")
   end
 
   test "remove deletes the row", %{conn: conn, dir: dir} do
@@ -181,6 +212,13 @@ defmodule PidroServerWeb.API.AvatarControllerTest do
 
     try do
       assert {:error, :busy} = Avatars.put(user.id, upload(image))
+
+      assert build_conn()
+             |> auth(user)
+             |> post(~p"/api/v1/profile/avatar", %{"avatar" => upload(image)})
+             |> json_response(503) ==
+               avatar_error("avatar_busy", "photo processing is busy; please try again")
+
       assert Repo.get!(UserAvatar, user.id).image == previous.image
     after
       :global.del_lock(lock, [node()])
@@ -192,6 +230,14 @@ defmodule PidroServerWeb.API.AvatarControllerTest do
 
   defp upload(path),
     do: %Plug.Upload{path: path, filename: Path.basename(path), content_type: "image/png"}
+
+  defp avatar_error(code, message),
+    do: %{
+      "errors" => %{"avatar" => [message]},
+      "error_code" => code,
+      "error_params" => %{},
+      "field_errors" => [%{"field" => "avatar", "error_code" => code, "error_params" => %{}}]
+    }
 
   defp png!(dir, name, color \\ "red") do
     path = Path.join(dir, name)

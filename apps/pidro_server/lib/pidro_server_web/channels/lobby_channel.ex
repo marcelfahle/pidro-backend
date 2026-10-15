@@ -45,6 +45,7 @@ defmodule PidroServerWeb.LobbyChannel do
   alias PidroServer.Games.PresenceAggregator
   alias PidroServer.Games.Room.{Config, Seat}
   alias PidroServerWeb.API.RoomJSON
+  alias PidroServerWeb.ErrorContract
   alias PidroServerWeb.Presence
   alias PidroServer.Accounts.Auth
   alias PidroServer.Accounts.User
@@ -101,26 +102,48 @@ defmodule PidroServerWeb.LobbyChannel do
        {:ok, %{room: serialize_room_with_users(room), assigned_position: assigned_position}},
        socket}
     else
-      {:error, {:seat_requires_games, min_games, games_played}} ->
+      {:error, {:seat_requires_games, min_games, games_played} = reason} ->
         {:reply,
          {:error,
-          %{
-            status: "error",
-            reason: "seat_requires_games",
-            min_games: min_games,
-            games_played: games_played
-          }}, socket}
+          ErrorContract.add(
+            %{
+              status: "error",
+              reason: "seat_requires_games",
+              min_games: min_games,
+              games_played: games_played
+            },
+            reason,
+            :action_failed
+          )}, socket}
 
       {:error, reason} ->
-        {:reply, {:error, %{status: "error", reason: Atom.to_string(reason)}}, socket}
+        legacy_reason = if is_atom(reason), do: Atom.to_string(reason), else: inspect(reason)
+
+        {:reply,
+         {:error,
+          ErrorContract.add(%{status: "error", reason: legacy_reason}, reason, :action_failed)},
+         socket}
 
       nil ->
-        {:reply, {:error, %{status: "error", reason: "unauthorized"}}, socket}
+        {:reply,
+         {:error,
+          ErrorContract.add(
+            %{status: "error", reason: "unauthorized"},
+            :unauthorized,
+            :action_failed
+          )}, socket}
     end
   end
 
   def handle_in("join_room", _params, socket),
-    do: {:reply, {:error, %{status: "error", reason: "invalid_room_params"}}, socket}
+    do:
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{status: "error", reason: "invalid_room_params"},
+          :invalid_room_params,
+          :action_failed
+        )}, socket}
 
   @doc """
   Handles internal messages.

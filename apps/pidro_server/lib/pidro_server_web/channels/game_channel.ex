@@ -69,6 +69,7 @@ defmodule PidroServerWeb.GameChannel do
   alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
   alias PidroServer.Games.Room.Seat
   alias PidroServerWeb.API.RoomJSON
+  alias PidroServerWeb.ErrorContract
   alias PidroServerWeb.Presence
   alias PidroServerWeb.Serializers.GameStateSerializer
 
@@ -119,10 +120,16 @@ defmodule PidroServerWeb.GameChannel do
           proceed_with_join(room_code, user_id, socket, :new, :spectator)
 
         :unauthorized ->
-          {:error, %{reason: "not authorized to join this room"}}
+          {:error,
+           ErrorContract.add(
+             %{reason: "not authorized to join this room"},
+             :forbidden,
+             :action_failed
+           )}
       end
     else
-      _ -> {:error, %{reason: "room not found"}}
+      _ ->
+        {:error, ErrorContract.add(%{reason: "room not found"}, :room_not_found, :action_failed)}
     end
   end
 
@@ -135,7 +142,12 @@ defmodule PidroServerWeb.GameChannel do
             attempt_player_reconnect(room_code, user_id, socket)
 
           is_permanently_botted?(room, user_id) ->
-            {:error, %{reason: "seat permanently filled by bot"}}
+            {:error,
+             ErrorContract.add(
+               %{reason: "seat permanently filled by bot"},
+               :seat_permanently_filled,
+               :action_failed
+             )}
 
           true ->
             proceed_with_join(room_code, user_id, socket, :new, :player)
@@ -144,7 +156,12 @@ defmodule PidroServerWeb.GameChannel do
       cleanup_failed_player_join(room_code, user_id, result)
     else
       {:error, :room_not_found} ->
-        cleanup_failed_player_join(room_code, user_id, {:error, %{reason: "room not found"}})
+        cleanup_failed_player_join(
+          room_code,
+          user_id,
+          {:error,
+           ErrorContract.add(%{reason: "room not found"}, :room_not_found, :action_failed)}
+        )
     end
   end
 
@@ -166,14 +183,30 @@ defmodule PidroServerWeb.GameChannel do
         proceed_with_join(room_code, user_id, socket, :reconnect, :player)
 
       {:error, :seat_permanently_filled} ->
-        {:error, %{reason: "seat permanently filled by bot"}}
+        {:error,
+         ErrorContract.add(
+           %{reason: "seat permanently filled by bot"},
+           :seat_permanently_filled,
+           :action_failed
+         )}
 
       {:error, :grace_period_expired} ->
-        {:error, %{reason: "reconnection grace period expired"}}
+        {:error,
+         ErrorContract.add(
+           %{reason: "reconnection grace period expired"},
+           :grace_period_expired,
+           :action_failed
+         )}
 
       {:error, reason} ->
         Logger.warning("Reconnection failed for #{user_id}: #{inspect(reason)}")
-        {:error, %{reason: "reconnection failed: #{format_error(reason)}"}}
+
+        {:error,
+         ErrorContract.add(
+           %{reason: "reconnection failed: #{format_error(reason)}"},
+           reason,
+           :action_failed
+         )}
     end
   end
 
@@ -243,13 +276,15 @@ defmodule PidroServerWeb.GameChannel do
       {:ok, reply_data, socket}
     else
       {:error, :room_not_found} ->
-        {:error, %{reason: "Room not found"}}
+        {:error, ErrorContract.add(%{reason: "Room not found"}, :room_not_found, :action_failed)}
 
       false ->
-        {:error, %{reason: "Not authorized for this room"}}
+        {:error,
+         ErrorContract.add(%{reason: "Not authorized for this room"}, :forbidden, :action_failed)}
 
       {:error, :not_spectating} ->
-        {:error, %{reason: "Not authorized for this room"}}
+        {:error,
+         ErrorContract.add(%{reason: "Not authorized for this room"}, :forbidden, :action_failed)}
     end
   end
 
@@ -279,7 +314,13 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_in("bid", %{"amount" => "pass"}, socket) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot make bids"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       apply_game_action(socket, :pass)
     end
@@ -287,7 +328,13 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_in("pass", _params, socket) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot make bids"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       apply_game_action(socket, :pass)
     end
@@ -295,7 +342,13 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_in("bid", %{"amount" => amount}, socket) when is_integer(amount) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot make bids"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       apply_game_action(socket, {:bid, amount})
     end
@@ -303,32 +356,61 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_in("bid", %{"amount" => amount}, socket) when is_binary(amount) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot make bids"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot make bids"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case Integer.parse(amount) do
-        {num, _} -> apply_game_action(socket, {:bid, num})
-        :error -> {:reply, {:error, %{reason: "Invalid bid amount"}}, socket}
+        {num, _} ->
+          apply_game_action(socket, {:bid, num})
+
+        :error ->
+          {:reply,
+           {:error,
+            ErrorContract.add(
+              %{reason: "Invalid bid amount"},
+              :invalid_bid_amount,
+              :action_failed
+            )}, socket}
       end
     end
   end
 
   def handle_in("declare_trump", %{"suit" => suit}, socket) when is_binary(suit) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot declare trump"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot declare trump"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case parse_suit(suit) do
         {:ok, suit_atom} ->
           apply_game_action(socket, {:declare_trump, suit_atom})
 
         :error ->
-          {:reply, {:error, %{reason: "invalid suit"}}, socket}
+          {:reply,
+           {:error, ErrorContract.add(%{reason: "invalid suit"}, :invalid_suit, :action_failed)},
+           socket}
       end
     end
   end
 
   def handle_in("play_card", %{"card" => %{"rank" => rank, "suit" => suit}}, socket) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot play cards"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot play cards"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       with {:ok, suit_atom} <- parse_suit(suit),
            true <- is_integer(rank) do
@@ -336,31 +418,50 @@ defmodule PidroServerWeb.GameChannel do
         apply_game_action(socket, {:play_card, card})
       else
         false ->
-          {:reply, {:error, %{reason: "invalid card rank"}}, socket}
+          {:reply,
+           {:error,
+            ErrorContract.add(%{reason: "invalid card rank"}, :invalid_card, :action_failed)},
+           socket}
 
         :error ->
-          {:reply, {:error, %{reason: "invalid card suit"}}, socket}
+          {:reply,
+           {:error,
+            ErrorContract.add(%{reason: "invalid card suit"}, :invalid_card, :action_failed)},
+           socket}
       end
     end
   end
 
   def handle_in("select_hand", %{"cards" => cards}, socket) when is_list(cards) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot select hand"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot select hand"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case parse_cards(cards) do
         {:ok, card_tuples} ->
           apply_game_action(socket, {:select_hand, card_tuples})
 
         {:error, reason} ->
-          {:reply, {:error, %{reason: reason}}, socket}
+          {:reply, {:error, ErrorContract.add(%{reason: reason}, :invalid_card, :action_failed)},
+           socket}
       end
     end
   end
 
   def handle_in("select_dealer", _params, socket) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot select dealer"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot select dealer"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       apply_game_action(socket, :select_dealer)
     end
@@ -369,7 +470,13 @@ defmodule PidroServerWeb.GameChannel do
   def handle_in("ready", %{"room_id" => room_id, "ready_epoch" => epoch}, socket)
       when is_integer(epoch) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot signal ready"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot signal ready"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case RoomManager.confirm_ready(
              socket.assigns.room_code,
@@ -382,18 +489,29 @@ defmodule PidroServerWeb.GameChannel do
           {:reply, {:ok, %{readiness: RoomJSON.readiness(readiness)}}, socket}
 
         {:error, :room_not_found, nil} ->
-          {:reply, {:error, %{reason: "room_not_found"}}, socket}
+          {:reply,
+           {:error,
+            ErrorContract.add(%{reason: "room_not_found"}, :room_not_found, :action_failed)},
+           socket}
 
         {:error, reason, readiness} ->
           {:reply,
-           {:error, %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)}},
-           socket}
+           {:error,
+            ErrorContract.add(
+              %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)},
+              reason,
+              :action_failed
+            )}, socket}
       end
     end
   end
 
   def handle_in("ready", _params, socket),
-    do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
+    do:
+      {:reply,
+       {:error,
+        ErrorContract.add(%{reason: "invalid_readiness"}, :invalid_readiness, :action_failed)},
+       socket}
 
   # A rematch is the ready check on a finished room, so the payload and replies
   # match "ready". The client says only "again"; the server derives the next
@@ -401,7 +519,13 @@ defmodule PidroServerWeb.GameChannel do
   def handle_in("rematch", %{"room_id" => room_id, "ready_epoch" => epoch}, socket)
       when is_integer(epoch) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot ask for a rematch"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot ask for a rematch"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case RoomManager.confirm_rematch(
              socket.assigns.room_code,
@@ -414,23 +538,40 @@ defmodule PidroServerWeb.GameChannel do
           {:reply, {:ok, %{readiness: RoomJSON.readiness(readiness)}}, socket}
 
         {:error, :room_not_found, nil} ->
-          {:reply, {:error, %{reason: "room_not_found"}}, socket}
+          {:reply,
+           {:error,
+            ErrorContract.add(%{reason: "room_not_found"}, :room_not_found, :action_failed)},
+           socket}
 
         {:error, reason, readiness} ->
           {:reply,
-           {:error, %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)}},
-           socket}
+           {:error,
+            ErrorContract.add(
+              %{reason: Atom.to_string(reason), readiness: RoomJSON.readiness(readiness)},
+              reason,
+              :action_failed
+            )}, socket}
       end
     end
   end
 
   def handle_in("rematch", _params, socket),
-    do: {:reply, {:error, %{reason: "invalid_readiness"}}, socket}
+    do:
+      {:reply,
+       {:error,
+        ErrorContract.add(%{reason: "invalid_readiness"}, :invalid_readiness, :action_failed)},
+       socket}
 
   def handle_in(event, %{"position" => position} = params, socket)
       when event in ["open_seat", "keep_bot"] do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot manage seats"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case parse_position(position) do
         {:ok, pos_atom} ->
@@ -453,12 +594,18 @@ defmodule PidroServerWeb.GameChannel do
           case result do
             {:ok, _room} ->
               case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
-                {:ok, snapshot} -> {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
-                {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+                {:ok, snapshot} ->
+                  {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
+
+                {:error, reason} ->
+                  {:reply,
+                   {:error,
+                    ErrorContract.add(%{reason: format_error(reason)}, reason, :action_failed)},
+                   socket}
               end
 
             {:error, reason} ->
-              reply = %{reason: format_error(reason)}
+              reply = ErrorContract.add(%{reason: format_error(reason)}, reason, :action_failed)
 
               reply =
                 case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
@@ -470,32 +617,55 @@ defmodule PidroServerWeb.GameChannel do
           end
 
         :error ->
-          {:reply, {:error, %{reason: "invalid position"}}, socket}
+          {:reply,
+           {:error,
+            ErrorContract.add(%{reason: "invalid position"}, :invalid_position, :action_failed)},
+           socket}
       end
     end
   end
 
   def handle_in("close_seat", %{"position" => position}, socket) do
     if socket.assigns[:role] == :spectator do
-      {:reply, {:error, %{reason: "spectators cannot manage seats"}}, socket}
+      {:reply,
+       {:error,
+        ErrorContract.add(
+          %{reason: "spectators cannot manage seats"},
+          :spectator_action_forbidden,
+          :action_failed
+        )}, socket}
     else
       case parse_position(position) do
         {:ok, pos_atom} ->
           case RoomManager.close_seat(socket.assigns.room_code, pos_atom, socket.assigns.user_id) do
-            {:ok, _room} -> {:reply, :ok, socket}
-            {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+            {:ok, _room} ->
+              {:reply, :ok, socket}
+
+            {:error, reason} ->
+              {:reply,
+               {:error,
+                ErrorContract.add(%{reason: format_error(reason)}, reason, :action_failed)},
+               socket}
           end
 
         :error ->
-          {:reply, {:error, %{reason: "invalid position"}}, socket}
+          {:reply,
+           {:error,
+            ErrorContract.add(%{reason: "invalid position"}, :invalid_position, :action_failed)},
+           socket}
       end
     end
   end
 
   def handle_in("get_seat_lifecycle", _params, socket) do
     case RoomManager.get_seat_lifecycle(socket.assigns.room_code) do
-      {:ok, snapshot} -> {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
-      {:error, reason} -> {:reply, {:error, %{reason: format_error(reason)}}, socket}
+      {:ok, snapshot} ->
+        {:reply, {:ok, %{seat_lifecycle: snapshot}}, socket}
+
+      {:error, reason} ->
+        {:reply,
+         {:error, ErrorContract.add(%{reason: format_error(reason)}, reason, :action_failed)},
+         socket}
     end
   end
 
@@ -858,7 +1028,10 @@ defmodule PidroServerWeb.GameChannel do
 
       {:error, reason} ->
         Logger.debug("Action failed: #{inspect(reason)}")
-        {:reply, {:error, %{reason: format_error(reason)}}, socket}
+
+        {:reply,
+         {:error, ErrorContract.add(%{reason: format_error(reason)}, reason, :action_failed)},
+         socket}
     end
   end
 

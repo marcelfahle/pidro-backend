@@ -35,6 +35,17 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
 
   alias OpenApiSpex.Schema
 
+  @localization_properties %{
+    error_code: %Schema{
+      type: :string,
+      description: "Optional stable snake_case code from docs/contracts/localization-errors.json"
+    },
+    error_params: %Schema{
+      type: :object,
+      description: "Allowlisted interpolation parameters; empty when none apply"
+    }
+  }
+
   @doc """
   Schema for an individual error object.
 
@@ -106,14 +117,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       type: :object,
       title: "ErrorResponse",
       description: "Generic error response containing array of errors",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array of error objects",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array of error objects",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -165,14 +177,24 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       type: :object,
       title: "ValidationError",
       description: "Validation error response (422 Unprocessable Entity)",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array of validation error objects, one per invalid field",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          field_errors: %Schema{
+            type: :array,
+            description: "Parallel field codes; legacy errors remain unchanged",
+            items: %Schema{
+              type: :object,
+              required: [:field, :error_code, :error_params],
+              properties: Map.put(@localization_properties, :field, %Schema{type: :string})
+            }
+          },
+          errors: %Schema{
+            type: :array,
+            description: "Array of validation error objects, one per invalid field",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -239,14 +261,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       type: :object,
       title: "UnauthorizedError",
       description: "Unauthorized error response (401 Unauthorized)",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array of authorization error objects",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array of authorization error objects",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -319,14 +342,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       type: :object,
       title: "NotFoundError",
       description: "Not Found error response (404 Not Found)",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array of not found error objects",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array of not found error objects",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -369,14 +393,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       title: "TooManyRequestsError",
       description:
         "Rate limit exceeded (429 Too Many Requests); the Retry-After header holds the seconds to wait",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array containing the single RATE_LIMITED error object",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array containing the single RATE_LIMITED error object",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -419,14 +444,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       title: "RoomCodeExhaustedError",
       description:
         "No free room code could be allocated (503 Service Unavailable); retry after a short delay",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array containing the single ROOM_CODE_EXHAUSTED error object",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array containing the single ROOM_CODE_EXHAUSTED error object",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -470,14 +496,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       title: "ConflictError",
       description:
         "The target refuses the action in its current state (409 Conflict); SEAT_TAKEN carries next_open",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array containing the single conflict error object",
-          items: conflict_error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array containing the single conflict error object",
+            items: conflict_error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -522,14 +549,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       title: "GoneError",
       description:
         "The invite or its table no longer accepts players (410 Gone); INVITE_MOVED carries next_code",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array containing the single gone error object",
-          items: gone_error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array containing the single gone error object",
+            items: gone_error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [
@@ -600,14 +628,15 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
       type: :object,
       title: "LockedError",
       description: "The host has locked the table (423 Locked)",
-      properties: %{
-        errors: %Schema{
-          type: :array,
-          description: "Array containing the single TABLE_LOCKED error object",
-          items: error_detail(),
-          minItems: 1
-        }
-      },
+      properties:
+        Map.merge(@localization_properties, %{
+          errors: %Schema{
+            type: :array,
+            description: "Array containing the single TABLE_LOCKED error object",
+            items: error_detail(),
+            minItems: 1
+          }
+        }),
       required: [:errors],
       example: %{
         "errors" => [

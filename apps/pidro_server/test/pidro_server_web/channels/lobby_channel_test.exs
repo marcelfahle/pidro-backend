@@ -120,15 +120,34 @@ defmodule PidroServerWeb.LobbyChannelTest do
       status: "error",
       reason: "seat_requires_games",
       min_games: 1000,
-      games_played: 999
+      games_played: 999,
+      error_code: "seat_requires_games",
+      error_params: %{min_games: 1000, games_played: 999}
     }
 
     {:ok, profile} = PidroServer.Profiles.get_or_create_profile(user.id)
     profile |> Ecto.Changeset.change(games_played: 1) |> PidroServer.Repo.update!()
     ref = push(socket, "join_room", %{code: room.code, position: "east"})
-    assert_reply ref, :ok, %{assigned_position: :east, room: joined}
+    assert_reply ref, :ok, success
+    assert %{assigned_position: :east, room: joined} = success
+    assert Enum.sort(Map.keys(success)) == [:assigned_position, :room]
     assert Enum.find(joined.seats, &(&1.position == :east)).min_games == 0
     RoomManager.close_room(room.code)
+  end
+
+  test "join_room errors preserve status and legacy reason", %{socket: socket} do
+    {:ok, reply, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    refute Map.has_key?(reply, :error_code)
+    refute Map.has_key?(reply, :error_params)
+
+    for {params, reason} <- [
+          {%{}, "invalid_room_params"},
+          {%{"code" => "MISSING"}, "room_not_found"}
+        ] do
+      ref = push(socket, "join_room", params)
+      assert_reply ref, :error, response
+      assert response == %{status: "error", reason: reason, error_code: reason, error_params: %{}}
+    end
   end
 
   describe "join/3" do

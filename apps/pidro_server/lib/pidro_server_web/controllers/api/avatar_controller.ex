@@ -1,6 +1,7 @@
 defmodule PidroServerWeb.API.AvatarController do
   use PidroServerWeb, :controller
   alias PidroServer.Accounts.Avatars
+  alias PidroServerWeb.ErrorContract
 
   def create(conn, %{"avatar" => upload}) do
     case Avatars.put(conn.assigns.current_user.id, upload) do
@@ -43,9 +44,25 @@ defmodule PidroServerWeb.API.AvatarController do
         _ -> "invalid avatar image"
       end
 
+    code =
+      case reason do
+        :too_large -> :avatar_too_large
+        :dimensions -> :avatar_dimensions
+        :unsupported_type -> :avatar_unsupported_type
+        :missing_file -> :field_required
+        :result_too_large -> :avatar_result_too_large
+        :busy -> :avatar_busy
+        _ -> :avatar_invalid
+      end
+
     conn
     |> put_resp_header("cache-control", "no-store")
     |> put_status(if(reason == :busy, do: 503, else: 422))
-    |> json(%{errors: %{avatar: [message]}})
+    |> json(
+      ErrorContract.add(
+        %{errors: %{avatar: [message]}, field_errors: [ErrorContract.field(:avatar, code)]},
+        code
+      )
+    )
   end
 end

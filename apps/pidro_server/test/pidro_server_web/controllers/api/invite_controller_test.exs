@@ -158,7 +158,13 @@ defmodule PidroServerWeb.API.InviteControllerTest do
     assert authed(conn, player)
            |> post(~p"/api/v1/invites/#{invite.code}/redeem", %{})
            |> json_response(403) ==
-             %{"error" => "SEAT_REQUIRES_GAMES", "min_games" => 100, "games_played" => 0}
+             %{
+               "error" => "SEAT_REQUIRES_GAMES",
+               "min_games" => 100,
+               "games_played" => 0,
+               "error_code" => "seat_requires_games",
+               "error_params" => %{"min_games" => 100, "games_played" => 0}
+             }
 
     refute Repo.exists?(from r in Redemption, where: r.invite_id == ^invite.id)
 
@@ -322,7 +328,14 @@ defmodule PidroServerWeb.API.InviteControllerTest do
     test "an invalid seat_hint is 422 on seat_hint", %{conn: conn} do
       {host, room} = host_and_room()
 
-      assert %{"errors" => [%{"code" => "seat_hint"}]} =
+      assert %{
+               "errors" => [%{"code" => "seat_hint"}],
+               "error_code" => "validation_failed",
+               "error_params" => %{},
+               "field_errors" => [
+                 %{"field" => "seat_hint", "error_code" => "field_invalid", "error_params" => %{}}
+               ]
+             } =
                conn |> mint(host, room.code, %{"seat_hint" => "up"}) |> json_response(422)
     end
 

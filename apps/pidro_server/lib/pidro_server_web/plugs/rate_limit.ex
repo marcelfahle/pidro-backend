@@ -64,6 +64,7 @@ defmodule PidroServerWeb.Plugs.RateLimit do
   require Logger
 
   alias PidroServer.Invites.Codes
+  alias PidroServerWeb.ErrorContract
 
   @default_limiter PidroServer.RateLimit
   @install_id_max_length 64
@@ -234,15 +235,20 @@ defmodule PidroServerWeb.Plugs.RateLimit do
     conn
     |> put_resp_header("retry-after", Integer.to_string(retry_after))
     |> put_status(:too_many_requests)
-    |> json(%{
-      errors: [
+    |> json(
+      ErrorContract.add(
         %{
-          code: "RATE_LIMITED",
-          title: "Too Many Requests",
-          detail: "Rate limit exceeded, retry after #{retry_after} seconds"
-        }
-      ]
-    })
+          errors: [
+            %{
+              code: "RATE_LIMITED",
+              title: "Too Many Requests",
+              detail: "Rate limit exceeded, retry after #{retry_after} seconds"
+            }
+          ]
+        },
+        {:rate_limited, retry_after}
+      )
+    )
     |> halt()
   end
 end

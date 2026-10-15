@@ -74,6 +74,12 @@ defmodule PidroServerWeb.Plugs.RateLimitTest do
       assert detail =~ "retry"
       assert [retry_after] = get_resp_header(denied, "retry-after")
       assert String.to_integer(retry_after) in 1..div(@window_ms, 1000)
+      assert json_response(denied, 429)["error_code"] == "rate_limited"
+
+      assert json_response(denied, 429)["error_params"] == %{
+               "retry_after" => String.to_integer(retry_after)
+             }
+
       assert denied.halted
     end
 

@@ -248,6 +248,16 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                json_response(conn, 422)
 
       assert detail =~ "at most 20"
+      assert json_response(conn, 422)["error_code"] == "validation_failed"
+      assert json_response(conn, 422)["error_params"] == %{}
+
+      assert json_response(conn, 422)["field_errors"] == [
+               %{
+                 "field" => "display_name",
+                 "error_code" => "field_too_long",
+                 "error_params" => %{"count" => 20}
+               }
+             ]
     end
 
     test "a reserved public name has the machine-readable reservation code", %{conn: conn} do
@@ -274,6 +284,12 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                "detail" =>
                  "This name belongs to a Classic player. Claim your Classic profile or choose another name."
              } in response["errors"]
+
+      assert %{
+               "field" => "display_name",
+               "error_code" => "classic_name_reserved",
+               "error_params" => %{}
+             } in response["field_errors"]
     end
 
     test "reservation metadata only overrides its own error code", %{conn: conn} do
@@ -373,7 +389,16 @@ defmodule PidroServerWeb.API.AuthControllerTest do
           "password" => "anything"
         })
 
-      assert %{"errors" => [%{"code" => "INVALID_CREDENTIALS"}]} = json_response(conn, 401)
+      assert %{
+               "errors" => [
+                 %{
+                   "code" => "INVALID_CREDENTIALS",
+                   "detail" => "Username or password is incorrect"
+                 }
+               ],
+               "error_code" => "invalid_credentials",
+               "error_params" => %{}
+             } = json_response(conn, 401)
     end
   end
 
@@ -1239,6 +1264,9 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert %{"errors" => [%{"code" => "INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN"}]} =
                json_response(conn, 422)
+
+      assert json_response(conn, 422)["error_code"] == "invalid_or_expired_password_reset_token"
+      assert json_response(conn, 422)["error_params"] == %{}
     end
   end
 
@@ -1353,7 +1381,11 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     test "refuses or validates declarations before creating a guest", %{conn: conn} do
       count = Repo.aggregate(User, :count)
 
-      assert %{"errors" => [%{"code" => "AGE_NOT_ELIGIBLE"}]} =
+      assert %{
+               "errors" => [%{"code" => "AGE_NOT_ELIGIBLE"}],
+               "error_code" => "age_not_eligible",
+               "error_params" => %{}
+             } =
                conn
                |> post(~p"/api/v1/auth/guest", %{
                  "creation_token" => Ecto.UUID.generate(),

@@ -265,10 +265,19 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
                |> json_response(200)
 
       for invalid <- [String.duplicate("a", 281), "has\0nul", 12, true, %{}, []] do
-        assert build_conn()
-               |> auth(user)
-               |> patch(~p"/api/v1/profile", %{"bio" => invalid})
-               |> json_response(422)
+        response =
+          build_conn()
+          |> auth(user)
+          |> patch(~p"/api/v1/profile", %{"bio" => invalid})
+          |> json_response(422)
+
+        assert response["error_code"] == "validation_failed"
+        assert response["error_params"] == %{}
+
+        assert [%{"field" => "bio", "error_code" => code, "error_params" => _}] =
+                 response["field_errors"]
+
+        assert code in ["field_invalid", "field_too_long"]
       end
 
       refute PidroServer.Accounts.User.bio_changeset(user, %{bio: <<255>>}).valid?

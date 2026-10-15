@@ -4,6 +4,7 @@ defmodule PidroServerWeb.API.FriendController do
   use OpenApiSpex.ControllerSpecs
 
   alias PidroServer.Friends
+  alias PidroServerWeb.ErrorContract
   alias PidroServerWeb.Schemas.{ErrorSchemas, FriendSchemas}
 
   plug :require_account
@@ -99,7 +100,10 @@ defmodule PidroServerWeb.API.FriendController do
   end
 
   defp require_account(%{assigns: %{current_user: %{guest: true}}} = conn, _opts) do
-    conn |> put_status(:forbidden) |> json(%{error: "ACCOUNT_REQUIRED"}) |> halt()
+    conn
+    |> put_status(:forbidden)
+    |> json(ErrorContract.add(%{error: "ACCOUNT_REQUIRED"}, :account_required))
+    |> halt()
   end
 
   defp require_account(conn, _opts), do: conn
@@ -107,11 +111,20 @@ defmodule PidroServerWeb.API.FriendController do
   defp respond(conn, {:ok, list}), do: json(conn, %{data: list})
 
   defp respond(conn, {:error, :cannot_friend_self}),
-    do: conn |> put_status(:bad_request) |> json(%{error: "CANNOT_FRIEND_SELF"})
+    do:
+      conn
+      |> put_status(:bad_request)
+      |> json(ErrorContract.add(%{error: "CANNOT_FRIEND_SELF"}, :cannot_friend_self))
 
   defp respond(conn, {:error, :user_not_found}),
-    do: conn |> put_status(:not_found) |> json(%{error: "USER_NOT_FOUND"})
+    do:
+      conn
+      |> put_status(:not_found)
+      |> json(ErrorContract.add(%{error: "USER_NOT_FOUND"}, :user_not_found))
 
   defp respond(conn, {:error, :query_too_short}),
-    do: conn |> put_status(:bad_request) |> json(%{error: "QUERY_TOO_SHORT"})
+    do:
+      conn
+      |> put_status(:bad_request)
+      |> json(ErrorContract.add(%{error: "QUERY_TOO_SHORT"}, :query_too_short))
 end
