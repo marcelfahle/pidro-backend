@@ -642,7 +642,10 @@ defmodule PidroServerWeb.API.AuthController do
 
     conn
     |> put_view(UserJSON)
-    |> render(:show, %{user: user})
+    |> render(:show, %{
+      user: user,
+      seat_invitations: PidroServer.Games.RoomManager.seat_invitations(user.id)
+    })
   end
 
   operation(:age,

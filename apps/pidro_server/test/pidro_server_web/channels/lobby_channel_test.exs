@@ -32,6 +32,31 @@ defmodule PidroServerWeb.LobbyChannelTest do
     %{user: user, socket: socket}
   end
 
+  test "lobby snapshots and updates expose holds and channel joins honor them", %{
+    socket: socket,
+    user: user
+  } do
+    host = PidroServer.AccountsFixtures.user_fixture()
+    friend = PidroServer.AccountsFixtures.user_fixture(%{display_name: "Nora"})
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: friend.id}})
+    {:ok, reply, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    listed = Enum.find(reply.lobby.open_tables, &(&1.code == room.code))
+    assert listed.available_positions == [:east, :west]
+    held = Enum.find(listed.seats, &(&1.position == :south))
+    assert held.status == "free"
+    assert held.held_for == %{user_id: friend.id, display_name: "Nora", avatar_url: nil}
+    ref = push(socket, "join_room", %{code: room.code, position: "south"})
+    assert_reply ref, :error, %{reason: "seat_taken"}
+
+    {:ok, _} = RoomManager.set_seat_hold(room.code, host.id, :south, user.id)
+    assert_push "room_updated", %{room: updated}
+    assert Enum.find(updated.seats, &(&1.position == :south)).held_for.user_id == user.id
+    ref = push(socket, "join_room", %{code: room.code, position: "south"})
+    assert_reply ref, :ok, %{assigned_position: :south, room: joined}
+    refute Map.has_key?(Enum.find(joined.seats, &(&1.position == :south)), :held_for)
+    RoomManager.close_room(room.code)
+  end
+
   test "join_room rejects below the bar and accepts the exact combined boundary", %{
     socket: socket,
     user: user

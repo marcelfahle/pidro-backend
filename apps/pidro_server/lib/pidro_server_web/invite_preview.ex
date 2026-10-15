@@ -56,6 +56,8 @@ defmodule PidroServerWeb.InvitePreview do
   end
 
   defp public_seats(room) do
+    users = PidroServerWeb.API.RoomJSON.users_for_rooms([room])
+
     [:north, :east, :south, :west]
     |> Enum.with_index()
     |> Enum.map(fn {position, index} ->
@@ -67,7 +69,8 @@ defmodule PidroServerWeb.InvitePreview do
         status: if(seat.occupant_type == :vacant, do: "free", else: "occupied"),
         min_games: seat.min_games
       }
-      |> Map.merge(Map.take(seat, [:vacated_by]))
+      |> Map.merge(Map.take(seat, [:vacated_by, :held_for]))
+      |> PidroServerWeb.API.RoomJSON.with_held_user(users)
     end)
   end
 

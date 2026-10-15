@@ -7,8 +7,8 @@ defmodule PidroServer.Games.Room.Config do
   still validated and echoed, but every accepted value uses the same production
   rulebook. New clients should omit it.
 
-  A config is set once, when the room is created, and does not change for the
-  life of the room. Seat requirements stay in the config; the initial bot/open
+  Seat requirements and friend holds stay in the config; holds are consumed
+  when their user sits down or released by the host. The initial bot/open
   plan is returned beside it because occupants change during play.
 
   There are two ways in, and both end at the same validation:
@@ -44,7 +44,11 @@ defmodule PidroServer.Games.Room.Config do
   """
 
   @type bot_difficulty :: :random | :basic | :smart
-  @type seat_plan :: %{east: :bot | :open, south: :bot | :open, west: :bot | :open}
+  @type seat_plan :: %{
+          east: :bot | :open | :held,
+          south: :bot | :open | :held,
+          west: :bot | :open | :held
+        }
   @type error :: %{field: String.t(), message: String.t()}
   @type errors :: {:invalid_room_params, [error()]}
 
@@ -53,14 +57,16 @@ defmodule PidroServer.Games.Room.Config do
           bot_difficulty: bot_difficulty(),
           rule_set: :finnish | :louisiana,
           solo: boolean(),
-          seat_requirements: %{optional(atom()) => 0 | 100 | 1000}
+          seat_requirements: %{optional(atom()) => 0 | 100 | 1000},
+          seat_holds: %{optional(atom()) => Ecto.UUID.t()}
         }
 
   defstruct name: nil,
             bot_difficulty: :basic,
             rule_set: :finnish,
             solo: false,
-            seat_requirements: %{}
+            seat_requirements: %{},
+            seat_holds: %{}
 
   @max_name_length 60
 
@@ -76,13 +82,14 @@ defmodule PidroServer.Games.Room.Config do
   @difficulty_wire_values Enum.map(@difficulties, &Atom.to_string/1)
 
   # Validation and error order for the config's own fields.
-  @fields [:name, :bot_difficulty, :rule_set, :solo, :seat_requirements]
+  @fields [:name, :bot_difficulty, :rule_set, :solo, :seat_requirements, :seat_holds]
   @field_by_wire %{
     "name" => :name,
     "bot_difficulty" => :bot_difficulty,
     "rule_set" => :rule_set,
     "solo" => :solo,
-    "seat_requirements" => :seat_requirements
+    "seat_requirements" => :seat_requirements,
+    "seat_holds" => :seat_holds
   }
   @rule_set_by_wire %{"finnish" => :finnish, "louisiana" => :louisiana}
 
@@ -155,7 +162,7 @@ defmodule PidroServer.Games.Room.Config do
   """
   @spec parse_create_params(term()) :: {:ok, t(), seat_plan()} | {:error, errors()}
   def parse_create_params(body) when is_map(body) and not is_struct(body) do
-    {seat_plan, requirements, seat_errors} = parse_seats(body)
+    {seat_plan, requirements, holds, seat_errors} = parse_seats(body)
     unknown_errors = unknown_key_errors(Map.keys(body), @accepted_fields, "", &body_label/1)
 
     {config, config_errors} =
@@ -163,6 +170,7 @@ defmodule PidroServer.Games.Room.Config do
       |> Map.take(["name", "bot_difficulty", "rule_set"])
       |> Map.put("solo", solo_plan?(seat_plan))
       |> Map.put("seat_requirements", requirements)
+      |> Map.put("seat_holds", holds)
       |> build()
       |> split_result()
 
@@ -238,12 +246,18 @@ defmodule PidroServer.Games.Room.Config do
   @doc "Serializes a seat with its configured requirement; occupied seats show zero."
   @spec serialize_seat(t(), PidroServer.Games.Room.Seat.t()) :: map()
   def serialize_seat(%__MODULE__{} = config, seat) do
+    held_user_id = if seat.occupant_type == :vacant, do: config.seat_holds[seat.position]
+
     min_games =
-      if seat.occupant_type == :vacant,
+      if seat.occupant_type == :vacant and is_nil(held_user_id),
         do: Map.get(config.seat_requirements, seat.position, 0),
         else: 0
 
-    seat |> PidroServer.Games.Room.Seat.serialize() |> Map.put(:min_games, min_games)
+    data = seat |> PidroServer.Games.Room.Seat.serialize() |> Map.put(:min_games, min_games)
+
+    if held_user_id,
+      do: Map.merge(data, %{status: "free", held_for: %{user_id: held_user_id}}),
+      else: data
   end
 
   # ---------------------------------------------------------------------------
@@ -339,6 +353,17 @@ defmodule PidroServer.Games.Room.Config do
 
   defp validate(:seat_requirements, _), do: {:error, "must be a map"}
 
+  defp validate(:seat_holds, holds) when is_map(holds) do
+    if Enum.all?(holds, fn {position, user_id} ->
+         position in [:north, :east, :south, :west] and
+           match?({:ok, ^user_id}, Ecto.UUID.cast(user_id))
+       end),
+       do: {:ok, holds},
+       else: {:error, "must map positions to user UUIDs"}
+  end
+
+  defp validate(:seat_holds, _), do: {:error, "must be a map"}
+
   defp validate(:rule_set, value) when value in [:finnish, :louisiana], do: {:ok, value}
 
   defp validate(:rule_set, value) do
@@ -357,7 +382,7 @@ defmodule PidroServer.Games.Room.Config do
   defp parse_seats(body) do
     case Map.fetch(body, "seats") do
       :error ->
-        {open_plan(), %{}, []}
+        {open_plan(), %{}, %{}, []}
 
       {:ok, seats} when is_map(seats) and not is_struct(seats) ->
         results =
@@ -375,14 +400,19 @@ defmodule PidroServer.Games.Room.Config do
               into: %{},
               do: {position, min_games}
 
+        holds =
+          for {_key, position, {:ok, :held, user_id}} <- results,
+              into: %{},
+              do: {position, user_id}
+
         value_errors =
           for {key, _position, {:error, message}} <- results, do: error("seats." <> key, message)
 
-        {plan, requirements,
+        {plan, requirements, holds,
          value_errors ++ unknown_key_errors(Map.keys(seats), @seat_keys, "seats.", &body_label/1)}
 
       {:ok, _other} ->
-        {open_plan(), %{}, [error("seats", "must be an object")]}
+        {open_plan(), %{}, %{}, [error("seats", "must be an object")]}
     end
   end
 
@@ -397,6 +427,12 @@ defmodule PidroServer.Games.Room.Config do
       %{"type" => "open", "min_games" => games} = value
       when games in [0, 100, 1000] and map_size(value) == 2 ->
         {:ok, :open, games}
+
+      %{"type" => "held", "user_id" => user_id} = value when map_size(value) == 2 ->
+        case Ecto.UUID.cast(user_id) do
+          {:ok, id} -> {:ok, :held, id}
+          :error -> {:error, "held seats require a user_id UUID"}
+        end
 
       value when is_map(value) ->
         {:error, "must be an open seat with min_games of 0, 100 or 1000"}

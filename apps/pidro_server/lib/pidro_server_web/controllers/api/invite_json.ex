@@ -33,6 +33,7 @@ defmodule PidroServerWeb.API.InviteJSON do
           url: Invites.url(invite),
           share_text: Invites.share_text(invite),
           seat_hint: invite.seat_hint,
+          position: invite.position,
           label: invite.label,
           expires_at: DateTime.to_iso8601(invite.expires_at),
           state: state
@@ -58,6 +59,7 @@ defmodule PidroServerWeb.API.InviteJSON do
       seats_taken: seats_taken,
       seats_total: @seats_total,
       seat_hint: invite.seat_hint,
+      position: invite.position,
       label: invite.label,
       expires_at: DateTime.to_iso8601(invite.expires_at)
     }

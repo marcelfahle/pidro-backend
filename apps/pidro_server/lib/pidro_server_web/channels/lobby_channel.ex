@@ -44,6 +44,7 @@ defmodule PidroServerWeb.LobbyChannel do
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.PresenceAggregator
   alias PidroServer.Games.Room.{Config, Seat}
+  alias PidroServerWeb.API.RoomJSON
   alias PidroServerWeb.Presence
   alias PidroServer.Accounts.Auth
   alias PidroServer.Accounts.User
@@ -195,22 +196,13 @@ defmodule PidroServerWeb.LobbyChannel do
   ## Private Helpers
 
   defp serialize_room_with_users(room) do
-    alias PidroServer.Games.Room.Positions
-    player_ids = Positions.player_ids(room)
-    user_map = Auth.get_users_map(player_ids)
+    user_map = RoomJSON.users_for_rooms([room])
     serialize_room(room, user_map)
   end
 
   @spec serialize_rooms([RoomManager.Room.t()]) :: [map()]
   defp serialize_rooms(rooms) do
-    alias PidroServer.Games.Room.Positions
-    # Bulk fetch all users involved in these rooms to avoid N+1 queries
-    all_player_ids =
-      rooms
-      |> Enum.flat_map(&Positions.player_ids/1)
-      |> Enum.uniq()
-
-    user_map = Auth.get_users_map(all_player_ids)
+    user_map = RoomJSON.users_for_rooms(rooms)
 
     Enum.map(rooms, &serialize_room(&1, user_map))
   end
@@ -258,7 +250,8 @@ defmodule PidroServerWeb.LobbyChannel do
 
       case seat do
         %Seat{} ->
-          seat_data = Config.serialize_seat(room.config, seat)
+          seat_data =
+            room.config |> Config.serialize_seat(seat) |> RoomJSON.with_held_user(user_map)
 
           Map.merge(base, %{
             min_games: seat_data.min_games,
@@ -270,7 +263,7 @@ defmodule PidroServerWeb.LobbyChannel do
             has_reservation: seat_data.has_reservation,
             joined_at: seat_data.joined_at
           })
-          |> Map.merge(Map.take(seat_data, [:vacated_by]))
+          |> Map.merge(Map.take(seat_data, [:vacated_by, :held_for]))
 
         nil ->
           base
@@ -279,19 +272,11 @@ defmodule PidroServerWeb.LobbyChannel do
   end
 
   defp serialize_lobby(lobby) do
-    alias PidroServer.Games.Room.Positions
-
-    # Collect ALL player IDs across all categories in one pass
-    all_player_ids =
+    rooms =
       [:my_rejoinable, :open_tables, :substitute_needed, :spectatable]
-      |> Enum.flat_map(fn key ->
-        Map.get(lobby, key, [])
-        |> Enum.flat_map(&Positions.player_ids/1)
-      end)
-      |> Enum.uniq()
+      |> Enum.flat_map(&Map.get(lobby, &1, []))
 
-    # Single DB query for all users
-    users_map = Auth.get_users_map(all_player_ids)
+    users_map = RoomJSON.users_for_rooms(rooms)
 
     # Serialize all categories with the shared users_map
     %{

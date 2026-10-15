@@ -124,7 +124,12 @@ defmodule PidroServerWeb.API.RoomJSON do
 
   @doc "Adds the same public player names as HTTP rooms to an authoritative readiness snapshot."
   def readiness(snapshot) do
-    users = snapshot.positions |> Map.values() |> Enum.reject(&is_nil/1) |> Auth.get_users_map()
+    held_ids = for {_pos, %{held_for: %{user_id: id}}} <- snapshot.seats, do: id
+
+    users =
+      (Map.values(snapshot.positions) ++ held_ids)
+      |> Enum.reject(&is_nil/1)
+      |> Auth.get_users_map()
 
     %{
       snapshot
@@ -165,9 +170,10 @@ defmodule PidroServerWeb.API.RoomJSON do
   defp serialize_rooms(rooms), do: serialize_rooms(rooms, users_for_rooms(rooms))
   defp serialize_rooms(rooms, users), do: Enum.map(rooms, &room(&1, users))
 
-  defp users_for_rooms(rooms) do
+  @doc "Fetches occupants and held users together for room projections."
+  def users_for_rooms(rooms) do
     rooms
-    |> Enum.flat_map(&Positions.player_ids/1)
+    |> Enum.flat_map(&(Positions.player_ids(&1) ++ Map.values(&1.config.seat_holds)))
     |> Enum.uniq()
     |> Auth.get_users_map()
   end
@@ -189,7 +195,24 @@ defmodule PidroServerWeb.API.RoomJSON do
     |> Map.put(:avatar_url, if(user, do: user.avatar_url, else: nil))
     |> Map.put(:level, if(user, do: user.level, else: nil))
     |> Map.put(:pin, if(user, do: user.pin, else: nil))
+    |> with_held_user(users)
   end
+
+  @doc "Adds public profile fields to a serialized friend hold."
+  def with_held_user(%{held_for: %{user_id: id}} = seat, users) do
+    user = users[id]
+
+    %{
+      seat
+      | held_for: %{
+          user_id: id,
+          display_name: user && (user.display_name || user.username),
+          avatar_url: user && user.avatar_url
+        }
+    }
+  end
+
+  def with_held_user(seat, _users), do: seat
 
   # The user row behind a human seat; nil for bots, vacant seats and ids that
   # resolve to nobody (a deleted account, R25).

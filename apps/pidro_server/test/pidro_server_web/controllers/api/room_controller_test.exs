@@ -19,6 +19,135 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  test "held seats are visible everywhere, invite their user, and exclude strangers", %{
+    conn: conn
+  } do
+    host = AccountsFixtures.user_fixture()
+    friend = AccountsFixtures.user_fixture(%{display_name: "Nora"})
+    stranger = AccountsFixtures.user_fixture()
+
+    created =
+      as_user(conn, host)
+      |> post(~p"/api/v1/rooms", %{seats: %{seat_3: %{type: "held", user_id: friend.id}}})
+      |> json_response(201)
+
+    room = created["data"]["room"]
+    code = room["code"]
+    held_for = %{"user_id" => friend.id, "display_name" => "Nora", "avatar_url" => nil}
+    assert room["available_positions"] == ["east", "west"]
+    assert room["seats"]["south"]["status"] == "free"
+    assert room["seats"]["south"]["held_for"] == held_for
+    assert room["seats"]["south"]["min_games"] == 0
+
+    detail = get(conn, ~p"/api/v1/rooms/#{code}") |> json_response(200)
+    assert detail["data"]["room"]["seats"]["south"]["held_for"] == held_for
+    lobby = as_user(conn, stranger) |> get(~p"/api/v1/lobby") |> json_response(200)
+    assert hd(lobby["data"]["open_tables"])["seats"]["south"]["held_for"] == held_for
+
+    me = as_user(conn, friend) |> get(~p"/api/v1/auth/me") |> json_response(200)
+
+    assert me["data"]["seat_invitations"] == [
+             %{"code" => code, "position" => "south", "host_id" => host.id}
+           ]
+
+    me = as_user(conn, stranger) |> get(~p"/api/v1/auth/me") |> json_response(200)
+    assert me["data"]["seat_invitations"] == []
+
+    refused =
+      as_user(conn, stranger)
+      |> post(~p"/api/v1/rooms/#{code}/join", %{position: "south"})
+      |> json_response(422)
+
+    assert hd(refused["errors"])["code"] == "SEAT_TAKEN"
+    assert {:error, :seat_taken} = RoomManager.move_seat(code, host.id, host.id, :south)
+    assert {:error, :seat_taken} = RoomManager.join_bot(code, "bot_test", self(), :south)
+    assert {:error, :not_enough_seats} = BotManager.start_bots(code, 3, :basic)
+
+    seated =
+      as_user(conn, friend) |> post(~p"/api/v1/rooms/#{code}/join", %{}) |> json_response(200)
+
+    assert seated["data"]["assigned_position"] == "south"
+    refute Map.has_key?(seated["data"]["room"]["seats"]["south"], "held_for")
+    assert RoomManager.seat_invitations(friend.id) == []
+    {:ok, after_join} = RoomManager.get_room(code)
+    assert after_join.config.seat_holds == %{}
+  end
+
+  test "only the waiting host can hold and release; holds bypass experience and block start", %{
+    conn: conn
+  } do
+    host = AccountsFixtures.user_fixture()
+    friend = AccountsFixtures.user_fixture()
+    stranger = AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_requirements: %{south: 1000}})
+    path = ~p"/api/v1/rooms/#{room.code}/seats/south/hold"
+
+    assert as_user(conn, stranger) |> put(path, %{user_id: friend.id}) |> json_response(403)
+    assert as_user(conn, host) |> put(path, %{}) |> json_response(422)
+    assert as_user(conn, host) |> put(path, %{user_id: "bad"}) |> json_response(422)
+
+    assert as_user(conn, host)
+           |> put(path, %{user_id: Ecto.UUID.generate()})
+           |> json_response(422)
+
+    assert as_user(conn, host)
+           |> put(~p"/api/v1/rooms/#{room.code}/seats/north/hold", %{user_id: friend.id})
+           |> json_response(422)
+
+    held = as_user(conn, host) |> put(path, %{user_id: friend.id}) |> json_response(200)
+    assert held["data"]["room"]["seats"]["south"]["min_games"] == 0
+    assert as_user(conn, stranger) |> delete(path) |> json_response(403)
+    {:ok, _, :east} = RoomManager.join_room(room.code, stranger.id, :east)
+    fourth = AccountsFixtures.user_fixture()
+    {:ok, _room, :west} = RoomManager.join_room(room.code, fourth.id, :west)
+    :ok = RoomManager.register_game_channel(room.code, host.id, self())
+    {:ok, snapshot} = RoomManager.readiness(room.code)
+
+    assert {:error, :table_not_full, blocked} =
+             RoomManager.confirm_ready(room.code, room.id, host.id, self(), snapshot.ready_epoch)
+
+    assert blocked.seats.south.held_for.user_id == friend.id
+
+    assert PidroServerWeb.API.RoomJSON.readiness(blocked).seats.south.held_for.display_name ==
+             friend.username
+
+    assert {:error, :not_found} = PidroServer.Games.GameSupervisor.get_game(room.code)
+
+    released = as_user(conn, host) |> delete(path) |> json_response(200)
+    assert released["data"]["room"]["available_positions"] == ["south"]
+    assert released["data"]["room"]["seats"]["south"]["min_games"] == 1000
+    assert RoomManager.seat_invitations(friend.id) == []
+    assert as_user(conn, host) |> put(path, %{user_id: friend.id}) |> json_response(200)
+    assert {:ok, _, :south} = RoomManager.join_room(room.code, friend.id, :south)
+    playing = PidroServer.RoomFixtures.ready_room(room.code)
+    assert playing.status == :playing
+    assert as_user(conn, host) |> put(path, %{user_id: friend.id}) |> json_response(409)
+    assert as_user(conn, host) |> delete(path) |> json_response(409)
+  end
+
+  test "ending a room removes pending invitations and invalid held create bodies fail", %{
+    conn: conn
+  } do
+    host = AccountsFixtures.user_fixture()
+    friend = AccountsFixtures.user_fixture()
+
+    for entry <- [
+          %{type: "held"},
+          %{type: "held", user_id: "bad"},
+          %{type: "held", user_id: Ecto.UUID.generate()},
+          %{type: "held", user_id: friend.id, min_games: 100}
+        ] do
+      assert as_user(conn, host)
+             |> post(~p"/api/v1/rooms", %{seats: %{seat_3: entry}})
+             |> json_response(422)
+    end
+
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: friend.id}})
+    assert [_] = RoomManager.seat_invitations(friend.id)
+    :ok = RoomManager.close_room(room.code)
+    assert RoomManager.seat_invitations(friend.id) == []
+  end
+
   test "playing room payloads share progress and preserve the departed player's name", %{
     conn: conn
   } do

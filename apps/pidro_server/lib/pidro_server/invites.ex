@@ -73,8 +73,9 @@ defmodule PidroServer.Invites do
   end
 
   @doc """
-  Creates or updates the room's one active invite and optionally supersedes an
-  earlier invite in the same transaction.
+  Creates or updates the active invite for this room, position and recipient,
+  optionally superseding an earlier invite in the same transaction. Unbound
+  links keep their original one-active-link-per-room behavior.
 
   Per-room transaction locks serialize the active-invite lookup, lifetime-cap
   check, insert and supersession so concurrent mint requests cannot create two
@@ -418,7 +419,23 @@ defmodule PidroServer.Invites do
   end
 
   defp upsert_active_invite(attrs, opts) do
-    case active_for_room(Map.fetch!(attrs, :room_id)) do
+    room_id = Map.fetch!(attrs, :room_id)
+    position = Map.get(attrs, :position)
+    invited_user_id = Map.get(attrs, :invited_user_id)
+    now = DateTime.utc_now()
+
+    active =
+      Repo.all(
+        from(i in Invite,
+          where:
+            i.room_id == ^room_id and is_nil(i.revoked_at) and is_nil(i.superseded_by) and
+              i.expires_at > ^now,
+          order_by: [desc: i.inserted_at, desc: i.id]
+        )
+      )
+      |> Enum.find(&(&1.position == position and &1.invited_user_id == invited_user_id))
+
+    case active do
       %Invite{} = active ->
         with {:ok, invite} <- update_hint(active, Map.take(attrs, [:seat_hint, :label])) do
           {:ok, invite, :ok}
@@ -468,13 +485,22 @@ defmodule PidroServer.Invites do
       room_id: Map.get(attrs, :room_id),
       room_code: Map.get(attrs, :room_code),
       host_user_id: Map.get(attrs, :host_user_id),
+      invited_user_id: Map.get(attrs, :invited_user_id),
       expires_at: DateTime.add(DateTime.utc_now(), @ttl_hours, :hour)
     }
     |> Invite.changeset(attrs)
   end
 
   defp successor_attrs(%Invite{} = old) do
-    Map.take(old, [:room_id, :room_code, :host_user_id, :seat_hint, :label])
+    Map.take(old, [
+      :room_id,
+      :room_code,
+      :host_user_id,
+      :seat_hint,
+      :label,
+      :position,
+      :invited_user_id
+    ])
   end
 
   defp bump_redeem_count(invite_id) do

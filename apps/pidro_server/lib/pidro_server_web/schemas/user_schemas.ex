@@ -146,7 +146,21 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           type: :object,
           description: "Response data envelope",
           properties: %{
-            user: User
+            user: User,
+            seat_invitations: %Schema{
+              type: :array,
+              description:
+                "GET /auth/me: live waiting-room holds for this user; disappears on release, seating or room end. code is the four-character room code for normal join, not an invite secret.",
+              items: %Schema{
+                type: :object,
+                required: [:code, :position, :host_id],
+                properties: %{
+                  code: %Schema{type: :string},
+                  position: %Schema{type: :string, enum: [:north, :east, :south, :west]},
+                  host_id: %Schema{type: :string, format: :uuid}
+                }
+              }
+            }
           },
           required: [:user]
         }

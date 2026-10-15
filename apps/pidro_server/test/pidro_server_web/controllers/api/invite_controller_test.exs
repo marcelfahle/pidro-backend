@@ -25,6 +25,126 @@ defmodule PidroServerWeb.API.InviteControllerTest do
     :ok
   end
 
+  test "position links keep separate destinations and never fall back or accept overrides", %{
+    conn: conn
+  } do
+    {host, room} = host_and_room()
+    first = AccountsFixtures.user_fixture()
+    second = AccountsFixtures.user_fixture()
+
+    links =
+      for position <- ["south", "west"] do
+        response =
+          authed(conn, host)
+          |> post(~p"/api/v1/rooms/#{room.code}/invites", %{position: position})
+          |> json_response(201)
+
+        assert response["data"]["invite"]["position"] == position
+        response["data"]["invite"]["code"]
+      end
+
+    [south, west] = links
+    assert south != west
+
+    again =
+      authed(conn, host)
+      |> post(~p"/api/v1/rooms/#{room.code}/invites", %{position: "south"})
+      |> json_response(200)
+
+    assert again["data"]["invite"]["code"] == south
+
+    seated =
+      authed(conn, first)
+      |> post(~p"/api/v1/invites/#{south}/redeem", %{position: "east"})
+      |> json_response(200)
+
+    assert seated["data"]["position"] == "south"
+
+    refused =
+      authed(conn, second) |> post(~p"/api/v1/invites/#{south}/redeem", %{}) |> json_response(409)
+
+    assert hd(refused["errors"])["code"] == "SEAT_TAKEN"
+    assert hd(refused["errors"])["next_open"] == ["east", "west"]
+
+    assert authed(conn, first)
+           |> post(~p"/api/v1/invites/#{west}/redeem", %{})
+           |> json_response(409)
+
+    seated =
+      authed(conn, second) |> post(~p"/api/v1/invites/#{west}/redeem", %{}) |> json_response(200)
+
+    assert seated["data"]["position"] == "west"
+
+    third = AccountsFixtures.user_fixture()
+    {:ok, _, :east} = RoomManager.join_room(room.code, third.id, :east)
+
+    assert authed(conn, third)
+           |> post(~p"/api/v1/invites/#{south}/redeem", %{})
+           |> json_response(409)
+           |> get_in(["errors", Access.at(0), "code"]) == "SEAT_TAKEN"
+  end
+
+  test "held invites bind their recipient through release and regeneration", %{conn: conn} do
+    {host, room} = host_and_room()
+    friend = AccountsFixtures.user_fixture(%{display_name: "Nora"})
+    stranger = AccountsFixtures.user_fixture()
+    {:ok, _} = RoomManager.set_seat_hold(room.code, host.id, :south, friend.id)
+
+    response =
+      authed(conn, host)
+      |> post(~p"/api/v1/rooms/#{room.code}/invites", %{position: "south"})
+      |> json_response(201)
+
+    code = response["data"]["invite"]["code"]
+
+    preview = get(conn, ~p"/api/v1/invites/#{code}") |> json_response(200)
+    seat = Enum.find(preview["data"]["invite"]["seats"], &(&1["position"] == "south"))
+    assert seat["status"] == "free"
+
+    assert seat["held_for"] == %{
+             "user_id" => friend.id,
+             "display_name" => "Nora",
+             "avatar_url" => nil
+           }
+
+    assert authed(conn, stranger)
+           |> post(~p"/api/v1/invites/#{code}/redeem", %{})
+           |> json_response(409)
+           |> get_in(["errors", Access.at(0), "code"]) == "SEAT_TAKEN"
+
+    {:ok, _} = RoomManager.set_seat_hold(room.code, host.id, :south, nil)
+
+    regenerated =
+      authed(conn, host)
+      |> post(~p"/api/v1/invites/#{code}/regenerate", %{})
+      |> json_response(201)
+
+    successor = regenerated["data"]["invite"]["code"]
+    assert regenerated["data"]["invite"]["position"] == "south"
+
+    assert authed(conn, stranger)
+           |> post(~p"/api/v1/invites/#{successor}/redeem", %{})
+           |> json_response(409)
+
+    shared =
+      authed(conn, host)
+      |> post(~p"/api/v1/rooms/#{room.code}/invites", %{position: "south"})
+      |> json_response(201)
+
+    assert shared["data"]["invite"]["code"] != successor
+
+    seated =
+      authed(conn, friend)
+      |> post(~p"/api/v1/invites/#{successor}/redeem", %{})
+      |> json_response(200)
+
+    assert seated["data"]["position"] == "south"
+
+    assert authed(conn, stranger)
+           |> post(~p"/api/v1/invites/#{shared["data"]["invite"]["code"]}/redeem", %{})
+           |> json_response(409)
+  end
+
   test "preview shows the requirement and redemption enforces it", %{conn: conn} do
     host = AccountsFixtures.user_fixture()
     player = AccountsFixtures.user_fixture()

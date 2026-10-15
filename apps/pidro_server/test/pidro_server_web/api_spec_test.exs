@@ -166,12 +166,16 @@ defmodule PidroServerWeb.ApiSpecTest do
       seats = resolve(seats, spec)
 
       for {seat, schema} <- seats.properties do
-        [strings, object] = resolve(schema, spec).oneOf
+        [strings, object, held] = resolve(schema, spec).oneOf
         assert strings.enum == Config.seat_values(), "seat #{seat}"
         assert object.required == [:type, :min_games]
         assert object.properties.type.enum == ["open"]
         assert object.properties.min_games.enum == [0, 100, 1000]
         assert object.additionalProperties == false
+        assert held.required == [:type, :user_id]
+        assert held.properties.type.enum == ["held"]
+        assert held.properties.user_id.format == :uuid
+        assert held.additionalProperties == false
       end
     end
 
