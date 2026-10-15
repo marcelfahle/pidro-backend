@@ -424,7 +424,7 @@ defmodule PidroServer.Profiles do
   @doc "Returns the same combined Classic and Pidro 2 record shown on the public profile."
   @spec record(Ecto.UUID.t()) :: map()
   def record(user_id) do
-    {:ok, profile} = get_or_create_profile(user_id)
+    profile = Repo.get_by(PlayerProfile, user_id: user_id) || %PlayerProfile{}
     record(profile, classic_profile(profile.heritage_flags, nil) || %{})
   end
 

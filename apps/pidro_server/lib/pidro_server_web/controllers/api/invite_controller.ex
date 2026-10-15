@@ -121,7 +121,8 @@ defmodule PidroServerWeb.API.InviteController do
 
     Open-seat requirements also apply to invite claims: below the combined
     Classic and Pidro 2 games count, 403 `SEAT_REQUIRES_GAMES` with top-level
-    `error`, `min_games` and `games_played`.
+    `error`, `min_games` and `games_played`. A failed lookup returns 503
+    `PROFILE_UNAVAILABLE` without claiming a seat.
 
     Limited at policy `invite_redeem` (per user).
     """,
@@ -140,6 +141,8 @@ defmodule PidroServerWeb.API.InviteController do
              PidroServerWeb.Schemas.RoomSchemas.SeatRequiresGames
            ]
          }},
+      service_unavailable:
+        {"PROFILE_UNAVAILABLE; retry later", "application/json", ErrorSchemas.error_response()},
       not_found: {"Unknown invite code", "application/json", ErrorSchemas.not_found_error()},
       conflict: {"Seat taken or table full", "application/json", ErrorSchemas.conflict_error()},
       gone:

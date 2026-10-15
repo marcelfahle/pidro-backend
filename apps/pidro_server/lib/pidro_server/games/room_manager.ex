@@ -290,6 +290,7 @@ defmodule PidroServer.Games.RoomManager do
              | :table_locked
              | :kicked
              | :account_required
+             | :profile_unavailable
              | {:seat_requires_games, pos_integer(), non_neg_integer()}}
   def join_room(room_code, player, position \\ nil) do
     {player_id, guest?} = admission_identity(player)
@@ -925,6 +926,7 @@ defmodule PidroServer.Games.RoomManager do
              | :already_in_room
              | :room_full
              | :invalid_position
+             | :profile_unavailable
              | {:seat_requires_games, pos_integer(), non_neg_integer()}
              | {:seat_taken, [Positions.position()]}}
   def claim_seat(room_code, room_id, user_id, opts \\ []) do
@@ -987,6 +989,7 @@ defmodule PidroServer.Games.RoomManager do
              | :player_not_in_room
              | :seat_taken
              | :invalid_position
+             | :profile_unavailable
              | {:seat_requires_games, pos_integer(), non_neg_integer()}}
   def move_seat(room_code, requesting_user_id, target_user_id, position) do
     GenServer.call(
@@ -3023,6 +3026,10 @@ defmodule PidroServer.Games.RoomManager do
           do: :ok,
           else: {:error, {:seat_requires_games, min_games, games_played}}
     end
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error, Ecto.Query.CastError] ->
+      Logger.error("Seat requirement lookup failed: #{Exception.message(error)}")
+      {:error, :profile_unavailable}
   end
 
   @doc false

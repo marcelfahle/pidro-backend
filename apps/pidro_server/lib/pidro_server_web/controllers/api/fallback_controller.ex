@@ -377,6 +377,20 @@ defmodule PidroServerWeb.API.FallbackController do
     |> json(%{error: "SEAT_REQUIRES_GAMES", min_games: min_games, games_played: games_played})
   end
 
+  def call(conn, {:error, :profile_unavailable}) do
+    conn
+    |> put_status(:service_unavailable)
+    |> json(%{
+      errors: [
+        %{
+          code: "PROFILE_UNAVAILABLE",
+          title: "Profile unavailable",
+          detail: "Games played could not be checked; please try again shortly"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :seat_taken}) do
     conn
     |> put_status(:unprocessable_entity)

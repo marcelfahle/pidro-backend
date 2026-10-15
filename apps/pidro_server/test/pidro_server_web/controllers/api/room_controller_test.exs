@@ -19,6 +19,25 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  test "a failed profile lookup refuses admission without losing rooms", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    player = AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_requirements: %{south: 100}})
+    manager = Process.whereis(RoomManager)
+    # Transactional DDL is undone by the Repo sandbox.
+    PidroServer.Repo.query!("ALTER TABLE player_profiles RENAME TO unavailable_player_profiles")
+
+    response =
+      as_user(conn, player)
+      |> post(~p"/api/v1/rooms/#{room.code}/join", %{position: "south"})
+      |> json_response(503)
+
+    assert %{"errors" => [%{"code" => "PROFILE_UNAVAILABLE"}]} = response
+    assert Process.whereis(RoomManager) == manager
+    assert {:ok, unchanged} = RoomManager.get_room(room.code)
+    assert unchanged.positions == room.positions
+  end
+
   test "seat requirements use the combined record and survive reclaim", %{conn: conn} do
     host = AccountsFixtures.user_fixture()
     player = AccountsFixtures.user_fixture()

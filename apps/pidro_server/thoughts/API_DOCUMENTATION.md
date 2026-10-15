@@ -445,6 +445,8 @@ Below the bar, HTTP 403 returns exactly:
 ```
 Automatic/team joins check the selected seat; they do not silently choose a different seat
 when its requirement fails. Reclaims, trusted bots and playing-room substitutes bypass the gate.
+If the profile cannot be read, admission fails with HTTP 503 and the standard
+`errors[]` envelope with code `PROFILE_UNAVAILABLE`. An unknown count is not reported as zero.
 
 The lobby channel accepts `join_room` with `{ "code": "A1B2", "position": "south" }`;
 position is optional (cardinal position or team). Success replies with `room` and
@@ -452,6 +454,7 @@ position is optional (cardinal position or team). Success replies with `room` an
 ```json
 { "status": "error", "reason": "seat_requires_games", "min_games": 100, "games_played": 40 }
 ```
+For a failed profile lookup, the reply is `{ "status": "error", "reason": "profile_unavailable" }`.
 Creation remains REST-only. Game-channel attachment/reconnection never claims an unowned seat.
 
 Any other key is rejected, including a `room` wrapper around the fields and `settings`. See

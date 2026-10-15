@@ -238,6 +238,7 @@ defmodule PidroServerWeb.API.RoomController do
       An open seat's `min_games` checks the combined Classic and Pidro 2 record.
       Below the bar: 403 `{"error":"SEAT_REQUIRES_GAMES","min_games":100,"games_played":40}`.
       Reclaims, bots and substitutes in playing rooms do not check it.
+      A failed profile lookup refuses admission with 503 `PROFILE_UNAVAILABLE`.
 
       Requires authentication via Bearer token.
       """,
@@ -265,6 +266,12 @@ defmodule PidroServerWeb.API.RoomController do
             %OpenApiSpex.Schema{
               oneOf: [ErrorSchemas.error_response(), RoomSchemas.SeatRequiresGames]
             }
+          ),
+        503 =>
+          Operation.response(
+            "PROFILE_UNAVAILABLE; retry later",
+            "application/json",
+            ErrorSchemas.error_response()
           ),
         404 =>
           Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),
