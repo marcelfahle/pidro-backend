@@ -171,6 +171,7 @@ defmodule PidroServerWeb.API.InviteController do
 
     with {:ok, position} <- parse_optional_position(params["position"]),
          {:ok, invite} <- Invites.get_by_code(code),
+         :ok <- ensure_recipient(invite, user.id),
          :ok <- ensure_open(invite),
          already_seated? = seated_here?(invite, user.id),
          {:ok, room, seat, hint_honored} <- claim_seat(invite, user, position) do
@@ -324,9 +325,14 @@ defmodule PidroServerWeb.API.InviteController do
   defp ensure_open(%Invite{} = invite) do
     case derive_state(invite) do
       :open -> :ok
+      :full when not is_nil(invite.position) -> :ok
       state -> state_error(state, invite)
     end
   end
+
+  defp ensure_recipient(%Invite{invited_user_id: nil}, _user_id), do: :ok
+  defp ensure_recipient(%Invite{invited_user_id: id}, id), do: :ok
+  defp ensure_recipient(%Invite{}, _user_id), do: {:error, {:seat_taken, []}}
 
   defp ensure_host(%Invite{host_user_id: host_id}, host_id), do: :ok
   defp ensure_host(%Invite{}, _user_id), do: {:error, :not_owner}
@@ -334,7 +340,8 @@ defmodule PidroServerWeb.API.InviteController do
   defp claim_seat(%Invite{} = invite, user, position) do
     RoomManager.claim_seat(invite.room_code, invite.room_id, user.id,
       hint: Map.get(@hints, invite.seat_hint),
-      position: position,
+      position: Map.get(@positions, invite.position) || position,
+      bound_position: Map.get(@positions, invite.position),
       username: user.username,
       display_name: user.display_name
     )

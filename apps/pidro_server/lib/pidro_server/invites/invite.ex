@@ -27,7 +27,7 @@ defmodule PidroServer.Invites.Invite do
 
   @seat_hints ~w(north east south west north_south east_west partner)
   @label_max_length 40
-  @castable [:seat_hint, :label]
+  @castable [:seat_hint, :label, :position]
   @identity [:code, :room_id, :room_code, :host_user_id, :expires_at]
 
   @primary_key {:id, :binary_id, autogenerate: true}
@@ -38,6 +38,8 @@ defmodule PidroServer.Invites.Invite do
     field :room_id, :binary_id
     field :room_code, :string
     field :host_user_id, :binary_id
+    field :position, :string
+    field :invited_user_id, :binary_id
     field :seat_hint, :string
     field :label, :string
     field :redeem_count, :integer, default: 0
@@ -58,7 +60,7 @@ defmodule PidroServer.Invites.Invite do
   @doc """
   Casts the host-editable fields and checks the invariants every row must hold.
 
-  Only `seat_hint` and `label` are castable; `code`, `room_id`, `room_code`,
+  Only `seat_hint`, `label` and `position` are castable; `code`, `room_id`, `room_code`,
   `host_user_id` and `expires_at` are set on the struct by the context and only
   validated here. Serves both the mint and the second-mint hint update.
   """
@@ -66,6 +68,7 @@ defmodule PidroServer.Invites.Invite do
   def changeset(invite, attrs) do
     invite
     |> cast(attrs, @castable)
+    |> validate_inclusion(:position, ~w(north east south west))
     |> validate_inclusion(:seat_hint, @seat_hints)
     |> validate_length(:label, max: @label_max_length)
     |> validate_required(@identity)

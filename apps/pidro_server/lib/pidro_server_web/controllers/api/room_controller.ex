@@ -299,13 +299,49 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc false
+  def open_api_operation(action) when action in [:hold, :release_hold] do
+    %Operation{
+      summary: if(action == :hold, do: "Hold a seat for a friend", else: "Release a seat hold"),
+      description:
+        "Host only, while waiting or ready. The seat must be vacant. Holds exclude strangers and bots, consume no open capacity, and end on release, seating or room closure. Readiness waits for the held user.",
+      operationId: "RoomController.#{action}",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        room_code_parameter(),
+        Operation.parameter(:position, :path, position_schema(), "Seat to hold or release",
+          required: true
+        )
+      ],
+      requestBody:
+        if(action == :hold,
+          do:
+            Operation.request_body(
+              "Existing user to invite",
+              "application/json",
+              %OpenApiSpex.Schema{
+                type: :object,
+                required: [:user_id],
+                properties: %{user_id: %OpenApiSpex.Schema{type: :string, format: :uuid}}
+              },
+              required: true
+            )
+        ),
+      responses: host_control_responses()
+    }
+  end
+
+  @doc false
   def open_api_operation(:create_invite) do
     %Operation{
       summary: "Mint the room's invite link",
       description: """
-      Mints an invite for a room the caller hosts while it is waiting. One link per
-      table: a second mint updates the active invite's `seat_hint` and `label` in
-      place and answers 200 with the same code. `supersedes` names an earlier
+      Mints an invite for a room the caller hosts while it is waiting. Without
+      `position`, a second mint updates the unbound invite's `seat_hint` and `label`.
+      With `position`, the link always seats there or fails SEAT_TAKEN, ignoring
+      hints and redeem-time positions. A held seat binds the link to its user,
+      even after release. Each position/recipient has a separate link; a repeated
+      mint for the same binding answers 200 with the same code. `supersedes` names an earlier
       invite the caller hosted (play again); it forwards here with state `moved`
       while this table waits.
 
@@ -1431,6 +1467,29 @@ defmodule PidroServerWeb.API.RoomController do
 
   # ==================== Invites and host controls ====================
 
+  @doc "Holds a vacant waiting-room seat for an existing user."
+  def hold(conn, %{"code" => code, "position" => position} = params) do
+    with {:ok, position} <- parse_position_strict(position),
+         {:ok, %{user_id: user_id}} <-
+           {%{}, %{user_id: Ecto.UUID}}
+           |> Ecto.Changeset.cast(Map.take(params, ["user_id"]), [:user_id])
+           |> Ecto.Changeset.validate_required([:user_id])
+           |> Ecto.Changeset.apply_action(:insert),
+         {:ok, room} <-
+           RoomManager.set_seat_hold(code, conn.assigns.current_user.id, position, user_id) do
+      render(conn, :show, room: room)
+    end
+  end
+
+  @doc "Releases a waiting-room hold without changing any other seat."
+  def release_hold(conn, %{"code" => code, "position" => position}) do
+    with {:ok, position} <- parse_position_strict(position),
+         {:ok, room} <-
+           RoomManager.set_seat_hold(code, conn.assigns.current_user.id, position, nil) do
+      render(conn, :show, room: room)
+    end
+  end
+
   @doc """
   Mints the room's invite link (R1). See `open_api_operation(:create_invite)`.
 
@@ -1593,18 +1652,20 @@ defmodule PidroServerWeb.API.RoomController do
     end
   end
 
-  # One link per table (KD1): an active invite is updated in place; otherwise a
-  # new one is minted under the per-room cap. The context serializes this whole
-  # mutation with any supersession for the room.
+  # Position and recipient identify separate links; a second mint for the same
+  # binding updates only its hint and label, never another friend's destination.
   defp mint_or_update(%Room{} = room, host_id, params, superseded) do
     attrs = hint_attrs(params)
 
-    with {:ok, invite, status} <-
+    with {:ok, position} <- parse_invite_position(params["position"]),
+         {:ok, invite, status} <-
            Invites.mint_for_room(
              Map.merge(attrs, %{
                room_id: room.id,
                room_code: room.code,
-               host_user_id: host_id
+               host_user_id: host_id,
+               position: params["position"],
+               invited_user_id: room.config.seat_holds[position]
              }),
              superseded
            ) do
@@ -1619,6 +1680,9 @@ defmodule PidroServerWeb.API.RoomController do
       {:ok, invite, status}
     end
   end
+
+  defp parse_invite_position(nil), do: {:ok, nil}
+  defp parse_invite_position(position), do: parse_position_strict(position)
 
   # Only the keys the body carries, so a second mint without `label` keeps it.
   defp hint_attrs(params) do

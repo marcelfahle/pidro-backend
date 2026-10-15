@@ -424,7 +424,7 @@ unnamed room with three open seats.
 | Field | Type | Default | Rules |
 |-------|------|---------|-------|
 | `name` | string | none | Trimmed. At most 60 characters after trimming. Missing or blank means no name (`config.name` is `null`) |
-| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"`, `"open"`, or `{ "type": "open", "min_games": 100 }`. Allowed requirements: integer 0, 100, 1000. A missing seat or bare `"open"` means 0. The host takes north |
+| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"`, `"open"`, `{ "type": "open", "min_games": 100 }`, or `{ "type": "held", "user_id": "<uuid>" }`. Allowed requirements: integer 0, 100, 1000. A missing seat or bare `"open"` means 0. The host takes north |
 | `bot_difficulty` | string | `"basic"` | One of `"random"`, `"basic"`, `"smart"`. Applies to the bots started for `"ai"` seats |
 
 A bot is started for every `"ai"` seat. When all three seats are `"ai"` the room is a solo room
@@ -434,9 +434,50 @@ requirements stay in the room config through rematches. Read `seats` for current
 Every seat gains `min_games`, including room detail, lobby, invite preview and rematch readiness.
 It is 0 on occupied/bot seats. Existing shapes are preserved: REST and readiness use a
 position-keyed `seats` object; the lobby channel and public invite preview use `seats[]`.
-Invite previews expose no player IDs. Invalid seat objects (including missing `type` or
-`min_games`, non-integer/unsupported requirements, or extra keys) return `invalid_room_params`
+Invite previews expose no occupant IDs; friend holds expose the invited user's public profile.
+Invalid seat objects (including missing `type`, missing `min_games` on open objects,
+missing/invalid `user_id` on holds, non-integer/unsupported requirements, or extra keys) return `invalid_room_params`
 on `seats.seat_2`, `seats.seat_3` or `seats.seat_4`.
+
+#### Seats held for friends (PID-208)
+
+Create a hold with `{"seats":{"seat_3":{"type":"held","user_id":"<uuid>"}}}`.
+The user must exist, must not already be seated at this table, and may have only one hold
+per table. No friendship requirement is imposed.
+
+From the waiting room, the host may use:
+- `PUT /api/v1/rooms/:code/seats/:position/hold` with `{"user_id":"<uuid>"}`.
+- `DELETE /api/v1/rooms/:code/seats/:position/hold` with no body.
+
+Both return `200 {"data":{"room":...}}`, require a vacant seat, and publish the updated
+room and readiness. Non-hosts get `403 NOT_OWNER`; outside waiting/ready, `409 ROOM_NOT_WAITING`.
+Invalid users/positions or occupied seats return `422`. Release is idempotent on a vacant seat.
+
+Every room projection includes the held seat as `status: "free"`, `min_games: 0`, with:
+```json
+{ "held_for": { "user_id": "<uuid>", "display_name": "Nora", "avatar_url": null } }
+```
+REST/readiness retain their position-keyed `seats` maps; lobby-channel/preview seats remain arrays.
+A hold does **not** count as open and is absent from `available_positions`. A stranger's explicit
+join returns the existing `422 SEAT_TAKEN`; channel joins return `reason: "seat_taken"`.
+Normal auto/team joins prefer the caller's own held seat. The held user bypasses `min_games`.
+Bots and auto-fill skip held seats. The ready check returns `table_not_full` with the waiting
+seat's `held_for` in its snapshot, never a bot replacement. Release the hold before filling it
+with a bot. A hold has no separate timeout: it lasts until host release/replacement, the invited
+user sitting there, or room closure. Consumed holds are removed from config, not resurrected
+by rematch; a rematch waiting for a replacement carries its hold with the rest of the config.
+
+**In-app notice:** `GET /api/v1/auth/me` adds `data.seat_invitations`:
+```json
+{ "data": { "user": {}, "seat_invitations": [
+  { "code": "A1B2", "position": "south", "host_id": "<uuid>" }
+] } }
+```
+`code` is the four-character room code. Deep-link to normal room join with `position`.
+The list is derived from current waiting-room holds and disappears on release, seating or closure;
+no acknowledgement endpoint or durable notification inbox is needed. This server currently has
+no friends notification service, registered-device store or push transport, so push delivery is
+deferred rather than adding that infrastructure here.
 
 REST joins, invite claims and seat moves check the **combined Classic + Pidro 2 record**.
 Below the bar, HTTP 403 returns exactly:
@@ -664,9 +705,10 @@ and `7KQ4-M2XB` all reach the same invite. Invites expire **24 hours** after the
 **Endpoint**: `POST /api/v1/rooms/:code/invites`
 **Authentication**: Required (the room's host)
 
-The room must be `waiting` or `ready`. A **second mint on the same room updates the active invite
-in place**: the same code comes back with the new `seat_hint` and `label`, and the status is `200`
-instead of `201`.
+The room must be `waiting` or `ready`. Without `position`, a second mint updates the room's
+active **unbound** invite in place. Bound invites have one active link per position/recipient;
+a second mint for that same binding updates only `seat_hint` and `label`, returning the same
+code with `200` instead of `201`. Inviting another seat/user never retargets an existing link.
 
 **Request Body** (all fields optional):
 ```json
@@ -679,6 +721,13 @@ instead of `201`.
 
 - `seat_hint` - `north`, `east`, `south`, `west`, `north_south`, `east_west` or `partner`.
   `partner` resolves against the host's current seat at redeem time.
+- `position` - optional `north`, `east`, `south` or `west`. Binds redemption to this exact seat,
+  overriding both `seat_hint` and redeem-time `position`; there is no fallback. A taken seat
+  returns `409` with the existing `errors[0].code: "SEAT_TAKEN"` and `next_open` list.
+  If held at mint time, the link is permanently restricted to that user, even after release
+  or regeneration. A different user gets `409 SEAT_TAKEN` with an empty `next_open`.
+  To share with anyone, release the hold and mint a new position-bound link.
+  Mint/regenerate and preview responses include `position` (null for legacy unbound links).
 - `label` - free text, at most 40 characters; a private note for the host ("Anna"). It is deleted
   when the host deletes their account.
 - `supersedes` - the code of an earlier invite the **caller hosted**. That invite starts reading

@@ -238,9 +238,44 @@ defmodule PidroServer.Games.RoomManager do
           {:ok, Room.t()}
           | {:error, :already_in_room | :room_code_exhausted | Config.errors()}
   def create_room(host_id, config_or_attrs \\ %{}) do
-    with {:ok, %Config{} = config} <- Config.new(config_or_attrs) do
+    with {:ok, %Config{} = config} <- Config.new(config_or_attrs),
+         :ok <- validate_hold_users(config.seat_holds, [host_id]) do
       GenServer.call(__MODULE__, {:create_room, host_id, config})
     end
+  end
+
+  @doc "Sets or releases a friend hold on a vacant waiting-room seat; host only."
+  @spec set_seat_hold(String.t(), String.t(), Positions.position(), String.t() | nil) ::
+          {:ok, Room.t()} | {:error, term()}
+  def set_seat_hold(code, host_id, position, user_id) do
+    with :ok <- validate_hold_users(if(user_id, do: %{position => user_id}, else: %{}), []) do
+      GenServer.call(
+        __MODULE__,
+        {:set_seat_hold, String.upcase(code), host_id, position, user_id}
+      )
+    end
+  end
+
+  @doc "Pending seat invitations derived from live waiting-room holds."
+  @spec seat_invitations(String.t()) :: [map()]
+  def seat_invitations(user_id), do: GenServer.call(__MODULE__, {:seat_invitations, user_id})
+
+  defp validate_hold_users(holds, seated_ids) do
+    ids = Map.values(holds)
+    users = PidroServer.Accounts.Auth.get_users_map(ids)
+
+    if length(Enum.uniq(ids)) == length(ids) and
+         Enum.all?(ids, &(Map.has_key?(users, &1) and &1 not in seated_ids)),
+       do: :ok,
+       else:
+         {:error,
+          {:invalid_room_params,
+           [
+             %{
+               field: "seats",
+               message: "holds require distinct existing users who are not seated"
+             }
+           ]}}
   end
 
   @doc """
@@ -465,9 +500,9 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc "Publicly claimable seats, shared by REST and lobby snapshots. Bots are not vacancies."
   @spec available_positions(Room.t()) :: [Positions.position()]
-  def available_positions(%Room{locked: false, status: status, seats: seats})
+  def available_positions(%Room{locked: false, status: status, seats: seats} = room)
       when status in [:waiting, :ready, :playing] do
-    Enum.filter([:north, :east, :south, :west], fn position ->
+    Enum.filter(Positions.available(room), fn position ->
       match?(%Seat{occupant_type: :vacant}, seats[position])
     end)
   end
@@ -937,7 +972,8 @@ defmodule PidroServer.Games.RoomManager do
              | {:seat_requires_games, pos_integer(), non_neg_integer()}
              | {:seat_taken, [Positions.position()]}}
   def claim_seat(room_code, room_id, user_id, opts \\ []) do
-    claim = opts |> Map.new() |> Map.take([:hint, :position, :username, :display_name])
+    claim =
+      opts |> Map.new() |> Map.take([:hint, :position, :bound_position, :username, :display_name])
 
     GenServer.call(
       __MODULE__,
@@ -1161,6 +1197,42 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:seat_invitations, user_id}, _from, %State{} = state) do
+    invitations =
+      for {_code, room} <- state.rooms,
+          room.status in [:waiting, :ready],
+          {position, ^user_id} <- room.config.seat_holds do
+        %{code: room.code, position: position, host_id: room.host_id}
+      end
+
+    {:reply, Enum.sort_by(invitations, &{&1.code, &1.position}), state}
+  end
+
+  def handle_call({:set_seat_hold, code, host_id, position, user_id}, _from, state) do
+    with {:ok, room} <- fetch_room(state, code),
+         :ok <- ensure_owner(room, host_id),
+         :ok <- ensure_waiting(room),
+         :ok <- ensure_hold_position(room, position, user_id) do
+      holds =
+        if user_id,
+          do: Map.put(room.config.seat_holds, position, user_id),
+          else: Map.delete(room.config.seat_holds, position)
+
+      updated =
+        %{room | config: %{room.config | seat_holds: holds}}
+        |> reset_readiness()
+        |> touch_last_activity()
+
+      broadcast_room(code, updated)
+      broadcast_lobby_event({:room_updated, updated})
+      broadcast_readiness(updated)
+      {:reply, {:ok, updated}, put_room(state, updated)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:create_room, host_id, %Config{} = config}, _from, %State{} = state) do
     # If the player is stuck in a room from a previous disconnected session
     # (e.g. browser refresh followed by navigating away), clean it up first.
@@ -1267,6 +1339,7 @@ defmodule PidroServer.Games.RoomManager do
   def handle_call({:claim_seat, room_code, room_id, user_id, claim}, _from, %State{} = state) do
     with {:ok, %Room{} = room} <- fetch_room(state, room_code),
          :ok <- ensure_room_id(room, room_id),
+         :ok <- ensure_bound_position(room, user_id, Map.get(claim, :bound_position)),
          :ok <- ensure_not_seated_here(room, user_id),
          :ok <- ensure_room_joinable(room, user_id) do
       claim_open_seat(state, room, user_id, claim)
@@ -3026,7 +3099,12 @@ defmodule PidroServer.Games.RoomManager do
   defp ensure_seat_requirement(room, user_id, position) do
     current_seat = room.seats[Positions.get_position(room, user_id)]
 
-    case {Map.get(room.config.seat_requirements, position, 0), current_seat} do
+    requirement =
+      if room.config.seat_holds[position] == user_id,
+        do: 0,
+        else: Map.get(room.config.seat_requirements, position, 0)
+
+    case {requirement, current_seat} do
       {0, _} ->
         :ok
 
@@ -3090,6 +3168,15 @@ defmodule PidroServer.Games.RoomManager do
 
   defp resolve_hint(%Room{}, hint), do: {:ok, hint}
 
+  defp ensure_bound_position(_room, _user_id, nil), do: :ok
+
+  defp ensure_bound_position(room, user_id, position) do
+    if room.positions[position] in [nil, user_id] and
+         Positions.get_position(room, user_id) in [nil, position],
+       do: :ok,
+       else: {:error, {:seat_taken, available_positions(room)}}
+  end
+
   @doc false
   # An explicit position wins over the hint and reports the open seats when
   # taken; otherwise the hint is tried with fallback to the first open seat.
@@ -3148,6 +3235,26 @@ defmodule PidroServer.Games.RoomManager do
     case Map.get(seats, position) do
       %Seat{occupant_type: :vacant, status: nil} -> :ok
       _ -> {:error, :seat_not_vacant}
+    end
+  end
+
+  defp ensure_hold_position(room, position, user_id) do
+    cond do
+      position not in [:north, :east, :south, :west] ->
+        {:error, :invalid_position}
+
+      room.positions[position] != nil ->
+        {:error, :seat_taken}
+
+      user_id != nil and Positions.has_player?(room, user_id) ->
+        {:error, :already_seated}
+
+      user_id != nil and
+          Enum.any?(room.config.seat_holds, fn {pos, id} -> pos != position and id == user_id end) ->
+        {:error, :already_seated}
+
+      true ->
+        :ok
     end
   end
 

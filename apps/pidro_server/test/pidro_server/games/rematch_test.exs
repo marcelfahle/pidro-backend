@@ -64,6 +64,37 @@ defmodule PidroServer.Games.RematchTest do
   end
 
   describe "the same four, again" do
+    test "a rematch waiting for a replacement retains the hold until that friend sits" do
+      {room, [host, departing | remaining]} = four_player_game()
+      finish_game(room.code)
+      :ok = RoomManager.leave_room(departing)
+      friend = AccountsFixtures.user_fixture()
+      {:ok, held} = RoomManager.set_seat_hold(room.code, host, :east, friend.id)
+      assert held.config.seat_holds == %{east: friend.id}
+      {:ok, snapshot} = RoomManager.readiness(room.code)
+      assert snapshot.seats.east.held_for.user_id == friend.id
+
+      assert {:error, :table_not_full, _} =
+               RoomManager.confirm_ready(room.code, room.id, host, self(), snapshot.ready_epoch)
+
+      assert {:error, :seat_taken} = RoomManager.join_room(room.code, departing, :east)
+      {:ok, joined, :east} = RoomManager.join_room(room.code, friend.id)
+      assert joined.config.seat_holds == %{}
+      :ok = RoomManager.register_game_channel(room.code, friend.id, self())
+      {:ok, snapshot} = RoomManager.readiness(room.code)
+
+      for user <- [host, friend.id | remaining] do
+        assert {:ok, _} =
+                 RoomManager.confirm_ready(room.code, room.id, user, self(), snapshot.ready_epoch)
+      end
+
+      {:ok, rematch} = RoomManager.get_room(room.code)
+      assert rematch.status == :playing
+      assert rematch.game_number == 2
+      assert rematch.positions.east == friend.id
+      assert rematch.config == joined.config
+    end
+
     test "rematch retains requirements without checking existing players or substitutes" do
       users = Enum.map(1..4, fn _ -> AccountsFixtures.user_fixture() end)
       [host, partner | others] = users

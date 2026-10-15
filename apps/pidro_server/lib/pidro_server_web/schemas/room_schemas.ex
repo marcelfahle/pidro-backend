@@ -12,6 +12,20 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
 
   # ==================== Room Schemas ====================
 
+  defmodule HeldFor do
+    @moduledoc "The public profile of the user a vacant seat waits for."
+    OpenApiSpex.schema(%{
+      title: "HeldFor",
+      type: :object,
+      required: [:user_id, :display_name, :avatar_url],
+      properties: %{
+        user_id: %Schema{type: :string, format: :uuid},
+        display_name: %Schema{type: :string, nullable: true},
+        avatar_url: %Schema{type: :string, nullable: true}
+      }
+    })
+  end
+
   defmodule Seat do
     @moduledoc "Schema for a Seat at the table."
 
@@ -20,6 +34,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       description: "A seat at the table with occupant and connection state",
       type: :object,
       properties: %{
+        held_for: HeldFor,
         vacated_by: %Schema{
           type: :string,
           description: "Departed player's display name, only on a vacant substitute seat"
@@ -71,9 +86,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         status: %Schema{
           type: :string,
-          enum: [:connected, :reconnecting, :grace, :bot_substitute],
+          enum: [:connected, :reconnecting, :grace, :bot_substitute, :free],
           nullable: true,
-          description: "Connection status; `reconnecting` in a waiting room is a held seat"
+          description: "Connection status; a vacant friend hold is `free` with `held_for`"
         },
         is_owner: %Schema{
           type: :boolean,
@@ -168,6 +183,15 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           properties: %{
             type: %Schema{type: :string, enum: ["open"]},
             min_games: %Schema{type: :integer, enum: [0, 100, 1000]}
+          }
+        },
+        %Schema{
+          type: :object,
+          additionalProperties: false,
+          required: [:type, :user_id],
+          properties: %{
+            type: %Schema{type: :string, enum: ["held"]},
+            user_id: %Schema{type: :string, format: :uuid}
           }
         }
       ]

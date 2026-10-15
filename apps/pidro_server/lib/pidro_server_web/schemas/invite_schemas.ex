@@ -51,6 +51,12 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
           example:
             "Come play Pidro with me 🃏 https://www.pidro.online/j/7KQ4M2XB — code 7KQ4-M2XB"
         },
+        position: %Schema{
+          type: :string,
+          nullable: true,
+          enum: [:north, :east, :south, :west],
+          description: "Bound destination; never falls back"
+        },
         seat_hint: %Schema{
           type: :string,
           nullable: true,
@@ -138,13 +144,14 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         game: PidroServerWeb.Schemas.RoomSchemas.GameProgress,
         seats: %Schema{
           type: :array,
-          description: "Public seats, without player identities; empty when the room is closed",
+          description: "Public seats, including held users' public profiles; empty when closed",
           items: %Schema{
             type: :object,
             properties: %{
               position: %Schema{type: :string, enum: [:north, :east, :south, :west]},
               seat_index: %Schema{type: :integer, minimum: 0, maximum: 3},
               status: %Schema{type: :string, enum: ["free", "occupied"]},
+              held_for: RoomSchemas.HeldFor,
               vacated_by: %Schema{type: :string, description: "Departed player's display name"},
               min_games: %Schema{type: :integer, enum: [0, 100, 1000]}
             }
@@ -164,6 +171,7 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
           example: 1
         },
         seats_total: %Schema{type: :integer, description: "Always 4", example: 4},
+        position: %Schema{type: :string, nullable: true, enum: [:north, :east, :south, :west]},
         seat_hint: %Schema{
           type: :string,
           nullable: true,
@@ -242,6 +250,13 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         "Optional seat hint, label and the code of an earlier invite this one supersedes (play again)",
       type: :object,
       properties: %{
+        position: %Schema{
+          type: :string,
+          nullable: true,
+          enum: [:north, :east, :south, :west],
+          description:
+            "Bind the link to this seat, overriding hints and redeem-time positions. If held, only that user may redeem, even after release."
+        },
         seat_hint: %Schema{
           type: :string,
           nullable: true,

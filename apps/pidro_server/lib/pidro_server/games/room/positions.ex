@@ -27,15 +27,14 @@ defmodule PidroServer.Games.Room.Positions do
   end
 
   @doc "Returns list of unoccupied positions"
-  def available(%Room{positions: positions}) do
+  def available(%Room{positions: positions, config: config}) do
     @positions
-    |> Enum.filter(&(Map.get(positions, &1) == nil))
+    |> Enum.filter(&(Map.get(positions, &1) == nil and not Map.has_key?(config.seat_holds, &1)))
   end
 
   @doc "Returns available positions for a specific team"
-  def team_available(%Room{positions: positions}, team) when team in [:north_south, :east_west] do
-    @teams[team]
-    |> Enum.filter(&(Map.get(positions, &1) == nil))
+  def team_available(%Room{} = room, team) when team in [:north_south, :east_west] do
+    Enum.filter(available(room), &(&1 in @teams[team]))
   end
 
   @doc "Returns list of player IDs in canonical order (N, E, S, W)"
@@ -133,7 +132,7 @@ defmodule PidroServer.Games.Room.Positions do
       not has_player?(room, player_id) ->
         {:error, :player_not_in_room}
 
-      Map.get(positions, to) != nil ->
+      Map.get(positions, to) != nil or not hold_allows?(room, player_id, to) ->
         {:error, :seat_taken}
 
       true ->
@@ -162,27 +161,37 @@ defmodule PidroServer.Games.Room.Positions do
   defp do_assign(_room, _player_id, :invalid), do: {:error, :invalid_position}
 
   defp do_assign(%Room{} = room, player_id, :auto) do
-    case available(room) do
+    case available_for(room, player_id, @positions) do
       [pos | _] -> {:ok, place(room, player_id, pos), pos}
       [] -> {:error, :room_full}
     end
   end
 
   defp do_assign(%Room{} = room, player_id, {:team, team}) do
-    case team_available(room, team) do
+    case available_for(room, player_id, @teams[team]) do
       [pos | _] -> {:ok, place(room, player_id, pos), pos}
       [] -> {:error, :team_full}
     end
   end
 
   defp do_assign(%Room{positions: positions} = room, player_id, {:seat, pos}) do
-    case Map.get(positions, pos) do
-      nil -> {:ok, place(room, player_id, pos), pos}
-      _occupied -> {:error, :seat_taken}
-    end
+    if Map.get(positions, pos) == nil and hold_allows?(room, player_id, pos),
+      do: {:ok, place(room, player_id, pos), pos},
+      else: {:error, :seat_taken}
+  end
+
+  defp available_for(room, player_id, positions) do
+    positions
+    |> Enum.filter(&(room.positions[&1] == nil and hold_allows?(room, player_id, &1)))
+    |> Enum.sort_by(&(room.config.seat_holds[&1] != player_id))
+  end
+
+  defp hold_allows?(room, player_id, position) do
+    Map.get(room.config.seat_holds, position) in [nil, player_id]
   end
 
   defp place(%Room{positions: positions} = room, player_id, pos) do
-    %{room | positions: Map.put(positions, pos, player_id)}
+    config = %{room.config | seat_holds: Map.delete(room.config.seat_holds, pos)}
+    %{room | positions: Map.put(positions, pos, player_id), config: config}
   end
 end
