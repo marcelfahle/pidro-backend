@@ -995,6 +995,62 @@ link can come back as a fresh guest — the host's answer to that is
 
 ---
 
+### Friends and Player Discovery (PID-223)
+
+All five routes require bearer authentication and a registered account. Guests receive
+`403 {"error":"ACCOUNT_REQUIRED"}`. These new routes use the attached friends contract's
+single `error` code shape for domain errors; authentication and rate limiting retain the
+existing `errors` array. Existing endpoints are unchanged.
+
+| Method | Endpoint | Result |
+|--------|----------|--------|
+| GET | `/api/v1/friends` | Full friends list |
+| PUT | `/api/v1/friends/:user_id` | Add one directed edge, then return full list |
+| DELETE | `/api/v1/friends/:user_id` | Delete both directions, then return full list |
+| GET | `/api/v1/users/search?q=nor` | Up to ten matching registered players |
+| GET | `/api/v1/friends/recent` | Up to ten recent human tablemates |
+
+The first three return:
+
+```json
+{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online"}],"added_you":[]}}
+```
+
+Friends have both directed edges; `added_you` has an incoming edge with none back.
+Adding back accepts it; there is no stored request state. PUT is idempotent (200 on
+repeat). DELETE is also idempotent for an existing registered target. Friends sort
+connected first (`online` and `at_table` together), then by folded name; `added_you`
+sorts newest first. Presence comes from existing Presence tracking: a game-channel
+connection wins as `at_table`, otherwise a lobby connection is `online`, otherwise
+`offline`. Avatars use the same URL as room/profile payloads, or null.
+
+Self-add and self-remove return `400 {"error":"CANNOT_FRIEND_SELF"}`. A missing,
+malformed or guest target returns `404 {"error":"USER_NOT_FOUND"}`.
+
+Search and recent return:
+
+```json
+{"data":{"users":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"offline","relation":"added_you"}]}}
+```
+
+Relations are `none`, `friend` (both edges), `added_you` (incoming only), or `added`
+(outgoing only). Search excludes self and guests, matches a display-name prefix using
+`User.name_key/1` (including accent, case, punctuation and compatibility folding),
+and requires at least three NFKC-normalized, trimmed graphemes. Short or missing
+queries return `400 {"error":"QUERY_TOO_SHORT"}`. Search scans registered display
+names using that existing Elixir fold; no duplicate folded-name column is stored.
+
+Recent uses the caller's last twenty `game_stats` rows by `completed_at`, deduplicates
+players most-recent-first, and excludes self, mutual friends, guests and non-account
+identities (including bots). Outgoing-only and incoming-only edges remain discoverable.
+Blocked-pair exclusion is deferred to PID-225, which extends `Friends.visible_pair?/2`.
+
+After add/remove, each affected user's joined lobby sockets receive
+`friends_changed` with `{}`; unrelated users receive nothing. Refetch `/api/v1/friends`.
+No push notification is sent.
+
+---
+
 ## WebSocket API
 
 For real-time gameplay, the Pidro Server uses Phoenix Channels over WebSockets.
@@ -1646,6 +1702,8 @@ the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
 
 | Policy | Route | Limit (production) | Keyed by |
 |--------|-------|--------------------|----------|
+| `user_search` | `GET /api/v1/users/search` | 30 per 60 s | authenticated user |
+| `friend_add` | `PUT /api/v1/friends/:user_id` | 30 per 3600 s | authenticated user |
 | `login` | `POST /api/v1/auth/login` | 10 per 60 s | client IP |
 | `register` | `POST /api/v1/auth/register` | 10 per 600 s | client IP |
 | `password_reset` | `POST /api/v1/auth/password-reset` | 3 per 900 s | client IP |

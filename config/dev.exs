@@ -100,6 +100,8 @@ config :pidro_server, dev_routes: true
 #   auth_age                   10 per 600_000 ms         100 per 600_000 ms
 #   classic_help               5 per 3_600_000 ms        50 per 3_600_000 ms
 config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  user_search: %{limit: 300, scale_ms: 60_000, key: :user},
+  friend_add: %{limit: 300, scale_ms: 3_600_000, key: :user},
   login: %{limit: 100, scale_ms: 60_000, key: :ip},
   register: %{limit: 100, scale_ms: 600_000, key: :ip},
   password_reset: %{limit: 30, scale_ms: 900_000, key: :ip},

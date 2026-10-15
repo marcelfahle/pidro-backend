@@ -167,6 +167,12 @@ defmodule PidroServerWeb.Router do
 
     # User routes with authentication
     get "/users/me/stats", UserController, :stats
+    get "/users/search", FriendController, :search, private: %{rate_limit: [:user_search]}
+
+    get "/friends", FriendController, :index
+    get "/friends/recent", FriendController, :recent
+    put "/friends/:user_id", FriendController, :add, private: %{rate_limit: [:friend_add]}
+    delete "/friends/:user_id", FriendController, :remove
 
     # Player profile route with authentication (own profile)
     get "/profile", ProfileController, :show

@@ -94,6 +94,8 @@ config :pidro_server, PidroServer.Games.Lifecycle,
 # Rate limits are effectively unlimited in test. Rate-limit tests lower one
 # policy at a time with PidroServerWeb.RateLimitCase.with_limit/3.
 config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  user_search: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
+  friend_add: %{limit: 1_000_000, scale_ms: 3_600_000, key: :user},
   login: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
   register: %{limit: 1_000_000, scale_ms: 600_000, key: :ip},
   password_reset: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},

@@ -62,6 +62,10 @@ end
 # are numeric only; raise a limit instead of looking for an off switch.
 rate_limit_overrides =
   [
+    {:user_search, :limit, "RATE_LIMIT_USER_SEARCH_LIMIT"},
+    {:user_search, :scale_ms, "RATE_LIMIT_USER_SEARCH_SCALE_MS"},
+    {:friend_add, :limit, "RATE_LIMIT_FRIEND_ADD_LIMIT"},
+    {:friend_add, :scale_ms, "RATE_LIMIT_FRIEND_ADD_SCALE_MS"},
     {:login, :limit, "RATE_LIMIT_LOGIN_LIMIT"},
     {:login, :scale_ms, "RATE_LIMIT_LOGIN_SCALE_MS"},
     {:register, :limit, "RATE_LIMIT_REGISTER_LIMIT"},

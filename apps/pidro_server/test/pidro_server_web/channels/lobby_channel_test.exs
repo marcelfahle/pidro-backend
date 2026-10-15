@@ -32,6 +32,52 @@ defmodule PidroServerWeb.LobbyChannelTest do
     %{user: user, socket: socket}
   end
 
+  test "friends_changed reaches both affected lobbies, never an unrelated lobby", %{user: user} do
+    friend = PidroServer.AccountsFixtures.user_fixture()
+    stranger = PidroServer.AccountsFixtures.user_fixture()
+
+    sockets =
+      for account <- [user, friend, stranger] do
+        {:ok, socket} = create_socket(account)
+        {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+        socket
+      end
+
+    [a, b, unrelated] = sockets
+
+    for _ <- sockets, do: assert_push("presence_state", _)
+
+    for {operation, expected} <- [
+          {&PidroServer.Friends.add/2, [%{user_id: user.id, presence: "online"}]},
+          {&PidroServer.Friends.remove/2, []}
+        ] do
+      assert {:ok, _} = operation.(user.id, friend.id)
+
+      assert Enum.map(
+               PidroServer.Friends.list(friend.id).added_you,
+               &Map.take(&1, [:user_id, :presence])
+             ) == expected
+
+      a_ref = a.join_ref
+      b_ref = b.join_ref
+      unrelated_ref = unrelated.join_ref
+
+      assert_receive %Phoenix.Socket.Message{
+        event: "friends_changed",
+        payload: %{},
+        join_ref: ^a_ref
+      }
+
+      assert_receive %Phoenix.Socket.Message{
+        event: "friends_changed",
+        payload: %{},
+        join_ref: ^b_ref
+      }
+
+      refute_receive %Phoenix.Socket.Message{event: "friends_changed", join_ref: ^unrelated_ref}
+    end
+  end
+
   test "lobby snapshots and updates expose holds and channel joins honor them", %{
     socket: socket,
     user: user

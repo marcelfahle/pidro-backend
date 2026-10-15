@@ -50,6 +50,8 @@ config :pidro_server, PidroServer.Games.Lifecycle,
 # harness, config/test.exs sets 1_000_000, and config/runtime.exs merges
 # RATE_LIMIT_<POLICY>_LIMIT / _SCALE_MS overrides.
 config :pidro_server, PidroServerWeb.Plugs.RateLimit,
+  user_search: %{limit: 30, scale_ms: 60_000, key: :user},
+  friend_add: %{limit: 30, scale_ms: 3_600_000, key: :user},
   login: %{limit: 10, scale_ms: 60_000, key: :ip},
   register: %{limit: 10, scale_ms: 600_000, key: :ip},
   password_reset: %{limit: 3, scale_ms: 900_000, key: :ip},

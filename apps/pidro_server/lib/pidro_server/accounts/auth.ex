@@ -698,7 +698,8 @@ defmodule PidroServer.Accounts.Auth do
 
   One database transaction revokes and strips labels from hosted invites and
   deletes the user's `player_profiles`, `player_achievements`,
-  `invite_redemptions`, `invite_events` and `users` rows. Only after commit
+  `invite_redemptions`, `invite_events`, incoming and outgoing `friendships`,
+  and `users` rows. Only after commit
   does the user leave their in-memory room, each affected room's
   `invite_live_until` get recomputed, and the disconnect broadcast fire.
   Post-commit cleanup is best-effort and logged. `game_stats` and
@@ -839,6 +840,10 @@ defmodule PidroServer.Accounts.Auth do
     Repo.delete_all(from x in GameXp, where: x.user_id == ^id)
     Repo.delete_all(from r in Redemption, where: r.user_id == ^id)
     Repo.delete_all(from e in Event, where: e.user_id == ^id)
+
+    Repo.delete_all(
+      from f in PidroServer.Friends.Friendship, where: f.user_id == ^id or f.friend_id == ^id
+    )
 
     case Repo.delete(user) do
       {:ok, deleted} -> {deleted, hosted_rooms}
