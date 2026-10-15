@@ -71,7 +71,7 @@
     {"code":"already_in_this_room","params":{},"sources":["rooms","lobby"],"meaning":"You are already in this room."},
     {"code":"not_in_room","params":{},"sources":["rooms","readiness","seats"],"meaning":"You are not in this room."},
     {"code":"player_not_in_room","params":{},"sources":["rooms","join","seats"],"meaning":"The player is not in this room."},
-    {"code":"seat_not_controlled","params":{},"sources":["readiness"],"meaning":"This connection no longer controls the seat."},
+    {"code":"seat_not_controlled","params":{},"sources":["actions"],"meaning":"This connection no longer controls the seat."},
     {"code":"invalid_locked","params":{},"sources":["rooms"],"meaning":"The locked value must be a boolean."},
     {"code":"room_not_available_for_spectators","params":{},"sources":["rooms"],"meaning":"Only playing or finished games can be watched."},
     {"code":"spectators_full","params":{},"sources":["rooms"],"meaning":"This room has reached its spectator limit."},
