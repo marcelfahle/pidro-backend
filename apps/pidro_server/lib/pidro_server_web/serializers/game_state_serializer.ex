@@ -51,7 +51,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       current_trick_details: serialize_current_trick_details(state),
       trick_number: Map.get(state, :trick_number),
       hand_points: Map.get(state, :hand_points, %{}),
-      last_hand: Map.get(state, :last_hand),
+      last_hand: serialize_last_hand(Map.get(state, :last_hand)),
       scores: Map.get(state, :cumulative_scores, %{}),
       cumulative_scores: Map.get(state, :cumulative_scores, %{}),
       winner: Map.get(state, :winner),
@@ -147,6 +147,18 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       points: Map.get(trick, :points, 0),
       two_of_trump: Map.get(trick, :two_of_trump)
     }
+  end
+
+  # The finished hand's bids and tricks use the live `bids` and `tricks` shapes;
+  # its trump is the suit atom, as the live `trump_suit` is.
+  @spec serialize_last_hand(map() | nil) :: map() | nil
+  defp serialize_last_hand(nil), do: nil
+
+  defp serialize_last_hand(last_hand) when is_map(last_hand) do
+    last_hand
+    |> Map.put(:bids, serialize_bids(Map.get(last_hand, :bids, [])))
+    |> Map.put(:trump, Map.get(last_hand, :trump))
+    |> Map.put(:tricks, serialize_tricks(Map.get(last_hand, :tricks, [])))
   end
 
   defp serialize_current_trick_details(%{current_trick: trick} = state) when not is_nil(trick) do

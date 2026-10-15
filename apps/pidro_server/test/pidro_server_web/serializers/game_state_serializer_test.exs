@@ -67,6 +67,43 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       end
     end
 
+    test "the last hand's bids, trump and tricks have the live fields' shapes" do
+      finished =
+        1
+        |> Pidro.Test.DeterministicGame.opening()
+        |> Pidro.Test.DeterministicGame.play_until(&(&1.hand_number == 2))
+
+      last_hand = finished.last_hand
+      assert [_ | _] = last_hand.tricks
+      assert [_ | _] = last_hand.bids
+      assert finished.tricks == [] and finished.bids == [] and finished.trump_suit == nil
+
+      payload = GameStateSerializer.serialize(finished)
+
+      # The same hand as it would have been serialized live, before the reset.
+      live =
+        GameStateSerializer.serialize(%{
+          finished
+          | tricks: last_hand.tricks,
+            bids: last_hand.bids,
+            trump_suit: last_hand.trump
+        })
+
+      assert payload.last_hand.tricks == live.tricks
+      assert payload.last_hand.bids == live.bids
+      assert payload.last_hand.trump == live.trump_suit
+      assert payload.last_hand.trump in [:hearts, :diamonds, :clubs, :spades]
+
+      assert Map.drop(payload.last_hand, [:bids, :trump, :tricks]) ==
+               Map.drop(last_hand, [:bids, :trump, :tricks])
+
+      wire = payload |> Jason.encode!() |> Jason.decode!()
+      live_wire = live |> Jason.encode!() |> Jason.decode!()
+      assert wire["last_hand"]["tricks"] == live_wire["tricks"]
+      assert wire["last_hand"]["bids"] == live_wire["bids"]
+      assert wire["last_hand"]["trump"] == live_wire["trump_suit"]
+    end
+
     test "absent and empty current tricks retain their existing shapes" do
       state = dealt_state()
       payload = GameStateSerializer.serialize(state)

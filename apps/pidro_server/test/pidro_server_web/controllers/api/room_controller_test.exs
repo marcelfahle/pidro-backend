@@ -56,7 +56,13 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       as_user(conn, host) |> get(~p"/api/v1/rooms/#{room.code}/state") |> json_response(200)
 
     payload = response["data"]["state"]
-    assert payload["last_hand"] == scored.last_hand |> Jason.encode!() |> Jason.decode!()
+
+    serialized_last_hand =
+      PidroServerWeb.Serializers.GameStateSerializer.serialize(scored).last_hand
+
+    assert payload["last_hand"] == serialized_last_hand |> Jason.encode!() |> Jason.decode!()
+    assert [_ | _] = payload["last_hand"]["tricks"]
+    assert [_ | _] = payload["last_hand"]["bids"]
     assert payload["scores"] == payload["cumulative_scores"]
     assert payload["current_trick"] == payload["current_trick_details"]["plays"]
 

@@ -384,7 +384,12 @@ defmodule Pidro.Finnish.Scorer do
       captured: state.hand_points,
       made: made,
       delta: %{bidding_team => bidding_delta, defending_team => defending_delta},
-      scores: new_cumulative_scores
+      scores: new_cumulative_scores,
+      # The hand-complete reset clears these from the live state in the same
+      # transition, so the finished hand is kept here for clients to read back.
+      bids: state.bids,
+      trump: state.trump_suit,
+      tricks: state.tricks
     }
 
     # Update state
