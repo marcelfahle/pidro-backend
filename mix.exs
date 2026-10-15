@@ -30,24 +30,10 @@ defmodule PidroBackend.MixProject do
     []
   end
 
-  # CVE-2026-105659: an HTTP/2 client can pin a Bandit stream process with a
-  # WINDOW_UPDATE trickle. No fixed release exists yet (1.12.5 is the latest).
-  # The app listens on plain HTTP behind kamal-proxy, which terminates TLS and
-  # speaks HTTP/1.1 upstream, so no HTTP/2 client reaches Bandit. Remove this
-  # exception when a fixed Bandit ships:
-  # https://github.com/mtrudel/bandit/security/advisories/GHSA-69m6-wcv4-rwcf
-  # Pin the exception to the reviewed lock version so upgrades are audited.
-  defp audit_exceptions do
-    case Mix.Dep.Lock.read(Path.join(__DIR__, "mix.lock"))[:bandit] do
-      {:hex, :bandit, "1.12.5", _, _, _, _, _} -> ["CVE-2026-105659"]
-      _ -> []
-    end
-  end
-
   defp aliases do
     [
       precommit: [
-        &hex_audit/1,
+        "hex.audit",
         "format --check-formatted",
         "compile --warnings-as-errors",
         "test --raise",
@@ -55,21 +41,6 @@ defmodule PidroBackend.MixProject do
         "dialyzer"
       ]
     ]
-  end
-
-  defp hex_audit(_args) do
-    # Hex can initialize while loading an umbrella child, before the root
-    # project settings apply. Pass the exception to a fresh audit process.
-    {_, status} =
-      System.cmd("mix", ["hex.audit"],
-        into: IO.stream(),
-        env: [
-          {"MIX_ENV", Atom.to_string(Mix.env())},
-          {"HEX_IGNORE_ADVISORIES", Enum.join(audit_exceptions(), ",")}
-        ]
-      )
-
-    if status != 0, do: Mix.raise("Hex dependency audit failed")
   end
 
   defp credo_diff(_args) do

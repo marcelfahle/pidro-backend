@@ -16,6 +16,9 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
   }
 
   alias PidroServer.AccountsFixtures
+  alias PidroServer.{Blocks, ClassicSocial, Friends}
+  alias PidroServer.Blocks.Block
+  alias PidroServer.Friends.Friendship
   alias PidroServer.Invites
   alias PidroServer.Invites.Event
   alias PidroServer.Profiles
@@ -67,6 +70,180 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     )
     |> Ecto.Changeset.change(Map.take(fields, [:password_hash]))
     |> Repo.update!()
+  end
+
+  describe "Classic social import" do
+    test "stores all directions, resolves claimed friends and keeps missing friends as facts" do
+      a = AccountsFixtures.user_fixture()
+      b = link!(AccountsFixtures.user_fixture(), 20_002, %{})
+      incoming = link!(AccountsFixtures.user_fixture(), 20_003, %{})
+      blocked = link!(AccountsFixtures.user_fixture(), 20_004, %{})
+
+      ticket =
+        issue_ticket!(a, 20_001, :password, nil, %{
+          friend_ids: [20_002, 20_002, 20_004, 20_005],
+          friended_by_ids: [20_002, 20_003, 20_004],
+          blocked_ids: [20_004, 20_006]
+        })
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+      assert {:ok, claimed} = ClassicClaims.redeem(ticket, a, %{})
+      assert_receive {:friends_changed, id} when id == b.id
+
+      assert Enum.sort(classic_edges("classic_friendships", :classic_friend_id)) == [
+               {20_001, 20_002},
+               {20_001, 20_004},
+               {20_001, 20_005},
+               {20_002, 20_001},
+               {20_003, 20_001},
+               {20_004, 20_001}
+             ]
+
+      assert Enum.sort(classic_edges("classic_blocks", :classic_blocked_id)) == [
+               {20_001, 20_004},
+               {20_001, 20_006}
+             ]
+
+      assert Enum.map(Friends.list(a.id).friends, & &1.user_id) == [b.id]
+      assert Enum.map(Friends.list(b.id).friends, & &1.user_id) == [a.id]
+      assert Enum.map(Friends.list(a.id).added_you, & &1.user_id) == [incoming.id]
+      assert Friends.list(incoming.id).added_you == []
+      assert Friends.list(a.id).classic == %{not_here: 1}
+      assert Enum.map(Blocks.list(a.id).blocked, & &1.user_id) == [blocked.id]
+      assert Repo.aggregate(Friendship, :count) == 3
+
+      assert {:ok, _} = ClassicClaims.redeem(ticket, claimed, %{})
+      assert :ok = ClassicSocial.resolve_classic(claimed)
+      assert Repo.aggregate(Friendship, :count) == 3
+      assert Repo.aggregate(Block, :count) == 1
+      assert length(classic_edges("classic_friendships", :classic_friend_id)) == 6
+
+      {:ok, _} = Friends.remove(a.id, b.id)
+      {:ok, _} = Blocks.unblock(a.id, blocked.id)
+      assert {:ok, _} = ClassicClaims.redeem(ticket, claimed, %{})
+      another = issue_ticket!(claimed, 20_001, :password, nil, %{friend_ids: [20_002]})
+      assert {:ok, _} = ClassicClaims.redeem(another, claimed, %{})
+      assert Friends.list(a.id).friends == []
+      assert Blocks.list(a.id).blocked == []
+    end
+
+    test "the second claim resolves stored edges even when its older ticket has no arrays" do
+      a = AccountsFixtures.user_fixture()
+      b = AccountsFixtures.user_fixture()
+
+      first =
+        issue_ticket!(a, 20_010, :password, nil, %{
+          friend_ids: [20_011],
+          friended_by_ids: [20_011]
+        })
+
+      second = issue_ticket!(b, 20_011, :password, nil, %{})
+
+      assert {:ok, _} = ClassicClaims.redeem(first, a, %{})
+      assert Friends.list(a.id).friends == []
+      assert Friends.list(a.id).classic.not_here == 1
+      assert {:ok, _} = ClassicClaims.redeem(second, b, %{})
+      assert Enum.map(Friends.list(a.id).friends, & &1.user_id) == [b.id]
+      assert Enum.map(Friends.list(b.id).friends, & &1.user_id) == [a.id]
+      assert Friends.list(a.id).classic.not_here == 0
+    end
+
+    test "incoming Classic blocks and existing live blocks win over friendship in both directions" do
+      for source <- [:classic, :live] do
+        a = AccountsFixtures.user_fixture()
+        b = AccountsFixtures.user_fixture()
+        base = if source == :classic, do: 20_020, else: 20_030
+        b_ticket = issue_ticket!(b, base + 1, :password, nil, %{})
+        assert {:ok, _} = ClassicClaims.redeem(b_ticket, b, %{})
+        {:ok, _} = Friends.add(a.id, b.id)
+        {:ok, _} = Friends.add(b.id, a.id)
+
+        case source do
+          :classic -> ClassicSocial.store(base + 1, %{blocked_ids: [base]})
+          :live -> Blocks.block(b.id, a.id)
+        end
+
+        ticket =
+          issue_ticket!(a, base, :password, nil, %{
+            friend_ids: [base + 1],
+            friended_by_ids: [base + 1]
+          })
+
+        assert {:ok, _} = ClassicClaims.redeem(ticket, a, %{})
+        assert Blocks.blocked?(a.id, b.id)
+        refute Repo.exists?(from f in Friendship, where: f.user_id in ^[a.id, b.id])
+        assert Enum.map(Blocks.list(b.id).blocked, & &1.user_id) == [a.id]
+      end
+    end
+
+    test "old tickets without arrays store no social facts" do
+      a = AccountsFixtures.user_fixture()
+      ticket = issue_ticket!(a, 20_040, :password, nil, %{xp: 10})
+      assert {:ok, _} = ClassicClaims.redeem(ticket, a, %{})
+      assert classic_edges("classic_friendships", :classic_friend_id) == []
+      assert classic_edges("classic_blocks", :classic_blocked_id) == []
+    end
+
+    test "resolve failure is loud, preserves the claim and facts, and the mix task recovers" do
+      a = AccountsFixtures.user_fixture()
+      b = link!(AccountsFixtures.user_fixture(), 20_051, %{})
+      ticket = issue_ticket!(a, 20_050, :password, nil, %{friend_ids: [20_051]})
+      event = [:pidro_server, :classic_social, :resolve, :error]
+      handler = "classic-social-test"
+
+      :telemetry.attach(
+        handler,
+        event,
+        fn event, measurements, metadata, pid ->
+          send(pid, {event, measurements, metadata})
+        end,
+        self()
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      Repo.query!("""
+      CREATE FUNCTION fail_classic_friendship() RETURNS trigger AS $$
+      BEGIN
+        RAISE EXCEPTION 'social storage unavailable';
+      END
+      $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!(
+        "CREATE TRIGGER fail_classic_friendship BEFORE INSERT ON friendships " <>
+          "FOR EACH ROW EXECUTE FUNCTION fail_classic_friendship()"
+      )
+
+      assert capture_log(fn ->
+               assert {:ok, claimed} = ClassicClaims.redeem(ticket, a, %{})
+               assert claimed.classic_user_id == 20_050
+             end) =~ "Classic social resolution failed for classic_user_id=20050"
+
+      assert_receive {^event, %{count: 1}, %{classic_user_id: 20_050, reason: _}}
+      assert Repo.get!(User, a.id).classic_user_id == 20_050
+      assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 20_050).redeemed_by_id == a.id
+
+      assert Repo.get_by!(PlayerProfile, user_id: a.id).heritage_flags["classic_user_id"] ==
+               20_050
+
+      assert classic_edges("classic_friendships", :classic_friend_id) == [{20_050, 20_051}]
+      assert Repo.aggregate(Friendship, :count) == 0
+
+      Repo.query!("DROP TRIGGER fail_classic_friendship ON friendships")
+
+      assert ExUnit.CaptureIO.capture_io(fn ->
+               Mix.Tasks.Pidro.ResolveClassicSocial.run(["20050"])
+               Mix.Tasks.Pidro.ResolveClassicSocial.run([])
+             end) =~ "Classic social resolution complete"
+
+      assert Enum.map(Friends.list(b.id).added_you, & &1.user_id) == [a.id]
+      assert Repo.aggregate(Friendship, :count) == 1
+    end
+  end
+
+  defp classic_edges(table, field) do
+    Repo.all(from e in table, select: {e.classic_user_id, field(e, ^field)})
   end
 
   test "an authenticated guest keeps its identity and progress, and retry is a no-op" do

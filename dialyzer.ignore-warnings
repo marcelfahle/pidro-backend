@@ -11,6 +11,11 @@ lib/mix/tasks/pidro.rerate.ex:1:
 lib/mix/tasks/pidro.rerate.ex:26:14:
 lib/mix/tasks/pidro.rerate.ex:42:13:
 lib/mix/tasks/pidro.rerate.ex:51:9:
+lib/mix/tasks/pidro.resolve_classic_social.ex:1:
+lib/mix/tasks/pidro.resolve_classic_social.ex:21:14:
+lib/mix/tasks/pidro.resolve_classic_social.ex:28:30:
+lib/mix/tasks/pidro.resolve_classic_social.ex:29:9:
+lib/mix/tasks/pidro.resolve_classic_social.ex:42:23:
 lib/mix/tasks/pidro.seed_admin.ex:1:
 lib/mix/tasks/pidro.seed_admin.ex:17:14:
 lib/mix/tasks/pidro.seed_admin.ex:26:13:

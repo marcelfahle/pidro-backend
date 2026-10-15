@@ -6,6 +6,47 @@ defmodule PidroServerWeb.API.FriendControllerTest do
   alias PidroServer.Accounts.Token
   alias PidroServer.Friends
 
+  test "Classic count includes only distinct outgoing friends who have not claimed", %{conn: conn} do
+    a = user_fixture()
+    b = user_fixture()
+
+    assert {:ok, %{ticket: ticket}} =
+             PidroServer.Accounts.ClassicClaims.issue_ticket(%{
+               classic_user_id: 30_001,
+               method: :password,
+               user_id: a.id,
+               legacy_data: %{
+                 friend_ids: [30_002, 30_002, 30_003],
+                 friended_by_ids: [30_004],
+                 blocked_ids: [30_005]
+               }
+             })
+
+    assert {:ok, _} = PidroServer.Accounts.ClassicClaims.redeem(ticket, a, %{})
+    response = conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200)
+    assert_schema(response, "FriendsResponse")
+    assert response["data"]["classic"] == %{"not_here" => 2}
+
+    response = conn |> auth(b) |> get(~p"/api/v1/friends") |> json_response(200)
+    refute Map.has_key?(response["data"], "classic")
+
+    assert {:ok, %{ticket: ticket}} =
+             PidroServer.Accounts.ClassicClaims.issue_ticket(%{
+               classic_user_id: 30_002,
+               method: :password,
+               user_id: b.id,
+               legacy_data: %{}
+             })
+
+    assert {:ok, _} = PidroServer.Accounts.ClassicClaims.redeem(ticket, b, %{})
+    response = conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200)
+    assert response["data"]["classic"] == %{"not_here" => 1}
+    response = conn |> auth(b) |> get(~p"/api/v1/friends") |> json_response(200)
+    assert_schema(response, "FriendsResponse")
+    assert response["data"]["classic"] == %{"not_here" => 0}
+    assert response["data"]["added_you"] == [player(a)]
+  end
+
   test "HTTP add, add back, list and remove share the full-list contract", %{conn: conn} do
     a = user_fixture(%{display_name: "Nora"})
     b = user_fixture(%{display_name: "Vera"})

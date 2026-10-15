@@ -86,5 +86,6 @@ defmodule PidroServer.Accounts.ClassicClient do
       "account_visible" => get_in(profile, ["account", "visible"]),
       "badges" => profile["badges"] || []
     }
+    |> Map.merge(Map.take(profile, ["friend_ids", "friended_by_ids", "blocked_ids"]))
   end
 end

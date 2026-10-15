@@ -4,6 +4,7 @@ defmodule PidroServer.Friends do
 
   alias PidroServer.Accounts.{Auth, User}
   alias PidroServer.Blocks
+  alias PidroServer.ClassicSocial
   alias PidroServer.Friends.Friendship
   alias PidroServer.Games.RoomManager
   alias PidroServer.Repo
@@ -73,6 +74,7 @@ defmodule PidroServer.Friends do
         ),
       added_you: added_you
     }
+    |> with_classic(user_id)
   end
 
   @doc "Finds up to ten registered players by the existing folded-name prefix."
@@ -134,6 +136,16 @@ defmodule PidroServer.Friends do
       |> MapSet.new()
 
     related_entries(user_id, Enum.filter(ids, &MapSet.member?(visible, &1))) |> Enum.take(10)
+  end
+
+  defp with_classic(list, user_id) do
+    case Repo.get(User, user_id) do
+      %User{classic_user_id: id} when not is_nil(id) ->
+        Map.put(list, :classic, %{not_here: ClassicSocial.not_here(id)})
+
+      _ ->
+        list
+    end
   end
 
   defp target(user_id, friend_id) do
