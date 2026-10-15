@@ -7,6 +7,47 @@ defmodule Pidro.Finnish.ScorerTest do
 
   doctest Pidro.Finnish.Scorer
 
+  describe "trick_signals/3" do
+    test "empty tricks have no winning play or points" do
+      for variant <- [:finnish, :louisiana] do
+        assert Scorer.trick_signals(%Types.Trick{number: 1, leader: :north}, :hearts, variant) ==
+                 %{winning: nil, points: 0, two_of_trump: nil}
+      end
+    end
+
+    test "each partial trick uses the variant winner and the shared point split" do
+      cases = [
+        {:finnish,
+         [{:north, {5, :diamonds}}, {:east, {5, :hearts}}, {:south, {2, :hearts}},
+          {:west, {10, :hearts}}], [:north, :east, :east, :west], [5, 10, 10, 11]},
+        {:louisiana,
+         [{:north, {10, :clubs}}, {:east, {14, :spades}}, {:south, {2, :hearts}},
+          {:west, {5, :diamonds}}], [:north, :north, :south, :west], [0, 0, 0, 5]},
+        {:finnish,
+         [{:north, {11, :hearts}}, {:south, {14, :hearts}}, {:west, {2, :hearts}}],
+         [:north, :south, :south], [1, 2, 2]}
+      ]
+
+      for {variant, plays, winners, points} <- cases,
+          count <- 1..length(plays) do
+        partial = Enum.take(plays, count)
+        winner = Enum.at(winners, count - 1)
+        {^winner, card} = List.keyfind(partial, winner, 0)
+        trick = %Types.Trick{number: 1, leader: :north, plays: partial}
+        signals = Scorer.trick_signals(trick, :hearts, variant)
+
+        assert signals.winning == %{position: winner, card: card}
+        assert signals.points == Enum.at(points, count - 1)
+
+        assert signals.two_of_trump ==
+                 if({:south, {2, :hearts}} in partial,
+                   do: %{position: :south, points: 1},
+                   else: if({:west, {2, :hearts}} in partial, do: %{position: :west, points: 1})
+                 )
+      end
+    end
+  end
+
   describe "score_trick/2" do
     test "scores a simple trick without 2 of trump" do
       trick = %Types.Trick{

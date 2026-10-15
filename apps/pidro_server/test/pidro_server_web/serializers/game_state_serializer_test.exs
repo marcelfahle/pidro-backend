@@ -32,6 +32,55 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
   end
 
   describe "serialize/2" do
+    test "trick signals are additive and finished points exclude the trump two" do
+      for variant <- [:finnish, :louisiana] do
+        trick = %Pidro.Core.Types.Trick{
+          number: 1,
+          leader: :north,
+          plays: [{:north, {5, :diamonds}}, {:east, {2, :hearts}}, {:south, {10, :hearts}}]
+        }
+
+        state = %{dealt_state() | variant: variant, trump_suit: :hearts, current_trick: trick}
+        payload = GameStateSerializer.serialize(state)
+        plays = GameStateSerializer.serialize_plays(trick.plays)
+
+        assert payload.current_trick == plays
+        assert payload.current_trick_details.plays == plays
+        assert payload.current_trick_details.cards == plays
+        assert payload.current_trick_details.winner == nil
+        assert payload.current_trick_details.winning ==
+                 %{position: :south, card: %{rank: 10, suit: :hearts}}
+
+        assert payload.current_trick_details.points == 6
+        assert payload.current_trick_details.two_of_trump == %{position: :east, points: 1}
+        assert payload.scores == payload.cumulative_scores
+        assert payload.hand_points == state.hand_points
+
+        {:ok, finished} = Pidro.Game.Play.complete_trick(state)
+        [completed] = GameStateSerializer.serialize(finished).tricks
+        assert completed.winner == :south
+        assert completed.points == 6
+        assert completed.two_of_trump == %{position: :east, points: 1}
+        assert completed.plays == plays
+        assert completed.cards == plays
+      end
+    end
+
+    test "absent and empty current tricks retain their existing shapes" do
+      state = dealt_state()
+      payload = GameStateSerializer.serialize(state)
+      assert payload.current_trick == []
+      assert payload.current_trick_details == nil
+      assert payload.last_hand == nil
+
+      empty = %Pidro.Core.Types.Trick{number: 1, leader: :north}
+      payload = GameStateSerializer.serialize(%{state | current_trick: empty, trump_suit: :hearts})
+      assert payload.current_trick == []
+      assert payload.current_trick_details.winning == nil
+      assert payload.current_trick_details.points == 0
+      assert payload.current_trick_details.two_of_trump == nil
+    end
+
     test "the payload has no :chance key" do
       state = dealt_state()
 
