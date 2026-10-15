@@ -98,6 +98,23 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
     assert html =~ "No owner"
   end
 
+  test "invitation creation and release leave the connected admin room list working", %{
+    conn: conn
+  } do
+    host = PidroServer.AccountsFixtures.user_fixture()
+    friend = PidroServer.AccountsFixtures.user_fixture()
+    {:ok, view, _html} = live(conn, ~p"/admin/games")
+
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: friend.id}})
+    room_link = "a[href='/admin/games/#{room.code}']"
+    assert has_element?(view, room_link)
+
+    {:ok, _} = RoomManager.set_seat_hold(room.code, host.id, :south, nil)
+    assert has_element?(view, room_link)
+    :ok = RoomManager.close_room(room.code)
+    refute has_element?(view, room_link)
+  end
+
   describe "room creation passes the room config constructor" do
     for preset <- ~w(preset_empty_room preset_1h_3b preset_2h_2b preset_4_bots) do
       test "AE6: #{preset} creates a room with a valid config and no free-form key", %{

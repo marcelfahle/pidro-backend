@@ -103,6 +103,189 @@ defmodule PidroServerWeb.LobbyChannelTest do
     RoomManager.close_room(room.code)
   end
 
+  test "seat invitations reach every invited lobby only, from create through release and seating",
+       %{user: host} do
+    friend = PidroServer.AccountsFixtures.user_fixture()
+    stranger = PidroServer.AccountsFixtures.user_fixture()
+
+    [host_ref, friend_ref, other_friend_ref, stranger_ref] =
+      for account <- [host, friend, friend, stranger] do
+        {:ok, socket} = create_socket(account)
+        {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+        assert_push "presence_state", _
+        socket.join_ref
+      end
+
+    {:ok, room} =
+      RoomManager.create_room(host.id, %{
+        rule_set: :louisiana,
+        seat_holds: %{south: friend.id}
+      })
+
+    code = room.code
+
+    expected = %{
+      code: code,
+      position: :south,
+      host_id: host.id,
+      host: %{user_id: host.id, display_name: host.username, avatar_url: nil},
+      rule_set: "louisiana",
+      held_since: DateTime.to_iso8601(room.created_at)
+    }
+
+    for ref <- [friend_ref, other_friend_ref] do
+      assert_receive %Phoenix.Socket.Message{
+        event: "seat_invitation",
+        payload: ^expected,
+        join_ref: ^ref
+      }
+    end
+
+    assert RoomManager.seat_invitations(friend.id) == [expected]
+    {:ok, _} = RoomManager.set_seat_hold(code, host.id, :south, friend.id)
+    assert RoomManager.seat_invitations(friend.id) == [expected]
+    refute_receive %Phoenix.Socket.Message{event: "seat_invitation"}
+
+    {:ok, _} = RoomManager.set_seat_hold(code, host.id, :south, nil)
+
+    for ref <- [friend_ref, other_friend_ref] do
+      assert_receive %Phoenix.Socket.Message{
+        event: "seat_invitation_gone",
+        payload: %{code: ^code, position: :south},
+        join_ref: ^ref
+      }
+    end
+
+    {:ok, _} = RoomManager.set_seat_hold(code, host.id, :east, friend.id)
+
+    for ref <- [friend_ref, other_friend_ref] do
+      assert_receive %Phoenix.Socket.Message{
+        event: "seat_invitation",
+        payload: %{code: ^code, position: :east, held_since: held_since} = invitation,
+        join_ref: ^ref
+      }
+
+      assert Map.drop(invitation, [:position, :held_since]) ==
+               Map.drop(expected, [:position, :held_since])
+
+      assert {:ok, time, 0} = DateTime.from_iso8601(held_since)
+      assert DateTime.compare(time, room.created_at) == :gt
+    end
+
+    {:ok, _, :east} = RoomManager.join_room(code, friend.id, :east)
+
+    for ref <- [friend_ref, other_friend_ref] do
+      assert_receive %Phoenix.Socket.Message{
+        event: "seat_invitation_gone",
+        payload: %{code: ^code, position: :east},
+        join_ref: ^ref
+      }
+    end
+
+    for _ <- 1..2 do
+      account = PidroServer.AccountsFixtures.user_fixture()
+      assert {:ok, _, _} = RoomManager.join_room(code, account.id)
+    end
+
+    assert PidroServer.RoomFixtures.ready_room(code).status == :playing
+    assert RoomManager.seat_invitations(friend.id) == []
+    :ok = RoomManager.close_room(code)
+
+    for ref <- [host_ref, stranger_ref] do
+      refute_receive %Phoenix.Socket.Message{event: "seat_invitation", join_ref: ^ref}
+      refute_receive %Phoenix.Socket.Message{event: "seat_invitation_gone", join_ref: ^ref}
+    end
+
+    refute_receive %Phoenix.Socket.Message{event: "seat_invitation_gone"}
+  end
+
+  test "replacement, room start and host departure remove invitations", %{user: host} do
+    friends = for _ <- 1..2, do: PidroServer.AccountsFixtures.user_fixture()
+    [first, second] = friends
+
+    [first_ref, second_ref] =
+      for friend <- friends do
+        {:ok, socket} = create_socket(friend)
+        {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+        assert_push "presence_state", _
+        socket.join_ref
+      end
+
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{west: first.id}})
+    code = room.code
+    assert_push "seat_invitation", %{code: ^code, position: :west}
+    {:ok, _} = RoomManager.set_seat_hold(code, host.id, :west, second.id)
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_gone",
+      payload: %{code: ^code, position: :west},
+      join_ref: ^first_ref
+    }
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation",
+      payload: %{code: ^code, position: :west},
+      join_ref: ^second_ref
+    }
+
+    :ok = RoomManager.update_room_status(code, :playing)
+    assert_push "seat_invitation_gone", %{code: ^code, position: :west}
+    assert RoomManager.seat_invitations(second.id) == []
+    :ok = RoomManager.close_room(code)
+    refute_push "seat_invitation_gone", _
+
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{east: first.id}})
+    code = room.code
+    assert_push "seat_invitation", %{code: ^code, position: :east}
+    :ok = RoomManager.leave_room(host.id)
+    assert_push "seat_invitation_gone", %{code: ^code, position: :east}
+    assert RoomManager.seat_invitations(first.id) == []
+
+    {:ok, room} =
+      RoomManager.create_room(host.id, %{seat_holds: %{south: first.id, west: second.id}})
+
+    code = room.code
+    assert_push "seat_invitation", %{code: ^code, position: :south}
+    assert_push "seat_invitation", %{code: ^code, position: :west}
+    :ok = RoomManager.close_room(code)
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_gone",
+      payload: %{code: ^code, position: :south},
+      join_ref: ^first_ref
+    }
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_gone",
+      payload: %{code: ^code, position: :west},
+      join_ref: ^second_ref
+    }
+  end
+
+  test "a block committed before queued lobby delivery suppresses the invitation", %{user: host} do
+    friend = PidroServer.AccountsFixtures.user_fixture()
+    {:ok, socket} = create_socket(friend)
+    {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    assert_push "presence_state", _
+
+    :sys.suspend(socket.channel_pid)
+
+    try do
+      {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: friend.id}})
+      assert {:ok, _} = PidroServer.Blocks.block(friend.id, host.id)
+      assert RoomManager.seat_invitations(friend.id) == []
+
+      assert {:error, :user_not_found} =
+               RoomManager.set_seat_hold(room.code, host.id, :east, friend.id)
+    after
+      :sys.resume(socket.channel_pid)
+    end
+
+    refute_push "seat_invitation", _
+    assert_push "friends_changed", %{}
+    :ok = RoomManager.leave_room(host.id)
+  end
+
   test "join_room rejects below the bar and accepts the exact combined boundary", %{
     socket: socket,
     user: user

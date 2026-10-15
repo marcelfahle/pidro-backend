@@ -73,6 +73,7 @@ defmodule PidroServerWeb.LobbyChannel do
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
     user_id = socket.assigns.user_id
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:invitations:#{user_id}")
 
     # Get current available room list (excludes finished and closed)
     rooms = RoomManager.list_rooms(:available) |> Enum.filter(&RoomManager.visible_in_lobby?/1)
@@ -160,6 +161,20 @@ defmodule PidroServerWeb.LobbyChannel do
 
   def handle_info({:friends_changed, user_id}, socket) do
     if socket.assigns.user_id == user_id, do: push(socket, "friends_changed", %{})
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_invitation, user_id, invitation}, socket) do
+    if socket.assigns.user_id == user_id and
+         not PidroServer.Blocks.blocked?(invitation.host_id, user_id) do
+      push(socket, "seat_invitation", RoomManager.seat_invitation_with_host(invitation))
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_invitation_gone, user_id, invitation}, socket) do
+    if socket.assigns.user_id == user_id, do: push(socket, "seat_invitation_gone", invitation)
     {:noreply, socket}
   end
 

@@ -192,6 +192,12 @@ defmodule PidroServer.Games.Room.Positions do
 
   defp place(%Room{positions: positions} = room, player_id, pos) do
     config = %{room.config | seat_holds: Map.delete(room.config.seat_holds, pos)}
-    %{room | positions: Map.put(positions, pos, player_id), config: config}
+
+    %{
+      room
+      | positions: Map.put(positions, pos, player_id),
+        config: config,
+        seat_hold_started_at: Map.delete(room.seat_hold_started_at, pos)
+    }
   end
 end

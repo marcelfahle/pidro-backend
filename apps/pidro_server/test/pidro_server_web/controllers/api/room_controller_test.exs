@@ -101,7 +101,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   test "held seats are visible everywhere, invite their user, and exclude strangers", %{
     conn: conn
   } do
-    host = AccountsFixtures.user_fixture()
+    host = AccountsFixtures.user_fixture(%{display_name: "Ada"})
     friend = AccountsFixtures.user_fixture(%{display_name: "Nora"})
     stranger = AccountsFixtures.user_fixture()
 
@@ -125,9 +125,35 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
     me = as_user(conn, friend) |> get(~p"/api/v1/auth/me") |> json_response(200)
 
+    {:ok, live_room} = RoomManager.get_room(code)
+
     assert me["data"]["seat_invitations"] == [
-             %{"code" => code, "position" => "south", "host_id" => host.id}
+             %{
+               "code" => code,
+               "position" => "south",
+               "host_id" => host.id,
+               "host" => %{
+                 "user_id" => host.id,
+                 "display_name" => host.display_name,
+                 "avatar_url" => nil
+               },
+               "rule_set" => "finnish",
+               "held_since" => DateTime.to_iso8601(live_room.created_at)
+             }
            ]
+
+    OpenApiSpex.TestAssertions.assert_schema(me, "User Response", PidroServerWeb.ApiSpec.spec())
+
+    legacy =
+      put_in(me, ["data", "seat_invitations"], [
+        %{"code" => code, "position" => "south", "host_id" => host.id}
+      ])
+
+    OpenApiSpex.TestAssertions.assert_schema(
+      legacy,
+      "User Response",
+      PidroServerWeb.ApiSpec.spec()
+    )
 
     me = as_user(conn, stranger) |> get(~p"/api/v1/auth/me") |> json_response(200)
     assert me["data"]["seat_invitations"] == []
