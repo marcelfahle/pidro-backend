@@ -14,7 +14,7 @@ defmodule PidroServer.BlocksTest do
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
     assert {:ok, %{blocked: [entry]}} = Blocks.block(a.id, b.id)
-    assert entry == %{user_id: b.id, display_name: b.display_name, avatar_url: b.avatar_url}
+    assert entry == %{user_id: b.id, display_name: b.username, avatar_url: b.avatar_url}
     assert_receive {:friends_changed, id} when id == a.id
     assert_receive {:friends_changed, id} when id == b.id
     assert Blocks.blocked?(a.id, b.id)

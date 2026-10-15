@@ -90,8 +90,8 @@ defmodule PidroServer.Friends do
       ids =
         from(u in User,
           where: u.guest == false and u.id != ^user_id,
-          order_by: [asc: u.display_name, asc: u.id],
-          select: {u.id, u.display_name}
+          order_by: [asc: coalesce(u.display_name, u.username), asc: u.id],
+          select: {u.id, coalesce(u.display_name, u.username)}
         )
         |> Blocks.excluding(user_id)
         |> Repo.all()
@@ -203,7 +203,7 @@ defmodule PidroServer.Friends do
 
       %{
         user_id: id,
-        display_name: user.display_name,
+        display_name: User.public_name(user),
         avatar_url: user.avatar_url,
         presence: presence
       }

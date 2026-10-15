@@ -101,6 +101,20 @@ defmodule PidroServer.FriendsTest do
            }
   end
 
+  test "a player without a display name is listed and found by username" do
+    caller = user_fixture()
+    plain = user_fixture(%{username: "nora_plain"})
+    named = user_fixture(%{username: "nora_named", display_name: "Vera"})
+    {:ok, _} = Friends.add(plain.id, caller.id)
+
+    assert [%{user_id: id, display_name: "nora_plain"}] = Friends.list(caller.id).added_you
+    assert id == plain.id
+
+    assert {:ok, [%{display_name: "nora_plain"}]} = Friends.search(caller.id, "nora")
+    assert {:ok, [%{display_name: "Vera"}]} = Friends.search(caller.id, "ver")
+    assert named.display_name == "Vera"
+  end
+
   test "search returns ten matches, not ten candidates before folding" do
     caller = user_fixture()
     for n <- 1..12, do: user_fixture(%{display_name: "Nora #{n}"})
