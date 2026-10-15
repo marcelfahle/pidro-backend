@@ -18,6 +18,9 @@ defmodule Pidro.Game.EngineTransitionTest do
       assert Map.get(state, :last_hand) == nil
       {:ok, scored} = Engine.apply_action(state, :west, {:play_card, {10, :hearts}})
 
+      [first_trick | _] = state.tricks
+      [_, final_trick] = scored.last_hand.tricks
+
       expected = %{
         hand_number: 1,
         bidding_team: :north_south,
@@ -26,7 +29,10 @@ defmodule Pidro.Game.EngineTransitionTest do
         captured: %{north_south: 13, east_west: 1},
         made: made,
         delta: delta,
-        scores: total
+        scores: total,
+        bids: state.bids,
+        trump: :hearts,
+        tricks: [first_trick, final_trick]
       }
 
       assert scored.last_hand == expected
@@ -60,6 +66,40 @@ defmodule Pidro.Game.EngineTransitionTest do
     end
   end
 
+  test "last hand keeps the finished hand's bids, trump and every trick, including the final one" do
+    for variant <- [:finnish, :louisiana] do
+      state = final_play_state(variant, 7, %{north_south: 4, east_west: 8})
+      {:ok, next} = Engine.apply_action(state, :west, {:play_card, {10, :hearts}})
+
+      assert next.hand_number == 2
+      assert next.tricks == []
+      assert next.bids == []
+      assert next.trump_suit == nil
+
+      assert next.last_hand.bids == state.bids
+      assert next.last_hand.trump == :hearts
+
+      [cold_trick, final_trick] = next.last_hand.tricks
+
+      # East and north had gone cold, so the first trick has two plays.
+      assert cold_trick.number == 1
+      assert cold_trick.plays == [{:south, {5, :hearts}}, {:west, {5, :diamonds}}]
+
+      assert final_trick.number == 2
+
+      assert final_trick.plays == [
+               {:north, {14, :hearts}},
+               {:east, {2, :hearts}},
+               {:south, {11, :hearts}},
+               {:west, {10, :hearts}}
+             ]
+
+      assert final_trick.winner == :north
+      assert final_trick.points == 3
+      assert final_trick.two_of_trump == %{position: :east, points: 1}
+    end
+  end
+
   defp final_play_state(variant, bid, scores) do
     state = GameState.new(seed: 1, variant: variant)
 
@@ -76,6 +116,12 @@ defmodule Pidro.Game.EngineTransitionTest do
         current_turn: :west,
         current_dealer: :north,
         highest_bid: {:south, bid},
+        bids: [
+          %Pidro.Core.Types.Bid{position: :east, amount: :pass, timestamp: 0},
+          %Pidro.Core.Types.Bid{position: :south, amount: bid, timestamp: 1},
+          %Pidro.Core.Types.Bid{position: :west, amount: :pass, timestamp: 2},
+          %Pidro.Core.Types.Bid{position: :north, amount: :pass, timestamp: 3}
+        ],
         bidding_team: :north_south,
         cumulative_scores: scores,
         trick_number: 2,

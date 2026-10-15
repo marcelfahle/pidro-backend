@@ -687,7 +687,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       properties: %{
         rank: %Schema{
           oneOf: [
-            %Schema{type: :integer, description: "Numeric rank 2-10"},
+            %Schema{type: :integer, minimum: 2, maximum: 10, description: "Numeric rank 2-10"},
             %Schema{type: :integer, enum: [11, 12, 13, 14], description: "Face cards and Ace"}
           ],
           description: "Card rank (2-14, where 11=Jack, 12=Queen, 13=King, 14=Ace)",
@@ -924,9 +924,38 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           @team_scores
           | description: "Score changes actually applied; may be negative"
         },
-        scores: %Schema{@team_scores | description: "Cumulative scores after this hand"}
+        scores: %Schema{@team_scores | description: "Cumulative scores after this hand"},
+        bids: %Schema{
+          type: :array,
+          items: Bid,
+          description: "The finished hand's bids, in the live `bids` shape"
+        },
+        trump: %Schema{
+          type: :string,
+          enum: [:hearts, :diamonds, :clubs, :spades],
+          nullable: true,
+          description: "The finished hand's trump suit, as the live `trump_suit`"
+        },
+        tricks: %Schema{
+          type: :array,
+          items: Trick,
+          description:
+            "Every completed trick of the finished hand, including the final one, in the live `tricks` shape"
+        }
       },
-      required: [:hand_number, :bidding_team, :bidder, :bid, :captured, :made, :delta, :scores],
+      required: [
+        :hand_number,
+        :bidding_team,
+        :bidder,
+        :bid,
+        :captured,
+        :made,
+        :delta,
+        :scores,
+        :bids,
+        :trump,
+        :tricks
+      ],
       example: %{
         "hand_number" => 3,
         "bidding_team" => "north_south",
@@ -935,7 +964,10 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         "captured" => %{"north_south" => 8, "east_west" => 6},
         "made" => false,
         "delta" => %{"north_south" => -9, "east_west" => 6},
-        "scores" => %{"north_south" => -2, "east_west" => 21}
+        "scores" => %{"north_south" => -2, "east_west" => 21},
+        "bids" => [%{"position" => "south", "amount" => 9}],
+        "trump" => "hearts",
+        "tricks" => []
       }
     })
   end

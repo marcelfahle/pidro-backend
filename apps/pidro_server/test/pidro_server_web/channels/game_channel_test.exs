@@ -1593,12 +1593,14 @@ defmodule PidroServerWeb.GameChannelTest do
       assert reconnect_reply.reconnected == true
       assert reconnect_reply.position == initial_position
       assert reconnect_reply.state.phase == :bidding
-      assert reconnect_reply.state.last_hand == state.last_hand
+      assert reconnect_reply.state.last_hand == GameStateSerializer.serialize(state).last_hand
       assert reconnect_reply.state.last_hand == initial_reply.state.last_hand
 
       wire = reconnect_reply.state |> Jason.encode!() |> Jason.decode!()
       assert wire["last_hand"]["hand_number"] == 1
       assert wire["last_hand"]["scores"] == wire["scores"]
+      assert length(wire["last_hand"]["tricks"]) == length(state.last_hand.tricks)
+      assert wire["last_hand"]["trump"] == to_string(state.last_hand.trump)
     end
 
     test "normal join still works without reconnected flag", %{
