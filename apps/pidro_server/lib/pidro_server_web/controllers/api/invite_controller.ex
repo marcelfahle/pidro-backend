@@ -119,6 +119,11 @@ defmodule PidroServerWeb.API.InviteController do
     with `next_code`. A kicked caller answers 403 `KICKED`; a caller connected in
     another room answers 422 `ALREADY_IN_ROOM`.
 
+    Open-seat requirements also apply to invite claims: below the combined
+    Classic and Pidro 2 games count, 403 `SEAT_REQUIRES_GAMES` with top-level
+    `error`, `min_games` and `games_played`. A failed lookup returns 503
+    `PROFILE_UNAVAILABLE` without claiming a seat.
+
     Limited at policy `invite_redeem` (per user).
     """,
     security: [%{"bearer_auth" => []}],
@@ -128,7 +133,16 @@ defmodule PidroServerWeb.API.InviteController do
     responses: [
       ok: {"Seated", "application/json", InviteSchemas.RedeemResponse},
       unauthorized: {"Unauthorized", "application/json", ErrorSchemas.unauthorized_error()},
-      forbidden: {"Kicked from this table", "application/json", ErrorSchemas.error_response()},
+      forbidden:
+        {"Kicked or below seat requirement", "application/json",
+         %OpenApiSpex.Schema{
+           oneOf: [
+             ErrorSchemas.error_response(),
+             PidroServerWeb.Schemas.RoomSchemas.SeatRequiresGames
+           ]
+         }},
+      service_unavailable:
+        {"PROFILE_UNAVAILABLE; retry later", "application/json", ErrorSchemas.error_response()},
       not_found: {"Unknown invite code", "application/json", ErrorSchemas.not_found_error()},
       conflict: {"Seat taken or table full", "application/json", ErrorSchemas.conflict_error()},
       gone:

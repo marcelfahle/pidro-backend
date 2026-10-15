@@ -54,6 +54,7 @@ defmodule PidroServerWeb.API.InviteJSON do
       state: state,
       host: host,
       config: Config.serialize(assigns.config),
+      seats: Map.get(assigns, :seats, []),
       seats_taken: seats_taken,
       seats_total: @seats_total,
       seat_hint: invite.seat_hint,

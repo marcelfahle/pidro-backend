@@ -7,6 +7,35 @@ defmodule PidroServer.Games.Room.ConfigTest do
 
   @all_open %{east: :open, south: :open, west: :open}
 
+  test "open-seat requirements parse, persist and serialize only on vacant seats" do
+    alias PidroServer.Games.Room.Seat
+
+    for games <- [0, 100, 1000] do
+      body = %{"seats" => %{"seat_3" => %{"type" => "open", "min_games" => games}}}
+      assert {:ok, config, @all_open} = Config.parse_create_params(body)
+      assert {:ok, ^config} = Config.new(config)
+      assert Config.serialize_seat(config, Seat.new_vacant(:south)).min_games == games
+      assert Config.serialize_seat(config, Seat.new_vacant(:east)).min_games == 0
+      assert Config.serialize_seat(config, Seat.new_human(:south, "player")).min_games == 0
+      assert Config.serialize_seat(config, Seat.new_bot(:south, self())).min_games == 0
+    end
+
+    for invalid <-
+          [
+            %{"min_games" => 100},
+            %{"type" => "open"},
+            %{"type" => "ai", "min_games" => 100},
+            %{"type" => "open", "min_games" => 100, "extra" => true}
+          ] ++
+            Enum.map(
+              [-1, 1, 101, 100.0, "100", nil, true],
+              &%{"type" => "open", "min_games" => &1}
+            ) do
+      assert {:error, {:invalid_room_params, [%{field: "seats.seat_3"}]}} =
+               Config.parse_create_params(%{"seats" => %{"seat_3" => invalid}})
+    end
+  end
+
   test "game-state bid schemas accept both variants' boundaries" do
     alias PidroServerWeb.Schemas.RoomSchemas.{Bid, GameStateResponse}
 

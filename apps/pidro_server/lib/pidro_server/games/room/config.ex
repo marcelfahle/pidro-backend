@@ -8,9 +8,8 @@ defmodule PidroServer.Games.Room.Config do
   rulebook. New clients should omit it.
 
   A config is set once, when the room is created, and does not change for the
-  life of the room. The seat plan sent at creation is not part of it: seats
-  change during play, so `parse_create_params/1` returns the plan beside the
-  config as a create-time input.
+  life of the room. Seat requirements stay in the config; the initial bot/open
+  plan is returned beside it because occupants change during play.
 
   There are two ways in, and both end at the same validation:
 
@@ -26,7 +25,7 @@ defmodule PidroServer.Games.Room.Config do
       name            := string, trimmed, at most 60 chars; missing or blank -> none
                          at most 4096 bytes as sent, whatever the char count
       seats           := { seat_2?, seat_3?, seat_4? }      any other key -> error "seats.<key>"
-      seat            := "ai" | "open"                      missing -> "open"
+      seat            := "ai" | "open" | { type: "open", min_games: 0 | 100 | 1000 }
       bot_difficulty  := "random" | "basic" | "smart"       missing -> "basic"
       rule_set        := "finnish" | "louisiana"             missing -> "finnish"
 
@@ -53,10 +52,15 @@ defmodule PidroServer.Games.Room.Config do
           name: String.t() | nil,
           bot_difficulty: bot_difficulty(),
           rule_set: :finnish | :louisiana,
-          solo: boolean()
+          solo: boolean(),
+          seat_requirements: %{optional(atom()) => 0 | 100 | 1000}
         }
 
-  defstruct name: nil, bot_difficulty: :basic, rule_set: :finnish, solo: false
+  defstruct name: nil,
+            bot_difficulty: :basic,
+            rule_set: :finnish,
+            solo: false,
+            seat_requirements: %{}
 
   @max_name_length 60
 
@@ -72,12 +76,13 @@ defmodule PidroServer.Games.Room.Config do
   @difficulty_wire_values Enum.map(@difficulties, &Atom.to_string/1)
 
   # Validation and error order for the config's own fields.
-  @fields [:name, :bot_difficulty, :rule_set, :solo]
+  @fields [:name, :bot_difficulty, :rule_set, :solo, :seat_requirements]
   @field_by_wire %{
     "name" => :name,
     "bot_difficulty" => :bot_difficulty,
     "rule_set" => :rule_set,
-    "solo" => :solo
+    "solo" => :solo,
+    "seat_requirements" => :seat_requirements
   }
   @rule_set_by_wire %{"finnish" => :finnish, "louisiana" => :louisiana}
 
@@ -104,8 +109,9 @@ defmodule PidroServer.Games.Room.Config do
 
   Accepts a keyword list or a map with atom or string keys, or an existing
   config, which is validated and returned. The recognised keys are `name`,
-  `bot_difficulty` and `rule_set` (atoms or wire strings), and `solo`. A missing key takes
-  its default. Any other key is rejected, as is a key given more than once.
+  `bot_difficulty` and `rule_set` (atoms or wire strings), `solo`, and
+  `seat_requirements` (position atoms mapped to 0, 100 or 1000). A missing key
+  takes its default. Any other key is rejected, as is a key given more than once.
 
   ## Examples
 
@@ -149,13 +155,14 @@ defmodule PidroServer.Games.Room.Config do
   """
   @spec parse_create_params(term()) :: {:ok, t(), seat_plan()} | {:error, errors()}
   def parse_create_params(body) when is_map(body) and not is_struct(body) do
-    {seat_plan, seat_errors} = parse_seats(body)
+    {seat_plan, requirements, seat_errors} = parse_seats(body)
     unknown_errors = unknown_key_errors(Map.keys(body), @accepted_fields, "", &body_label/1)
 
     {config, config_errors} =
       body
       |> Map.take(["name", "bot_difficulty", "rule_set"])
       |> Map.put("solo", solo_plan?(seat_plan))
+      |> Map.put("seat_requirements", requirements)
       |> build()
       |> split_result()
 
@@ -226,6 +233,17 @@ defmodule PidroServer.Games.Room.Config do
       rule_set: Atom.to_string(config.rule_set),
       solo: config.solo
     }
+  end
+
+  @doc "Serializes a seat with its configured requirement; occupied seats show zero."
+  @spec serialize_seat(t(), PidroServer.Games.Room.Seat.t()) :: map()
+  def serialize_seat(%__MODULE__{} = config, seat) do
+    min_games =
+      if seat.occupant_type == :vacant,
+        do: Map.get(config.seat_requirements, seat.position, 0),
+        else: 0
+
+    seat |> PidroServer.Games.Room.Seat.serialize() |> Map.put(:min_games, min_games)
   end
 
   # ---------------------------------------------------------------------------
@@ -311,6 +329,16 @@ defmodule PidroServer.Games.Room.Config do
   defp validate(:solo, solo) when is_boolean(solo), do: {:ok, solo}
   defp validate(:solo, _other), do: {:error, "must be a boolean"}
 
+  defp validate(:seat_requirements, requirements) when is_map(requirements) do
+    if Enum.all?(requirements, fn {position, games} ->
+         position in [:east, :south, :west] and games in [0, 100, 1000]
+       end),
+       do: {:ok, requirements},
+       else: {:error, "must map east, south or west to 0, 100 or 1000"}
+  end
+
+  defp validate(:seat_requirements, _), do: {:error, "must be a map"}
+
   defp validate(:rule_set, value) when value in [:finnish, :louisiana], do: {:ok, value}
 
   defp validate(:rule_set, value) do
@@ -329,7 +357,7 @@ defmodule PidroServer.Games.Room.Config do
   defp parse_seats(body) do
     case Map.fetch(body, "seats") do
       :error ->
-        {open_plan(), []}
+        {open_plan(), %{}, []}
 
       {:ok, seats} when is_map(seats) and not is_struct(seats) ->
         results =
@@ -337,28 +365,44 @@ defmodule PidroServer.Games.Room.Config do
 
         plan =
           Map.new(results, fn
-            {_key, position, {:ok, occupant}} -> {position, occupant}
+            {_key, position, {:ok, occupant, _min_games}} -> {position, occupant}
             {_key, position, {:error, _message}} -> {position, :open}
           end)
+
+        requirements =
+          for {_key, position, {:ok, :open, min_games}} <- results,
+              min_games > 0,
+              into: %{},
+              do: {position, min_games}
 
         value_errors =
           for {key, _position, {:error, message}} <- results, do: error("seats." <> key, message)
 
-        {plan,
+        {plan, requirements,
          value_errors ++ unknown_key_errors(Map.keys(seats), @seat_keys, "seats.", &body_label/1)}
 
       {:ok, _other} ->
-        {open_plan(), [error("seats", "must be an object")]}
+        {open_plan(), %{}, [error("seats", "must be an object")]}
     end
   end
 
   defp parse_seat(seats, key) do
-    with {:ok, value} <- Map.fetch(seats, key),
-         {_wire, occupant} <- List.keyfind(@seat_occupants, value, 0) do
-      {:ok, occupant}
-    else
-      :error -> {:ok, :open}
-      nil -> {:error, "must be one of: #{Enum.join(@seat_values, ", ")}"}
+    case Map.get(seats, key, "open") do
+      "ai" ->
+        {:ok, :bot, 0}
+
+      "open" ->
+        {:ok, :open, 0}
+
+      %{"type" => "open", "min_games" => games} = value
+      when games in [0, 100, 1000] and map_size(value) == 2 ->
+        {:ok, :open, games}
+
+      value when is_map(value) ->
+        {:error, "must be an open seat with min_games of 0, 100 or 1000"}
+
+      _ ->
+        {:error, "must be one of: #{Enum.join(@seat_values, ", ")}"}
     end
   end
 

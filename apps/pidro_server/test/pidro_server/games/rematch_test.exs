@@ -64,6 +64,29 @@ defmodule PidroServer.Games.RematchTest do
   end
 
   describe "the same four, again" do
+    test "rematch retains requirements without checking existing players or substitutes" do
+      users = Enum.map(1..4, fn _ -> AccountsFixtures.user_fixture() end)
+      [host, partner | others] = users
+      {:ok, _} = Profiles.import_legacy_progression(partner, %{legacy_played_games: 100})
+      {:ok, room} = RoomManager.create_room(host.id, %{seat_requirements: %{south: 100}})
+      {:ok, _, :south} = RoomManager.join_room(room.code, partner.id, :south)
+      for user <- others, do: {:ok, _, _} = RoomManager.join_room(room.code, user.id)
+      RoomFixtures.ready_room(room.code)
+      :ok = RoomManager.leave_room(partner.id)
+      {:ok, _} = RoomManager.open_seat(room.code, :south, host.id)
+      substitute = AccountsFixtures.user_fixture()
+      assert {:ok, _, :south} = RoomManager.join_room(room.code, substitute.id)
+      :ok = RoomManager.register_game_channel(room.code, substitute.id, self())
+
+      finish_game(room.code)
+      ask_for_rematch(room, Enum.map([host, substitute | others], & &1.id))
+      {:ok, rematch} = RoomManager.get_room(room.code)
+      assert rematch.status == :playing
+      assert rematch.config.seat_requirements == %{south: 100}
+      {:ok, snapshot} = RoomManager.readiness(room.code)
+      assert snapshot.seats.south.min_games == 0
+    end
+
     test "game over turns the ready check into a rematch vote" do
       {room, user_ids} = four_player_game()
       {:ok, before} = RoomManager.readiness(room.code)

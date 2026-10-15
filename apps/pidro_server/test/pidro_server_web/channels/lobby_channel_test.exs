@@ -32,6 +32,34 @@ defmodule PidroServerWeb.LobbyChannelTest do
     %{user: user, socket: socket}
   end
 
+  test "join_room rejects below the bar and accepts the exact combined boundary", %{
+    socket: socket,
+    user: user
+  } do
+    host = PidroServer.AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_requirements: %{east: 1000}})
+    {:ok, _} = PidroServer.Profiles.import_legacy_progression(user, %{legacy_played_games: 999})
+    {:ok, reply, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    listed = Enum.find(reply.lobby.open_tables, &(&1.code == room.code))
+    assert Enum.find(listed.seats, &(&1.position == :east)).min_games == 1000
+
+    ref = push(socket, "join_room", %{code: room.code, position: "east"})
+
+    assert_reply ref, :error, %{
+      status: "error",
+      reason: "seat_requires_games",
+      min_games: 1000,
+      games_played: 999
+    }
+
+    {:ok, profile} = PidroServer.Profiles.get_or_create_profile(user.id)
+    profile |> Ecto.Changeset.change(games_played: 1) |> PidroServer.Repo.update!()
+    ref = push(socket, "join_room", %{code: room.code, position: "east"})
+    assert_reply ref, :ok, %{assigned_position: :east, room: joined}
+    assert Enum.find(joined.seats, &(&1.position == :east)).min_games == 0
+    RoomManager.close_room(room.code)
+  end
+
   describe "join/3" do
     test "authenticated user can join lobby", %{socket: socket} do
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})

@@ -8,7 +8,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   """
 
   alias PidroServer.Accounts.Auth
-  alias PidroServer.Games.Room.{Config, Positions, Seat}
+  alias PidroServer.Games.Room.{Config, Positions}
   alias PidroServerWeb.Serializers.GameStateSerializer
 
   @doc """
@@ -152,7 +152,8 @@ defmodule PidroServerWeb.API.RoomJSON do
       max_spectators: room.max_spectators,
       created_at: DateTime.to_iso8601(room.created_at),
       config: serialize_config(Map.get(room, :config)),
-      seats: serialize_room_seats(Map.get(room, :seats, %{}), users)
+      seats:
+        serialize_room_seats(Map.get(room, :seats, %{}), Map.get(room, :config, %Config{}), users)
     }
   end
 
@@ -170,11 +171,11 @@ defmodule PidroServerWeb.API.RoomJSON do
     |> Auth.get_users_map()
   end
 
-  defp serialize_room_seats(seats, _users) when map_size(seats) == 0, do: %{}
+  defp serialize_room_seats(seats, _config, _users) when map_size(seats) == 0, do: %{}
 
-  defp serialize_room_seats(seats, users) do
+  defp serialize_room_seats(seats, config, users) do
     Map.new(seats, fn {position, seat} ->
-      {position, seat |> Seat.serialize() |> with_player_names(users)}
+      {position, config |> Config.serialize_seat(seat) |> with_player_names(users)}
     end)
   end
 

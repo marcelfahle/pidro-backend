@@ -421,6 +421,13 @@ defmodule PidroServer.Profiles do
     }
   end
 
+  @doc "Returns the same combined Classic and Pidro 2 record shown on the public profile."
+  @spec record(Ecto.UUID.t()) :: map()
+  def record(user_id) do
+    profile = Repo.get_by(PlayerProfile, user_id: user_id) || %PlayerProfile{}
+    record(profile, classic_profile(profile.heritage_flags, nil) || %{})
+  end
+
   defp record(screen, classic) do
     games = screen.games_played + Map.get(classic, :games_played, 0)
     wins = screen.wins + Map.get(classic, :wins, 0)

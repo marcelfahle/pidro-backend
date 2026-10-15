@@ -12,8 +12,8 @@ defmodule PidroServerWeb.LobbyChannel do
 
   ## Incoming Events (from client)
 
-  Currently, the lobby is read-only from the client perspective.
-  Room creation and joining is done via REST API endpoints.
+  * `"join_room"` - Explicitly claim a seat with `code` and optional `position`.
+    Room creation remains a REST operation.
 
   ## Outgoing Events (to clients)
 
@@ -48,6 +48,15 @@ defmodule PidroServerWeb.LobbyChannel do
   alias PidroServer.Accounts.Auth
   alias PidroServer.Accounts.User
 
+  @positions %{
+    "north" => :north,
+    "east" => :east,
+    "south" => :south,
+    "west" => :west,
+    "north_south" => :north_south,
+    "east_west" => :east_west
+  }
+
   @doc """
   Joins the lobby channel.
 
@@ -79,6 +88,38 @@ defmodule PidroServerWeb.LobbyChannel do
        online_count: PresenceAggregator.get_count()
      }, socket}
   end
+
+  @impl true
+  def handle_in("join_room", %{"code" => code} = params, socket) when is_binary(code) do
+    position =
+      Map.get(@positions, params["position"], if(params["position"], do: :invalid, else: nil))
+
+    with %User{} = user <- Auth.get_user(socket.assigns.user_id),
+         {:ok, room, assigned_position} <- RoomManager.join_room(code, user, position) do
+      {:reply,
+       {:ok, %{room: serialize_room_with_users(room), assigned_position: assigned_position}},
+       socket}
+    else
+      {:error, {:seat_requires_games, min_games, games_played}} ->
+        {:reply,
+         {:error,
+          %{
+            status: "error",
+            reason: "seat_requires_games",
+            min_games: min_games,
+            games_played: games_played
+          }}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, %{status: "error", reason: Atom.to_string(reason)}}, socket}
+
+      nil ->
+        {:reply, {:error, %{status: "error", reason: "unauthorized"}}, socket}
+    end
+  end
+
+  def handle_in("join_room", _params, socket),
+    do: {:reply, {:error, %{status: "error", reason: "invalid_room_params"}}, socket}
 
   @doc """
   Handles internal messages.
@@ -210,14 +251,16 @@ defmodule PidroServerWeb.LobbyChannel do
         position: position,
         seat_index: index,
         status: if(player_id, do: "occupied", else: "free"),
-        player: player_data
+        player: player_data,
+        min_games: 0
       }
 
       case seat do
         %Seat{} ->
-          seat_data = Seat.serialize(seat)
+          seat_data = Config.serialize_seat(room.config, seat)
 
           Map.merge(base, %{
+            min_games: seat_data.min_games,
             occupant_type: seat_data.occupant_type,
             lifecycle_status: seat_data.status,
             is_owner: seat_data.is_owner,
