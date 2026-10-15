@@ -3,6 +3,7 @@ defmodule PidroServer.Friends do
   import Ecto.Query
 
   alias PidroServer.Accounts.{Auth, User}
+  alias PidroServer.Blocks
   alias PidroServer.Friends.Friendship
   alias PidroServer.Games.RoomManager
   alias PidroServer.Repo
@@ -14,10 +15,19 @@ defmodule PidroServer.Friends do
   def add(user_id, friend_id) do
     with {:ok, friend_id} <- target(user_id, friend_id),
          {:ok, _} <-
-           Repo.insert(Friendship.changeset(user_id, friend_id),
-             on_conflict: :nothing,
-             conflict_target: [:user_id, :friend_id]
-           ) do
+           Repo.transaction(fn ->
+             Blocks.lock_pair(user_id, friend_id)
+
+             if Blocks.blocked?(user_id, friend_id), do: Repo.rollback(:user_not_found)
+
+             case Repo.insert(Friendship.changeset(user_id, friend_id),
+                    on_conflict: :nothing,
+                    conflict_target: [:user_id, :friend_id]
+                  ) do
+               {:ok, edge} -> edge
+               {:error, reason} -> Repo.rollback(reason)
+             end
+           end) do
       changed(user_id, friend_id)
       {:ok, list(user_id)}
     end
@@ -81,9 +91,10 @@ defmodule PidroServer.Friends do
           order_by: [asc: u.display_name, asc: u.id],
           select: {u.id, u.display_name}
         )
+        |> Blocks.excluding(user_id)
         |> Repo.all()
-        |> Stream.filter(fn {id, name} ->
-          visible_pair?(user_id, id) and String.starts_with?(User.name_key(name) || "", prefix)
+        |> Stream.filter(fn {_id, name} ->
+          String.starts_with?(User.name_key(name) || "", prefix)
         end)
         |> Stream.map(&elem(&1, 0))
         |> Enum.take(10)
@@ -115,25 +126,26 @@ defmodule PidroServer.Friends do
       |> List.flatten()
       |> Enum.uniq()
       |> Enum.reject(&(&1 == user_id or MapSet.member?(mutual, &1)))
-      |> Enum.filter(&visible_pair?(user_id, &1))
 
-    related_entries(user_id, ids) |> Enum.take(10)
+    visible =
+      from(u in User, where: u.id in ^ids, select: u.id)
+      |> Blocks.excluding(user_id)
+      |> Repo.all()
+      |> MapSet.new()
+
+    related_entries(user_id, Enum.filter(ids, &MapSet.member?(visible, &1))) |> Enum.take(10)
   end
 
   defp target(user_id, friend_id) do
     with {:ok, id} <- Ecto.UUID.cast(friend_id),
          false <- id == user_id,
-         %User{guest: false} <- Repo.get(User, id),
-         true <- visible_pair?(user_id, id) do
+         %User{guest: false} <- Repo.get(User, id) do
       {:ok, id}
     else
       true -> {:error, :cannot_friend_self}
       _ -> {:error, :user_not_found}
     end
   end
-
-  # PID-225 adds the symmetric blocked-pair check here.
-  defp visible_pair?(user_id, other_id), do: user_id != other_id
 
   defp outgoing_ids(user_id) do
     Repo.all(from f in Friendship, where: f.user_id == ^user_id, select: f.friend_id)

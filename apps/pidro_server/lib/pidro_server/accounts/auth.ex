@@ -698,7 +698,7 @@ defmodule PidroServer.Accounts.Auth do
 
   One database transaction revokes and strips labels from hosted invites and
   deletes the user's `player_profiles`, `player_achievements`,
-  `invite_redemptions`, `invite_events`, incoming and outgoing `friendships`,
+  `invite_redemptions`, `invite_events`, incoming and outgoing `friendships` and `blocks`,
   and `users` rows. Only after commit
   does the user leave their in-memory room, each affected room's
   `invite_live_until` get recomputed, and the disconnect broadcast fire.
@@ -828,6 +828,12 @@ defmodule PidroServer.Accounts.Auth do
   end
 
   defp delete_personal_rows_in_transaction(%User{id: id} = user) do
+    # Social writers take the same user lock before inserting their edges.
+    case Repo.one(from u in User, where: u.id == ^id, lock: "FOR UPDATE") do
+      nil -> Repo.rollback(:not_found)
+      %User{} -> :ok
+    end
+
     hosted_rooms = hosted_invite_rooms(id)
 
     case Invites.revoke_hosted(id) do
@@ -843,6 +849,10 @@ defmodule PidroServer.Accounts.Auth do
 
     Repo.delete_all(
       from f in PidroServer.Friends.Friendship, where: f.user_id == ^id or f.friend_id == ^id
+    )
+
+    Repo.delete_all(
+      from b in PidroServer.Blocks.Block, where: b.user_id == ^id or b.blocked_id == ^id
     )
 
     case Repo.delete(user) do

@@ -24,6 +24,7 @@ defmodule PidroServerWeb.API.FriendController do
 
   operation(:add,
     summary: "Add a player, or accept their incoming edge, idempotently",
+    description: "A block in either direction answers 404 USER_NOT_FOUND without revealing it.",
     parameters: [user_id: [in: :path, type: :string, required: true]],
     responses: [
       ok: {"Full friends list", "application/json", FriendSchemas.ListResponse},
@@ -60,7 +61,8 @@ defmodule PidroServerWeb.API.FriendController do
 
   operation(:search,
     summary: "Search registered players by folded display-name prefix",
-    description: "At least three NFKC-normalized graphemes; at most ten results, excluding self.",
+    description:
+      "At least three NFKC-normalized graphemes; at most ten results, excluding self and blocked pairs in either direction.",
     parameters: [q: [in: :query, type: :string, required: true]],
     responses: [
       ok: {"Players with relation and presence", "application/json", FriendSchemas.UsersResponse},
@@ -82,7 +84,8 @@ defmodule PidroServerWeb.API.FriendController do
 
   operation(:recent,
     summary: "Recent human tablemates, excluding mutual friends and self",
-    description: "Most recent first, ten results from the caller's last twenty completed games.",
+    description:
+      "Most recent first, ten results from the caller's last twenty completed games, excluding blocked pairs in either direction.",
     responses: [
       ok: {"Players with relation and presence", "application/json", FriendSchemas.UsersResponse},
       forbidden: {"Account required", "application/json", FriendSchemas.Error},

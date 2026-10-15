@@ -587,7 +587,10 @@ defmodule PidroServerWeb.API.AuthController do
       ok: {"Current user retrieved successfully", "application/json", UserSchemas.UserResponse},
       unauthorized:
         {"Authentication required or invalid", "application/json",
-         ErrorSchemas.unauthorized_error()}
+         ErrorSchemas.unauthorized_error()},
+      service_unavailable:
+        {"Player eligibility could not be checked", "application/json",
+         ErrorSchemas.error_response()}
     ]
   )
 
@@ -636,7 +639,7 @@ defmodule PidroServerWeb.API.AuthController do
         ]
       }
   """
-  @spec me(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  @spec me(Plug.Conn.t(), map()) :: Plug.Conn.t() | {:error, :profile_unavailable}
   def me(conn, _params) do
     user = conn.assigns[:current_user]
 
@@ -646,6 +649,10 @@ defmodule PidroServerWeb.API.AuthController do
       user: user,
       seat_invitations: PidroServer.Games.RoomManager.seat_invitations(user.id)
     })
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      Logger.error("Block lookup failed: #{Exception.message(error)}")
+      {:error, :profile_unavailable}
   end
 
   operation(:age,
