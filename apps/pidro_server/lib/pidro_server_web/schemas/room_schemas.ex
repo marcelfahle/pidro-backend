@@ -1138,26 +1138,20 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   example: []
                 },
                 current_trick_details: %Schema{
-                  allOf: [
-                    Trick,
-                    %Schema{
+                  type: :object,
+                  properties:
+                    Map.put(Trick.schema().properties, :winning, %Schema{
                       type: :object,
+                      nullable: true,
+                      description:
+                        "Play currently winning under the table's variant, or null before the first play",
                       properties: %{
-                        winning: %Schema{
-                          type: :object,
-                          nullable: true,
-                          description:
-                            "Play currently winning under the table's variant, or null before the first play",
-                          properties: %{
-                            position: %Schema{type: :string, enum: [:north, :south, :east, :west]},
-                            card: Card
-                          },
-                          required: [:position, :card]
-                        }
+                        position: %Schema{type: :string, enum: [:north, :south, :east, :west]},
+                        card: Card
                       },
-                      required: [:winning]
-                    }
-                  ],
+                      required: [:position, :card]
+                    }),
+                  required: Trick.schema().required ++ [:winning],
                   description:
                     "Current trick with winning play and points so far; null when no trick exists",
                   nullable: true

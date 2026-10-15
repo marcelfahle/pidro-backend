@@ -77,6 +77,19 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       "GameStateResponse",
       PidroServerWeb.ApiSpec.spec()
     )
+
+    :ok = GenServer.call(pid, {:set_state, %{state | current_trick: nil}})
+
+    response =
+      as_user(conn, host) |> get(~p"/api/v1/rooms/#{room.code}/state") |> json_response(200)
+
+    assert response["data"]["state"]["current_trick_details"] == nil
+
+    OpenApiSpex.TestAssertions.assert_schema(
+      response,
+      "GameStateResponse",
+      PidroServerWeb.ApiSpec.spec()
+    )
   end
 
   test "held seats are visible everywhere, invite their user, and exclude strangers", %{
