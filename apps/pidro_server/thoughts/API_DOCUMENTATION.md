@@ -1043,11 +1043,58 @@ names using that existing Elixir fold; no duplicate folded-name column is stored
 Recent uses the caller's last twenty `game_stats` rows by `completed_at`, deduplicates
 players most-recent-first, and excludes self, mutual friends, guests and non-account
 identities (including bots). Outgoing-only and incoming-only edges remain discoverable.
-Blocked-pair exclusion is deferred to PID-225, which extends `Friends.visible_pair?/2`.
+Search and recent exclude blocked pairs in either direction, in SQL before the result
+cap. Adding a friend across a block returns `404 {"error":"USER_NOT_FOUND"}`.
 
-After add/remove, each affected user's joined lobby sockets receive
+After add/remove/block, each affected user's joined lobby sockets receive
 `friends_changed` with `{}`; unrelated users receive nothing. Refetch `/api/v1/friends`.
 No push notification is sent.
+
+---
+
+### Blocking (PID-225)
+
+Bearer authentication and a registered account are required on all three routes:
+
+| Method | Endpoint | Result |
+|--------|----------|--------|
+| GET | `/api/v1/blocks` | Your blocked list, newest first |
+| PUT | `/api/v1/blocks/:user_id` | Block idempotently, then return your list |
+| DELETE | `/api/v1/blocks/:user_id` | Unblock idempotently, then return your list |
+
+All three return the same body. Entries deliberately have no presence or relation:
+
+```json
+{"data":{"blocked":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null}]}}
+```
+
+Blocking inserts the directed block and deletes friendship both ways in one transaction.
+Unblocking removes only your block and restores nothing. A reverse block, if any, stays.
+The other player is never told: both receive the same `friends_changed {}` as a remove.
+They cannot see who blocked them through the blocked-list route.
+
+Self on PUT or DELETE: `400 {"error":"CANNOT_BLOCK_SELF"}`. Guest caller on any route:
+`403 {"error":"ACCOUNT_REQUIRED"}`. Guest, missing or malformed target:
+`404 {"error":"USER_NOT_FOUND"}`. Missing authentication keeps the existing 401 envelope.
+
+`Blocks.blocked?(a, b)` checks either direction. A blocked pair cannot create a seat hold
+(including at room creation), mint/update/regenerate a recipient-bound invite, or add a
+friend: host actions return `404 {"error":"USER_NOT_FOUND"}`. Existing holds are hidden
+from the recipient's `/api/v1/auth/me` `seat_invitations` while the block exists.
+
+Joining the other player's hosted table fails with the existing `SEAT_TAKEN` error:
+ordinary joins (explicit position, team choice or automatic seat assignment) and
+substitute joins keep the existing 422 `errors` array with `available_positions: []`;
+invite redemption keeps 409 with `next_open: []`. No new admission error code is added.
+This applies to general and seat-bound invite claims, even when a hold was released.
+Existing players are not kicked; retries for an already-owned invite seat remain idempotent.
+Two blocked players may sit at a third person's table. A failed block lookup refuses
+admission/holds with the existing 503 `PROFILE_UNAVAILABLE` rather than risking a seat;
+live rooms are preserved.
+
+There is no separate server matchmaking/quick-game route: the current app's Quick Game
+creates a new solo room with three bots. Human admission uses `join_room/3` or
+`claim_seat/4`; bot filling stays unchanged.
 
 ---
 

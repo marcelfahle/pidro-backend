@@ -385,7 +385,7 @@ defmodule PidroServerWeb.API.FallbackController do
         %{
           code: "PROFILE_UNAVAILABLE",
           title: "Profile unavailable",
-          detail: "Games played could not be checked; please try again shortly"
+          detail: "Player eligibility could not be checked; please try again shortly"
         }
       ]
     })
@@ -539,6 +539,10 @@ defmodule PidroServerWeb.API.FallbackController do
   # would answer 422. The bare `:seat_taken` atom keeps its 422 above so
   # `POST /rooms/:code/join` is unchanged; the tuple form is the invite redeem
   # answer (R5).
+
+  def call(conn, {:error, :user_not_found}) do
+    conn |> put_status(:not_found) |> json(%{error: "USER_NOT_FOUND"})
+  end
 
   def call(conn, {:error, {:seat_taken, next_open}}) when is_list(next_open) do
     conn

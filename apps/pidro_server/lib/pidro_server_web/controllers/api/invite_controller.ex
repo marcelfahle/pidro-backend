@@ -123,6 +123,9 @@ defmodule PidroServerWeb.API.InviteController do
     with `next_code`. A kicked caller answers 403 `KICKED`; a caller connected in
     another room answers 422 `ALREADY_IN_ROOM`.
 
+    A block in either direction with the room's host answers 409 `SEAT_TAKEN`
+    with `next_open: []`, for general and seat-bound links alike.
+
     Open-seat requirements also apply to invite claims: below the combined
     Classic and Pidro 2 games count, 403 `SEAT_REQUIRES_GAMES` with top-level
     `error`, `min_games` and `games_played`. A failed lookup returns 503
@@ -226,6 +229,8 @@ defmodule PidroServerWeb.API.InviteController do
     Revokes the invite and mints a new one for the same table with the same seat
     hint and label. The old code never forwards to the new one: regenerate exists
     to kill a leaked link. The room's 20-invite lifetime cap still applies.
+    A block in either direction with a bound recipient answers 404 `USER_NOT_FOUND`
+    without revoking the old invite.
     Limited at policy `invite_mint` (per user).
     """,
     security: [%{"bearer_auth" => []}],
@@ -235,7 +240,11 @@ defmodule PidroServerWeb.API.InviteController do
       unauthorized: {"Unauthorized", "application/json", ErrorSchemas.unauthorized_error()},
       forbidden:
         {"Not the host of this invite", "application/json", ErrorSchemas.error_response()},
-      not_found: {"Unknown invite code", "application/json", ErrorSchemas.not_found_error()},
+      not_found:
+        {"Unknown invite code or bound recipient unavailable", "application/json",
+         %OpenApiSpex.Schema{
+           oneOf: [ErrorSchemas.not_found_error(), PidroServerWeb.Schemas.BlockSchemas.Error]
+         }},
       conflict: {"Room invite limit reached", "application/json", ErrorSchemas.conflict_error()},
       gone: {"Invite already revoked", "application/json", ErrorSchemas.gone_error()},
       unprocessable_entity:

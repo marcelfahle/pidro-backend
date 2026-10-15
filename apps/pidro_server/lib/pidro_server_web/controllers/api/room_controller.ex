@@ -45,7 +45,7 @@ defmodule PidroServerWeb.API.RoomController do
   alias PidroServer.Invites
   alias PidroServer.Invites.Invite
   alias PidroServerWeb.API.{InviteController, InviteJSON, RoomJSON}
-  alias PidroServerWeb.Schemas.{ErrorSchemas, InviteSchemas, RoomSchemas}
+  alias PidroServerWeb.Schemas.{BlockSchemas, ErrorSchemas, InviteSchemas, RoomSchemas}
 
   action_fallback PidroServerWeb.API.FallbackController
 
@@ -134,6 +134,8 @@ defmodule PidroServerWeb.API.RoomController do
 
       Name, the legacy preference and solo are stored on the room and returned as `config`.
 
+      A held seat for a user blocked in either direction answers 404 `USER_NOT_FOUND`.
+
       Every other key is rejected, including a `room` wrapper and `settings`. A rejected
       request creates no room and starts no bot. The 422 response lists every problem at
       once, one entry per field, with the field path as `code`: `name`, `bot_difficulty`,
@@ -158,6 +160,8 @@ defmodule PidroServerWeb.API.RoomController do
             "application/json",
             RoomSchemas.RoomCreatedResponse
           ),
+        404 =>
+          Operation.response("Held player unavailable", "application/json", BlockSchemas.Error),
         401 =>
           Operation.response(
             "Unauthorized",
@@ -179,9 +183,11 @@ defmodule PidroServerWeb.API.RoomController do
           ),
         503 =>
           Operation.response(
-            "No free room code could be allocated; retry shortly",
+            "Room codes exhausted or PROFILE_UNAVAILABLE; retry shortly",
             "application/json",
-            ErrorSchemas.room_code_exhausted_error()
+            %OpenApiSpex.Schema{
+              anyOf: [ErrorSchemas.room_code_exhausted_error(), ErrorSchemas.error_response()]
+            }
           )
       }
     }
@@ -235,6 +241,9 @@ defmodule PidroServerWeb.API.RoomController do
       In a playing room, this explicit command claims an owner-opened substitute
       seat. Successful admission ends any spectator membership atomically; game
       channel joins/reconnects never claim unowned seats.
+
+      A block in either direction with the host answers 422 `SEAT_TAKEN`, including
+      automatic seat assignment and substitutes. Blocks with non-hosts do not prevent admission.
 
       A locked table answers 423 `TABLE_LOCKED`; a user the host kicked answers
       403 `KICKED`; and a guest answers 403 `ACCOUNT_REQUIRED`. Limited at policy
@@ -303,7 +312,7 @@ defmodule PidroServerWeb.API.RoomController do
     %Operation{
       summary: if(action == :hold, do: "Hold a seat for a friend", else: "Release a seat hold"),
       description:
-        "Host only, while waiting or ready. The seat must be vacant. Holds exclude strangers and bots, consume no open capacity, and end on release, seating or room closure. Readiness waits for the held user.",
+        "Host only, while waiting or ready. The seat must be vacant. Holds exclude strangers and bots, consume no open capacity, and end on release, seating or room closure. Readiness waits for the held user. Holding for a blocked pair in either direction answers 404 USER_NOT_FOUND; releasing remains allowed.",
       operationId: "RoomController.#{action}",
       tags: ["Rooms"],
       security: [%{"bearer_auth" => []}],
@@ -327,7 +336,21 @@ defmodule PidroServerWeb.API.RoomController do
               required: true
             )
         ),
-      responses: host_control_responses()
+      responses:
+        Map.merge(host_control_responses(), %{
+          404 =>
+            Operation.response(
+              "Room not found or held player unavailable",
+              "application/json",
+              %OpenApiSpex.Schema{oneOf: [ErrorSchemas.not_found_error(), BlockSchemas.Error]}
+            ),
+          503 =>
+            Operation.response(
+              "PROFILE_UNAVAILABLE; retry later",
+              "application/json",
+              ErrorSchemas.error_response()
+            )
+        })
     }
   end
 
@@ -344,6 +367,8 @@ defmodule PidroServerWeb.API.RoomController do
       mint for the same binding answers 200 with the same code. `supersedes` names an earlier
       invite the caller hosted (play again); it forwards here with state `moved`
       while this table waits.
+
+      A block in either direction with the held recipient answers 404 `USER_NOT_FOUND`.
 
       A room that is not `waiting`/`ready` answers 409 `ROOM_NOT_WAITING`; more
       than 20 invites for one room answer 409 `INVITE_LIMIT`; a non-host answers
@@ -379,9 +404,9 @@ defmodule PidroServerWeb.API.RoomController do
           Operation.response("Not the host", "application/json", ErrorSchemas.error_response()),
         404 =>
           Operation.response(
-            "Room or superseded invite not found",
+            "Room or superseded invite not found, or held recipient unavailable",
             "application/json",
-            ErrorSchemas.not_found_error()
+            %OpenApiSpex.Schema{oneOf: [ErrorSchemas.not_found_error(), BlockSchemas.Error]}
           ),
         409 =>
           Operation.response(

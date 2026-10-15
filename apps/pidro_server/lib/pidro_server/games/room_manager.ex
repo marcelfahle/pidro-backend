@@ -236,10 +236,16 @@ defmodule PidroServer.Games.RoomManager do
   """
   @spec create_room(String.t(), Config.t() | map() | keyword()) ::
           {:ok, Room.t()}
-          | {:error, :already_in_room | :room_code_exhausted | Config.errors()}
+          | {:error,
+             :already_in_room
+             | :room_code_exhausted
+             | :user_not_found
+             | :profile_unavailable
+             | Config.errors()}
   def create_room(host_id, config_or_attrs \\ %{}) do
     with {:ok, %Config{} = config} <- Config.new(config_or_attrs),
-         :ok <- validate_hold_users(config.seat_holds, [host_id]) do
+         :ok <- validate_hold_users(config.seat_holds, [host_id]),
+         :ok <- ensure_unblocked_holds(host_id, Map.values(config.seat_holds)) do
       GenServer.call(__MODULE__, {:create_room, host_id, config})
     end
   end
@@ -258,7 +264,11 @@ defmodule PidroServer.Games.RoomManager do
 
   @doc "Pending seat invitations derived from live waiting-room holds."
   @spec seat_invitations(String.t()) :: [map()]
-  def seat_invitations(user_id), do: GenServer.call(__MODULE__, {:seat_invitations, user_id})
+  def seat_invitations(user_id) do
+    __MODULE__
+    |> GenServer.call({:seat_invitations, user_id})
+    |> Enum.reject(&PidroServer.Blocks.blocked?(&1.host_id, user_id))
+  end
 
   defp validate_hold_users(holds, seated_ids) do
     ids = Map.values(holds)
@@ -1212,6 +1222,7 @@ defmodule PidroServer.Games.RoomManager do
     with {:ok, room} <- fetch_room(state, code),
          :ok <- ensure_owner(room, host_id),
          :ok <- ensure_waiting(room),
+         :ok <- ensure_unblocked_holds(host_id, [user_id]),
          :ok <- ensure_hold_position(room, position, user_id) do
       holds =
         if user_id,
@@ -1345,6 +1356,7 @@ defmodule PidroServer.Games.RoomManager do
       claim_open_seat(state, room, user_id, claim)
     else
       {:already_seated, room, position} -> {:reply, {:ok, room, position, true}, state}
+      {:error, :seat_taken} -> {:reply, {:error, {:seat_taken, []}}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -2921,9 +2933,30 @@ defmodule PidroServer.Games.RoomManager do
   # way for everybody, matching the invite state a redeem derives first.
   defp ensure_room_joinable(%Room{} = room, user_id) do
     with :ok <- ensure_room_open(room),
-         :ok <- ensure_not_locked(room) do
+         :ok <- ensure_not_locked(room),
+         :ok <- ensure_host_unblocked(room, user_id) do
       ensure_not_kicked(room, user_id)
     end
+  end
+
+  defp ensure_host_unblocked(room, user_id) do
+    if PidroServer.Blocks.blocked?(room.host_id, user_id),
+      do: {:error, :seat_taken},
+      else: :ok
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      Logger.error("Block lookup failed: #{Exception.message(error)}")
+      {:error, :profile_unavailable}
+  end
+
+  defp ensure_unblocked_holds(host_id, user_ids) do
+    if Enum.any?(user_ids, &PidroServer.Blocks.blocked?(host_id, &1)),
+      do: {:error, :user_not_found},
+      else: :ok
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      Logger.error("Block lookup failed: #{Exception.message(error)}")
+      {:error, :profile_unavailable}
   end
 
   defp ensure_room_open(%Room{status: status}) when status in [:waiting, :ready], do: :ok
@@ -2990,6 +3023,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_playing(room),
          :ok <- ensure_not_locked(room),
          :ok <- ensure_not_kicked(room, player_id),
+         :ok <- ensure_host_unblocked(room, player_id),
          {:ok, position} <- find_vacant_seat_position(room) do
       {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
       state = end_spectating(state, player_id, room_code)

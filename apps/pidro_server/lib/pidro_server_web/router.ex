@@ -174,6 +174,10 @@ defmodule PidroServerWeb.Router do
     put "/friends/:user_id", FriendController, :add, private: %{rate_limit: [:friend_add]}
     delete "/friends/:user_id", FriendController, :remove
 
+    get "/blocks", BlockController, :index
+    put "/blocks/:user_id", BlockController, :block
+    delete "/blocks/:user_id", BlockController, :unblock
+
     # Player profile route with authentication (own profile)
     get "/profile", ProfileController, :show
     patch "/profile", ProfileController, :update

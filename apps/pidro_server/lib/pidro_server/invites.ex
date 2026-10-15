@@ -66,10 +66,14 @@ defmodule PidroServer.Invites do
   `opts[:generator]` replaces `Codes.generate/0`, which is how tests force a
   collision. Answers the changeset error when the second draw is taken too.
   """
-  @spec create_invite(map(), keyword()) :: {:ok, Invite.t()} | {:error, Ecto.Changeset.t()}
+  @spec create_invite(map(), keyword()) ::
+          {:ok, Invite.t()} | {:error, :user_not_found | Ecto.Changeset.t()}
   def create_invite(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
     generator = Keyword.get(opts, :generator, &Codes.generate/0)
-    insert_with_fresh_code(attrs, generator, @code_attempts)
+
+    with :ok <- ensure_recipient_unblocked(attrs) do
+      insert_with_fresh_code(attrs, generator, @code_attempts)
+    end
   end
 
   @doc """
@@ -90,7 +94,8 @@ defmodule PidroServer.Invites do
     Repo.transaction(fn ->
       lock_rooms!([room_id, superseded && superseded.room_id])
 
-      with {:ok, invite, status} <- upsert_active_invite(attrs, opts),
+      with :ok <- ensure_recipient_unblocked(attrs),
+           {:ok, invite, status} <- upsert_active_invite(attrs, opts),
            :ok <- maybe_supersede(superseded, invite) do
         {invite, status}
       else
@@ -453,6 +458,12 @@ defmodule PidroServer.Invites do
 
   defp maybe_supersede(%Invite{} = old, %Invite{} = new) do
     with {:ok, _old} <- supersede(old, new), do: :ok
+  end
+
+  defp ensure_recipient_unblocked(attrs) do
+    if PidroServer.Blocks.blocked?(attrs[:host_user_id], attrs[:invited_user_id]),
+      do: {:error, :user_not_found},
+      else: :ok
   end
 
   defp ensure_regenerable(%Invite{revoked_at: nil}), do: :ok

@@ -8,6 +8,74 @@ defmodule PidroServer.Accounts.AuthConcurrencyTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Repo
 
+  test "account deletion and social writes leave no edges to a deleted account in either order" do
+    :ok = Sandbox.checkout(Repo, sandbox: false)
+    parent = self()
+
+    try do
+      for write <- [&PidroServer.Blocks.block/2, &PidroServer.Friends.add/2],
+          first <- [:delete, :write] do
+        a = AccountsFixtures.user_fixture()
+        b = AccountsFixtures.user_fixture()
+
+        try do
+          leading =
+            async_unboxed(fn ->
+              Repo.transaction(fn ->
+                result = if first == :delete, do: Auth.delete_user(b), else: write.(a.id, b.id)
+                send(parent, :written)
+                receive do: (:commit -> result)
+              end)
+            end)
+
+          assert_receive :written, 5_000
+
+          trailing =
+            async_unboxed(fn ->
+              if first == :delete, do: write.(a.id, b.id), else: Auth.delete_user(b)
+            end)
+
+          assert Task.yield(trailing, 100) == nil
+          send(leading.pid, :commit)
+          assert {:ok, {:ok, _}} = Task.await(leading, 5_000)
+
+          case {first, Task.await(trailing, 5_000)} do
+            {:delete, {:error, :user_not_found}} -> :ok
+            {:write, {:ok, %User{}}} -> :ok
+            result -> flunk("unexpected racing operation result: #{inspect(result)}")
+          end
+
+          refute Repo.get(User, b.id)
+
+          refute Repo.exists?(
+                   from e in PidroServer.Blocks.Block,
+                     where: e.user_id == ^b.id or e.blocked_id == ^b.id
+                 )
+
+          refute Repo.exists?(
+                   from e in PidroServer.Friends.Friendship,
+                     where: e.user_id == ^b.id or e.friend_id == ^b.id
+                 )
+        after
+          ids = [a.id, b.id]
+
+          Repo.delete_all(
+            from e in PidroServer.Blocks.Block, where: e.user_id in ^ids or e.blocked_id in ^ids
+          )
+
+          Repo.delete_all(
+            from e in PidroServer.Friends.Friendship,
+              where: e.user_id in ^ids or e.friend_id in ^ids
+          )
+
+          Repo.delete_all(from u in User, where: u.id in ^ids)
+        end
+      end
+    after
+      Sandbox.checkin(Repo)
+    end
+  end
+
   test "guest deletion preserves an account whose upgrade commits while deletion waits" do
     :ok = Sandbox.checkout(Repo, sandbox: false)
     guest = AccountsFixtures.guest_fixture()
