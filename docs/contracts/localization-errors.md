@@ -61,6 +61,9 @@ at the top level, and repeat that code in `field_errors` for field `avatar`.
   old 422 envelope with `request_failed`. Previously unhandled REST reasons
   still reach the endpoint's error renderer (normally 500), now with
   `request_failed`. No new status semantics are introduced.
+- Previously unhandled non-atom lobby join failures use `reason: "action_failed"`
+  instead of exposing internal contents. Their `error_code` still comes from
+  the allowlisted tuple tag when known, otherwise `action_failed`.
 - Interpolation parameters contain only selected integers: game counts, field
   length counts and retry seconds. Exception messages, credentials, arbitrary
   changeset options and tuple contents never enter them. Legacy diagnostic text

@@ -117,7 +117,7 @@ defmodule PidroServerWeb.LobbyChannel do
           )}, socket}
 
       {:error, reason} ->
-        legacy_reason = if is_atom(reason), do: Atom.to_string(reason), else: inspect(reason)
+        legacy_reason = if is_atom(reason), do: Atom.to_string(reason), else: "action_failed"
 
         {:reply,
          {:error,

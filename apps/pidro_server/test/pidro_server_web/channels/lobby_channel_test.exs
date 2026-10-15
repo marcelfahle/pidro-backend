@@ -150,6 +150,55 @@ defmodule PidroServerWeb.LobbyChannelTest do
     end
   end
 
+  test "join_room never exposes internal non-atom reasons", %{socket: socket} do
+    {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    assert_push "presence_state", _
+
+    failures = [
+      {{:unexpected_failure, %{token: "private-token"}}, "action_failed"},
+      {%RuntimeError{message: "private diagnostic"}, "action_failed"},
+      {{:seat_taken, %{token: "private-token"}}, "seat_taken"}
+    ]
+
+    # Substitute only the dependency reply; exercise the real channel transport.
+    manager = Process.whereis(RoomManager)
+
+    responder =
+      spawn(fn ->
+        for {reason, _code} <- failures do
+          receive do
+            {:"$gen_call", from, {:join_room, "ERROR", _, _, _}} ->
+              GenServer.reply(from, {:error, reason})
+          end
+        end
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    Process.unregister(RoomManager)
+    Process.register(responder, RoomManager)
+
+    try do
+      for {_reason, code} <- failures do
+        ref = push(socket, "join_room", %{code: "ERROR"})
+        assert_reply ref, :error, response
+
+        assert response == %{
+                 status: "error",
+                 reason: "action_failed",
+                 error_code: code,
+                 error_params: %{}
+               }
+      end
+    after
+      Process.unregister(RoomManager)
+      Process.register(manager, RoomManager)
+      Process.exit(responder, :kill)
+    end
+  end
+
   describe "join/3" do
     test "authenticated user can join lobby", %{socket: socket} do
       {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
