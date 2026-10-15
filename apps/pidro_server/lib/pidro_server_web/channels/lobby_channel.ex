@@ -135,6 +135,11 @@ defmodule PidroServerWeb.LobbyChannel do
   @impl true
   def handle_info(msg, socket)
 
+  def handle_info({:friends_changed, user_id}, socket) do
+    if socket.assigns.user_id == user_id, do: push(socket, "friends_changed", %{})
+    {:noreply, socket}
+  end
+
   def handle_info({:room_created, room}, socket) do
     if RoomManager.visible_in_lobby?(room) do
       serialized = serialize_room_with_users(room)

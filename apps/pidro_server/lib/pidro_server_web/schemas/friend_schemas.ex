@@ -1,0 +1,86 @@
+defmodule PidroServerWeb.Schemas.FriendSchemas do
+  @moduledoc "Wire contract for friends and player discovery (PID-223)."
+  require OpenApiSpex
+  alias OpenApiSpex.Schema
+
+  defmodule Player do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "FriendPlayer",
+      type: :object,
+      required: [:user_id, :display_name, :avatar_url, :presence],
+      properties: %{
+        user_id: %Schema{type: :string, format: :uuid},
+        display_name: %Schema{type: :string, nullable: true},
+        avatar_url: %Schema{type: :string, nullable: true},
+        presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]}
+      }
+    })
+  end
+
+  defmodule DiscoveryPlayer do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "DiscoveryPlayer",
+      type: :object,
+      required: [:user_id, :display_name, :avatar_url, :presence, :relation],
+      properties: %{
+        user_id: %Schema{type: :string, format: :uuid},
+        display_name: %Schema{type: :string, nullable: true},
+        avatar_url: %Schema{type: :string, nullable: true},
+        presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]},
+        relation: %Schema{type: :string, enum: ["none", "friend", "added_you", "added"]}
+      }
+    })
+  end
+
+  defmodule ListResponse do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "FriendsResponse",
+      type: :object,
+      required: [:data],
+      properties: %{
+        data: %Schema{
+          type: :object,
+          required: [:friends, :added_you],
+          properties: %{
+            friends: %Schema{type: :array, items: Player},
+            added_you: %Schema{type: :array, items: Player}
+          }
+        }
+      }
+    })
+  end
+
+  defmodule UsersResponse do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "FriendUsersResponse",
+      type: :object,
+      required: [:data],
+      properties: %{
+        data: %Schema{
+          type: :object,
+          required: [:users],
+          properties: %{users: %Schema{type: :array, items: DiscoveryPlayer, maxItems: 10}}
+        }
+      }
+    })
+  end
+
+  defmodule Error do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "FriendError",
+      type: :object,
+      required: [:error],
+      properties: %{
+        error: %Schema{
+          type: :string,
+          enum: ["ACCOUNT_REQUIRED", "CANNOT_FRIEND_SELF", "USER_NOT_FOUND", "QUERY_TOO_SHORT"]
+        }
+      }
+    })
+  end
+end

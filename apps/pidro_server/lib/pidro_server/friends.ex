@@ -1,0 +1,194 @@
+defmodule PidroServer.Friends do
+  @moduledoc "Directed friendship edges, discovery and live player entries."
+  import Ecto.Query
+
+  alias PidroServer.Accounts.{Auth, User}
+  alias PidroServer.Friends.Friendship
+  alias PidroServer.Games.RoomManager
+  alias PidroServer.Repo
+  alias PidroServer.Stats.GameStats
+  alias PidroServerWeb.Presence
+
+  @doc "Adds one edge, idempotently, and returns the caller's full list."
+  @spec add(String.t(), String.t()) :: {:ok, map()} | {:error, atom() | Ecto.Changeset.t()}
+  def add(user_id, friend_id) do
+    with {:ok, friend_id} <- target(user_id, friend_id),
+         {:ok, _} <-
+           Repo.insert(Friendship.changeset(user_id, friend_id),
+             on_conflict: :nothing,
+             conflict_target: [:user_id, :friend_id]
+           ) do
+      changed(user_id, friend_id)
+      {:ok, list(user_id)}
+    end
+  end
+
+  @doc "Deletes both edges and returns the caller's full list."
+  @spec remove(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
+  def remove(user_id, friend_id) do
+    with {:ok, friend_id} <- target(user_id, friend_id) do
+      Repo.delete_all(
+        from f in Friendship,
+          where:
+            (f.user_id == ^user_id and f.friend_id == ^friend_id) or
+              (f.user_id == ^friend_id and f.friend_id == ^user_id)
+      )
+
+      changed(user_id, friend_id)
+      {:ok, list(user_id)}
+    end
+  end
+
+  @doc "Returns mutual friends and incoming-only edges, with live presence."
+  @spec list(String.t()) :: map()
+  def list(user_id) do
+    outgoing = outgoing_ids(user_id)
+
+    incoming =
+      Repo.all(
+        from f in Friendship,
+          where: f.friend_id == ^user_id,
+          order_by: [desc: f.inserted_at, asc: f.user_id],
+          select: f.user_id
+      )
+
+    entries = entries(incoming)
+    {friends, added_you} = Enum.split_with(entries, &MapSet.member?(outgoing, &1.user_id))
+
+    %{
+      friends:
+        Enum.sort_by(
+          friends,
+          &{&1.presence == "offline", User.name_key(&1.display_name), &1.user_id}
+        ),
+      added_you: added_you
+    }
+  end
+
+  @doc "Finds up to ten registered players by the existing folded-name prefix."
+  @spec search(String.t(), term()) :: {:ok, [map()]} | {:error, :query_too_short}
+  def search(user_id, query) when is_binary(query) do
+    query = query |> String.normalize(:nfkc) |> String.trim()
+
+    if String.length(query) < 3 do
+      {:error, :query_too_short}
+    else
+      prefix = User.name_key(query)
+
+      ids =
+        from(u in User,
+          where: u.guest == false and u.id != ^user_id,
+          order_by: [asc: u.display_name, asc: u.id],
+          select: {u.id, u.display_name}
+        )
+        |> Repo.all()
+        |> Stream.filter(fn {id, name} ->
+          visible_pair?(user_id, id) and String.starts_with?(User.name_key(name) || "", prefix)
+        end)
+        |> Stream.map(&elem(&1, 0))
+        |> Enum.take(10)
+
+      {:ok, related_entries(user_id, ids)}
+    end
+  end
+
+  def search(_user_id, _query), do: {:error, :query_too_short}
+
+  @doc "Returns non-friend humans from the caller's last twenty completed games."
+  @spec recent(String.t()) :: [map()]
+  def recent(user_id) do
+    outgoing = outgoing_ids(user_id)
+
+    mutual =
+      Repo.all(from f in Friendship, where: f.friend_id == ^user_id, select: f.user_id)
+      |> Enum.filter(&MapSet.member?(outgoing, &1))
+      |> MapSet.new()
+
+    ids =
+      Repo.all(
+        from g in GameStats,
+          where: ^user_id in g.player_ids and not is_nil(g.completed_at),
+          order_by: [desc: g.completed_at, desc: g.id],
+          limit: 20,
+          select: g.player_ids
+      )
+      |> List.flatten()
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 == user_id or MapSet.member?(mutual, &1)))
+      |> Enum.filter(&visible_pair?(user_id, &1))
+
+    related_entries(user_id, ids) |> Enum.take(10)
+  end
+
+  defp target(user_id, friend_id) do
+    with {:ok, id} <- Ecto.UUID.cast(friend_id),
+         false <- id == user_id,
+         %User{guest: false} <- Repo.get(User, id),
+         true <- visible_pair?(user_id, id) do
+      {:ok, id}
+    else
+      true -> {:error, :cannot_friend_self}
+      _ -> {:error, :user_not_found}
+    end
+  end
+
+  # PID-225 adds the symmetric blocked-pair check here.
+  defp visible_pair?(user_id, other_id), do: user_id != other_id
+
+  defp outgoing_ids(user_id) do
+    Repo.all(from f in Friendship, where: f.user_id == ^user_id, select: f.friend_id)
+    |> MapSet.new()
+  end
+
+  defp related_entries(user_id, ids) do
+    outgoing = outgoing_ids(user_id)
+
+    incoming =
+      Repo.all(from f in Friendship, where: f.friend_id == ^user_id, select: f.user_id)
+      |> MapSet.new()
+
+    Enum.map(entries(ids), fn entry ->
+      relation =
+        case {MapSet.member?(outgoing, entry.user_id), MapSet.member?(incoming, entry.user_id)} do
+          {true, true} -> "friend"
+          {false, true} -> "added_you"
+          {true, false} -> "added"
+          {false, false} -> "none"
+        end
+
+      Map.put(entry, :relation, relation)
+    end)
+  end
+
+  defp entries(ids) do
+    users = Auth.get_users_map(ids)
+    lobby = Presence.list("lobby")
+
+    at_table =
+      RoomManager.list_rooms()
+      |> Enum.flat_map(fn room -> Map.keys(Presence.list("game:" <> room.code)) end)
+      |> MapSet.new()
+
+    for id <- ids, user = users[id], user && user.guest == false do
+      presence =
+        cond do
+          MapSet.member?(at_table, id) -> "at_table"
+          Map.has_key?(lobby, id) -> "online"
+          true -> "offline"
+        end
+
+      %{
+        user_id: id,
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
+        presence: presence
+      }
+    end
+  end
+
+  defp changed(user_id, friend_id) do
+    for id <- [user_id, friend_id] do
+      Phoenix.PubSub.broadcast(PidroServer.PubSub, "lobby:updates", {:friends_changed, id})
+    end
+  end
+end
