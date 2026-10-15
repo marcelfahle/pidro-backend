@@ -4204,7 +4204,9 @@ defmodule PidroServer.Games.RoomManager do
 
     if before do
       for {position, user_id} <- old_holds, new_holds[position] != user_id do
-        broadcast_lobby_event(
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "lobby:invitations:#{user_id}",
           {:seat_invitation_gone, user_id, %{code: before.code, position: position}}
         )
       end
@@ -4212,7 +4214,11 @@ defmodule PidroServer.Games.RoomManager do
 
     if after_room do
       for {position, user_id} <- new_holds, old_holds[position] != user_id do
-        broadcast_lobby_event({:seat_invitation, user_id, seat_invitation(after_room, position)})
+        Phoenix.PubSub.broadcast(
+          PidroServer.PubSub,
+          "lobby:invitations:#{user_id}",
+          {:seat_invitation, user_id, seat_invitation(after_room, position)}
+        )
       end
     end
   end

@@ -73,6 +73,7 @@ defmodule PidroServerWeb.LobbyChannel do
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
     user_id = socket.assigns.user_id
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:invitations:#{user_id}")
 
     # Get current available room list (excludes finished and closed)
     rooms = RoomManager.list_rooms(:available) |> Enum.filter(&RoomManager.visible_in_lobby?/1)
