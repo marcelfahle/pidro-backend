@@ -72,9 +72,14 @@ at the top level, and repeat that code in `field_errors` for field `avatar`.
 ## Covered paths and intentional gaps
 
 Covered: auth/guest/upgrade/age/recovery, Classic verification/claim/help,
-room create/join/watch/host controls, invites, friends/search, profiles/avatar,
+room create/join/watch/host controls, invites, friends/search/blocks, profiles/avatar,
 HTTP authentication/rate limits, lobby joins, game joins/actions/seats and
 ready/rematch replies. The manifest inventories the different legacy envelopes.
+
+The rebase includes PID-225 blocks. Blocked pairs still receive the same
+`user_not_found` or `seat_taken` metadata as other unavailable users/seats;
+localization never discloses whether a block exists. `profile_unavailable`
+covers eligibility checks, including failed block lookups.
 
 Socket authentication still rejects with bare `:error`. Missing public avatars
 still return empty 404 bodies. Deferred invite misses remain successful

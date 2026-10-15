@@ -31,7 +31,7 @@ defmodule PidroServerWeb.ErrorContract do
     trump_not_declared invalid_card card_not_in_hand cards_not_in_hand must_follow_suit
     cannot_play_non_trump cannot_discard_trump can_only_kill_trump cannot_kill_point_cards
     no_dealer not_dealer_turn invalid_card_count player_eliminated game_already_complete
-    invalid_team cannot_friend_self user_not_found query_too_short avatar_too_large
+    invalid_team cannot_friend_self cannot_block_self user_not_found query_too_short avatar_too_large
     avatar_dimensions avatar_unsupported_type avatar_result_too_large avatar_busy avatar_invalid
   )a
 

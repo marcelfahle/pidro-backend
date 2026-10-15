@@ -6,6 +6,12 @@ defmodule PidroServerWeb.API.BlockControllerTest do
   alias PidroServer.{Blocks, Friends}
   alias PidroServer.Games.RoomManager
 
+  @user_not_found %{
+    "error" => "USER_NOT_FOUND",
+    "error_code" => "user_not_found",
+    "error_params" => %{}
+  }
+
   setup do
     RoomManager.reset_for_test()
     on_exit(&PidroServer.RoomManagerCase.cleanup/0)
@@ -39,7 +45,7 @@ defmodule PidroServerWeb.API.BlockControllerTest do
 
     for {caller, target} <- [{a, b}, {b, a}] do
       assert conn |> auth(caller) |> put(~p"/api/v1/friends/#{target.id}") |> json_response(404) ==
-               %{"error" => "USER_NOT_FOUND"}
+               @user_not_found
 
       assert conn |> auth(caller) |> get(~p"/api/v1/friends") |> json_response(200) ==
                %{"data" => %{"friends" => [], "added_you" => []}}
@@ -63,7 +69,11 @@ defmodule PidroServerWeb.API.BlockControllerTest do
           {:delete, "/api/v1/blocks/#{user.id}"}
         ] do
       assert conn |> auth(guest) |> dispatch(method, path) |> json_response(403) ==
-               %{"error" => "ACCOUNT_REQUIRED"}
+               %{
+                 "error" => "ACCOUNT_REQUIRED",
+                 "error_code" => "account_required",
+                 "error_params" => %{}
+               }
 
       assert conn |> dispatch(method, path) |> json_response(401)
     end
@@ -72,7 +82,12 @@ defmodule PidroServerWeb.API.BlockControllerTest do
       response =
         conn |> auth(user) |> dispatch(method, "/api/v1/blocks/#{user.id}") |> json_response(400)
 
-      assert response == %{"error" => "CANNOT_BLOCK_SELF"}
+      assert response == %{
+               "error" => "CANNOT_BLOCK_SELF",
+               "error_code" => "cannot_block_self",
+               "error_params" => %{}
+             }
+
       assert_schema(response, "BlockError")
 
       for id <- [guest.id, Ecto.UUID.generate(), "invalid"] do
@@ -80,7 +95,7 @@ defmodule PidroServerWeb.API.BlockControllerTest do
                |> auth(user)
                |> dispatch(method, "/api/v1/blocks/#{id}")
                |> json_response(404) ==
-                 %{"error" => "USER_NOT_FOUND"}
+                 @user_not_found
       end
     end
   end
@@ -145,6 +160,8 @@ defmodule PidroServerWeb.API.BlockControllerTest do
         |> json_response(422)
 
       assert hd(response["errors"])["code"] == "SEAT_TAKEN"
+      assert response["error_code"] == "seat_taken"
+      assert response["error_params"] == %{}
       assert {:error, {:seat_taken, []}} = RoomManager.claim_seat(room.code, room.id, joining.id)
     end
 
@@ -245,9 +262,8 @@ defmodule PidroServerWeb.API.BlockControllerTest do
       assert hd(response["errors"])["code"] == "SEAT_TAKEN"
 
       for path <- ["/api/v1/rooms/#{room.code}/invites", "/api/v1/invites/#{code}/regenerate"] do
-        assert conn |> auth(host) |> post(path, %{position: "south"}) |> json_response(404) == %{
-                 "error" => "USER_NOT_FOUND"
-               }
+        assert conn |> auth(host) |> post(path, %{position: "south"}) |> json_response(404) ==
+                 @user_not_found
       end
 
       assert {:ok, %{revoked_at: nil, redeem_count: 0}} = PidroServer.Invites.get_by_code(code)
@@ -257,12 +273,12 @@ defmodule PidroServerWeb.API.BlockControllerTest do
       assert conn
              |> auth(host)
              |> post(~p"/api/v1/rooms/#{room.code}/invites", %{position: "south"})
-             |> json_response(404) == %{"error" => "USER_NOT_FOUND"}
+             |> json_response(404) == @user_not_found
 
       assert conn
              |> auth(host)
              |> put(~p"/api/v1/rooms/#{room.code}/seats/east/hold", %{user_id: friend.id})
-             |> json_response(404) == %{"error" => "USER_NOT_FOUND"}
+             |> json_response(404) == @user_not_found
 
       assert conn
              |> auth(host)
@@ -274,7 +290,7 @@ defmodule PidroServerWeb.API.BlockControllerTest do
       assert conn
              |> auth(host)
              |> post(~p"/api/v1/rooms", %{seats: %{seat_3: %{type: "held", user_id: friend.id}}})
-             |> json_response(404) == %{"error" => "USER_NOT_FOUND"}
+             |> json_response(404) == @user_not_found
 
       assert RoomManager.seat_invitations(friend.id) == []
     end
@@ -302,6 +318,8 @@ defmodule PidroServerWeb.API.BlockControllerTest do
       conn |> auth(player) |> post(~p"/api/v1/rooms/#{room.code}/join") |> json_response(503)
 
     assert hd(response["errors"])["code"] == "PROFILE_UNAVAILABLE"
+    assert response["error_code"] == "profile_unavailable"
+    assert response["error_params"] == %{}
     assert {:error, :profile_unavailable} = RoomManager.claim_seat(room.code, room.id, player.id)
 
     assert {:error, :profile_unavailable} =

@@ -4,6 +4,7 @@ defmodule PidroServerWeb.API.BlockController do
   use OpenApiSpex.ControllerSpecs
 
   alias PidroServer.Blocks
+  alias PidroServerWeb.ErrorContract
   alias PidroServerWeb.Schemas.{BlockSchemas, ErrorSchemas}
 
   plug :require_account
@@ -55,7 +56,10 @@ defmodule PidroServerWeb.API.BlockController do
     do: respond(conn, Blocks.unblock(conn.assigns.current_user.id, id))
 
   defp require_account(%{assigns: %{current_user: %{guest: true}}} = conn, _opts) do
-    conn |> put_status(:forbidden) |> json(%{error: "ACCOUNT_REQUIRED"}) |> halt()
+    conn
+    |> put_status(:forbidden)
+    |> json(ErrorContract.add(%{error: "ACCOUNT_REQUIRED"}, :account_required))
+    |> halt()
   end
 
   defp require_account(conn, _opts), do: conn
@@ -63,11 +67,20 @@ defmodule PidroServerWeb.API.BlockController do
   defp respond(conn, {:ok, list}), do: json(conn, %{data: list})
 
   defp respond(conn, {:error, :cannot_block_self}),
-    do: conn |> put_status(:bad_request) |> json(%{error: "CANNOT_BLOCK_SELF"})
+    do:
+      conn
+      |> put_status(:bad_request)
+      |> json(ErrorContract.add(%{error: "CANNOT_BLOCK_SELF"}, :cannot_block_self))
 
   defp respond(conn, {:error, :user_not_found}),
-    do: conn |> put_status(:not_found) |> json(%{error: "USER_NOT_FOUND"})
+    do:
+      conn
+      |> put_status(:not_found)
+      |> json(ErrorContract.add(%{error: "USER_NOT_FOUND"}, :user_not_found))
 
   defp respond(conn, {:error, :account_required}),
-    do: conn |> put_status(:forbidden) |> json(%{error: "ACCOUNT_REQUIRED"})
+    do:
+      conn
+      |> put_status(:forbidden)
+      |> json(ErrorContract.add(%{error: "ACCOUNT_REQUIRED"}, :account_required))
 end
