@@ -235,6 +235,10 @@ defmodule PidroServerWeb.API.RoomController do
       403 `KICKED`; and a guest answers 403 `ACCOUNT_REQUIRED`. Limited at policy
       `room_join` (per user).
 
+      An open seat's `min_games` checks the combined Classic and Pidro 2 record.
+      Below the bar: 403 `{"error":"SEAT_REQUIRES_GAMES","min_games":100,"games_played":40}`.
+      Reclaims, bots and substitutes in playing rooms do not check it.
+
       Requires authentication via Bearer token.
       """,
       operationId: "RoomController.join",
@@ -256,9 +260,11 @@ defmodule PidroServerWeb.API.RoomController do
           ),
         403 =>
           Operation.response(
-            "Account required or kicked from this room",
+            "Account required, kicked, or SEAT_REQUIRES_GAMES",
             "application/json",
-            ErrorSchemas.error_response()
+            %OpenApiSpex.Schema{
+              oneOf: [ErrorSchemas.error_response(), RoomSchemas.SeatRequiresGames]
+            }
           ),
         404 =>
           Operation.response("Room not found", "application/json", ErrorSchemas.not_found_error()),

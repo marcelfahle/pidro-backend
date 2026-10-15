@@ -19,6 +19,73 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  test "seat requirements use the combined record and survive reclaim", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    player = AccountsFixtures.user_fixture()
+    {:ok, profile} = PidroServer.Profiles.get_or_create_profile(player.id)
+    profile |> Ecto.Changeset.change(games_played: 40) |> PidroServer.Repo.update!()
+
+    created =
+      as_user(conn, host)
+      |> post(~p"/api/v1/rooms", %{
+        "seats" => %{"seat_3" => %{"type" => "open", "min_games" => 100}}
+      })
+      |> json_response(201)
+
+    code = created["data"]["code"]
+    assert created["data"]["room"]["seats"]["south"]["min_games"] == 100
+    assert created["data"]["room"]["seats"]["north"]["min_games"] == 0
+
+    assert as_user(conn, player)
+           |> post(~p"/api/v1/rooms/#{code}/join", %{position: "south"})
+           |> json_response(403) ==
+             %{"error" => "SEAT_REQUIRES_GAMES", "min_games" => 100, "games_played" => 40}
+
+    {:ok, _} = PidroServer.Profiles.import_legacy_progression(player, %{legacy_played_games: 110})
+    assert PidroServer.Profiles.public_profile(player.id).record.games == 150
+
+    joined =
+      as_user(conn, player)
+      |> post(~p"/api/v1/rooms/#{code}/join", %{position: "south"})
+      |> json_response(200)
+
+    assert joined["data"]["assigned_position"] == "south"
+    assert joined["data"]["room"]["seats"]["south"]["min_games"] == 0
+
+    {:ok, profile} = PidroServer.Profiles.get_or_create_profile(player.id)
+
+    profile
+    |> Ecto.Changeset.change(games_played: 0, heritage_flags: %{})
+    |> PidroServer.Repo.update!()
+
+    :ok = RoomManager.handle_player_disconnect(code, player.id)
+    assert {:ok, reclaimed} = RoomManager.handle_player_reconnect(code, player.id)
+    assert reclaimed.positions.south == player.id
+    {:ok, readiness} = RoomManager.readiness(code)
+    assert readiness.seats.south.min_games == 0
+    assert reclaimed.config.seat_requirements == %{south: 100}
+  end
+
+  test "moving into a restricted chair cannot bypass admission", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    player = AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_requirements: %{south: 100}})
+    {:ok, _, :east} = RoomManager.join_room(room.code, player.id)
+
+    assert {:error, {:seat_requires_games, 100, 0}} =
+             RoomManager.move_seat(room.code, player.id, player.id, :south)
+
+    assert as_user(conn, host)
+           |> get(~p"/api/v1/rooms/#{room.code}")
+           |> json_response(200)
+           |> get_in(["data", "room", "seats", "south", "min_games"]) == 100
+
+    assert {:ok, _, :west} = RoomManager.join_bot(room.code, "bot_test", self(), :west)
+    assert {:ok, moved} = RoomManager.move_seat(room.code, host.id, "bot_test", :south)
+    assert moved.seats.south.occupant_type == :bot
+    assert moved.config.seat_requirements == %{south: 100}
+  end
+
   describe "PID-79 explicit admission" do
     test "REST Join promotes a watcher only after an opened seat is explicitly claimed", %{
       conn: conn

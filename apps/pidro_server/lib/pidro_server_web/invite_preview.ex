@@ -19,7 +19,8 @@ defmodule PidroServerWeb.InvitePreview do
           state: Invites.state(),
           host: String.t() | nil,
           config: Config.t(),
-          seats_taken: non_neg_integer()
+          seats_taken: non_neg_integer(),
+          seats: [map()]
         }
 
   @doc "Returns the public projection for a normalized or display-form invite code."
@@ -33,10 +34,10 @@ defmodule PidroServerWeb.InvitePreview do
   @doc "Builds the public projection for an already-loaded invite."
   @spec from_invite(Invite.t()) :: t()
   def from_invite(%Invite{} = invite) do
-    {seats_taken, config} =
+    {seats_taken, config, seats} =
       case live_room(invite.room_code, invite.room_id) do
-        {:ok, room} -> {Positions.count(room), room.config}
-        {:error, _reason} -> {0, %Config{}}
+        {:ok, room} -> {Positions.count(room), room.config, public_seats(room)}
+        {:error, _reason} -> {0, %Config{}, []}
       end
 
     %{
@@ -44,8 +45,24 @@ defmodule PidroServerWeb.InvitePreview do
       state: state(invite),
       host: host_name(invite),
       config: config,
+      seats: seats,
       seats_taken: seats_taken
     }
+  end
+
+  defp public_seats(room) do
+    [:north, :east, :south, :west]
+    |> Enum.with_index()
+    |> Enum.map(fn {position, index} ->
+      seat = Config.serialize_seat(room.config, room.seats[position])
+
+      %{
+        position: position,
+        seat_index: index,
+        status: if(seat.occupant_type == :vacant, do: "free", else: "occupied"),
+        min_games: seat.min_games
+      }
+    end)
   end
 
   @doc "Derives the invite state against the live RoomManager."

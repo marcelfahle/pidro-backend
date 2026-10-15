@@ -424,12 +424,35 @@ unnamed room with three open seats.
 | Field | Type | Default | Rules |
 |-------|------|---------|-------|
 | `name` | string | none | Trimmed. At most 60 characters after trimming. Missing or blank means no name (`config.name` is `null`) |
-| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"` or `"open"`. A missing seat is open. The host takes the remaining seat |
+| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"`, `"open"`, or `{ "type": "open", "min_games": 100 }`. Allowed requirements: integer 0, 100, 1000. A missing seat or bare `"open"` means 0. The host takes north |
 | `bot_difficulty` | string | `"basic"` | One of `"random"`, `"basic"`, `"smart"`. Applies to the bots started for `"ai"` seats |
 
 A bot is started for every `"ai"` seat. When all three seats are `"ai"` the room is a solo room
-(`config.solo` is `true`) and is hidden from the lobby. The seat plan is a create-time input only:
-it is not stored, so read `seats` on the room for the table as it stands.
+(`config.solo` is `true`) and is hidden from the lobby. Initial occupants are create-time input;
+requirements stay in the room config through rematches. Read `seats` for current occupants.
+
+Every seat gains `min_games`, including room detail, lobby, invite preview and rematch readiness.
+It is 0 on occupied/bot seats. Existing shapes are preserved: REST and readiness use a
+position-keyed `seats` object; the lobby channel and public invite preview use `seats[]`.
+Invite previews expose no player IDs. Invalid seat objects (including missing `type` or
+`min_games`, non-integer/unsupported requirements, or extra keys) return `invalid_room_params`
+on `seats.seat_2`, `seats.seat_3` or `seats.seat_4`.
+
+REST joins, invite claims and seat moves check the **combined Classic + Pidro 2 record**.
+Below the bar, HTTP 403 returns exactly:
+```json
+{ "error": "SEAT_REQUIRES_GAMES", "min_games": 100, "games_played": 40 }
+```
+Automatic/team joins check the selected seat; they do not silently choose a different seat
+when its requirement fails. Reclaims, trusted bots and playing-room substitutes bypass the gate.
+
+The lobby channel accepts `join_room` with `{ "code": "A1B2", "position": "south" }`;
+position is optional (cardinal position or team). Success replies with `room` and
+`assigned_position`. Its error reply payload is:
+```json
+{ "status": "error", "reason": "seat_requires_games", "min_games": 100, "games_played": 40 }
+```
+Creation remains REST-only. Game-channel attachment/reconnection never claims an unowned seat.
 
 Any other key is rejected, including a `room` wrapper around the fields and `settings`. See
 [Invalid create request](#invalid-create-request) below.

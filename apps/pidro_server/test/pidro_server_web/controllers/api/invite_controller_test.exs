@@ -25,6 +25,34 @@ defmodule PidroServerWeb.API.InviteControllerTest do
     :ok
   end
 
+  test "preview shows the requirement and redemption enforces it", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    player = AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_requirements: %{south: 100}})
+    invite = mint!(room, host, %{seat_hint: "partner"})
+    preview = get(conn, ~p"/api/v1/invites/#{invite.code}") |> json_response(200)
+    seats = preview["data"]["invite"]["seats"]
+    assert Enum.find(seats, &(&1["position"] == "south"))["min_games"] == 100
+    refute Enum.any?(seats, &Map.has_key?(&1, "user_id"))
+
+    assert authed(conn, player)
+           |> post(~p"/api/v1/invites/#{invite.code}/redeem", %{})
+           |> json_response(403) ==
+             %{"error" => "SEAT_REQUIRES_GAMES", "min_games" => 100, "games_played" => 0}
+
+    refute Repo.exists?(from r in Redemption, where: r.invite_id == ^invite.id)
+
+    {:ok, _} = PidroServer.Profiles.import_legacy_progression(player, %{legacy_played_games: 100})
+
+    response =
+      authed(conn, player)
+      |> post(~p"/api/v1/invites/#{invite.code}/redeem", %{})
+      |> json_response(200)
+
+    assert response["data"]["position"] == "south"
+    assert response["data"]["room"]["seats"]["south"]["min_games"] == 0
+  end
+
   # ==================== Helpers ====================
 
   defp authed(conn, user) do

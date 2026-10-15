@@ -20,6 +20,11 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       description: "A seat at the table with occupant and connection state",
       type: :object,
       properties: %{
+        min_games: %Schema{
+          type: :integer,
+          enum: [0, 100, 1000],
+          description: "Games required for an open seat; zero on occupied and bot seats"
+        },
         position: %Schema{
           type: :string,
           enum: [:north, :south, :east, :west],
@@ -146,6 +151,39 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
+  defmodule SeatPlanEntry do
+    @moduledoc "An initial bot or open seat, optionally requiring experience."
+    OpenApiSpex.schema(%{
+      title: "SeatPlanEntry",
+      oneOf: [
+        %Schema{type: :string, enum: Config.seat_values()},
+        %Schema{
+          type: :object,
+          additionalProperties: false,
+          required: [:type, :min_games],
+          properties: %{
+            type: %Schema{type: :string, enum: ["open"]},
+            min_games: %Schema{type: :integer, enum: [0, 100, 1000]}
+          }
+        }
+      ]
+    })
+  end
+
+  defmodule SeatRequiresGames do
+    @moduledoc "The experience gate's HTTP 403 response."
+    OpenApiSpex.schema(%{
+      title: "SeatRequiresGames",
+      type: :object,
+      required: [:error, :min_games, :games_played],
+      properties: %{
+        error: %Schema{type: :string, enum: ["SEAT_REQUIRES_GAMES"]},
+        min_games: %Schema{type: :integer, enum: [100, 1000]},
+        games_played: %Schema{type: :integer, minimum: 0}
+      }
+    })
+  end
+
   defmodule RoomCreateRequest do
     @moduledoc "Schema for the create-room request body."
 
@@ -180,24 +218,9 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           three are `ai` the room is a solo room.
           """,
           properties: %{
-            seat_2: %Schema{
-              type: :string,
-              enum: Config.seat_values(),
-              default: "open",
-              description: "East seat"
-            },
-            seat_3: %Schema{
-              type: :string,
-              enum: Config.seat_values(),
-              default: "open",
-              description: "South seat"
-            },
-            seat_4: %Schema{
-              type: :string,
-              enum: Config.seat_values(),
-              default: "open",
-              description: "West seat"
-            }
+            seat_2: SeatPlanEntry,
+            seat_3: SeatPlanEntry,
+            seat_4: SeatPlanEntry
           }
         },
         bot_difficulty: %Schema{

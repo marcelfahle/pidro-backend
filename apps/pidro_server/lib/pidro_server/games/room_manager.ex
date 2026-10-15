@@ -289,7 +289,8 @@ defmodule PidroServer.Games.RoomManager do
              | :already_seated
              | :table_locked
              | :kicked
-             | :account_required}
+             | :account_required
+             | {:seat_requires_games, pos_integer(), non_neg_integer()}}
   def join_room(room_code, player, position \\ nil) do
     {player_id, guest?} = admission_identity(player)
 
@@ -924,6 +925,7 @@ defmodule PidroServer.Games.RoomManager do
              | :already_in_room
              | :room_full
              | :invalid_position
+             | {:seat_requires_games, pos_integer(), non_neg_integer()}
              | {:seat_taken, [Positions.position()]}}
   def claim_seat(room_code, room_id, user_id, opts \\ []) do
     claim = opts |> Map.new() |> Map.take([:hint, :position, :username, :display_name])
@@ -984,7 +986,8 @@ defmodule PidroServer.Games.RoomManager do
              | :room_not_waiting
              | :player_not_in_room
              | :seat_taken
-             | :invalid_position}
+             | :invalid_position
+             | {:seat_requires_games, pos_integer(), non_neg_integer()}}
   def move_seat(room_code, requesting_user_id, target_user_id, position) do
     GenServer.call(
       __MODULE__,
@@ -1309,7 +1312,8 @@ defmodule PidroServer.Games.RoomManager do
     with {:ok, %Room{} = room} <- fetch_room(state, room_code),
          :ok <- ensure_can_move(room, requesting_user_id, target_user_id),
          :ok <- ensure_waiting(room),
-         {:ok, moved_room, from} <- Positions.move(room, target_user_id, position) do
+         {:ok, moved_room, from} <- Positions.move(room, target_user_id, position),
+         :ok <- ensure_seat_requirement(room, target_user_id, position) do
       updated_room =
         moved_room
         |> move_seat_struct(from, position)
@@ -2944,7 +2948,8 @@ defmodule PidroServer.Games.RoomManager do
     with :ok <- ensure_can_leave_other_room(state, user_id, room_code),
          {:ok, hint} <- resolve_hint(room, Map.get(claim, :hint)),
          {:ok, updated_room, position, hint_honored} <-
-           claim_position(room, user_id, Map.get(claim, :position), hint) do
+           claim_position(room, user_id, Map.get(claim, :position), hint),
+         :ok <- ensure_seat_requirement(room, user_id, position) do
       next_state = maybe_evict_from_other_room(state, user_id, room_code)
 
       with :ok <- ensure_not_in_other_room(next_state, user_id, room_code) do
@@ -2984,7 +2989,8 @@ defmodule PidroServer.Games.RoomManager do
     with :ok <- ensure_room_joinable(room, player_id),
          :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_can_leave_other_room(state, player_id, room_code),
-         {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position) do
+         {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position),
+         :ok <- ensure_seat_requirement(room, player_id, assigned_position) do
       next_state = maybe_evict_from_other_room(state, player_id, room_code)
 
       with :ok <- ensure_not_in_other_room(next_state, player_id, room_code) do
@@ -2997,6 +3003,25 @@ defmodule PidroServer.Games.RoomManager do
       end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp ensure_seat_requirement(room, user_id, position) do
+    current_seat = room.seats[Positions.get_position(room, user_id)]
+
+    case {Map.get(room.config.seat_requirements, position, 0), current_seat} do
+      {0, _} ->
+        :ok
+
+      {_, %Seat{occupant_type: :bot}} ->
+        :ok
+
+      {min_games, _} ->
+        games_played = PidroServer.Profiles.record(user_id).games
+
+        if games_played >= min_games,
+          do: :ok,
+          else: {:error, {:seat_requires_games, min_games, games_played}}
     end
   end
 
@@ -3162,7 +3187,10 @@ defmodule PidroServer.Games.RoomManager do
       status: room.status,
       config: Config.serialize(room.config),
       positions: room.positions,
-      seats: Map.new(room.seats, fn {position, seat} -> {position, Seat.serialize(seat)} end),
+      seats:
+        Map.new(room.seats, fn {position, seat} ->
+          {position, Config.serialize_seat(room.config, seat)}
+        end),
       ready_players: ready_players
     }
   end
