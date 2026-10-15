@@ -196,7 +196,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
   defp player(user),
     do: %{
       "user_id" => user.id,
-      "display_name" => user.display_name,
+      "display_name" => user.display_name || user.username,
       "avatar_url" => nil,
       "presence" => "offline"
     }

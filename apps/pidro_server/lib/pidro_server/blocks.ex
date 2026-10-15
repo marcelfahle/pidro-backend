@@ -66,7 +66,7 @@ defmodule PidroServer.Blocks do
 
     blocked =
       for id <- ids, user = users[id], user do
-        %{user_id: id, display_name: user.display_name, avatar_url: user.avatar_url}
+        %{user_id: id, display_name: User.public_name(user), avatar_url: user.avatar_url}
       end
 
     %{blocked: blocked}

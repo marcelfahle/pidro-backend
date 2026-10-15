@@ -346,6 +346,12 @@ defmodule PidroServer.Accounts.User do
     |> cast(attrs, [:password_reset_token_hash, :password_reset_sent_at])
   end
 
+  @doc "The name other players see: the display name, or the username until one is set."
+  @spec public_name(%__MODULE__{}) :: String.t() | nil
+  def public_name(%__MODULE__{display_name: display_name, username: username}) do
+    display_name || username
+  end
+
   @doc """
   Derives the look-alike key of a display name (R11).
 
