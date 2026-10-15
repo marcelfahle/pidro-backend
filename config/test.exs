@@ -1,5 +1,9 @@
 import Config
 
+# Exercise real hash/verify behavior without spending production-strength CPU
+# on every fixture account.
+config :bcrypt_elixir, log_rounds: 4
+
 config :pidro_server, PidroServer.Invites.DeferredMatcher, enabled: true
 
 config :pidro_server, PidroServer.Accounts.ClassicClient,
