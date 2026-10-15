@@ -122,6 +122,7 @@ defmodule PidroServer.Games.RematchTest do
 
       [started] = ask_for_rematch(room, [last])
       assert started.status == :playing
+      assert started.game == %{hand: 1, scores: %{north_south: 0, east_west: 0}}
 
       {:ok, rematch} = RoomManager.get_room(room.code)
       assert rematch.code == room.code

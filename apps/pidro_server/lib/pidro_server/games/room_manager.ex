@@ -109,6 +109,7 @@ defmodule PidroServer.Games.RoomManager do
             turn_timer: TurnTimer.t() | nil,
             consecutive_timeouts: %{optional(Positions.position()) => non_neg_integer()},
             last_hand_number: non_neg_integer() | nil,
+            game: map() | nil,
             ready_epoch: non_neg_integer(),
             snapshot_revision: non_neg_integer(),
             ready_player_ids: MapSet.t(String.t()),
@@ -137,6 +138,7 @@ defmodule PidroServer.Games.RoomManager do
       turn_timer: nil,
       consecutive_timeouts: %{},
       last_hand_number: nil,
+      game: nil,
       ready_epoch: 0,
       snapshot_revision: 0,
       ready_player_ids: MapSet.new(),
@@ -145,6 +147,11 @@ defmodule PidroServer.Games.RoomManager do
       game_number: 0,
       game_started_at: nil
     ]
+
+    @doc "Public game progress, omitted outside a playing room."
+    @spec game_payload(map()) :: map()
+    def game_payload(%{status: :playing, game: game}) when is_map(game), do: %{game: game}
+    def game_payload(_room), do: %{}
   end
 
   # Internal state struct
@@ -2153,6 +2160,7 @@ defmodule PidroServer.Games.RoomManager do
 
           # Make bot permanent — player can no longer reclaim
           {:ok, permanent_seat} = Seat.make_permanent_bot(seat)
+          permanent_seat = remember_departed_name(permanent_seat)
 
           # Clean up phase timer for this position
           updated_room =
@@ -2320,11 +2328,17 @@ defmodule PidroServer.Games.RoomManager do
           {:noreply, state}
         else
           state = put_game_snapshot_cursor(state, room_code, game_instance_id, state_revision)
+          game = game_summary(game_state)
+
+          if room.status == :playing and game != room.game do
+            broadcast_lobby_event({:room_updated, %{room | game: game}})
+          end
 
           room =
             room
             |> maybe_reset_timeout_counters_for_new_hand(game_state)
             |> Map.put(:last_hand_number, Map.get(game_state, :hand_number))
+            |> Map.put(:game, game)
 
           updated_state = %{state | rooms: Map.put(state.rooms, room_code, room)}
 
@@ -3200,6 +3214,7 @@ defmodule PidroServer.Games.RoomManager do
         end),
       ready_players: ready_players
     }
+    |> Map.merge(Room.game_payload(room))
   end
 
   defp reset_readiness(room) do
@@ -3496,8 +3511,24 @@ defmodule PidroServer.Games.RoomManager do
 
   defp surrender_seat(room, position, bot_pid) do
     {:ok, seat} = Seat.surrender(room.seats[position], bot_pid)
+    seat = remember_departed_name(seat)
     %{room | seats: Map.put(room.seats, position, seat)}
   end
+
+  defp remember_departed_name(%Seat{vacated_by: nil} = seat) do
+    with {:ok, id} <- Ecto.UUID.cast(seat.decision_player_id),
+         %User{} = user <- PidroServer.Accounts.Auth.get_user(id) do
+      %{seat | vacated_by: user.display_name || user.username}
+    else
+      _ -> seat
+    end
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      Logger.warning("Departed player name unavailable: #{Exception.message(error)}")
+      seat
+  end
+
+  defp remember_departed_name(seat), do: seat
 
   defp promote_departed_owner(%Room{host_id: player_id} = room, player_id) do
     {_result, promoted_room} = promote_owner(room)
@@ -4243,6 +4274,7 @@ defmodule PidroServer.Games.RoomManager do
           turn_timer: nil,
           consecutive_timeouts: %{},
           last_hand_number: nil,
+          game: game_summary(snapshot.state),
           game_number: room.game_number + 1,
           game_started_at: DateTime.utc_now()
       }
@@ -4260,6 +4292,10 @@ defmodule PidroServer.Games.RoomManager do
     broadcast_seat_lifecycle(updated_room)
     broadcast_initial_game_state(room.code, snapshot)
     new_state
+  end
+
+  defp game_summary(state) do
+    %{hand: Map.get(state, :hand_number), scores: Map.get(state, :cumulative_scores, %{})}
   end
 
   @spec broadcast_initial_game_state(String.t(), map()) :: :ok

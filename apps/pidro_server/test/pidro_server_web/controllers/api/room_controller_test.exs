@@ -19,6 +19,75 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  test "playing room payloads share progress and preserve the departed player's name", %{
+    conn: conn
+  } do
+    [host, departed | others] =
+      Enum.map(1..4, &AccountsFixtures.user_fixture(%{display_name: "Player #{&1}"}))
+
+    {:ok, room} = RoomManager.create_room(host.id)
+
+    {:ok, invite} =
+      PidroServer.Invites.create_invite(%{
+        room_id: room.id,
+        room_code: room.code,
+        host_user_id: host.id
+      })
+
+    waiting = as_user(conn, host) |> get(~p"/api/v1/rooms/#{room.code}") |> json_response(200)
+    refute Map.has_key?(waiting["data"]["room"], "game")
+    {:ok, readiness} = RoomManager.readiness(room.code)
+    refute Map.has_key?(readiness, :game)
+
+    for user <- [departed | others], do: RoomManager.join_room(room.code, user.id)
+    PidroServer.RoomFixtures.ready_room(room.code)
+    {:ok, snapshot} = PidroServer.Games.GameAdapter.get_snapshot(room.code)
+    snapshot = Map.put(snapshot, :transition_delay_ms, 0)
+
+    game = %{
+      snapshot.state
+      | hand_number: 4,
+        cumulative_scores: %{north_south: 34, east_west: 21}
+    }
+
+    send(
+      RoomManager,
+      {:state_update, room.code,
+       %{snapshot | state: game, state_revision: snapshot.state_revision + 1}}
+    )
+
+    {:ok, _} = RoomManager.get_room(room.code)
+
+    expected = %{"hand" => 4, "scores" => %{"north_south" => 34, "east_west" => 21}}
+    detail = as_user(conn, host) |> get(~p"/api/v1/rooms/#{room.code}") |> json_response(200)
+    assert detail["data"]["room"]["game"] == expected
+    lobby = as_user(conn, departed) |> get(~p"/api/v1/lobby") |> json_response(200)
+
+    assert Enum.find(lobby["data"]["spectatable"], &(&1["code"] == room.code))["game"] ==
+             expected
+
+    {:ok, readiness} = RoomManager.readiness(room.code)
+    assert Jason.decode!(Jason.encode!(readiness.game)) == expected
+    preview = get(conn, ~p"/api/v1/invites/#{invite.code}") |> json_response(200)
+    assert preview["data"]["invite"]["game"] == expected
+
+    :ok = RoomManager.handle_player_disconnect(room.code, departed.id)
+    {:ok, _} = PidroServer.RoomManagerCase.expire_phase(room.code, :east, :phase2_start)
+    {:ok, gone} = PidroServer.RoomManagerCase.expire_phase(room.code, :east, :phase3_gone)
+    {:ok, _} = RoomManager.keep_bot(room.code, :east, host.id, gone.seats.east.decision_id)
+    {:ok, opened} = RoomManager.open_seat(room.code, :east, host.id)
+    assert PidroServerWeb.API.RoomJSON.room(opened).seats.east.vacated_by == "Player 2"
+    preview = get(conn, ~p"/api/v1/invites/#{invite.code}") |> json_response(200)
+
+    assert Enum.find(preview["data"]["invite"]["seats"], &(&1["position"] == "east"))[
+             "vacated_by"
+           ] == "Player 2"
+
+    send(RoomManager, {:game_over, room.code, :north_south, game.cumulative_scores})
+    {:ok, finished} = RoomManager.get_room(room.code)
+    refute Map.has_key?(PidroServerWeb.API.RoomJSON.room(finished), :game)
+  end
+
   test "a failed profile lookup refuses admission without losing rooms", %{conn: conn} do
     host = AccountsFixtures.user_fixture()
     player = AccountsFixtures.user_fixture()

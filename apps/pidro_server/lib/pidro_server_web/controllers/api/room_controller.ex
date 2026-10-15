@@ -92,6 +92,11 @@ defmodule PidroServerWeb.API.RoomController do
       Returns rooms grouped into four categories for the lobby UI:
       my_rejoinable, open_tables, substitute_needed, and spectatable.
 
+      Playing rooms include `game: {hand, scores: {north_south, east_west}}`.
+      Other rooms omit `game`. Vacant substitute seats include `vacated_by`,
+      the departed player's display name. Lobby `room_updated` pushes refresh
+      progress only when the hand or cumulative team scores change, not each trick.
+
       Requires authentication to identify which rooms the user can rejoin.
       """,
       operationId: "RoomController.lobby",

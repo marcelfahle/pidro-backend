@@ -15,6 +15,7 @@ defmodule PidroServerWeb.InvitePreview do
   alias PidroServer.Invites.Invite
 
   @type t :: %{
+          optional(:game) => map(),
           invite: Invite.t(),
           state: Invites.state(),
           host: String.t() | nil,
@@ -34,10 +35,13 @@ defmodule PidroServerWeb.InvitePreview do
   @doc "Builds the public projection for an already-loaded invite."
   @spec from_invite(Invite.t()) :: t()
   def from_invite(%Invite{} = invite) do
-    {seats_taken, config, seats} =
+    {seats_taken, config, seats, game} =
       case live_room(invite.room_code, invite.room_id) do
-        {:ok, room} -> {Positions.count(room), room.config, public_seats(room)}
-        {:error, _reason} -> {0, %Config{}, []}
+        {:ok, room} ->
+          {Positions.count(room), room.config, public_seats(room), Room.game_payload(room)}
+
+        {:error, _reason} ->
+          {0, %Config{}, [], %{}}
       end
 
     %{
@@ -48,6 +52,7 @@ defmodule PidroServerWeb.InvitePreview do
       seats: seats,
       seats_taken: seats_taken
     }
+    |> Map.merge(game)
   end
 
   defp public_seats(room) do
@@ -62,6 +67,7 @@ defmodule PidroServerWeb.InvitePreview do
         status: if(seat.occupant_type == :vacant, do: "free", else: "occupied"),
         min_games: seat.min_games
       }
+      |> Map.merge(Map.take(seat, [:vacated_by]))
     end)
   end
 

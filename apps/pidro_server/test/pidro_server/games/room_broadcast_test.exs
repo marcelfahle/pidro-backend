@@ -17,6 +17,69 @@ defmodule PidroServer.Games.RoomBroadcastTest do
     %{socket: socket}
   end
 
+  test "lobby reports game progress only when a hand or score changes", %{socket: socket} do
+    [host, departed | others] =
+      Enum.map(1..4, &AccountsFixtures.user_fixture(%{display_name: "Player #{&1}"}))
+
+    {:ok, room} = RoomManager.create_room(host.id)
+    assert_push "room_created", %{room: waiting}
+    refute Map.has_key?(waiting, :game)
+    for user <- [departed | others], do: RoomManager.join_room(room.code, user.id)
+    PidroServer.RoomFixtures.ready_room(room.code)
+    assert_push "room_updated", %{room: %{status: :playing, game: initial}}
+    assert initial == %{hand: 1, scores: %{north_south: 0, east_west: 0}}
+    :sys.get_state(socket.channel_pid)
+    flush_messages()
+
+    {:ok, snapshot} = PidroServer.Games.GameAdapter.get_snapshot(room.code)
+    snapshot = Map.put(snapshot, :transition_delay_ms, 0)
+
+    game = %{
+      snapshot.state
+      | hand_number: 4,
+        cumulative_scores: %{north_south: 34, east_west: 21}
+    }
+
+    update = %{snapshot | state: game, state_revision: snapshot.state_revision + 1}
+    send(RoomManager, {:state_update, room.code, update})
+    assert_push "room_updated", %{room: %{game: progress}}
+    assert progress == %{hand: 4, scores: %{north_south: 34, east_west: 21}}
+    refute_push "room_updated", _, 50
+
+    # A stale snapshot cannot rewind the row, and an in-hand trick cannot refresh it.
+    send(RoomManager, {:state_update, room.code, snapshot})
+    trick = %{game | tricks: [%{winner: :east}], current_trick: nil}
+    update = %{update | state: trick, state_revision: update.state_revision + 1}
+    send(RoomManager, {:state_update, room.code, update})
+    refute_push "room_updated", _, 50
+
+    scored = %{game | cumulative_scores: %{north_south: -6, east_west: 35}}
+    update = %{update | state: scored, state_revision: update.state_revision + 1}
+    send(RoomManager, {:state_update, room.code, update})
+    assert_push "room_updated", %{room: %{game: %{hand: 4, scores: scores}}}
+    assert scores == %{north_south: -6, east_west: 35}
+    refute_push "room_updated", _, 50
+
+    update = %{
+      update
+      | state: %{scored | hand_number: 5},
+        state_revision: update.state_revision + 1
+    }
+
+    send(RoomManager, {:state_update, room.code, update})
+    assert_push "room_updated", %{room: %{game: %{hand: 5, scores: ^scores}}}
+    refute_push "room_updated", _, 50
+
+    :ok = RoomManager.leave_room(departed.id)
+    {:ok, _} = RoomManager.open_seat(room.code, :east, host.id)
+    assert_push "room_updated", %{category: "substitute_needed", room: opened}
+    seat = Enum.find(opened.seats, &(&1.position == :east))
+    assert seat.vacated_by == departed.display_name
+    replacement = AccountsFixtures.user_fixture()
+    {:ok, filled, :east} = RoomManager.join_room(room.code, replacement.id)
+    refute Map.has_key?(PidroServerWeb.API.RoomJSON.room(filled).seats.east, :vacated_by)
+  end
+
   test "broadcasting room update when player leaves", %{socket: _socket} do
     # 1. Create Room
     host = AccountsFixtures.user_fixture()

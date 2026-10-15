@@ -78,6 +78,10 @@ defmodule PidroServerWeb.API.InviteController do
     host's name, how many seats are taken, the seat hint and label, and, when the
     host has moved to a new table, `next_code`. The room code is never included.
 
+    Playing rooms include `game: {hand, scores: {north_south, east_west}}`;
+    otherwise `game` is absent. Vacant substitute seats carry `vacated_by`,
+    the departed player's display name, until filled.
+
     Unknown codes answer 404. Limited at policy `invite_preview` (per client IP).
     """,
     parameters: @code_parameter,

@@ -457,6 +457,22 @@ position is optional (cardinal position or team). Success replies with `room` an
 For a failed profile lookup, the reply is `{ "status": "error", "reason": "profile_unavailable" }`.
 Creation remains REST-only. Game-channel attachment/reconnection never claims an unowned seat.
 
+Playing rooms include the same public progress in room detail, lobby lists/pushes,
+invite previews and readiness snapshots:
+```json
+{ "game": { "hand": 4, "scores": { "north_south": 34, "east_west": 21 } } }
+```
+`hand` is the current hand number; scores are cumulative team scores (and may be negative).
+`game` is absent, not null, outside `playing`. A rematch starts again at hand 1 and 0–0.
+The lobby pushes one `room_updated` when the hand or either score changes, not for
+tricks within a hand. Membership and room lifecycle changes still push as before.
+
+A vacant substitute seat adds `vacated_by`, for example `"vacated_by": "Jussi"`.
+This is the display name at departure (username fallback), retained through the owner's
+Keep Bot/Open Seat decision and removed when someone sits. It is omitted if the account
+no longer exists or its name cannot be read. No departure-hand field is defined;
+`game.hand` is the current hand, not the hand in which the player left.
+
 Any other key is rejected, including a `room` wrapper around the fields and `settings`. See
 [Invalid create request](#invalid-create-request) below.
 

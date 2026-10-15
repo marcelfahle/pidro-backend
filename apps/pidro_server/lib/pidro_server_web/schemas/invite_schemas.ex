@@ -135,6 +135,7 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
         },
         state: PidroServerWeb.Schemas.InviteSchemas.State,
         config: PidroServerWeb.Schemas.RoomSchemas.RoomConfig,
+        game: PidroServerWeb.Schemas.RoomSchemas.GameProgress,
         seats: %Schema{
           type: :array,
           description: "Public seats, without player identities; empty when the room is closed",
@@ -144,6 +145,7 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
               position: %Schema{type: :string, enum: [:north, :east, :south, :west]},
               seat_index: %Schema{type: :integer, minimum: 0, maximum: 3},
               status: %Schema{type: :string, enum: ["free", "occupied"]},
+              vacated_by: %Schema{type: :string, description: "Departed player's display name"},
               min_games: %Schema{type: :integer, enum: [0, 100, 1000]}
             }
           }
