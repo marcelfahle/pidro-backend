@@ -18,13 +18,20 @@ defmodule Pidro.Finnish.ScorerTest do
     test "each partial trick uses the variant winner and the shared point split" do
       cases = [
         {:finnish,
-         [{:north, {5, :diamonds}}, {:east, {5, :hearts}}, {:south, {2, :hearts}},
-          {:west, {10, :hearts}}], [:north, :east, :east, :west], [5, 10, 10, 11]},
+         [
+           {:north, {5, :diamonds}},
+           {:east, {5, :hearts}},
+           {:south, {2, :hearts}},
+           {:west, {10, :hearts}}
+         ], [:north, :east, :east, :west], [5, 10, 10, 11]},
         {:louisiana,
-         [{:north, {10, :clubs}}, {:east, {14, :spades}}, {:south, {2, :hearts}},
-          {:west, {5, :diamonds}}], [:north, :north, :south, :west], [0, 0, 0, 5]},
-        {:finnish,
-         [{:north, {11, :hearts}}, {:south, {14, :hearts}}, {:west, {2, :hearts}}],
+         [
+           {:north, {10, :clubs}},
+           {:east, {14, :spades}},
+           {:south, {2, :hearts}},
+           {:west, {5, :diamonds}}
+         ], [:north, :north, :south, :west], [0, 0, 0, 5]},
+        {:finnish, [{:north, {11, :hearts}}, {:south, {14, :hearts}}, {:west, {2, :hearts}}],
          [:north, :south, :south], [1, 2, 2]}
       ]
 

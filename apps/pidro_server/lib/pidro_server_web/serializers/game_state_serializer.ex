@@ -48,9 +48,10 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       trump_suit: Map.get(state, :trump_suit),
       tricks: serialize_tricks(Map.get(state, :tricks, [])),
       current_trick: serialize_current_trick(Map.get(state, :current_trick)),
-      current_trick_details: serialize_trick(Map.get(state, :current_trick)),
+      current_trick_details: serialize_current_trick_details(state),
       trick_number: Map.get(state, :trick_number),
       hand_points: Map.get(state, :hand_points, %{}),
+      last_hand: Map.get(state, :last_hand),
       scores: Map.get(state, :cumulative_scores, %{}),
       cumulative_scores: Map.get(state, :cumulative_scores, %{}),
       winner: Map.get(state, :winner),
@@ -143,9 +144,26 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       plays: plays,
       cards: plays,
       winner: Map.get(trick, :winner),
-      points: Map.get(trick, :points, 0)
+      points: Map.get(trick, :points, 0),
+      two_of_trump: Map.get(trick, :two_of_trump)
     }
   end
+
+  defp serialize_current_trick_details(%{current_trick: trick} = state) when not is_nil(trick) do
+    signals = Pidro.Finnish.Scorer.trick_signals(trick, state.trump_suit, state.variant)
+
+    winning =
+      case signals.winning do
+        nil -> nil
+        %{position: position, card: card} -> %{position: position, card: serialize_card(card)}
+      end
+
+    trick
+    |> serialize_trick()
+    |> Map.merge(%{signals | winning: winning})
+  end
+
+  defp serialize_current_trick_details(_state), do: nil
 
   @doc """
   Serializes the current trick as a flat array of plays.

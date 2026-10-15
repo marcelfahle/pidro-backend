@@ -710,10 +710,20 @@ defmodule Pidro.Game.Play do
   # Moves current trick to history
   @spec move_trick_to_history(game_state()) :: {:ok, game_state()}
   defp move_trick_to_history(state) do
-    trick = state.current_trick
+    signals =
+      Pidro.Finnish.Scorer.trick_signals(state.current_trick, state.trump_suit, state.variant)
+
+    trick = %{
+      state.current_trick
+      | winner: signals.winning.position,
+        points: signals.points,
+        two_of_trump: signals.two_of_trump
+    }
+
     updated_tricks = state.tricks ++ [trick]
     state = GameState.update(state, :tricks, updated_tricks)
     state = GameState.update(state, :current_trick, nil)
+    state = GameState.update(state, :last_hand, nil)
     {:ok, state}
   end
 

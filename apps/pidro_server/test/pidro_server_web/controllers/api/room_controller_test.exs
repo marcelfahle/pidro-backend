@@ -19,6 +19,66 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     :ok
   end
 
+  test "game state exposes trick signals and the retained hand result over HTTP", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{name: "Trick signals"})
+
+    for _ <- 1..3 do
+      user = AccountsFixtures.user_fixture()
+      {:ok, _, _} = RoomManager.join_room(room.code, user.id)
+    end
+
+    PidroServer.RoomFixtures.ready_room(room.code)
+
+    scored =
+      1
+      |> Pidro.Test.DeterministicGame.opening()
+      |> Pidro.Test.DeterministicGame.play_until(&(&1.hand_number == 2))
+
+    trick = %Pidro.Core.Types.Trick{
+      number: 1,
+      leader: :north,
+      plays: [{:north, {5, :diamonds}}, {:east, {2, :hearts}}, {:south, {10, :hearts}}]
+    }
+
+    state = %{
+      scored
+      | phase: :playing,
+        trump_suit: :hearts,
+        current_trick: trick,
+        trick_number: 1
+    }
+
+    {:ok, pid} = PidroServer.Games.GameRegistry.lookup(room.code)
+    :ok = GenServer.call(pid, {:set_state, state})
+
+    response =
+      as_user(conn, host) |> get(~p"/api/v1/rooms/#{room.code}/state") |> json_response(200)
+
+    payload = response["data"]["state"]
+    assert payload["last_hand"] == scored.last_hand |> Jason.encode!() |> Jason.decode!()
+    assert payload["scores"] == payload["cumulative_scores"]
+    assert payload["current_trick"] == payload["current_trick_details"]["plays"]
+
+    assert payload["current_trick_details"]["winning"] == %{
+             "position" => "south",
+             "card" => %{"rank" => 10, "suit" => "hearts"}
+           }
+
+    assert payload["current_trick_details"]["points"] == 6
+
+    assert payload["current_trick_details"]["two_of_trump"] == %{
+             "position" => "east",
+             "points" => 1
+           }
+
+    OpenApiSpex.TestAssertions.assert_schema(
+      response,
+      "GameStateResponse",
+      PidroServerWeb.ApiSpec.spec()
+    )
+  end
+
   test "held seats are visible everywhere, invite their user, and exclude strangers", %{
     conn: conn
   } do

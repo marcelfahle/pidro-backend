@@ -1177,6 +1177,9 @@ gameChannel.on("game_over", ({ winner, scores }) => {
     {"position": "north", "amount": 8}
   ],
   "tricks": [],
+  "current_trick": [],
+  "current_trick_details": null,
+  "last_hand": null,
   "hand_points": {
     "north_south": 0,
     "east_west": 0
@@ -1826,10 +1829,60 @@ All game state sent through the API or WebSocket channels is serialized by `Pidr
     "north": {"position": "north", "team": "north_south", "hand": [...], "tricks_won": 2},
     ...
   },
-  "current_trick": {"number": 3, "leader": "south", "plays": [...], "winner": null},
+  "current_trick": [{"player": "south", "position": "south", "card": {"rank": 14, "suit": "hearts"}}],
+  "current_trick_details": {
+    "number": 3,
+    "leader": "south",
+    "plays": [{"player": "south", "position": "south", "card": {"rank": 14, "suit": "hearts"}}],
+    "cards": [{"player": "south", "position": "south", "card": {"rank": 14, "suit": "hearts"}}],
+    "winner": null,
+    "winning": {"position": "south", "card": {"rank": 14, "suit": "hearts"}},
+    "points": 1,
+    "two_of_trump": null
+  },
+  "last_hand": null,
   "cumulative_scores": {"north_south": 24, "east_west": 18}
 }
 ```
+
+**Trick signals (Finnish and Louisiana)**:
+
+- `current_trick` remains a flat array of plays. `current_trick_details` is `null` when no trick exists; an empty trick object has `winning: null`, `points: 0` and `two_of_trump: null`.
+- `current_trick_details.winning` is the `{position, card}` currently winning under the table's rules. The engine decides this after each play, including Finnish tricks with only one, two or three active players. Louisiana off-suit cards cannot beat a trump or a card of the led suit.
+- `points` in both `current_trick_details` and finished `tricks[]` is **the winner's share**, excluding the 2 of trump. For a partial trick it counts only cards played so far.
+- `two_of_trump` in both shapes is `{ "position": "east", "points": 1 }` once East plays the 2 of trump, or `null` if absent. That player's team keeps the point even if the other team wins the trick. Both implemented variants use this split.
+- Finished `tricks[]` retain `number`, `leader`, `plays`, `cards`, `winner` and `points`, and gain `two_of_trump`. Existing play and score aliases remain unchanged. Clients should render the signals rather than implement card ranking or scoring.
+
+**Last scored hand**:
+
+```json
+{
+  "last_hand": {
+    "hand_number": 3,
+    "bidding_team": "north_south",
+    "bidder": "south",
+    "bid": 9,
+    "captured": {"north_south": 8, "east_west": 6},
+    "made": false,
+    "delta": {"north_south": -9, "east_west": 6},
+    "scores": {"north_south": -2, "east_west": 21}
+  }
+}
+```
+
+`last_hand` is `null` before any hand scores. The engine records it when scoring,
+before `hand_points`, bids and tricks reset. It survives the next deal, bidding,
+and partial first trick, including channel reconnects and REST snapshots. It
+becomes `null` when that next hand's first trick completes. If the game ends,
+the final result remains available.
+
+`captured` contains final team totals with the 2-of-trump split. `made`, `delta`
+and `scores` come from the result the engine applied: a set bidding team loses
+the bid amount, defenders keep their captured points, and scores may be
+negative. If both teams reach 62 on the same hand, the bidding team wins;
+the top-level `winner` remains authoritative. These fields do not change the
+existing live `hand_points` calculation, which currently credits all trick
+points to the winner's team until final scoring applies the 2-of-trump split.
 
 ### Room Codes
 

@@ -837,9 +837,19 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         },
         points: %Schema{
           type: :integer,
-          description: "Points earned in this trick",
+          description: "Winner's share of trick points, excluding the 2 of trump",
           minimum: 0,
-          example: 15
+          example: 1
+        },
+        two_of_trump: %Schema{
+          type: :object,
+          nullable: true,
+          description: "The player who keeps the 2-of-trump point, or null if not played",
+          properties: %{
+            position: %Schema{type: :string, enum: [:north, :south, :east, :west]},
+            points: %Schema{type: :integer, enum: [1]}
+          },
+          required: [:position, :points]
         }
       },
       required: [:plays, :cards, :points],
@@ -871,7 +881,61 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           }
         ],
         "winner" => "north",
-        "points" => 15
+        "points" => 1,
+        "two_of_trump" => nil
+      }
+    })
+  end
+
+  defmodule LastHand do
+    @moduledoc "The engine's retained result of the last scored hand."
+
+    @team_scores %Schema{
+      type: :object,
+      properties: %{
+        north_south: %Schema{type: :integer},
+        east_west: %Schema{type: :integer}
+      },
+      required: [:north_south, :east_west]
+    }
+
+    OpenApiSpex.schema(%{
+      title: "LastHand",
+      type: :object,
+      nullable: true,
+      description:
+        "Result retained from scoring until the next hand's first trick completes, including reconnects. Retained at game end; otherwise null when unavailable.",
+      properties: %{
+        hand_number: %Schema{type: :integer, minimum: 1},
+        bidding_team: %Schema{type: :string, enum: [:north_south, :east_west]},
+        bidder: %Schema{type: :string, enum: [:north, :south, :east, :west]},
+        bid: %Schema{type: :integer, minimum: 6, maximum: 14},
+        captured: %Schema{
+          type: :object,
+          description: "Final captured points, including the 2 of trump for its player's team",
+          properties: %{
+            north_south: %Schema{type: :integer, minimum: 0},
+            east_west: %Schema{type: :integer, minimum: 0}
+          },
+          required: [:north_south, :east_west]
+        },
+        made: %Schema{type: :boolean, description: "Whether the bidding team made its bid"},
+        delta: %Schema{
+          @team_scores
+          | description: "Score changes actually applied; may be negative"
+        },
+        scores: %Schema{@team_scores | description: "Cumulative scores after this hand"}
+      },
+      required: [:hand_number, :bidding_team, :bidder, :bid, :captured, :made, :delta, :scores],
+      example: %{
+        "hand_number" => 3,
+        "bidding_team" => "north_south",
+        "bidder" => "south",
+        "bid" => 9,
+        "captured" => %{"north_south" => 8, "east_west" => 6},
+        "made" => false,
+        "delta" => %{"north_south" => -9, "east_west" => 6},
+        "scores" => %{"north_south" => -2, "east_west" => 21}
       }
     })
   end
@@ -1074,8 +1138,28 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   example: []
                 },
                 current_trick_details: %Schema{
-                  allOf: [Trick],
-                  description: "Current trick in full object shape (legacy alias)",
+                  allOf: [
+                    Trick,
+                    %Schema{
+                      type: :object,
+                      properties: %{
+                        winning: %Schema{
+                          type: :object,
+                          nullable: true,
+                          description:
+                            "Play currently winning under the table's variant, or null before the first play",
+                          properties: %{
+                            position: %Schema{type: :string, enum: [:north, :south, :east, :west]},
+                            card: Card
+                          },
+                          required: [:position, :card]
+                        }
+                      },
+                      required: [:winning]
+                    }
+                  ],
+                  description:
+                    "Current trick with winning play and points so far; null when no trick exists",
                   nullable: true
                 },
                 trick_number: %Schema{
@@ -1092,6 +1176,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   description: "Points earned by each team in this hand",
                   example: %{"north_south" => 0, "east_west" => 0}
                 },
+                last_hand: LastHand,
                 scores: %Schema{
                   type: :object,
                   additionalProperties: %Schema{type: :integer},

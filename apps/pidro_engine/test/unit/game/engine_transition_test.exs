@@ -32,9 +32,12 @@ defmodule Pidro.Game.EngineTransitionTest do
       assert scored.last_hand == expected
       assert scored.cumulative_scores == total
       assert scored.phase == phase
+
       assert Enum.take(scored.events |> Enum.filter(&match?({:hand_scored, _, _}, &1)), -2) ==
-               [{:hand_scored, :north_south, delta.north_south},
-                {:hand_scored, :east_west, delta.east_west}]
+               [
+                 {:hand_scored, :north_south, delta.north_south},
+                 {:hand_scored, :east_west, delta.east_west}
+               ]
 
       if phase == :complete do
         assert scored.winner == :north_south
@@ -62,8 +65,7 @@ defmodule Pidro.Game.EngineTransitionTest do
 
     players =
       Map.new(state.players, fn {position, player} ->
-        {position,
-         %{player | hand: if(position == :west, do: [{10, :hearts}], else: [])}}
+        {position, %{player | hand: if(position == :west, do: [{10, :hearts}], else: [])}}
       end)
 
     %{

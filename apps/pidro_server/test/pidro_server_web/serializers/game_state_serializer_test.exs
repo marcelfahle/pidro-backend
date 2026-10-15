@@ -48,6 +48,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
         assert payload.current_trick_details.plays == plays
         assert payload.current_trick_details.cards == plays
         assert payload.current_trick_details.winner == nil
+
         assert payload.current_trick_details.winning ==
                  %{position: :south, card: %{rank: 10, suit: :hearts}}
 
@@ -74,7 +75,10 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert payload.last_hand == nil
 
       empty = %Pidro.Core.Types.Trick{number: 1, leader: :north}
-      payload = GameStateSerializer.serialize(%{state | current_trick: empty, trump_suit: :hearts})
+
+      payload =
+        GameStateSerializer.serialize(%{state | current_trick: empty, trump_suit: :hearts})
+
       assert payload.current_trick == []
       assert payload.current_trick_details.winning == nil
       assert payload.current_trick_details.points == 0
