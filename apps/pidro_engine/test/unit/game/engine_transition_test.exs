@@ -4,6 +4,96 @@ defmodule Pidro.Game.EngineTransitionTest do
   alias Pidro.Core.Types.Player
   alias Pidro.Game.Engine
 
+  test "last hand records applied scores and survives until the next first trick completes" do
+    for variant <- [:finnish, :louisiana],
+        {bid, scores, made, delta, total, phase} <- [
+          {7, %{north_south: 4, east_west: 8}, true, %{north_south: 13, east_west: 1},
+           %{north_south: 17, east_west: 9}, :bidding},
+          {14, %{north_south: 4, east_west: 8}, false, %{north_south: -14, east_west: 1},
+           %{north_south: -10, east_west: 9}, :bidding},
+          {7, %{north_south: 50, east_west: 61}, true, %{north_south: 13, east_west: 1},
+           %{north_south: 63, east_west: 62}, :complete}
+        ] do
+      state = final_play_state(variant, bid, scores)
+      assert Map.get(state, :last_hand) == nil
+      {:ok, scored} = Engine.apply_action(state, :west, {:play_card, {10, :hearts}})
+
+      expected = %{
+        hand_number: 1,
+        bidding_team: :north_south,
+        bidder: :south,
+        bid: bid,
+        captured: %{north_south: 13, east_west: 1},
+        made: made,
+        delta: delta,
+        scores: total
+      }
+
+      assert scored.last_hand == expected
+      assert scored.cumulative_scores == total
+      assert scored.phase == phase
+
+      assert Enum.take(scored.events |> Enum.filter(&match?({:hand_scored, _, _}, &1)), -2) ==
+               [
+                 {:hand_scored, :north_south, delta.north_south},
+                 {:hand_scored, :east_west, delta.east_west}
+               ]
+
+      if phase == :complete do
+        assert scored.winner == :north_south
+      else
+        assert scored.hand_number == 2
+        assert scored.hand_points == %{north_south: 0, east_west: 0}
+        assert scored.tricks == []
+
+        before_first_trick =
+          Pidro.Test.DeterministicGame.play_until(scored, fn next ->
+            assert next.last_hand == expected
+            next.current_trick != nil and length(next.current_trick.plays) == 1
+          end)
+
+        after_first_trick =
+          Pidro.Test.DeterministicGame.play_until(before_first_trick, &(&1.tricks != []))
+
+        assert after_first_trick.last_hand == nil
+      end
+    end
+  end
+
+  defp final_play_state(variant, bid, scores) do
+    state = GameState.new(seed: 1, variant: variant)
+
+    players =
+      Map.new(state.players, fn {position, player} ->
+        {position, %{player | hand: if(position == :west, do: [{10, :hearts}], else: [])}}
+      end)
+
+    %{
+      state
+      | phase: :playing,
+        players: players,
+        trump_suit: :hearts,
+        current_turn: :west,
+        current_dealer: :north,
+        highest_bid: {:south, bid},
+        bidding_team: :north_south,
+        cumulative_scores: scores,
+        trick_number: 2,
+        tricks: [
+          %Pidro.Core.Types.Trick{
+            number: 1,
+            leader: :south,
+            plays: [{:south, {5, :hearts}}, {:west, {5, :diamonds}}]
+          }
+        ],
+        current_trick: %Pidro.Core.Types.Trick{
+          number: 2,
+          leader: :north,
+          plays: [{:north, {14, :hearts}}, {:east, {2, :hearts}}, {:south, {11, :hearts}}]
+        }
+    }
+  end
+
   test "playing phase automatically transitions to scoring when all hands are empty" do
     # Setup: Game in playing phase, all players eliminated/empty except one who plays last card
 

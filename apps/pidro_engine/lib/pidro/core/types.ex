@@ -229,6 +229,12 @@ defmodule Pidro.Core.Types do
     field(:plays, [{Pidro.Core.Types.position(), Pidro.Core.Types.card()}], default: [])
     field(:winner, Pidro.Core.Types.position() | nil, default: nil)
     field(:points, non_neg_integer(), default: 0)
+
+    field(
+      :two_of_trump,
+      %{position: Pidro.Core.Types.position(), points: non_neg_integer()} | nil,
+      default: nil
+    )
   end
 
   typedstruct module: Player do
@@ -323,6 +329,7 @@ defmodule Pidro.Core.Types do
     )
 
     field(:winner, Pidro.Core.Types.team() | nil, default: nil)
+    field(:last_hand, map() | nil, default: nil)
 
     # History (for replay/undo)
     field(:events, [Pidro.Core.Types.event()], default: [])

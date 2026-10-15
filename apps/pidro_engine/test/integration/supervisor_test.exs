@@ -10,7 +10,7 @@ defmodule Pidro.SupervisorTest do
   setup_all do
     # Start one supervisor for all tests to avoid conflicts
     unless Process.whereis(Pidro.Supervisor) do
-      {:ok, _sup_pid} = Supervisor.start_link()
+      start_supervised!(Supervisor)
     end
 
     :ok

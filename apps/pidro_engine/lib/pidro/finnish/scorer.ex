@@ -220,6 +220,44 @@ defmodule Pidro.Finnish.Scorer do
   end
 
   @doc """
+  Returns the winning play and point split for a partial or completed trick.
+
+  Both variants use the same point split, with their own winner rules. An empty
+  trick has no winning play, no points and no two-of-trump owner.
+
+  ## Examples
+
+      iex> trick = %Pidro.Core.Types.Trick{number: 1, leader: :north, plays: [{:north, {2, :hearts}}]}
+      iex> Pidro.Finnish.Scorer.trick_signals(trick, :hearts, :finnish)
+      %{winning: %{position: :north, card: {2, :hearts}}, points: 0, two_of_trump: %{position: :north, points: 1}}
+  """
+  @spec trick_signals(Types.Trick.t(), suit(), atom()) :: %{
+          winning: %{position: position(), card: Types.card()} | nil,
+          points: non_neg_integer(),
+          two_of_trump: %{position: position(), points: non_neg_integer()} | nil
+        }
+  def trick_signals(%Types.Trick{plays: []}, _trump_suit, _variant) do
+    %{winning: nil, points: 0, two_of_trump: nil}
+  end
+
+  def trick_signals(%Types.Trick{} = trick, trump_suit, variant) do
+    score = score_trick(trick, trump_suit, variant)
+    {position, card} = List.keyfind(trick.plays, score.winner, 0)
+
+    two_of_trump =
+      case score.two_of_trump_player do
+        nil -> nil
+        player -> %{position: player, points: score.two_of_trump_points}
+      end
+
+    %{
+      winning: %{position: position, card: card},
+      points: score.winner_points,
+      two_of_trump: two_of_trump
+    }
+  end
+
+  @doc """
   Aggregates team scores from all scored tricks in a hand.
 
   This function takes all the trick scores (from `score_trick/2`) and
@@ -300,7 +338,7 @@ defmodule Pidro.Finnish.Scorer do
   """
   @spec apply_bid_result(Types.GameState.t()) :: Types.GameState.t()
   def apply_bid_result(%Types.GameState{} = state) do
-    {_bidder_position, bid_amount} = state.highest_bid
+    {bidder_position, bid_amount} = state.highest_bid
     bidding_team = state.bidding_team
     defending_team = Types.opposing_team(bidding_team)
 
@@ -308,9 +346,10 @@ defmodule Pidro.Finnish.Scorer do
     defending_points = Map.get(state.hand_points, defending_team, 0)
 
     old_scores = state.cumulative_scores
+    made = bidding_points >= bid_amount
 
     {new_bidding_score, new_defending_score} =
-      if bidding_points >= bid_amount do
+      if made do
         # Bidding team made their bid - both teams get their points
         {
           old_scores[bidding_team] + bidding_points,
@@ -337,9 +376,21 @@ defmodule Pidro.Finnish.Scorer do
     bidding_event = {:hand_scored, bidding_team, bidding_delta}
     defending_event = {:hand_scored, defending_team, defending_delta}
 
+    last_hand = %{
+      hand_number: state.hand_number,
+      bidding_team: bidding_team,
+      bidder: bidder_position,
+      bid: bid_amount,
+      captured: state.hand_points,
+      made: made,
+      delta: %{bidding_team => bidding_delta, defending_team => defending_delta},
+      scores: new_cumulative_scores
+    }
+
     # Update state
     state
     |> GameState.update(:cumulative_scores, new_cumulative_scores)
+    |> GameState.update(:last_hand, last_hand)
     |> GameState.update(:events, state.events ++ [bidding_event, defending_event])
   end
 

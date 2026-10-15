@@ -1557,11 +1557,20 @@ defmodule PidroServerWeb.GameChannelTest do
       assert position in [:north, :east, :south, :west]
     end
 
-    test "reconnection returns correct state with reconnected flag", %{
+    @tag :stable_turn_timer
+    test "reconnection returns the scored last hand with reconnected flag", %{
       user1: user,
       room_code: room_code,
       sockets: sockets
     } do
+      state =
+        1
+        |> Pidro.Test.DeterministicGame.opening()
+        |> Pidro.Test.DeterministicGame.play_until(&(&1.hand_number == 2))
+
+      assert state.last_hand != nil
+      {:ok, pid} = PidroServer.Games.GameRegistry.lookup(room_code)
+      :ok = GenServer.call(pid, {:set_state, state})
       socket = sockets[user.id]
 
       # First join
@@ -1583,7 +1592,13 @@ defmodule PidroServerWeb.GameChannelTest do
       # Should have same position and reconnected flag
       assert reconnect_reply.reconnected == true
       assert reconnect_reply.position == initial_position
-      assert reconnect_reply.state.phase in [:dealer_selection, :dealing, :bidding]
+      assert reconnect_reply.state.phase == :bidding
+      assert reconnect_reply.state.last_hand == state.last_hand
+      assert reconnect_reply.state.last_hand == initial_reply.state.last_hand
+
+      wire = reconnect_reply.state |> Jason.encode!() |> Jason.decode!()
+      assert wire["last_hand"]["hand_number"] == 1
+      assert wire["last_hand"]["scores"] == wire["scores"]
     end
 
     test "normal join still works without reconnected flag", %{
