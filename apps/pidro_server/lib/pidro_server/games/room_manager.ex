@@ -280,7 +280,7 @@ defmodule PidroServer.Games.RoomManager do
 
     Map.put(invitation, :host, %{
       user_id: invitation.host_id,
-      display_name: user && user.display_name,
+      display_name: user && User.public_name(user),
       avatar_url: user && user.avatar_url
     })
   end

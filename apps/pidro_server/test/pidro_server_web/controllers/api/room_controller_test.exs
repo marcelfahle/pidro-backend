@@ -101,7 +101,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
   test "held seats are visible everywhere, invite their user, and exclude strangers", %{
     conn: conn
   } do
-    host = AccountsFixtures.user_fixture()
+    host = AccountsFixtures.user_fixture(%{display_name: "Ada"})
     friend = AccountsFixtures.user_fixture(%{display_name: "Nora"})
     stranger = AccountsFixtures.user_fixture()
 

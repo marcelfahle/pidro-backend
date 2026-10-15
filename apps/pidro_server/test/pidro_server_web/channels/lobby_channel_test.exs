@@ -128,7 +128,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
       code: code,
       position: :south,
       host_id: host.id,
-      host: %{user_id: host.id, display_name: host.display_name, avatar_url: nil},
+      host: %{user_id: host.id, display_name: host.username, avatar_url: nil},
       rule_set: "louisiana",
       held_since: DateTime.to_iso8601(room.created_at)
     }
