@@ -231,6 +231,7 @@ defmodule PidroServerWeb.LobbyChannel do
       config: Config.serialize(room.config),
       seats: serialize_seats(room, user_map)
     }
+    |> Map.merge(RoomManager.Room.game_payload(room))
   end
 
   defp serialize_seats(room, user_map) do
@@ -269,6 +270,7 @@ defmodule PidroServerWeb.LobbyChannel do
             has_reservation: seat_data.has_reservation,
             joined_at: seat_data.joined_at
           })
+          |> Map.merge(Map.take(seat_data, [:vacated_by]))
 
         nil ->
           base

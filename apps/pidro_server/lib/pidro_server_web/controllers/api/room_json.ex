@@ -155,6 +155,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       seats:
         serialize_room_seats(Map.get(room, :seats, %{}), Map.get(room, :config, %Config{}), users)
     }
+    |> Map.merge(PidroServer.Games.RoomManager.Room.game_payload(room))
   end
 
   # Room-shaped maps without a config (invite redeem, tests) serialize the default.

@@ -20,6 +20,10 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       description: "A seat at the table with occupant and connection state",
       type: :object,
       properties: %{
+        vacated_by: %Schema{
+          type: :string,
+          description: "Departed player's display name, only on a vacant substitute seat"
+        },
         min_games: %Schema{
           type: :integer,
           enum: [0, 100, 1000],
@@ -239,6 +243,30 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
+  defmodule GameProgress do
+    @moduledoc "Public progress for a playing room."
+
+    OpenApiSpex.schema(%{
+      title: "GameProgress",
+      description: "Present only while the room is playing; omitted otherwise",
+      type: :object,
+      required: [:hand, :scores],
+      properties: %{
+        hand: %Schema{type: :integer, minimum: 1},
+        scores: %Schema{
+          type: :object,
+          description: "Cumulative team scores; may be negative",
+          required: [:north_south, :east_west],
+          properties: %{
+            north_south: %Schema{type: :integer},
+            east_west: %Schema{type: :integer}
+          }
+        }
+      },
+      example: %{hand: 4, scores: %{north_south: 34, east_west: 21}}
+    })
+  end
+
   defmodule Room do
     @moduledoc "Schema for a Room object representing a game room."
 
@@ -247,6 +275,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
       description: "A game room for playing Pidro with up to 4 players",
       type: :object,
       properties: %{
+        game: GameProgress,
         code: %Schema{
           type: :string,
           description: "Unique 4-character room code",

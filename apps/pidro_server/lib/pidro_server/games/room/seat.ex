@@ -37,7 +37,8 @@ defmodule PidroServer.Games.Room.Seat do
           joined_at: DateTime.t() | nil,
           substitute: boolean(),
           decision_id: String.t() | nil,
-          decision_player_id: String.t() | nil
+          decision_player_id: String.t() | nil,
+          vacated_by: String.t() | nil
         }
 
   defstruct [
@@ -51,6 +52,7 @@ defmodule PidroServer.Games.Room.Seat do
     :reserved_for,
     :decision_id,
     :decision_player_id,
+    :vacated_by,
     is_owner: false,
     joined_at: nil,
     substitute: false
@@ -316,6 +318,7 @@ defmodule PidroServer.Games.Room.Seat do
          user_id: user_id,
          joined_at: DateTime.utc_now(),
          substitute: true,
+         vacated_by: nil,
          decision_id: nil,
          decision_player_id: nil
      }}
@@ -389,7 +392,7 @@ defmodule PidroServer.Games.Room.Seat do
   """
   @spec serialize(t()) :: map()
   def serialize(%__MODULE__{} = seat) do
-    %{
+    data = %{
       position: seat.position,
       occupant_type: seat.occupant_type,
       user_id: seat.user_id,
@@ -401,6 +404,10 @@ defmodule PidroServer.Games.Room.Seat do
       has_reservation: seat.reserved_for != nil,
       joined_at: maybe_to_iso8601(seat.joined_at)
     }
+
+    if seat.occupant_type == :vacant and is_binary(seat.vacated_by),
+      do: Map.put(data, :vacated_by, seat.vacated_by),
+      else: data
   end
 
   defp maybe_to_iso8601(nil), do: nil

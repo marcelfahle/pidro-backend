@@ -62,6 +62,7 @@ defmodule PidroServerWeb.API.InviteJSON do
       expires_at: DateTime.to_iso8601(invite.expires_at)
     }
 
+    preview = Map.merge(preview, Map.take(assigns, [:game]))
     %{data: %{invite: maybe_put_next_code(preview, state, invite)}}
   end
 
