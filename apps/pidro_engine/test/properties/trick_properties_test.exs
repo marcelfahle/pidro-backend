@@ -36,15 +36,9 @@ defmodule Pidro.Properties.TrickPropertiesTest do
   end
 
   defp non_trump_card_gen(trump_suit) do
-    gen all(
-          rank <- integer(2..14),
-          suit <- suit_gen(),
-          suit != trump_suit,
-          # Ensure it's not the wrong 5
-          not Card.is_trump?({rank, suit}, trump_suit)
-        ) do
-      {rank, suit}
-    end
+    Pidro.Core.Deck.ordered()
+    |> Enum.reject(&Card.is_trump?(&1, trump_suit))
+    |> member_of()
   end
 
   # Generator for a game state in playing phase with at least one completed trick
