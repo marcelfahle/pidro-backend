@@ -39,6 +39,12 @@ defmodule PidroServerWeb.Schemas.BlockSchemas do
       type: :object,
       required: [:error],
       properties: %{
+        error_code: %Schema{
+          type: :string,
+          description: "Stable localization key; the legacy error field is unchanged",
+          enum: ["account_required", "cannot_block_self", "user_not_found"]
+        },
+        error_params: %Schema{type: :object, additionalProperties: false},
         error: %Schema{
           type: :string,
           enum: ["ACCOUNT_REQUIRED", "CANNOT_BLOCK_SELF", "USER_NOT_FOUND"]

@@ -335,7 +335,13 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     assert as_user(conn, player)
            |> post(~p"/api/v1/rooms/#{code}/join", %{position: "south"})
            |> json_response(403) ==
-             %{"error" => "SEAT_REQUIRES_GAMES", "min_games" => 100, "games_played" => 40}
+             %{
+               "error" => "SEAT_REQUIRES_GAMES",
+               "min_games" => 100,
+               "games_played" => 40,
+               "error_code" => "seat_requires_games",
+               "error_params" => %{"min_games" => 100, "games_played" => 40}
+             }
 
     {:ok, _} = PidroServer.Profiles.import_legacy_progression(player, %{legacy_played_games: 110})
     assert PidroServer.Profiles.public_profile(player.id).record.games == 150
@@ -480,6 +486,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       conn = leave(conn, player, finished.code)
 
       assert json_response(conn, 404) == %{
+               "error_code" => "not_in_room",
+               "error_params" => %{},
                "errors" => [
                  %{
                    "code" => "NOT_IN_ROOM",
@@ -882,6 +890,18 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       assert %{"errors" => [_first, _second] = errors} = response
       assert errors |> Enum.map(& &1["code"]) |> Enum.sort() == ["bot_difficulty", "settings"]
+      assert response["error_code"] == "validation_failed"
+      assert response["error_params"] == %{}
+
+      assert Enum.sort_by(response["field_errors"], & &1["field"]) == [
+               %{
+                 "field" => "bot_difficulty",
+                 "error_code" => "field_invalid",
+                 "error_params" => %{}
+               },
+               %{"field" => "settings", "error_code" => "field_invalid", "error_params" => %{}}
+             ]
+
       assert_no_room_for(user)
     end
 

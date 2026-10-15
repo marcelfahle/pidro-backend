@@ -16,6 +16,17 @@ defmodule PidroServerWeb.ErrorJSON do
   # the template name. For example, "404.json" becomes
   # "Not Found".
   def render(template, _assigns) do
-    %{errors: %{detail: Phoenix.Controller.status_message_from_template(template)}}
+    reason =
+      case template do
+        "401.json" -> :unauthorized
+        "403.json" -> :forbidden
+        "404.json" -> :not_found
+        _ -> :request_failed
+      end
+
+    PidroServerWeb.ErrorContract.add(
+      %{errors: %{detail: Phoenix.Controller.status_message_from_template(template)}},
+      reason
+    )
   end
 end

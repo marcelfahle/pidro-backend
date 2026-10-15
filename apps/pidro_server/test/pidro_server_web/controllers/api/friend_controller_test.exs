@@ -80,9 +80,17 @@ defmodule PidroServerWeb.API.FriendControllerTest do
           {:delete, "/api/v1/friends/#{target.id}"}
         ] do
       assert conn |> auth(guest) |> dispatch(method, path) |> json_response(403) ==
-               %{"error" => "ACCOUNT_REQUIRED"}
+               %{
+                 "error" => "ACCOUNT_REQUIRED",
+                 "error_code" => "account_required",
+                 "error_params" => %{}
+               }
 
-      assert conn |> dispatch(method, path) |> json_response(401)
+      assert conn |> dispatch(method, path) |> json_response(401) == %{
+               "errors" => %{"detail" => "Unauthorized"},
+               "error_code" => "unauthorized",
+               "error_params" => %{}
+             }
     end
   end
 
@@ -94,7 +102,12 @@ defmodule PidroServerWeb.API.FriendControllerTest do
       response =
         conn |> auth(user) |> dispatch(method, "/api/v1/friends/#{user.id}") |> json_response(400)
 
-      assert response == %{"error" => "CANNOT_FRIEND_SELF"}
+      assert response == %{
+               "error" => "CANNOT_FRIEND_SELF",
+               "error_code" => "cannot_friend_self",
+               "error_params" => %{}
+             }
+
       assert_schema(response, "FriendError")
 
       for id <- [guest.id, Ecto.UUID.generate(), "invalid"] do
@@ -102,7 +115,11 @@ defmodule PidroServerWeb.API.FriendControllerTest do
                |> auth(user)
                |> dispatch(method, "/api/v1/friends/#{id}")
                |> json_response(404) ==
-                 %{"error" => "USER_NOT_FOUND"}
+                 %{
+                   "error" => "USER_NOT_FOUND",
+                   "error_code" => "user_not_found",
+                   "error_params" => %{}
+                 }
       end
     end
   end
@@ -121,7 +138,9 @@ defmodule PidroServerWeb.API.FriendControllerTest do
           "/api/v1/users/search?q[]=nor"
         ] do
       assert conn |> auth(user) |> get(path) |> json_response(400) == %{
-               "error" => "QUERY_TOO_SHORT"
+               "error" => "QUERY_TOO_SHORT",
+               "error_code" => "query_too_short",
+               "error_params" => %{}
              }
     end
 

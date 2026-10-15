@@ -210,7 +210,12 @@ defmodule PidroServerWeb.GameChannelTest do
 
       for event <- ["keep_bot", "open_seat"] do
         ref = push(owner, event, %{"position" => "east"})
-        assert_reply ref, :error, %{reason: "stale_decision"}
+
+        assert_reply ref, :error, %{
+          reason: "stale_decision",
+          error_code: "stale_decision",
+          error_params: %{}
+        }
       end
 
       ref = push(owner, "keep_bot", %{"position" => "east", "decision_id" => id})
@@ -231,7 +236,14 @@ defmodule PidroServerWeb.GameChannelTest do
 
       assert reply.seat_lifecycle == kept
       ref = push(owner, "open_seat", %{"position" => "east", "decision_id" => id})
-      assert_reply ref, :error, %{reason: "stale_decision", seat_lifecycle: ^kept}
+      assert_reply ref, :error, response
+
+      assert response == %{
+               reason: "stale_decision",
+               seat_lifecycle: kept,
+               error_code: "stale_decision",
+               error_params: %{}
+             }
     end
 
     test "all observers receive takeover and reclaim snapshots, including a cold join", context do
@@ -716,19 +728,27 @@ defmodule PidroServerWeb.GameChannelTest do
 
       {:ok, socket} = create_socket(outsider)
 
-      assert {:error, %{reason: reason}} =
+      assert {:error, response} =
                subscribe_and_join(socket, GameChannel, "game:#{room_code}", %{})
 
-      assert reason == "not authorized to join this room"
+      assert response == %{
+               reason: "not authorized to join this room",
+               error_code: "forbidden",
+               error_params: %{}
+             }
     end
 
     test "rejects join for invalid room code", %{user1: user, sockets: sockets} do
       socket = sockets[user.id]
 
-      assert {:error, %{reason: reason}} =
+      assert {:error, response} =
                subscribe_and_join(socket, GameChannel, "game:XXXX", %{})
 
-      assert reason == "room not found"
+      assert response == %{
+               reason: "room not found",
+               error_code: "room_not_found",
+               error_params: %{}
+             }
     end
 
     @tag stable_turn_timer: true
@@ -936,6 +956,81 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "input validation" do
+    test "parser errors retain their legacy reasons and add explicit codes", ctx do
+      {:ok, reply, socket} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}")
+
+      refute Map.has_key?(reply, :error_code)
+      refute Map.has_key?(reply, :error_params)
+
+      for {event, params, reason, code} <- [
+            {"bid", %{"amount" => "nope"}, "Invalid bid amount", "invalid_bid_amount"},
+            {"declare_trump", %{"suit" => "stars"}, "invalid suit", "invalid_suit"},
+            {"play_card", %{"card" => %{"rank" => "ace", "suit" => "hearts"}},
+             "invalid card rank", "invalid_card"},
+            {"play_card", %{"card" => %{"rank" => 14, "suit" => "stars"}}, "invalid card suit",
+             "invalid_card"},
+            {"select_hand", %{"cards" => [%{"rank" => 14, "suit" => "stars"}]},
+             "invalid card suit", "invalid_card"},
+            {"select_hand", %{"cards" => [%{}]}, "invalid card payload", "invalid_card"},
+            {"close_seat", %{"position" => "up"}, "invalid position", "invalid_position"}
+          ] do
+        ref = push(socket, event, params)
+        assert_reply ref, :error, response
+        assert response == %{reason: reason, error_code: code, error_params: %{}}
+      end
+    end
+
+    test "spectator failures retain action-specific reasons", ctx do
+      spectator = Phoenix.Socket.assign(ctx.sockets[ctx.user1.id], :role, :spectator)
+
+      for {event, params, reason} <- [
+            {"bid", %{"amount" => "pass"}, "spectators cannot make bids"},
+            {"bid", %{"amount" => 8}, "spectators cannot make bids"},
+            {"bid", %{"amount" => "8"}, "spectators cannot make bids"},
+            {"pass", %{}, "spectators cannot make bids"},
+            {"declare_trump", %{"suit" => "hearts"}, "spectators cannot declare trump"},
+            {"play_card", %{"card" => %{"rank" => 14, "suit" => "hearts"}},
+             "spectators cannot play cards"},
+            {"select_hand", %{"cards" => []}, "spectators cannot select hand"},
+            {"select_dealer", %{}, "spectators cannot select dealer"},
+            {"ready", %{"room_id" => ctx.room.id, "ready_epoch" => 0},
+             "spectators cannot signal ready"},
+            {"rematch", %{"room_id" => ctx.room.id, "ready_epoch" => 0},
+             "spectators cannot ask for a rematch"},
+            {"open_seat", %{"position" => "east"}, "spectators cannot manage seats"},
+            {"keep_bot", %{"position" => "east"}, "spectators cannot manage seats"},
+            {"close_seat", %{"position" => "east"}, "spectators cannot manage seats"}
+          ] do
+        assert {:reply, {:error, response}, ^spectator} =
+                 GameChannel.handle_in(event, params, spectator)
+
+        assert response == %{
+                 reason: reason,
+                 error_code: "spectator_action_forbidden",
+                 error_params: %{}
+               }
+      end
+    end
+
+    test "engine tuple errors preserve inspected reasons without exposing tuple params", ctx do
+      advance_game_to_bidding(ctx.room_code)
+      {:ok, state} = GameAdapter.get_state(ctx.room_code)
+      user_id = ctx.room.positions[state.current_turn]
+
+      {:ok, _, socket} =
+        subscribe_and_join(ctx.sockets[user_id], GameChannel, "game:#{ctx.room_code}")
+
+      ref = push(socket, "bid", %{"amount" => 99})
+      assert_reply ref, :error, response
+
+      assert response == %{
+               reason: "{:invalid_bid_amount, 99}",
+               error_code: "invalid_bid_amount",
+               error_params: %{}
+             }
+    end
+
     test "rejects invalid trump suit", %{user1: user, room_code: room_code, sockets: sockets} do
       socket = sockets[user.id]
 

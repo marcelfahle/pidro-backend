@@ -82,6 +82,12 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
       type: :object,
       required: [:error],
       properties: %{
+        error_code: %Schema{
+          type: :string,
+          description: "Stable localization key; the legacy error field is unchanged",
+          enum: ["account_required", "cannot_friend_self", "user_not_found", "query_too_short"]
+        },
+        error_params: %Schema{type: :object, additionalProperties: false},
         error: %Schema{
           type: :string,
           enum: ["ACCOUNT_REQUIRED", "CANNOT_FRIEND_SELF", "USER_NOT_FOUND", "QUERY_TOO_SHORT"]

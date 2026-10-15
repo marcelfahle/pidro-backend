@@ -120,15 +120,83 @@ defmodule PidroServerWeb.LobbyChannelTest do
       status: "error",
       reason: "seat_requires_games",
       min_games: 1000,
-      games_played: 999
+      games_played: 999,
+      error_code: "seat_requires_games",
+      error_params: %{min_games: 1000, games_played: 999}
     }
 
     {:ok, profile} = PidroServer.Profiles.get_or_create_profile(user.id)
     profile |> Ecto.Changeset.change(games_played: 1) |> PidroServer.Repo.update!()
     ref = push(socket, "join_room", %{code: room.code, position: "east"})
-    assert_reply ref, :ok, %{assigned_position: :east, room: joined}
+    assert_reply ref, :ok, success
+    assert %{assigned_position: :east, room: joined} = success
+    assert Enum.sort(Map.keys(success)) == [:assigned_position, :room]
     assert Enum.find(joined.seats, &(&1.position == :east)).min_games == 0
     RoomManager.close_room(room.code)
+  end
+
+  test "join_room errors preserve status and legacy reason", %{socket: socket} do
+    {:ok, reply, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    refute Map.has_key?(reply, :error_code)
+    refute Map.has_key?(reply, :error_params)
+
+    for {params, reason} <- [
+          {%{}, "invalid_room_params"},
+          {%{"code" => "MISSING"}, "room_not_found"}
+        ] do
+      ref = push(socket, "join_room", params)
+      assert_reply ref, :error, response
+      assert response == %{status: "error", reason: reason, error_code: reason, error_params: %{}}
+    end
+  end
+
+  test "join_room never exposes internal non-atom reasons", %{socket: socket} do
+    {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    assert_push "presence_state", _
+
+    failures = [
+      {{:unexpected_failure, %{token: "private-token"}}, "action_failed"},
+      {%RuntimeError{message: "private diagnostic"}, "action_failed"},
+      {{:seat_taken, %{token: "private-token"}}, "seat_taken"}
+    ]
+
+    # Substitute only the dependency reply; exercise the real channel transport.
+    manager = Process.whereis(RoomManager)
+
+    responder =
+      spawn(fn ->
+        for {reason, _code} <- failures do
+          receive do
+            {:"$gen_call", from, {:join_room, "ERROR", _, _, _}} ->
+              GenServer.reply(from, {:error, reason})
+          end
+        end
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    Process.unregister(RoomManager)
+    Process.register(responder, RoomManager)
+
+    try do
+      for {_reason, code} <- failures do
+        ref = push(socket, "join_room", %{code: "ERROR"})
+        assert_reply ref, :error, response
+
+        assert response == %{
+                 status: "error",
+                 reason: "action_failed",
+                 error_code: code,
+                 error_params: %{}
+               }
+      end
+    after
+      Process.unregister(RoomManager)
+      Process.register(manager, RoomManager)
+      Process.exit(responder, :kill)
+    end
   end
 
   describe "join/3" do

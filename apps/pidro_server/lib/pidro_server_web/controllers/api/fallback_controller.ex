@@ -26,6 +26,9 @@ defmodule PidroServerWeb.API.FallbackController do
 
   use PidroServerWeb, :controller
 
+  import Phoenix.Controller, except: [json: 2]
+  alias PidroServerWeb.ErrorContract
+
   @doc """
   Handles Ecto changeset validation errors.
 
@@ -73,7 +76,7 @@ defmodule PidroServerWeb.API.FallbackController do
 
     conn
     |> put_status(:unprocessable_entity)
-    |> json(%{errors: formatted_errors})
+    |> Phoenix.Controller.json(ErrorContract.validation(%{errors: formatted_errors}, changeset))
   end
 
   def call(conn, {:error, :invalid_credentials}) do
@@ -711,7 +714,7 @@ defmodule PidroServerWeb.API.FallbackController do
 
     conn
     |> put_status(:unprocessable_entity)
-    |> json(%{errors: formatted_errors})
+    |> Phoenix.Controller.json(ErrorContract.validation(%{errors: formatted_errors}, errors))
   end
 
   def call(conn, {:error, reason}) when is_atom(reason) do
@@ -740,6 +743,8 @@ defmodule PidroServerWeb.API.FallbackController do
   defp conflict(conn, code, title, detail), do: error(conn, :conflict, code, title, detail)
 
   defp gone(conn, code, title, detail), do: error(conn, :gone, code, title, detail)
+
+  defp json(conn, payload), do: Phoenix.Controller.json(conn, ErrorContract.rest(payload))
 
   defp error(conn, status, code, title, detail) do
     conn

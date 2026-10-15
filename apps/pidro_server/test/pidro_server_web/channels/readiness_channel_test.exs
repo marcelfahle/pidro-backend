@@ -51,9 +51,21 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     assert {:error, :not_found} = GameSupervisor.get_game(room.code)
 
     ref = push(socket, "ready", %{})
-    assert_reply ref, :error, %{reason: "invalid_readiness"}
+
+    assert_reply ref, :error, %{
+      reason: "invalid_readiness",
+      error_code: "invalid_readiness",
+      error_params: %{}
+    }
+
     ref = push(socket, "ready", %{"room_id" => "old-room", "ready_epoch" => initial.ready_epoch})
-    assert_reply ref, :error, %{reason: "stale_readiness", readiness: ^initial}
+
+    assert_reply ref, :error, %{
+      reason: "stale_readiness",
+      readiness: ^initial,
+      error_code: "stale_readiness",
+      error_params: %{}
+    }
 
     params = %{"room_id" => room.id, "ready_epoch" => initial.ready_epoch}
     ref = push(socket, "ready", params)
@@ -65,7 +77,8 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     assert_push "readiness_updated", ^accepted
 
     ref = push(socket, "ready", params)
-    assert_reply ref, :ok, %{readiness: ^accepted}
+    assert_reply ref, :ok, success
+    assert success == %{readiness: accepted}
     assert {:error, :not_found} = GameSupervisor.get_game(room.code)
 
     Enum.each(rest ++ [{last_user, last_reply, last_joined}], fn {_user, _reply, joined} ->
@@ -108,7 +121,36 @@ defmodule PidroServerWeb.ReadinessChannelTest do
     assert :ok = RoomManager.close_room(room.code)
     ref = push(socket, "ready", %{"room_id" => room.id, "ready_epoch" => initial.ready_epoch})
     assert_reply ref, :error, response
-    assert response == %{reason: "room_not_found"}
+
+    assert response == %{
+             reason: "room_not_found",
+             error_code: "room_not_found",
+             error_params: %{}
+           }
+  end
+
+  test "rematch errors preserve the readiness snapshot and malformed payload reason", %{
+    room: room,
+    channels: [{_host, %{readiness: initial}, socket} | _]
+  } do
+    ref = push(socket, "rematch", %{})
+    assert_reply ref, :error, response
+
+    assert response == %{
+             reason: "invalid_readiness",
+             error_code: "invalid_readiness",
+             error_params: %{}
+           }
+
+    ref = push(socket, "rematch", %{"room_id" => room.id, "ready_epoch" => initial.ready_epoch})
+    assert_reply ref, :error, response
+
+    assert response == %{
+             reason: "room_not_finished",
+             readiness: initial,
+             error_code: "room_not_finished",
+             error_params: %{}
+           }
   end
 
   test "roster replacement rejects old intent with the current full snapshot", %{
