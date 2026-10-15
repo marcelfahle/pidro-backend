@@ -1020,6 +1020,13 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           type: :boolean,
           description: "Whether the player is eliminated from the round",
           example: false
+        },
+        revealed_cards: %Schema{
+          type: :array,
+          description:
+            "Cards a player laid face up on going cold (out of trumps); empty otherwise. Public to every viewer.",
+          items: Card,
+          example: []
         }
       },
       required: [:position, :team, :hand, :tricks_won, :eliminated],

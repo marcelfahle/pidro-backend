@@ -74,7 +74,9 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       hand: if(visible?, do: serialize_cards(hand), else: nil),
       card_count: length(hand),
       tricks_won: Map.get(player, :tricks_won, 0),
-      eliminated: Map.get(player, :eliminated?, false)
+      eliminated: Map.get(player, :eliminated?, false),
+      # A cold player lays these face up for everyone, as at a real table.
+      revealed_cards: serialize_cards(Map.get(player, :revealed_cards, []))
     }
   end
 
