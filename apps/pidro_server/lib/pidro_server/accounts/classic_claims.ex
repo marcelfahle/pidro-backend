@@ -4,6 +4,10 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   PID-143 issues an opaque, short-lived ticket after verification. This module
   owns the durable one-to-one link, career import and repeat-sign-in identity.
+
+  Optional `friend_ids`, `friended_by_ids` and `blocked_ids` arrays in the
+  ticket's `legacy_data` become Classic social facts after progression import.
+  Older tickets without these arrays remain valid.
   """
 
   import Ecto.Query
@@ -19,6 +23,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
     UserIdentities
   }
 
+  alias PidroServer.ClassicSocial
   alias PidroServer.Invites
   alias PidroServer.Profiles
   alias PidroServer.Profiles.{LegacyProgression, PlayerProfile}
@@ -44,6 +49,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
       |> fetch(:legacy_data)
       |> LegacyProgression.new()
       |> Map.from_struct()
+      |> Map.merge(ClassicSocial.legacy_data(fetch(attrs, :legacy_data)))
       |> Map.put(:classic_user_id, classic_user_id)
 
     ticket_attrs = %{
@@ -93,6 +99,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
         {:error, :claim_state_changed} -> redeem_once(token, current_user, params)
         result -> result
       end
+      |> resolve_social()
 
     record_upgrade(current_user, result)
     result
@@ -123,7 +130,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
                :ok <- lock_classic(ticket.classic_user_id),
                {:ok, user, mode} <- target_user(ticket, current_user, params, locked_user),
                {:ok, user} <- redeem_for_user(ticket, user, mode, now, display_name, params) do
-            user
+            {user, is_nil(locked_user) or is_nil(locked_user.classic_user_id)}
           else
             nil -> Repo.rollback(:invalid_claim_ticket)
             {:error, reason} -> Repo.rollback(reason)
@@ -131,6 +138,15 @@ defmodule PidroServer.Accounts.ClassicClaims do
       end
     end)
   end
+
+  # Resolve only a new link, after commit. Retrying a sign-in must not restore
+  # friends removed or blocks unblocked since the original claim.
+  defp resolve_social({:ok, {user, new_link?}}) do
+    if new_link?, do: ClassicSocial.resolve_classic(user)
+    {:ok, user}
+  end
+
+  defp resolve_social(error), do: error
 
   # A guest the claim saved counts as upgraded, as through POST /auth/upgrade.
   # After the commit: a failed event write must not undo the claim.
@@ -550,10 +566,15 @@ defmodule PidroServer.Accounts.ClassicClaims do
   defp maybe_import_progression(false, user, ticket), do: import_progression(user, ticket)
 
   defp import_progression(user, ticket) do
-    case Profiles.import_legacy_progression(user, ticket.legacy_data) do
-      {:ok, %PlayerProfile{}} -> :ok
-      {:ok, :already_migrated} -> ensure_same_import(user.id, ticket.classic_user_id)
-      {:error, reason} -> {:error, reason}
+    result =
+      case Profiles.import_legacy_progression(user, ticket.legacy_data) do
+        {:ok, %PlayerProfile{}} -> :ok
+        {:ok, :already_migrated} -> ensure_same_import(user.id, ticket.classic_user_id)
+        {:error, reason} -> {:error, reason}
+      end
+
+    with :ok <- result do
+      ClassicSocial.store(ticket.classic_user_id, ticket.legacy_data)
     end
   end
 

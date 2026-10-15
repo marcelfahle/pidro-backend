@@ -358,6 +358,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
     |> Map.put("premium", premium?(fetch(profile, :premium_until)))
     |> LegacyProgression.new()
     |> Map.from_struct()
+    |> Map.merge(PidroServer.ClassicSocial.legacy_data(profile))
   end
 
   defp preview(legacy) do

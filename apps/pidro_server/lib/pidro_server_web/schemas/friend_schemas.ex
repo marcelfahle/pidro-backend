@@ -46,7 +46,13 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
           required: [:friends, :added_you],
           properties: %{
             friends: %Schema{type: :array, items: Player},
-            added_you: %Schema{type: :array, items: Player}
+            added_you: %Schema{type: :array, items: Player},
+            classic: %Schema{
+              type: :object,
+              description: "Claimed accounts only: outgoing Classic friends not yet claimed.",
+              required: [:not_here],
+              properties: %{not_here: %Schema{type: :integer, minimum: 0}}
+            }
           }
         }
       }

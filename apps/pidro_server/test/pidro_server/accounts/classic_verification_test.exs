@@ -43,6 +43,9 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
            "games_ended" => 0
          },
          "premium" => %{"active" => false, "until" => nil},
+         "friend_ids" => [12, 345],
+         "friended_by_ids" => [67],
+         "blocked_ids" => [89],
          "badges" => []
        })}
     end
@@ -187,7 +190,11 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
 
     assert result.classic.name == "Bengt"
     assert result.classic.games_played == 1862
-    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 50).bound_user_id == user.id
+    ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 50)
+    assert ticket.bound_user_id == user.id
+    assert ticket.legacy_data["friend_ids"] == [12, 345]
+    assert ticket.legacy_data["friended_by_ids"] == [67]
+    assert ticket.legacy_data["blocked_ids"] == [89]
   end
 
   test "password verification accepts an email login and binds the authenticated user" do

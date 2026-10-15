@@ -1050,6 +1050,38 @@ After add/remove/block, each affected user's joined lobby sockets receive
 `friends_changed` with `{}`; unrelated users receive nothing. Refetch `/api/v1/friends`.
 No push notification is sent.
 
+#### Classic friends at claim (PID-226)
+
+For a claimed account, the full friends response also includes:
+
+```json
+{"data":{"friends":[],"added_you":[],"classic":{"not_here":7}}}
+```
+
+`classic.not_here` counts distinct outgoing Classic friend ids with no claimed user
+yet, not incoming-only edges or blacklist entries. `classic` is absent for accounts
+without a Classic link. The additive field also appears in PUT/DELETE full-list
+responses; old clients can ignore it.
+
+Classic's restricted claims profile supplies optional integer arrays `friend_ids`,
+`friended_by_ids` and `blocked_ids` (each capped at 500 by Classic). Verification
+preserves them in the ticket's `legacy_data`; older tickets without them remain valid.
+Claiming stores outgoing friends, incoming friends and outgoing blocks as durable
+Classic facts in the same transaction as progression import. After that transaction
+commits, edges touching the new link resolve against players who have already claimed.
+Mutual edges become friends, incoming-only edges become `added_you`, and a block in
+either direction wins over friendship. Both affected players receive `friends_changed`.
+Later claims resolve the stored edges even if the later ticket has no arrays.
+
+A resolution failure does not undo the claim or its stored facts. It logs at error
+level and emits `[:pidro_server, :classic_social, :resolve, :error]` with `%{count: 1}`
+and `classic_user_id`/`reason` metadata. Retry with
+`mix pidro.resolve_classic_social [classic_user_id]` (omit the id for all claimed users).
+This is a recovery command, not a scheduled sync: replaying facts may restore friends
+removed or blocks unblocked since the claim. Ordinary repeat claims do not replay them.
+Accounts linked before this import shipped are not backfilled; the task resolves only
+stored facts, not arrays missing from their original claims.
+
 ---
 
 ### Blocking (PID-225)
