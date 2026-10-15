@@ -104,6 +104,26 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert wire["last_hand"]["trump"] == live_wire["trump_suit"]
     end
 
+    test "a cold player's revealed cards reach every viewer" do
+      state = dealt_state()
+
+      cold = %{
+        state.players.east
+        | eliminated?: true,
+          revealed_cards: [{9, :clubs}, {4, :spades}]
+      }
+
+      state = %{state | players: %{state.players | east: cold}}
+
+      for viewer <- [nil, :north, :east] do
+        east = GameStateSerializer.serialize(state, viewer).players.east
+        assert east.eliminated
+        assert east.revealed_cards == [%{rank: 9, suit: :clubs}, %{rank: 4, suit: :spades}]
+      end
+
+      assert GameStateSerializer.serialize(state).players.north.revealed_cards == []
+    end
+
     test "absent and empty current tricks retain their existing shapes" do
       state = dealt_state()
       payload = GameStateSerializer.serialize(state)
