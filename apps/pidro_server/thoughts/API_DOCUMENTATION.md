@@ -1183,6 +1183,41 @@ lobbyChannel.join()
 - `room_closed` - Room was closed
 - `presence_state` - Current lobby presence
 - `presence_diff` - Presence changes
+- `friends_changed` - Refetch `/api/v1/friends`; sent only to affected users
+- `seat_invitation` - A seat is held for you; sent only to the invited user's lobbies
+- `seat_invitation_gone` - Remove the invitation matching `code` and `position`
+
+**Seat invitations (PID-227)**:
+
+On launch and reconnect, join the lobby, buffer invitation events while fetching
+`data.seat_invitations` from `GET /api/v1/auth/me`, then apply those events to the
+snapshot in order. Upsert by `(code, position)`. There is no event replay or new
+REST endpoint. A `seat_invitation` at room creation or when the host holds a
+waiting-room seat contains one entry:
+
+```json
+{
+  "code": "ABCD",
+  "position": "south",
+  "host_id": "<uuid>",
+  "host": { "user_id": "<uuid>", "display_name": "Nora", "avatar_url": null },
+  "rule_set": "finnish",
+  "held_since": "2026-10-15T12:00:00Z"
+}
+```
+
+This is also the enriched `/me` entry. `host_id` stays for existing clients;
+`host` is a player entry without presence. `held_since` is the hold's creation
+time, unchanged by an identical repeated hold. `rule_set` is `finnish` or `louisiana`.
+Blocked pairs receive no invitation, and `/me` excludes their holds.
+Refetch `/me` on `friends_changed` and after unblocking: blocks do not revoke
+holds or emit invitation events, but change which existing holds `/me` lists.
+
+`seat_invitation_gone` carries `{ "code": "ABCD", "position": "south" }` on
+release, replacement, seating, game start or room end. On replacement the previous
+invitee receives gone and the new invitee receives the new entry. Join normally
+by `code` with that `position`; redeeming and seat-taken errors are unchanged.
+Push notifications and device registration are not part of this delivery.
 
 **Event Payloads**:
 ```javascript

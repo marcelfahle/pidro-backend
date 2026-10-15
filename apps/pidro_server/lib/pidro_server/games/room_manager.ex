@@ -103,6 +103,7 @@ defmodule PidroServer.Games.RoomManager do
             max_spectators: integer(),
             created_at: DateTime.t(),
             config: Config.t(),
+            seat_hold_started_at: %{optional(Positions.position()) => DateTime.t()},
             phase_timers: %{Positions.position() => reference()},
             seats: map(),
             last_activity: DateTime.t(),
@@ -127,6 +128,7 @@ defmodule PidroServer.Games.RoomManager do
       :created_at,
       :last_activity,
       config: %Config{},
+      seat_hold_started_at: %{},
       locked: false,
       kicked_ids: [],
       invite_live_until: nil,
@@ -268,6 +270,19 @@ defmodule PidroServer.Games.RoomManager do
     __MODULE__
     |> GenServer.call({:seat_invitations, user_id})
     |> Enum.reject(&PidroServer.Blocks.blocked?(&1.host_id, user_id))
+    |> Enum.map(&seat_invitation_with_host/1)
+  end
+
+  @doc "Resolves a seat invitation's host outside the room manager, without presence."
+  @spec seat_invitation_with_host(map()) :: map()
+  def seat_invitation_with_host(invitation) do
+    user = PidroServer.Accounts.Auth.get_users_map([invitation.host_id])[invitation.host_id]
+
+    Map.put(invitation, :host, %{
+      user_id: invitation.host_id,
+      display_name: user && user.display_name,
+      avatar_url: user && user.avatar_url
+    })
   end
 
   defp validate_hold_users(holds, seated_ids) do
@@ -1212,7 +1227,7 @@ defmodule PidroServer.Games.RoomManager do
       for {_code, room} <- state.rooms,
           room.status in [:waiting, :ready],
           {position, ^user_id} <- room.config.seat_holds do
-        %{code: room.code, position: position, host_id: room.host_id}
+        seat_invitation(room, position)
       end
 
     {:reply, Enum.sort_by(invitations, &{&1.code, &1.position}), state}
@@ -1229,11 +1244,19 @@ defmodule PidroServer.Games.RoomManager do
           do: Map.put(room.config.seat_holds, position, user_id),
           else: Map.delete(room.config.seat_holds, position)
 
+      started_at =
+        cond do
+          is_nil(user_id) -> Map.delete(room.seat_hold_started_at, position)
+          room.config.seat_holds[position] == user_id -> room.seat_hold_started_at
+          true -> Map.put(room.seat_hold_started_at, position, DateTime.utc_now())
+        end
+
       updated =
-        %{room | config: %{room.config | seat_holds: holds}}
+        %{room | config: %{room.config | seat_holds: holds}, seat_hold_started_at: started_at}
         |> reset_readiness()
         |> touch_last_activity()
 
+      broadcast_seat_invitation_changes(room, updated)
       broadcast_room(code, updated)
       broadcast_lobby_event({:room_updated, updated})
       broadcast_readiness(updated)
@@ -1273,7 +1296,8 @@ defmodule PidroServer.Games.RoomManager do
         max_players: @max_players,
         created_at: now,
         last_activity: now,
-        config: config
+        config: config,
+        seat_hold_started_at: Map.new(config.seat_holds, fn {position, _} -> {position, now} end)
       }
 
       # Auto-assign host to first available position
@@ -1300,6 +1324,7 @@ defmodule PidroServer.Games.RoomManager do
         }
 
       Logger.info("Room created: #{room_code} by host: #{host_id}")
+      broadcast_seat_invitation_changes(nil, room_with_host)
       broadcast_lobby_event({:room_created, room_with_host})
 
       {:reply, {:ok, room_with_host}, new_state}
@@ -1421,6 +1446,7 @@ defmodule PidroServer.Games.RoomManager do
           "by #{requesting_user_id}"
       )
 
+      broadcast_seat_invitation_changes(room, updated_room)
       broadcast_room(room_code, updated_room)
       broadcast_lobby_event({:room_updated, updated_room})
       broadcast_seat_lifecycle(updated_room)
@@ -1658,6 +1684,7 @@ defmodule PidroServer.Games.RoomManager do
 
         Logger.info("Room #{room_code} status updated: #{room.status} -> #{new_status}")
 
+        broadcast_seat_invitation_changes(room, updated_room)
         broadcast_room(room_code, updated_room)
         broadcast_lobby_event({:room_updated, updated_room})
         if room.status != new_status, do: broadcast_seat_lifecycle(updated_room)
@@ -3983,6 +4010,8 @@ defmodule PidroServer.Games.RoomManager do
 
     new_state = put_room_and_player(state, final_room, player_id)
 
+    broadcast_seat_invitation_changes(state.rooms[room_code], final_room)
+
     Logger.info(
       "Player #{player_id} joined room #{room_code} at position #{position} " <>
         "(#{Positions.count(final_room)}/#{@max_players})"
@@ -4136,6 +4165,7 @@ defmodule PidroServer.Games.RoomManager do
                 end)
           }
 
+        broadcast_seat_invitation_changes(room, nil)
         broadcast_room(room_code, nil)
         broadcast_lobby_event({:room_closed, room_code})
 
@@ -4151,6 +4181,40 @@ defmodule PidroServer.Games.RoomManager do
       "lobby:updates",
       event
     )
+  end
+
+  defp seat_invitation(room, position) do
+    %{
+      code: room.code,
+      position: position,
+      host_id: room.host_id,
+      rule_set: Atom.to_string(room.config.rule_set),
+      held_since: DateTime.to_iso8601(Map.fetch!(room.seat_hold_started_at, position))
+    }
+  end
+
+  defp invitation_holds(%Room{status: status} = room) when status in [:waiting, :ready],
+    do: room.config.seat_holds
+
+  defp invitation_holds(_room), do: %{}
+
+  defp broadcast_seat_invitation_changes(before, after_room) do
+    old_holds = invitation_holds(before)
+    new_holds = invitation_holds(after_room)
+
+    if before do
+      for {position, user_id} <- old_holds, new_holds[position] != user_id do
+        broadcast_lobby_event(
+          {:seat_invitation_gone, user_id, %{code: before.code, position: position}}
+        )
+      end
+    end
+
+    if after_room do
+      for {position, user_id} <- new_holds, old_holds[position] != user_id do
+        broadcast_lobby_event({:seat_invitation, user_id, seat_invitation(after_room, position)})
+      end
+    end
   end
 
   @doc false
@@ -4427,6 +4491,7 @@ defmodule PidroServer.Games.RoomManager do
       |> subscribe_to_game_topic(room.code)
       |> put_active_game_instance(room.code, snapshot)
 
+    broadcast_seat_invitation_changes(room, updated_room)
     broadcast_room(room.code, updated_room)
     broadcast_readiness(updated_room)
     broadcast_lobby_event({:room_updated, updated_room})

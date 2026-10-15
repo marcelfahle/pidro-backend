@@ -163,6 +163,20 @@ defmodule PidroServerWeb.LobbyChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:seat_invitation, user_id, invitation}, socket) do
+    if socket.assigns.user_id == user_id and
+         not PidroServer.Blocks.blocked?(invitation.host_id, user_id) do
+      push(socket, "seat_invitation", RoomManager.seat_invitation_with_host(invitation))
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_invitation_gone, user_id, invitation}, socket) do
+    if socket.assigns.user_id == user_id, do: push(socket, "seat_invitation_gone", invitation)
+    {:noreply, socket}
+  end
+
   def handle_info({:room_created, room}, socket) do
     if RoomManager.visible_in_lobby?(room) do
       serialized = serialize_room_with_users(room)

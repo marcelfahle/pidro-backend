@@ -150,14 +150,25 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             seat_invitations: %Schema{
               type: :array,
               description:
-                "GET /auth/me: live waiting-room holds for this user, excluding hosts blocked in either direction; disappears on release, seating or room end. code is the four-character room code for normal join, not an invite secret.",
+                "GET /auth/me: live waiting-room holds for this user, excluding hosts blocked in either direction; disappears on release, seating, game start or room end. code is the four-character room code for normal join, not an invite secret.",
               items: %Schema{
                 type: :object,
                 required: [:code, :position, :host_id],
                 properties: %{
                   code: %Schema{type: :string},
                   position: %Schema{type: :string, enum: [:north, :east, :south, :west]},
-                  host_id: %Schema{type: :string, format: :uuid}
+                  host_id: %Schema{type: :string, format: :uuid},
+                  host: %Schema{
+                    type: :object,
+                    required: [:user_id, :display_name, :avatar_url],
+                    properties: %{
+                      user_id: %Schema{type: :string, format: :uuid},
+                      display_name: %Schema{type: :string, nullable: true},
+                      avatar_url: %Schema{type: :string, nullable: true}
+                    }
+                  },
+                  rule_set: %Schema{type: :string, enum: [:finnish, :louisiana]},
+                  held_since: %Schema{type: :string, format: :"date-time"}
                 }
               }
             }
