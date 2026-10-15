@@ -89,6 +89,7 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   bot_min_delay_ms: 5,
   dealer_selection_delay_ms: 0,
   trick_transition_delay_ms: 30,
+  sweep_trick_delay_ms: 10,
   hand_transition_delay_ms: 40
 
 # Rate limits are effectively unlimited in test. Rate-limit tests lower one

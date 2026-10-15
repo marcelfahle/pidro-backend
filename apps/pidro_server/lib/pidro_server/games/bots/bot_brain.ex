@@ -12,7 +12,7 @@ defmodule PidroServer.Games.Bots.BotBrain do
   alias Pidro.Bot.Rulebook
   alias Pidro.Core.SeatView
   alias Pidro.Core.Types.GameState
-  alias Pidro.Game.DealerRob
+  alias Pidro.Game.{DealerRob, Play}
   alias PidroServer.Games.{GameAdapter, Lifecycle}
 
   @doc """
@@ -20,6 +20,9 @@ defmodule PidroServer.Games.Bots.BotBrain do
 
   Checks that the phase is active (not :complete or nil) and that either
   `current_turn` matches the bot's position or the phase is :dealer_selection.
+
+  A settled hand is the RoomManager's to sweep, so the bot holding the last
+  trumps waits for it.
 
   Note: Does NOT check paused state — callers that support pausing should
   check that separately before calling this function.
@@ -30,7 +33,8 @@ defmodule PidroServer.Games.Bots.BotBrain do
 
     phase not in [:complete, nil] and
       (Map.get(game_state, :current_turn) == position or
-         phase == :dealer_selection)
+         phase == :dealer_selection) and
+      is_nil(Play.settled_play(game_state))
   end
 
   @doc """

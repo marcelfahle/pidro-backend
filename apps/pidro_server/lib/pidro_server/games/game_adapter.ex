@@ -32,7 +32,7 @@ defmodule PidroServer.Games.GameAdapter do
   """
 
   require Logger
-  alias Pidro.Game.Replay
+  alias Pidro.Game.{Play, Replay}
   alias PidroServer.Games.{GameRegistry, GameSupervisor, Lifecycle}
 
   @doc """
@@ -395,6 +395,9 @@ defmodule PidroServer.Games.GameAdapter do
 
       hand_completed?(old_state, new_state) ->
         Lifecycle.config(:hand_transition_delay_ms)
+
+      trick_completed?(old_state, new_state) and Play.settled_play(old_state) != nil ->
+        Lifecycle.config(:sweep_trick_delay_ms)
 
       trick_completed?(old_state, new_state) ->
         Lifecycle.config(:trick_transition_delay_ms)
