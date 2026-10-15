@@ -5,6 +5,7 @@ defmodule PidroServer.StandInsConfigTest do
   import ExUnit.CaptureIO
 
   @runtime_config Path.expand("../../../../config/runtime.exs", __DIR__)
+  @compile_config Path.expand("../../../../config/config.exs", __DIR__)
 
   # The variables the production block of config/runtime.exs requires.
   @prod_env %{
@@ -19,6 +20,8 @@ defmodule PidroServer.StandInsConfigTest do
   # What an end-to-end suite sets to point a server at its stand-ins and
   # shorten lifetimes. Production must read none of them (PID-183).
   @stand_in_env %{
+    "CI" => "true",
+    "PIDRO_E2E" => "1",
     "APPLE_JWKS_URL" => "http://127.0.0.1:4555/auth/keys",
     "CLASSIC_CLAIM_TICKET_TTL_SECONDS" => "1",
     "PASSWORD_RESET_TTL_SECONDS" => "1",
@@ -63,6 +66,31 @@ defmodule PidroServer.StandInsConfigTest do
     assert config[:password_reset_ttl_seconds] == 1
     assert config[:password_reset][:reset_url_base] == "http://127.0.0.1:5173"
     assert config[:password_reset][:debug_tokens] == false
+  end
+
+  test "unit tests use cheap real password hashes" do
+    assert Application.fetch_env!(:bcrypt_elixir, :log_rounds) == 4
+  end
+
+  test "development uses cheap hashes only for explicitly opted-in CI journeys" do
+    assert bcrypt_config(:dev)[:log_rounds] == 4
+
+    System.delete_env("CI")
+    refute Keyword.has_key?(bcrypt_config(:dev), :log_rounds)
+
+    System.put_env("CI", "true")
+    System.delete_env("PIDRO_E2E")
+    refute Keyword.has_key?(bcrypt_config(:dev), :log_rounds)
+  end
+
+  test "production keeps its hashing cost even with all E2E flags set" do
+    refute Keyword.has_key?(bcrypt_config(:prod), :log_rounds)
+  end
+
+  defp bcrypt_config(env) do
+    @compile_config
+    |> Config.Reader.read!(env: env, target: :host)
+    |> Keyword.get(:bcrypt_elixir, [])
   end
 
   defp runtime_config(env) do
