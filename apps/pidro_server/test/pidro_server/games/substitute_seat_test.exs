@@ -233,6 +233,20 @@ defmodule PidroServer.Games.SubstituteSeatTest do
       assert seat.user_id == "stranger1"
     end
 
+    test "a requested seat is honoured, and a taken one answers seat_taken" do
+      {room, _positions} = create_playing_room()
+      {_room_with_bot, position} = make_seat_bot_substitute(room, "user2")
+      {:ok, _} = RoomManager.open_seat(room.code, position, "user1")
+      taken = Enum.find([:north, :east, :south, :west], &(&1 != position))
+
+      assert {:error, :seat_taken} = RoomManager.join_room(room.code, "stranger1", taken)
+
+      assert {:ok, updated_room, ^position} =
+               RoomManager.join_room(room.code, "stranger1", position)
+
+      assert updated_room.seats[position].user_id == "stranger1"
+    end
+
     test "AE5: the room config is unchanged after a substitute seat is opened and reclaimed" do
       {:ok, config} = Config.new(name: "Friday", bot_difficulty: :smart)
       {room, _positions} = create_playing_room(config)

@@ -1352,7 +1352,7 @@ defmodule PidroServer.Games.RoomManager do
       ) do
     with {:ok, %Room{} = room} <- fetch_room(state, room_code) do
       if room.status == :playing,
-        do: join_substitute(state, room, player_id, guest?),
+        do: join_substitute(state, room, player_id, position, guest?),
         else: join_open_seat(state, room, player_id, position, guest?)
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -2110,7 +2110,7 @@ defmodule PidroServer.Games.RoomManager do
         %State{} = state
       ) do
     with {:ok, room} <- fetch_room(state, room_code) do
-      join_substitute(state, room, player_id, guest?)
+      join_substitute(state, room, player_id, nil, guest?)
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -3043,6 +3043,7 @@ defmodule PidroServer.Games.RoomManager do
          %State{} = state,
          %Room{code: room_code} = room,
          player_id,
+         position,
          guest?
        ) do
     with :ok <- ensure_not_in_other_room(state, player_id, room_code),
@@ -3051,7 +3052,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_not_locked(room),
          :ok <- ensure_not_kicked(room, player_id),
          :ok <- ensure_host_unblocked(room, player_id),
-         {:ok, position} <- find_vacant_seat_position(room) do
+         {:ok, position} <- substitute_position(room, position) do
       {:ok, filled_seat} = Seat.fill_seat(room.seats[position], player_id)
       state = end_spectating(state, player_id, room_code)
 
@@ -3326,6 +3327,16 @@ defmodule PidroServer.Games.RoomManager do
       nil -> {:error, :no_vacant_seat}
     end
   end
+
+  # A join that names a seat (a seat-bound invite, "Sit down" on an
+  # invitation) sits exactly there or is refused; anything else takes the
+  # first vacant seat as before.
+  defp substitute_position(%Room{seats: seats}, position)
+       when position in [:north, :east, :south, :west] do
+    if Seat.vacant?(seats[position]), do: {:ok, position}, else: {:error, :seat_taken}
+  end
+
+  defp substitute_position(%Room{} = room, _position), do: find_vacant_seat_position(room)
 
   @doc false
   defp maybe_set_ready(%Room{} = room) do
