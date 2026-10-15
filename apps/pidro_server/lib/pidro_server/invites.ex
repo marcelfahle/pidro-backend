@@ -67,7 +67,8 @@ defmodule PidroServer.Invites do
   collision. Answers the changeset error when the second draw is taken too.
   """
   @spec create_invite(map(), keyword()) ::
-          {:ok, Invite.t()} | {:error, :user_not_found | Ecto.Changeset.t()}
+          {:ok, Invite.t()}
+          | {:error, :user_not_found | :profile_unavailable | Ecto.Changeset.t()}
   def create_invite(attrs, opts \\ []) when is_map(attrs) and is_list(opts) do
     generator = Keyword.get(opts, :generator, &Codes.generate/0)
 
@@ -464,6 +465,10 @@ defmodule PidroServer.Invites do
     if PidroServer.Blocks.blocked?(attrs[:host_user_id], attrs[:invited_user_id]),
       do: {:error, :user_not_found},
       else: :ok
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      Logger.error("Block lookup failed: #{Exception.message(error)}")
+      {:error, :profile_unavailable}
   end
 
   defp ensure_regenerable(%Invite{revoked_at: nil}), do: :ok

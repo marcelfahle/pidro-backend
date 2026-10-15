@@ -250,6 +250,9 @@ defmodule PidroServerWeb.API.InviteController do
       unprocessable_entity:
         {"The new invite could not be minted", "application/json",
          ErrorSchemas.validation_error()},
+      service_unavailable:
+        {"Player eligibility could not be checked", "application/json",
+         ErrorSchemas.error_response()},
       too_many_requests:
         {"Rate limit exceeded; see Retry-After", "application/json",
          ErrorSchemas.too_many_requests_error()}

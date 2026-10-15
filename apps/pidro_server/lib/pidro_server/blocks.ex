@@ -77,7 +77,10 @@ defmodule PidroServer.Blocks do
   def blocked?(user_id, other_id) do
     with {:ok, user_id} <- Ecto.UUID.cast(user_id),
          {:ok, other_id} <- Ecto.UUID.cast(other_id) do
-      Repo.exists?(from b in subquery(blocked_ids(user_id)), where: b.id == ^other_id)
+      # Room admission must fail before its GenServer caller times out.
+      Repo.exists?(from(b in subquery(blocked_ids(user_id)), where: b.id == ^other_id),
+        timeout: 1_000
+      )
     else
       :error -> false
     end

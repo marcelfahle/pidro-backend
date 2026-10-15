@@ -420,6 +420,12 @@ defmodule PidroServerWeb.API.RoomController do
             "application/json",
             ErrorSchemas.validation_error()
           ),
+        503 =>
+          Operation.response(
+            "Player eligibility could not be checked",
+            "application/json",
+            ErrorSchemas.error_response()
+          ),
         429 =>
           Operation.response(
             "Rate limit exceeded; see Retry-After",

@@ -286,6 +286,15 @@ defmodule PidroServerWeb.API.BlockControllerTest do
     unrelated = user_fixture()
     {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: player.id}})
     {:ok, other} = RoomManager.create_room(unrelated.id)
+
+    invite =
+      conn
+      |> auth(host)
+      |> post(~p"/api/v1/rooms/#{room.code}/invites", %{position: "south"})
+      |> json_response(201)
+
+    code = invite["data"]["invite"]["code"]
+    {:ok, room} = RoomManager.get_room(room.code)
     manager = Process.whereis(RoomManager)
     PidroServer.Repo.query!("ALTER TABLE blocks RENAME TO unavailable_blocks")
 
@@ -299,6 +308,17 @@ defmodule PidroServerWeb.API.BlockControllerTest do
              RoomManager.set_seat_hold(room.code, host.id, :south, player.id)
 
     assert_raise Postgrex.Error, fn -> RoomManager.seat_invitations(player.id) end
+
+    me = conn |> auth(player) |> get(~p"/api/v1/auth/me") |> json_response(503)
+    assert hd(me["errors"])["code"] == "PROFILE_UNAVAILABLE"
+
+    for path <- ["/api/v1/rooms/#{room.code}/invites", "/api/v1/invites/#{code}/regenerate"] do
+      result = conn |> auth(host) |> post(path, %{position: "south"}) |> json_response(503)
+      assert hd(result["errors"])["code"] == "PROFILE_UNAVAILABLE"
+    end
+
+    assert {:ok, %{revoked_at: nil}} = PidroServer.Invites.get_by_code(code)
+    assert PidroServer.Invites.count_for_room(room.id) == 1
     assert Process.whereis(RoomManager) == manager
     assert {:ok, ^room} = RoomManager.get_room(room.code)
     assert {:ok, ^other} = RoomManager.get_room(other.code)

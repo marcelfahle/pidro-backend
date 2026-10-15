@@ -1089,8 +1089,10 @@ invite redemption keeps 409 with `next_open: []`. No new admission error code is
 This applies to general and seat-bound invite claims, even when a hold was released.
 Existing players are not kicked; retries for an already-owned invite seat remain idempotent.
 Two blocked players may sit at a third person's table. A failed block lookup refuses
-admission/holds with the existing 503 `PROFILE_UNAVAILABLE` rather than risking a seat;
-live rooms are preserved.
+admission/holds, bound invite minting/regeneration and `/me` invitation filtering with
+the existing 503 `PROFILE_UNAVAILABLE` rather than risking a seat or exposing a blocked
+host's hold; live rooms are preserved. Block checks time out after one second, before
+the room call's timeout.
 
 There is no separate server matchmaking/quick-game route: the current app's Quick Game
 creates a new solo room with three bots. Human admission uses `join_room/3` or
