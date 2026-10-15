@@ -30,14 +30,16 @@ defmodule PidroBackend.MixProject do
     []
   end
 
-  # The EEF feed omits the fixed-version boundary for CVE-2026-32686.
-  # The maintainer identifies 3.0.0 as fixed; our verified 3.1.1 includes
-  # bounded parsing. Remove this exception when the feed is corrected:
-  # https://github.com/ericmj/decimal/security/advisories/GHSA-rhv4-8758-jx7v
+  # CVE-2026-105659: an HTTP/2 client can pin a Bandit stream process with a
+  # WINDOW_UPDATE trickle. No fixed release exists yet (1.12.5 is the latest).
+  # The app listens on plain HTTP behind kamal-proxy, which terminates TLS and
+  # speaks HTTP/1.1 upstream, so no HTTP/2 client reaches Bandit. Remove this
+  # exception when a fixed Bandit ships:
+  # https://github.com/mtrudel/bandit/security/advisories/GHSA-69m6-wcv4-rwcf
   # Pin the exception to the reviewed lock version so upgrades are audited.
-  defp decimal_audit_exceptions do
-    case Mix.Dep.Lock.read(Path.join(__DIR__, "mix.lock"))[:decimal] do
-      {:hex, :decimal, "3.1.1", _, _, _, _, _} -> ["CVE-2026-32686"]
+  defp audit_exceptions do
+    case Mix.Dep.Lock.read(Path.join(__DIR__, "mix.lock"))[:bandit] do
+      {:hex, :bandit, "1.12.5", _, _, _, _, _} -> ["CVE-2026-105659"]
       _ -> []
     end
   end
@@ -63,7 +65,7 @@ defmodule PidroBackend.MixProject do
         into: IO.stream(),
         env: [
           {"MIX_ENV", Atom.to_string(Mix.env())},
-          {"HEX_IGNORE_ADVISORIES", Enum.join(decimal_audit_exceptions(), ",")}
+          {"HEX_IGNORE_ADVISORIES", Enum.join(audit_exceptions(), ",")}
         ]
       )
 
