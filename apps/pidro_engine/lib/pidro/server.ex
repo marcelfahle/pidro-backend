@@ -334,7 +334,7 @@ defmodule Pidro.Server do
       end
 
     dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
-    dealer_rob_presentation_ms = Keyword.get(opts, :dealer_rob_presentation_ms, 1_800)
+    dealer_rob_presentation_ms = Keyword.get(opts, :dealer_rob_presentation_ms, 5_000)
     pubsub = Keyword.get(opts, :pubsub)
 
     state =
