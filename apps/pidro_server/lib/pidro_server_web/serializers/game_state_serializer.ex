@@ -6,6 +6,9 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
   consistent game state representation across all interfaces.
   """
 
+  alias Pidro.Core.SeatView
+  alias Pidro.Core.Types.GameState
+
   @doc """
   Serializes game state with all player hands hidden (card counts only).
 
@@ -41,7 +44,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       config: Map.get(state, :config, %{}),
       current_turn: Map.get(state, :current_turn),
       current_dealer: Map.get(state, :current_dealer),
-      players: serialize_players(Map.get(state, :players, %{}), position),
+      players: serialize_players(Map.get(state, :players, %{}), position, second_deal(state)),
       bids: serialize_bids(Map.get(state, :bids, [])),
       highest_bid: serialize_highest_bid(Map.get(state, :highest_bid)),
       bidding_team: Map.get(state, :bidding_team),
@@ -60,13 +63,19 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
     }
   end
 
-  defp serialize_players(players, viewer_position) do
+  defp serialize_players(players, viewer_position, second_deal) do
     Map.new(players, fn {position, player} ->
-      {position, serialize_player(player, position == viewer_position and viewer_position != nil)}
+      visible? = position == viewer_position and viewer_position != nil
+      {position, serialize_player(player, visible?, Map.get(second_deal, position))}
     end)
   end
 
-  defp serialize_player(player, visible?) do
+  # What each seat kept and drew in the second deal: everyone at the table
+  # sees it, so the client can play it out card by card.
+  defp second_deal(%GameState{} = state), do: SeatView.second_deal_counts(state)
+  defp second_deal(_state), do: %{}
+
+  defp serialize_player(player, visible?, second_deal) do
     hand = Map.get(player, :hand, [])
 
     %{
@@ -77,7 +86,9 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       tricks_won: Map.get(player, :tricks_won, 0),
       eliminated: Map.get(player, :eliminated?, false),
       # A cold player lays these face up for everyone, as at a real table.
-      revealed_cards: serialize_cards(Map.get(player, :revealed_cards, []))
+      revealed_cards: serialize_cards(Map.get(player, :revealed_cards, [])),
+      kept_count: second_deal && second_deal.kept,
+      drawn_count: second_deal && second_deal.drawn
     }
   end
 

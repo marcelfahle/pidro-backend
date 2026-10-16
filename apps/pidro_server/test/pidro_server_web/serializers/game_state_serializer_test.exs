@@ -131,6 +131,38 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert GameStateSerializer.serialize(state).players.north.revealed_cards == []
     end
 
+    test "every viewer sees what each seat kept and drew in the second deal" do
+      state = dealt_state()
+      dealer = state.current_dealer
+      [first | _] = others = Enum.reject([:north, :east, :south, :west], &(&1 == dealer))
+
+      # Each non-dealer throws all but two; the first throws seven and draws four.
+      throws =
+        for pos <- [dealer | others] do
+          {:cards_discarded, pos, Enum.take(state.players[pos].hand, 7)}
+        end
+
+      state = %{
+        state
+        | phase: :playing,
+          events: state.events ++ throws,
+          cards_requested: Map.new(others, &{&1, 4})
+      }
+
+      for viewer <- [nil, first, dealer] do
+        players = GameStateSerializer.serialize(state, viewer).players
+        assert players[first].kept_count == 2
+        assert players[first].drawn_count == 4
+        assert players[dealer].kept_count == 2
+        assert players[dealer].drawn_count == nil
+      end
+    end
+
+    test "no second-deal counts before the discard" do
+      players = GameStateSerializer.serialize(dealt_state()).players
+      assert Enum.all?(players, fn {_pos, p} -> p.kept_count == nil and p.drawn_count == nil end)
+    end
+
     test "absent and empty current tricks retain their existing shapes" do
       state = dealt_state()
       payload = GameStateSerializer.serialize(state)

@@ -161,6 +161,47 @@ defmodule Pidro.Core.SeatView do
     end)
   end
 
+  @doc """
+  What each seat kept after the discard and drew in the second deal: public at
+  any table, where everyone sees how many cards each player throws and is
+  dealt. `drawn` is `nil` for the dealer, who takes the rest of the pack.
+  Empty before the discard and once the hand is over.
+
+  ## Examples
+
+      iex> Pidro.Core.SeatView.second_deal_counts(Pidro.Core.GameState.new(seed: 7))
+      %{}
+  """
+  @spec second_deal_counts(GameState.t()) :: %{
+          Types.position() => %{kept: non_neg_integer(), drawn: non_neg_integer() | nil}
+        }
+  def second_deal_counts(%GameState{phase: phase} = state)
+      when phase in [:second_deal, :playing] do
+    dealt =
+      Enum.find_value(Enum.reverse(state.events), %{}, fn
+        {:cards_dealt, hands} -> hands
+        _event -> nil
+      end)
+
+    thrown =
+      state.events
+      |> current_hand_events()
+      |> Enum.reduce(%{}, fn
+        {:cards_discarded, pos, cards}, acc ->
+          Map.update(acc, pos, length(cards), &(&1 + length(cards)))
+
+        _event, acc ->
+          acc
+      end)
+
+    Map.new(dealt, fn {pos, cards} ->
+      drawn = if pos == state.current_dealer, do: nil, else: Map.get(state.cards_requested, pos)
+      {pos, %{kept: length(cards) - Map.get(thrown, pos, 0), drawn: drawn}}
+    end)
+  end
+
+  def second_deal_counts(%GameState{}), do: %{}
+
   # Events after the last deal, oldest first. Every hand starts with one
   # `:cards_dealt` event, including hands after the first.
   defp current_hand_events(events) do
