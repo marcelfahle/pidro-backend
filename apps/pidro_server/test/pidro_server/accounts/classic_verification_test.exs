@@ -50,6 +50,33 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
        })}
     end
 
+    # Classic recorded no creation date before about 2018 (live id 2000, 2026-10-16).
+    def verify_password("tiger", "correct-password") do
+      {:ok,
+       PidroServer.Accounts.ClassicClient.normalize(%{
+         "id" => 2000,
+         "username" => "tiger",
+         "first_name" => "sonja",
+         "member_since" => nil,
+         "level" => 1,
+         "xp" => 0,
+         "games" => %{
+           "total_game" => 6814,
+           "win_game" => 3416,
+           "lost_game" => 3398,
+           "games_ended" => 0,
+           "games_logged" => 0,
+           "games_started" => 0,
+           "legacy_losses" => 3394,
+           "legacy_played_games" => 6806,
+           "legacy_victories" => 3412
+         },
+         "premium" => %{"active" => false, "until" => nil},
+         "account" => %{"visible" => true, "deleted" => false},
+         "badges" => ["00000000000"]
+       })}
+    end
+
     def verify_password(_login, _password), do: {:error, :invalid_credentials}
 
     @impl true
@@ -195,6 +222,20 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.legacy_data["friend_ids"] == [12, 345]
     assert ticket.legacy_data["friended_by_ids"] == [67]
     assert ticket.legacy_data["blocked_ids"] == [89]
+  end
+
+  test "an account from before Classic recorded dates previews with no member_since" do
+    assert {:ok, result} =
+             ClassicVerification.verify(
+               %{"method" => "password", "login" => "tiger", "password" => "correct-password"},
+               AccountsFixtures.guest_fixture(),
+               classic_client: Classic,
+               provider_identity: Providers
+             )
+
+    assert result.classic.name == "tiger"
+    assert result.classic.member_since == nil
+    assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 2000)
   end
 
   test "password verification accepts an email login and binds the authenticated user" do

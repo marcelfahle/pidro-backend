@@ -370,10 +370,13 @@ defmodule PidroServer.Accounts.ClassicVerification do
       name_allowed: legacy.classic_name_allowed
     }
 
+    # Classic recorded no creation date before about 2018, so the oldest
+    # accounts arrive with `member_since: nil`; they must still be claimable.
     if (is_nil(preview.name) or is_binary(preview.name)) and
          is_integer(preview.games_played) and preview.games_played >= 0 and
          is_integer(preview.level) and preview.level >= 0 and
-         is_binary(preview.member_since) and preview.member_since != "" do
+         (is_nil(preview.member_since) or
+            (is_binary(preview.member_since) and preview.member_since != "")) do
       {:ok, preview}
     else
       {:error, :provider_unavailable}

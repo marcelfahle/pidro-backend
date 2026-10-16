@@ -14,7 +14,11 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
         name: %Schema{type: :string, nullable: true},
         games_played: %Schema{type: :integer, minimum: 0},
         level: %Schema{type: :integer, minimum: 0},
-        member_since: %Schema{type: :string},
+        member_since: %Schema{
+          type: :string,
+          nullable: true,
+          description: "Null for Classic accounts created before Classic recorded a date"
+        },
         name_allowed: %Schema{
           type: :boolean,
           description:
