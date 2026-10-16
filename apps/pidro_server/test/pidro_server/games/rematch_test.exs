@@ -632,7 +632,9 @@ defmodule PidroServer.Games.RematchTest do
       {:ok, state} = GameAdapter.get_state(code)
       {:ok, actions} = GameAdapter.get_legal_actions(code, :north)
 
-      if actions != [] do
+      # Every seat may cut for dealer, so the driver leaves the cut to the bots
+      # and waits for the dealer-selection timer to deal rather than race them.
+      if state.phase != :dealer_selection and actions != [] do
         view = Pidro.Core.SeatView.for_seat(state, :north)
 
         {:ok, action, _} =
