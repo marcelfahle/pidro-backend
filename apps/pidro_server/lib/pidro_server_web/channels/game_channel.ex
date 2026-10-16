@@ -33,7 +33,9 @@ defmodule PidroServerWeb.GameChannel do
   * `"turn_changed"` - Current player changed: `%{current_player: :north}`
   * `"game_over"` - Game ended: `%{winner: :north_south, scores: %{...}}`
   * `"progression_summary"` - Per-player post-game "what changed" deltas (XP/level,
-    achievements, and a rated tier move); only this socket's own slice (PID-52)
+    achievements, a rated tier move and the partnership run); only this socket's own
+    slice (PID-52). A player who joins a finished room gets it again as
+    `progression_summary` in the join reply, until a rematch starts (PID-234)
   * `"invite_redeemed"` - A guest claimed a seat through an invite:
     `%{position: :south, user_id: id, username: "anna_123", display_name: "Anna"}`
   * `"seat_moved"` - The host moved a seat: `%{user_id: id, from: :east, to: :west}`;
@@ -272,6 +274,16 @@ defmodule PidroServerWeb.GameChannel do
 
       # Add position only for players
       reply_data = if position, do: Map.put(reply_data, :position, position), else: reply_data
+
+      # PID-234: a rejoin after game over gets the same summary the push carried.
+      reply_data =
+        case current_room.post_game_summaries do
+          %{^user_id => summary} when role == :player ->
+            Map.put(reply_data, :progression_summary, summary)
+
+          _ ->
+            reply_data
+        end
 
       {:ok, reply_data, socket}
     else

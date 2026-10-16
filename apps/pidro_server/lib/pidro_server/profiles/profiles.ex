@@ -706,7 +706,11 @@ defmodule PidroServer.Profiles do
     # 3. Achievements (PID-50): per participant with a user, evaluate active defs
     #    against the post-update aggregates + this game + ordered history, and
     #    idempotent-upsert. Returns the per-user newly-earned keys.
-    newly_earned = apply_live_achievements(players, player_results, scores)
+    histories =
+      Map.new(players, fn {user_id, _result} -> {user_id, ordered_history_views(user_id)} end)
+
+    newly_earned = apply_live_achievements(players, player_results, scores, histories)
+    partners = partner_summaries(players, player_results, histories)
 
     # 4. Assemble the ephemeral per-player summary from the deltas just computed.
     summaries =
@@ -718,6 +722,7 @@ defmodule PidroServer.Profiles do
             Map.get(rating_deltas, valid_id),
             Map.get(newly_earned, valid_id, [])
           )
+          |> Map.put(:partner, Map.fetch!(partners, valid_id))
 
         {valid_id, PostGameSummary.build(before, deltas, [])}
       end)
@@ -1228,7 +1233,7 @@ defmodule PidroServer.Profiles do
   # the user's ordered history (incl. this game — already inserted earlier in
   # this transaction), evaluate active defs, and idempotent-upsert. Returns the
   # per-user newly-earned keys as `%{user_id => [key]}`.
-  defp apply_live_achievements(players, player_results, scores) do
+  defp apply_live_achievements(players, player_results, scores, histories) do
     players
     |> Enum.reduce(%{}, fn {user_id, result}, acc ->
       case Ecto.UUID.cast(user_id) do
@@ -1246,7 +1251,7 @@ defmodule PidroServer.Profiles do
             user_id: valid_id,
             aggregates: aggregates,
             this_game: this_game,
-            history: ordered_history_views(valid_id)
+            history: Map.fetch!(histories, user_id)
           }
 
           newly =
@@ -1259,6 +1264,41 @@ defmodule PidroServer.Profiles do
         :error ->
           acc
       end
+    end)
+  end
+
+  # PID-234: each participant's partner in this game and their run together, or
+  # nil when the partner is a bot or has no account (guests included). History
+  # already holds this game, so `games_together` counts it.
+  defp partner_summaries(players, player_results, histories) do
+    partner_ids =
+      Map.new(players, fn {user_id, _result} ->
+        {user_id, partner_id_for(player_results, to_string(user_id))}
+      end)
+
+    names =
+      from(u in User,
+        where: u.id in ^Enum.reject(Map.values(partner_ids), &is_nil/1) and not u.guest
+      )
+      |> Repo.all()
+      |> Map.new(&{&1.id, User.public_name(&1)})
+
+    Map.new(partner_ids, fn {user_id, partner_id} ->
+      partner =
+        case Map.fetch(names, partner_id) do
+          {:ok, name} ->
+            history = Map.fetch!(histories, user_id)
+
+            Map.merge(
+              %{user_id: partner_id, display_name: name},
+              Achievements.partnership_streak(history, partner_id)
+            )
+
+          :error ->
+            nil
+        end
+
+      {user_id, partner}
     end)
   end
 

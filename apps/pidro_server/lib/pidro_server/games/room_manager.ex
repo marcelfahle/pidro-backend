@@ -80,6 +80,7 @@ defmodule PidroServer.Games.RoomManager do
     - `:created_at` - DateTime when the room was created
     - `:config` - The `Room.Config` set at creation: name, requested bot difficulty and whether the table is solo. Never changes for the life of the room
     - `:phase_timers` - Map of position to timer reference for the disconnect cascade (%{position => reference()})
+    - `:post_game_summaries` - The last game's `%{user_id => summary}`, kept while `:finished` so a rejoin sees it
 
     ## Derived Data
 
@@ -116,7 +117,8 @@ defmodule PidroServer.Games.RoomManager do
             ready_player_ids: MapSet.t(String.t()),
             seat_lifecycle_revision: non_neg_integer(),
             game_number: non_neg_integer(),
-            game_started_at: DateTime.t() | nil
+            game_started_at: DateTime.t() | nil,
+            post_game_summaries: %{optional(String.t()) => map()}
           }
 
     defstruct [
@@ -147,7 +149,8 @@ defmodule PidroServer.Games.RoomManager do
       seat_lifecycle_revision: 0,
       # Games started in this room. A rematch starts game 2, 3, ... in place.
       game_number: 0,
-      game_started_at: nil
+      game_started_at: nil,
+      post_game_summaries: %{}
     ]
 
     @doc "Public game progress, omitted outside a playing room."
@@ -2544,17 +2547,20 @@ defmodule PidroServer.Games.RoomManager do
         # rooms. Isolate it — log and carry on if it blows up.
         game_instance_id = Map.get(state.active_game_instances, room_code)
 
-        case persist_completed_game(finished_room, winner, scores, game_state, game_instance_id) do
-          {:ok, summaries} when is_map(summaries) and map_size(summaries) > 0 ->
-            Phoenix.PubSub.broadcast(
-              PidroServer.PubSub,
-              "game:#{room_code}",
-              {:progression_summary, room_code, summaries}
-            )
+        finished_room =
+          case persist_completed_game(finished_room, winner, scores, game_state, game_instance_id) do
+            {:ok, summaries} when is_map(summaries) and map_size(summaries) > 0 ->
+              Phoenix.PubSub.broadcast(
+                PidroServer.PubSub,
+                "game:#{room_code}",
+                {:progression_summary, room_code, summaries}
+              )
 
-          _ ->
-            :ok
-        end
+              %{finished_room | post_game_summaries: summaries}
+
+            _ ->
+              finished_room
+          end
 
         updated_state =
           %{state | rooms: Map.put(state.rooms, room_code, finished_room)}
@@ -4524,7 +4530,8 @@ defmodule PidroServer.Games.RoomManager do
           last_hand_number: nil,
           game: game_summary(snapshot.state),
           game_number: room.game_number + 1,
-          game_started_at: DateTime.utc_now()
+          game_started_at: DateTime.utc_now(),
+          post_game_summaries: %{}
       }
       |> bump_seat_lifecycle_revision()
 

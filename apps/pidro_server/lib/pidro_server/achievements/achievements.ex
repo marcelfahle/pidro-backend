@@ -188,6 +188,33 @@ defmodule PidroServer.Achievements do
   end
 
   @doc """
+  One partnership over an ordered list of `game_view`s: how many games were
+  played with `partner_id`, and how many of the most recent of those were won
+  in a row. Games with other partners do not break the run. The caller must
+  pass history already in the canonical total order. Pure.
+
+  ## Examples
+
+      iex> g = fn won?, partner -> %{won?: won?, partner_id: partner} end
+      iex> history = [g.(true, "a"), g.(false, "a"), g.(true, "a"), g.(false, "b"), g.(true, "a")]
+      iex> PidroServer.Achievements.partnership_streak(history, "a")
+      %{games_together: 4, wins_in_a_row: 2}
+
+  """
+  @spec partnership_streak([game_view()], String.t()) :: %{
+          games_together: non_neg_integer(),
+          wins_in_a_row: non_neg_integer()
+        }
+  def partnership_streak(history, partner_id) when is_list(history) do
+    together = Enum.filter(history, &(Map.get(&1, :partner_id) == partner_id))
+
+    %{
+      games_together: length(together),
+      wins_in_a_row: together |> Enum.reverse() |> Enum.take_while(& &1.won?) |> length()
+    }
+  end
+
+  @doc """
   Max number of WON games sharing a single partner over an ordered list of
   `game_view`s. Keeps only won games that carry a real `partner_id` (a 4-distinct
   -human 2v2 win — solo/bot-filled games have `partner_id: nil` and never count),
