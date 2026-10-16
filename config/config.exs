@@ -39,6 +39,7 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   bot_delay_variance_ms: 800,
   bot_min_delay_ms: 300,
   trick_transition_delay_ms: 1_500,
+  sweep_trick_delay_ms: 500,
   hand_transition_delay_ms: 3_000
 
 # Rate-limit policies for PidroServerWeb.Plugs.RateLimit: `limit` requests per

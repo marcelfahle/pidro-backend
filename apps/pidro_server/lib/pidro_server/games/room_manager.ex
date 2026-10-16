@@ -46,7 +46,7 @@ defmodule PidroServer.Games.RoomManager do
   require Logger
 
   alias Pidro.Core.SeatView
-  alias Pidro.Game.Engine
+  alias Pidro.Game.{Engine, Play}
   alias PidroServer.Accounts.User
   alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
@@ -2457,6 +2457,8 @@ defmodule PidroServer.Games.RoomManager do
           {updated_room, updated_state} =
             reconcile_turn_timer(room, room_code, game_state, transition_delay_ms, updated_state)
 
+          maybe_schedule_sweep(updated_room, room_code, game_state, transition_delay_ms)
+
           {:noreply,
            %{updated_state | rooms: Map.put(updated_state.rooms, room_code, updated_room)}}
         end
@@ -2567,6 +2569,30 @@ defmodule PidroServer.Games.RoomManager do
 
         {:noreply, updated_state}
     end
+  end
+
+  # A settled hand plays itself out: once the trick on the table has had its
+  # pause, the lone trump holder's next trump goes down. The event count pins
+  # the play to the state that scheduled it, so a card played meanwhile
+  # (the holder tapping one) cancels it. Nothing else plays a settled hand,
+  # so a game that did not answer is asked again a few times.
+  @impl true
+  def handle_info({:sweep_play, room_code, event_seq, retries}, %State{} = state) do
+    with %Room{status: :playing} <- Map.get(state.rooms, room_code),
+         {:ok, game_state} <- GameAdapter.get_state(room_code),
+         ^event_seq <- length(game_state.events),
+         {position, card} <- Play.settled_play(game_state),
+         {:ok, _state} <- GameAdapter.apply_action(room_code, position, {:play_card, card}) do
+      :ok
+    else
+      {:error, _reason} when retries > 0 ->
+        schedule_sweep_play(room_code, event_seq, retries - 1, sweep_delay_ms())
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, state}
   end
 
   @impl true
@@ -4976,8 +5002,24 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  defp maybe_schedule_sweep(%Room{status: :playing}, room_code, game_state, transition_delay_ms) do
+    if Play.settled_play(game_state) do
+      delay_ms = max(transition_delay_ms, sweep_delay_ms())
+      schedule_sweep_play(room_code, length(game_state.events), 3, delay_ms)
+    end
+  end
+
+  defp maybe_schedule_sweep(_room, _room_code, _game_state, _transition_delay_ms), do: nil
+
+  defp schedule_sweep_play(room_code, event_seq, retries, delay_ms) do
+    Process.send_after(self(), {:sweep_play, room_code, event_seq, retries}, delay_ms)
+  end
+
+  defp sweep_delay_ms, do: Lifecycle.config(:sweep_trick_delay_ms)
+
   defp current_action_window(%Room{} = room, game_state) do
-    if room.status != :playing or single_player_room?(room) do
+    if room.status != :playing or single_player_room?(room) or
+         Play.settled_play(game_state) != nil do
       :none
     else
       phase = Map.get(game_state, :phase)

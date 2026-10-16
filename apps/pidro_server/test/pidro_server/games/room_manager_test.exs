@@ -15,7 +15,9 @@ defmodule PidroServer.Games.RoomManagerTest do
 
   import ExUnit.CaptureLog
 
+  alias Pidro.Core.Types.{Bid, Trick}
   alias PidroServer.Games.{GameAdapter, Lifecycle, RoomCodes, RoomManager}
+  alias PidroServer.Games.Bots.BotBrain
   alias PidroServer.Games.Room.{Config, Positions, Seat}
   alias PidroServer.RoomFixtures
 
@@ -1234,6 +1236,117 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert current_timer.phase == timer.phase
       assert current_timer.event_seq == timer.event_seq
     end
+  end
+
+  describe "settled hand sweep" do
+    setup do
+      previous = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.merge(previous, trick_transition_delay_ms: 600, sweep_trick_delay_ms: 60)
+      )
+
+      on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, previous) end)
+    end
+
+    test "plays out a lone trump holder's trumps quickly, then scores the hand" do
+      room_code = create_playing_room()
+      {:ok, pid} = GameAdapter.get_game(room_code)
+      :ok = GenServer.call(pid, {:set_state, west_about_to_go_cold()})
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room_code}")
+
+      {:ok, _} = GameAdapter.apply_action(room_code, :west, {:play_card, {4, :hearts}})
+
+      # West's last trump completes an ordinary trick; south's four follow alone.
+      updates = for _ <- 1..5, do: receive_state_update()
+      [{_, last_ordinary} | sweep] = updates
+
+      assert last_ordinary.transition_delay_ms == 600
+
+      assert Enum.map(sweep, &elem(&1, 1).transition_delay_ms) ==
+               [60, 60, 60, Lifecycle.config(:hand_transition_delay_ms)]
+
+      arrivals = Enum.map(updates, &elem(&1, 0))
+      gaps = Enum.zip_with(arrivals, tl(arrivals), &(&2 - &1))
+      # The settled hand waits out the ordinary trick, then runs well inside it.
+      # Gaps are measured on receipt, so the lower bounds allow delivery jitter.
+      assert hd(gaps) >= 550
+      assert Enum.all?(tl(gaps), &(&1 in 40..450))
+
+      {_, %{state: scored}} = List.last(updates)
+      assert scored.hand_number == 2
+      assert scored.cumulative_scores == %{north_south: 8, east_west: 1}
+
+      assert for({:card_played, :south, card} <- scored.events, do: card) ==
+               [{14, :hearts}, {10, :hearts}, {5, :hearts}, {2, :hearts}]
+
+      refute_received {:turn_timer_started, %{position: :south, phase: :playing}}
+    end
+
+    test "a bot holding the last trumps leaves them to the sweep" do
+      {:ok, settled} =
+        Pidro.Game.Engine.apply_action(west_about_to_go_cold(), :west, {:play_card, {4, :hearts}})
+
+      assert settled.current_turn == :south
+      refute BotBrain.should_make_move?(settled, :south)
+      assert BotBrain.should_make_move?(west_about_to_go_cold(), :west)
+    end
+  end
+
+  defp receive_state_update do
+    assert_receive {:state_update, _room_code, payload}, 1_000
+    {System.monotonic_time(:millisecond), payload}
+  end
+
+  # East won the first trick with the jack; north and east played their last
+  # trumps into it. South leads the second, and west's four is its last trump.
+  defp west_about_to_go_cold do
+    base = Pidro.Core.GameState.new(seed: 1)
+
+    hands = %{
+      north: [],
+      east: [],
+      south: [{14, :hearts}, {10, :hearts}, {5, :hearts}, {2, :hearts}],
+      west: [{4, :hearts}, {9, :clubs}]
+    }
+
+    first = %Trick{
+      number: 1,
+      leader: :east,
+      plays: [east: {11, :hearts}, south: {7, :hearts}, west: {3, :hearts}, north: {6, :hearts}],
+      winner: :east,
+      points: 1
+    }
+
+    players =
+      Map.new(base.players, fn {position, player} ->
+        {position,
+         %{
+           player
+           | hand: hands[position],
+             eliminated?: position in [:north, :east],
+             tricks_won: if(position == :east, do: 1, else: 0)
+         }}
+      end)
+
+    %{
+      base
+      | phase: :playing,
+        trump_suit: :hearts,
+        current_dealer: :east,
+        current_turn: :west,
+        highest_bid: {:south, 8},
+        bidding_team: :north_south,
+        bids: [%Bid{position: :south, amount: 8}],
+        players: players,
+        tricks: [first],
+        current_trick: %Trick{number: 2, leader: :south, plays: [south: {12, :hearts}]},
+        trick_number: 2,
+        hand_points: %{north_south: 0, east_west: 1},
+        events: [{:cards_dealt, %{}}]
+    }
   end
 
   describe "abandoned room cleanup" do

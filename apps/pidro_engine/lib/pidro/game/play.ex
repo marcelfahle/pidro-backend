@@ -257,6 +257,29 @@ defmodule Pidro.Game.Play do
     )
   end
 
+  @doc """
+  The next play of a settled hand: one player alone holds trumps and leads.
+
+  Every card they hold is a trump that wins its own trick, so the order cannot
+  change the score; this plays them highest first. Settled only between tricks,
+  as a trick already led by a player who went cold still gives the holder a
+  real choice. Louisiana players never go cold and still choose what to follow
+  with, so its hands never settle.
+  """
+  @spec settled_play(game_state()) :: {position(), card()} | nil
+  def settled_play(%Types.GameState{phase: :playing, trump_suit: trump} = state) do
+    with false <- match?(%Trick{plays: [_ | _]}, state.current_trick),
+         [{holder, %Player{hand: hand}}] <- Enum.reject(state.players, &elem(&1, 1).eliminated?),
+         ^holder <- state.current_turn,
+         [_ | _] = trumps <- Enum.filter(hand, &Card.is_trump?(&1, trump)) do
+      {holder, Enum.max_by(trumps, & &1, &(Card.compare(&1, &2, trump) != :lt))}
+    else
+      _ -> nil
+    end
+  end
+
+  def settled_play(_state), do: nil
+
   # Validates card is in player's hand
   @spec validate_card_in_hand(Player.t(), card()) :: :ok | {:error, error()}
   defp validate_card_in_hand(%Player{hand: hand}, card) do

@@ -14,6 +14,9 @@ defmodule PidroServer.Games.Lifecycle do
   sweep closes a `:waiting` room with no connected human while one of its
   invites is still live (`LIFECYCLE_INVITED_WAITING_TTL_MS`); without a live
   invite the sweep keeps its five-minute grace period.
+
+  `sweep_trick_delay_ms` paces a settled hand: once one player alone holds
+  trumps, the server plays their remaining trumps one trick this far apart.
   """
 
   @type timeout_key ::
@@ -34,6 +37,7 @@ defmodule PidroServer.Games.Lifecycle do
           | :bot_min_delay_ms
           | :dealer_selection_delay_ms
           | :trick_transition_delay_ms
+          | :sweep_trick_delay_ms
           | :hand_transition_delay_ms
 
   @defaults %{
@@ -54,6 +58,7 @@ defmodule PidroServer.Games.Lifecycle do
     bot_min_delay_ms: 300,
     dealer_selection_delay_ms: 3_000,
     trick_transition_delay_ms: 1_500,
+    sweep_trick_delay_ms: 500,
     hand_transition_delay_ms: 3_000
   }
 
