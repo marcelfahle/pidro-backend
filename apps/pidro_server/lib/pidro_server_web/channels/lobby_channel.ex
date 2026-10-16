@@ -278,7 +278,7 @@ defmodule PidroServerWeb.LobbyChannel do
 
       player_data =
         if player_id do
-          get_player_summary(player_id, user_map)
+          get_player_summary(player_id, user_map, seat)
         else
           nil
         end
@@ -337,7 +337,23 @@ defmodule PidroServerWeb.LobbyChannel do
     end
   end
 
-  defp get_player_summary(player_id, user_map) do
+  defp get_player_summary(player_id, _user_map, %Seat{bot_persona: persona})
+       when is_binary(persona) do
+    name = Seat.bot_display_name(persona)
+
+    %{
+      id: player_id,
+      username: name,
+      display_name: name,
+      is_bot: true,
+      bot_persona: persona,
+      avatar_url: nil,
+      level: nil,
+      pin: nil
+    }
+  end
+
+  defp get_player_summary(player_id, user_map, _seat) do
     case Map.get(user_map, player_id) do
       %User{} = user ->
         %{
@@ -345,6 +361,7 @@ defmodule PidroServerWeb.LobbyChannel do
           username: user.username,
           display_name: user.display_name,
           is_bot: false,
+          bot_persona: nil,
           avatar_url: user.avatar_url,
           level: user.level,
           pin: user.pin
@@ -357,6 +374,7 @@ defmodule PidroServerWeb.LobbyChannel do
           username: "Bot/User #{String.slice(player_id, 0..5)}",
           display_name: nil,
           is_bot: true,
+          bot_persona: nil,
           avatar_url: nil,
           level: nil,
           pin: nil

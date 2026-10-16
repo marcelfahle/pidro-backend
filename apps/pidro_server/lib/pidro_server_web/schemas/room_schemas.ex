@@ -59,17 +59,28 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           nullable: true,
           description: "User ID of human occupant"
         },
+        is_bot: %Schema{
+          type: :boolean,
+          description: "Whether a bot plays this seat, including a substitute bot"
+        },
+        bot_persona: %Schema{
+          type: :string,
+          enum: ["marcel", "antti", "jocke"],
+          nullable: true,
+          description:
+            "Who a real bot seat is named after; null for humans, vacant seats and substitute bots"
+        },
         username: %Schema{
           type: :string,
           nullable: true,
           description:
-            "Occupant's username; \"Bot\" for bots, null when the id resolves to nobody"
+            "Occupant's username; the persona's name (\"Marcel\", \"Antti\", \"Jocke\") for a bot with a persona, \"Bot\" for other bots, null when the id resolves to nobody"
         },
         display_name: %Schema{
           type: :string,
           nullable: true,
           description:
-            "Occupant's display name; \"Bot\" for bots, null when unset or when the id resolves to nobody"
+            "Occupant's display name; the persona's name for a bot with a persona, \"Bot\" for other bots, null when unset or when the id resolves to nobody"
         },
         level: %Schema{
           type: :integer,

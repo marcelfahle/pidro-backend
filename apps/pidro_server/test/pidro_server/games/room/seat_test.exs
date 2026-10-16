@@ -380,6 +380,49 @@ defmodule PidroServer.Games.Room.SeatTest do
     end
   end
 
+  describe "bot personas" do
+    test "a bot takes the first of marcel, antti, jocke no other seat holds" do
+      pid = self()
+      assert Seat.next_bot_persona(%{}) == "marcel"
+
+      seats = %{
+        north: Seat.new_human(:north, "user-1"),
+        east: Seat.new_bot(:east, pid, "marcel"),
+        south: Seat.new_bot(:south, pid, "jocke"),
+        west: Seat.new_vacant(:west)
+      }
+
+      assert Seat.next_bot_persona(seats) == "antti"
+    end
+
+    test "a substitute bot holds no persona, so it does not take one" do
+      {:ok, grace} =
+        Seat.new_human(:east, "user-1")
+        |> Seat.disconnect()
+        |> elem(1)
+        |> Seat.start_grace(DateTime.utc_now())
+
+      {:ok, substitute} = Seat.substitute_bot(grace, self())
+
+      assert substitute.bot_persona == nil
+      assert Seat.next_bot_persona(%{east: substitute}) == "marcel"
+    end
+
+    test "the fourth bot at an all-bot table reuses marcel" do
+      seats =
+        Map.new(Enum.zip([:north, :east, :south], ~w(marcel antti jocke)), fn {pos, persona} ->
+          {pos, Seat.new_bot(pos, self(), persona)}
+        end)
+
+      assert Seat.next_bot_persona(seats) == "marcel"
+    end
+
+    test "personas show as Marcel, Antti and Jocke" do
+      assert Enum.map(~w(marcel antti jocke), &Seat.bot_display_name/1) ==
+               ["Marcel", "Antti", "Jocke"]
+    end
+  end
+
   describe "serialization" do
     test "serialize returns a map with no Elixir-specific types" do
       joined = ~U[2026-03-08 10:00:00Z]

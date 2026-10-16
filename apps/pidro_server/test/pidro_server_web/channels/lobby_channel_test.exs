@@ -708,6 +708,60 @@ defmodule PidroServerWeb.LobbyChannelTest do
       refute north.player.display_name == guest.username
     end
 
+    test "a bot seat carries its persona; a human seat carries none", %{socket: socket} do
+      host = PidroServer.AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Crew table"})
+
+      assert {:ok, _, :east} =
+               RoomManager.join_bot(room.code, "bot_#{room.code}_east", self(), :east)
+
+      {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      seats = Enum.find(reply.rooms, &(&1.code == room.code)).seats
+      player = &Enum.find(seats, fn seat -> seat.position == &1 end).player
+
+      assert %{
+               is_bot: true,
+               display_name: "Marcel",
+               username: "Marcel",
+               bot_persona: "marcel",
+               avatar_url: nil
+             } = player.(:east)
+
+      assert %{is_bot: false, bot_persona: nil} = player.(:north)
+      assert player.(:north).username == host.username
+    end
+
+    test "a substitute bot for a disconnected human keeps the human's name and has no persona",
+         %{socket: socket} do
+      [host | _] = users = for _ <- 1..4, do: PidroServer.AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Subs"})
+      for user <- tl(users), do: {:ok, _, _} = RoomManager.join_room(room.code, user.id)
+      PidroServer.RoomFixtures.ready_room(room.code)
+
+      gone = List.last(users)
+      {:ok, playing} = RoomManager.get_room(room.code)
+      position = Enum.find_value(playing.positions, fn {pos, id} -> if id == gone.id, do: pos end)
+
+      :ok = RoomManager.handle_player_disconnect(room.code, gone.id)
+
+      {:ok, substituted} =
+        PidroServer.RoomManagerCase.expire_phase(room.code, position, :phase2_start)
+
+      assert %{status: :bot_substitute, bot_persona: nil} = substituted.seats[position]
+
+      {:ok, reply, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+
+      seat =
+        Enum.find(
+          Enum.find(reply.rooms, &(&1.code == room.code)).seats,
+          &(&1.position == position)
+        )
+
+      assert %{username: username, bot_persona: nil, is_bot: false} = seat.player
+      assert username == gone.username
+    end
+
     test "a seat whose id resolves to nobody carries display_name nil", %{socket: socket} do
       {:ok, room} = RoomManager.create_room("dev_host", %{name: "Dev table"})
 

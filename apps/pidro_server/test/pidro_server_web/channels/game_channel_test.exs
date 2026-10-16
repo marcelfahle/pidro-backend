@@ -189,6 +189,30 @@ defmodule PidroServerWeb.GameChannelTest do
   end
 
   describe "seat lifecycle snapshot" do
+    test "a bot seat carries its persona in the join reply's readiness and seat lifecycle" do
+      host = PidroServer.AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Crew"})
+
+      for position <- [:east, :south] do
+        bot_id = "bot_#{room.code}_#{position}"
+        assert {:ok, _, ^position} = RoomManager.join_bot(room.code, bot_id, self(), position)
+      end
+
+      {:ok, socket} = create_socket(host)
+      {:ok, reply, _} = subscribe_and_join(socket, GameChannel, "game:#{room.code}")
+
+      for {position, persona, name} <- [{:east, "marcel", "Marcel"}, {:south, "antti", "Antti"}] do
+        assert %{is_bot: true, bot_persona: ^persona, display_name: ^name, username: ^name} =
+                 reply.readiness.seats[position]
+
+        assert %{bot_persona: ^persona, display_name: ^name, username: ^name, avatar_url: nil} =
+                 reply.seat_lifecycle.seats[position]
+      end
+
+      assert %{is_bot: false, bot_persona: nil} = reply.readiness.seats.north
+      assert reply.seat_lifecycle.seats.north.bot_persona == nil
+    end
+
     test "Keep Bot broadcasts resolution to all observers and cold joins", context do
       {:ok, _, owner} =
         subscribe_and_join(
@@ -401,6 +425,7 @@ defmodule PidroServerWeb.GameChannelTest do
       assert departed.seats.east.player_id == nil
       assert departed.seats.east.username == "Bot"
       assert departed.seats.east.display_name == "Bot"
+      assert departed.seats.east.bot_persona == nil
       assert departed.seats.east.avatar_url == nil
       assert departed.seats.east.level == nil
       assert departed.seats.east.pin == nil
@@ -430,6 +455,7 @@ defmodule PidroServerWeb.GameChannelTest do
                status: :vacant,
                player_id: nil,
                username: nil,
+               bot_persona: nil,
                display_name: nil,
                avatar_url: nil,
                level: nil,

@@ -677,10 +677,29 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       assert data["room"]["seats"]["north"]["username"] == user.username
 
-      assert data["room"]["seats"]
-             |> Map.values()
-             |> Enum.filter(&(&1["occupant_type"] == "bot"))
-             |> Enum.all?(&(&1["username"] == "Bot"))
+      shown =
+        build_conn()
+        |> get(~p"/api/v1/rooms/#{code}")
+        |> json_response(200)
+        |> get_in(["data", "room", "seats"])
+
+      bot_seats =
+        shown
+        |> Map.values()
+        |> Enum.filter(&(&1["occupant_type"] == "bot"))
+
+      assert bot_seats |> Enum.map(& &1["bot_persona"]) |> Enum.sort() ==
+               ["antti", "jocke", "marcel"]
+
+      for seat <- bot_seats do
+        assert seat["is_bot"] == true
+        assert seat["avatar_url"] == nil
+        assert seat["display_name"] == String.capitalize(seat["bot_persona"])
+        assert seat["username"] == seat["display_name"]
+      end
+
+      assert shown["north"]["is_bot"] == false
+      assert shown["north"]["bot_persona"] == nil
 
       assert {:ok, room} = RoomManager.get_room(code)
       assert room.config.solo == true
