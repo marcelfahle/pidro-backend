@@ -94,6 +94,9 @@ defmodule Pidro.Finnish.Scorer do
           two_of_trump_points: 0 | 1
         }
 
+  @typedoc "A card that scored, with the seat and team that took its points."
+  @type point_card :: %{card: card(), points: pos_integer(), position: position(), team: team()}
+
   # =============================================================================
   # Public API
   # =============================================================================
@@ -310,6 +313,38 @@ defmodule Pidro.Finnish.Scorer do
   end
 
   @doc """
+  Lists every card that scored in the given tricks, with the seat that took it.
+
+  Attribution follows `score_trick/3`: the trick winner takes each point card,
+  except the 2 of trump, which its player keeps. Each team's points add up to
+  its `aggregate_team_scores/1` total.
+
+  ## Examples
+
+      iex> trick = %Pidro.Core.Types.Trick{
+      ...>   number: 1,
+      ...>   leader: :north,
+      ...>   plays: [{:north, {14, :hearts}}, {:east, {2, :hearts}}, {:south, {7, :hearts}}]
+      ...> }
+      iex> Pidro.Finnish.Scorer.point_cards([trick], :hearts)
+      [
+        %{card: {14, :hearts}, points: 1, position: :north, team: :north_south},
+        %{card: {2, :hearts}, points: 1, position: :east, team: :east_west}
+      ]
+  """
+  @spec point_cards([Types.Trick.t()], suit(), atom()) :: [point_card()]
+  def point_cards(tricks, trump_suit, variant \\ :finnish) do
+    for trick <- tricks,
+        score = score_trick(trick, trump_suit, variant),
+        {player, card} <- trick.plays,
+        points = Card.point_value(card, trump_suit),
+        points > 0 do
+      position = if player == score.two_of_trump_player, do: player, else: score.winner
+      %{card: card, points: points, position: position, team: Types.position_to_team(position)}
+    end
+  end
+
+  @doc """
   Applies bid result to cumulative scores based on hand outcome.
 
   This implements the core Finnish Pidro scoring rules:
@@ -385,6 +420,7 @@ defmodule Pidro.Finnish.Scorer do
       made: made,
       delta: %{bidding_team => bidding_delta, defending_team => defending_delta},
       scores: new_cumulative_scores,
+      point_cards: point_cards(state.tricks, state.trump_suit, state.variant),
       # The hand-complete reset clears these from the live state in the same
       # transition, so the finished hand is kept here for clients to read back.
       bids: state.bids,
@@ -396,6 +432,7 @@ defmodule Pidro.Finnish.Scorer do
     state
     |> GameState.update(:cumulative_scores, new_cumulative_scores)
     |> GameState.update(:last_hand, last_hand)
+    |> GameState.update(:hand_history, state.hand_history ++ [hand_summary(last_hand)])
     |> GameState.update(:events, state.events ++ [bidding_event, defending_event])
   end
 
@@ -529,6 +566,10 @@ defmodule Pidro.Finnish.Scorer do
   # =============================================================================
   # Private Helper Functions
   # =============================================================================
+
+  # A hand_history entry is the last hand without its bids and tricks.
+  @spec hand_summary(map()) :: map()
+  defp hand_summary(last_hand), do: Map.drop(last_hand, [:bids, :tricks])
 
   # Finds if the 2 of trump was played in this trick
   # Returns {player_position, 1} if found, nil otherwise

@@ -887,8 +887,34 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     })
   end
 
-  defmodule LastHand do
-    @moduledoc "The engine's retained result of the last scored hand."
+  defmodule PointCard do
+    @moduledoc "A card that scored in a hand, with the seat and team that took its points."
+
+    OpenApiSpex.schema(%{
+      title: "PointCard",
+      type: :object,
+      properties: %{
+        card: Card,
+        points: %Schema{type: :integer, minimum: 1, maximum: 5},
+        position: %Schema{
+          type: :string,
+          enum: [:north, :south, :east, :west],
+          description: "The trick winner, or the player of the 2 of trump, who keeps it"
+        },
+        team: %Schema{type: :string, enum: [:north_south, :east_west]}
+      },
+      required: [:card, :points, :position, :team],
+      example: %{
+        "card" => %{"rank" => 5, "suit" => "hearts"},
+        "points" => 5,
+        "position" => "east",
+        "team" => "east_west"
+      }
+    })
+  end
+
+  defmodule HandSummary do
+    @moduledoc "A scored hand as kept in `hand_history`: `last_hand` without bids and tricks."
 
     @team_scores %Schema{
       type: :object,
@@ -900,11 +926,8 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
     }
 
     OpenApiSpex.schema(%{
-      title: "LastHand",
+      title: "HandSummary",
       type: :object,
-      nullable: true,
-      description:
-        "Result retained from scoring until the next hand's first trick completes, including reconnects. Retained at game end; otherwise null when unavailable.",
       properties: %{
         hand_number: %Schema{type: :integer, minimum: 1},
         bidding_team: %Schema{type: :string, enum: [:north_south, :east_west]},
@@ -925,22 +948,17 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           | description: "Score changes actually applied; may be negative"
         },
         scores: %Schema{@team_scores | description: "Cumulative scores after this hand"},
-        bids: %Schema{
-          type: :array,
-          items: Bid,
-          description: "The finished hand's bids, in the live `bids` shape"
-        },
         trump: %Schema{
           type: :string,
           enum: [:hearts, :diamonds, :clubs, :spades],
           nullable: true,
           description: "The finished hand's trump suit, as the live `trump_suit`"
         },
-        tricks: %Schema{
+        point_cards: %Schema{
           type: :array,
-          items: Trick,
+          items: PointCard,
           description:
-            "Every completed trick of the finished hand, including the final one, in the live `tricks` shape"
+            "Every card that scored, in play order; each team's points add up to its `captured`"
         }
       },
       required: [
@@ -952,10 +970,36 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         :made,
         :delta,
         :scores,
-        :bids,
         :trump,
-        :tricks
-      ],
+        :point_cards
+      ]
+    })
+  end
+
+  defmodule LastHand do
+    @moduledoc "The engine's retained result of the last scored hand."
+
+    OpenApiSpex.schema(%{
+      title: "LastHand",
+      type: :object,
+      nullable: true,
+      description:
+        "Result retained from scoring until the next hand's first trick completes, including reconnects. Retained at game end; otherwise null when unavailable.",
+      properties:
+        Map.merge(HandSummary.schema().properties, %{
+          bids: %Schema{
+            type: :array,
+            items: Bid,
+            description: "The finished hand's bids, in the live `bids` shape"
+          },
+          tricks: %Schema{
+            type: :array,
+            items: Trick,
+            description:
+              "Every completed trick of the finished hand, including the final one, in the live `tricks` shape"
+          }
+        }),
+      required: HandSummary.schema().required ++ [:bids, :tricks],
       example: %{
         "hand_number" => 3,
         "bidding_team" => "north_south",
@@ -967,7 +1011,45 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         "scores" => %{"north_south" => -2, "east_west" => 21},
         "bids" => [%{"position" => "south", "amount" => 9}],
         "trump" => "hearts",
-        "tricks" => []
+        "tricks" => [],
+        "point_cards" => [
+          %{
+            "card" => %{"rank" => 5, "suit" => "hearts"},
+            "points" => 5,
+            "position" => "south",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 14, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "north",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 11, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "north",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 2, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "south",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 5, "suit" => "diamonds"},
+            "points" => 5,
+            "position" => "east",
+            "team" => "east_west"
+          },
+          %{
+            "card" => %{"rank" => 10, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "west",
+            "team" => "east_west"
+          }
+        ]
       }
     })
   end
@@ -1210,6 +1292,12 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                   example: %{"north_south" => 0, "east_west" => 0}
                 },
                 last_hand: LastHand,
+                hand_history: %Schema{
+                  type: :array,
+                  items: HandSummary,
+                  description:
+                    "Every scored hand of this game, oldest first; kept through game end, empty in a new game"
+                },
                 scores: %Schema{
                   type: :object,
                   additionalProperties: %Schema{type: :integer},

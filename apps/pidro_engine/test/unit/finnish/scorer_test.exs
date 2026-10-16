@@ -251,6 +251,82 @@ defmodule Pidro.Finnish.ScorerTest do
     end
   end
 
+  describe "point_cards/3" do
+    test "each point card goes to the trick winner, the 2 of trump to its player" do
+      trick = fn plays -> %Types.Trick{number: 1, leader: elem(hd(plays), 0), plays: plays} end
+
+      cases = [
+        # Defenders take the right 5; south keeps the 2 though east wins the trick.
+        {:finnish,
+         [
+           trick.([
+             {:north, {5, :hearts}},
+             {:east, {6, :hearts}},
+             {:south, {2, :hearts}},
+             {:west, {4, :hearts}}
+           ]),
+           trick.([
+             {:south, {14, :hearts}},
+             {:west, {5, :diamonds}},
+             {:north, {11, :hearts}},
+             {:east, {10, :hearts}}
+           ])
+         ],
+         [
+           {{5, :hearts}, 5, :east},
+           {{2, :hearts}, 1, :south},
+           {{14, :hearts}, 1, :south},
+           {{5, :diamonds}, 5, :south},
+           {{11, :hearts}, 1, :south},
+           {{10, :hearts}, 1, :south}
+         ]},
+        # Off-suit cards score nothing; the wrong 5 beats the 2 on a club lead.
+        {:louisiana,
+         [
+           trick.([
+             {:north, {10, :clubs}},
+             {:east, {14, :spades}},
+             {:south, {2, :hearts}},
+             {:west, {5, :diamonds}}
+           ]),
+           trick.([
+             {:west, {13, :clubs}},
+             {:north, {14, :clubs}},
+             {:east, {3, :clubs}},
+             {:south, {9, :clubs}}
+           ])
+         ], [{{2, :hearts}, 1, :south}, {{5, :diamonds}, 5, :west}]}
+      ]
+
+      for {variant, tricks, expected} <- cases do
+        point_cards = Scorer.point_cards(tricks, :hearts, variant)
+
+        assert point_cards ==
+                 Enum.map(expected, fn {card, points, position} ->
+                   %{
+                     card: card,
+                     points: points,
+                     position: position,
+                     team: Types.position_to_team(position)
+                   }
+                 end)
+
+        captured =
+          tricks
+          |> Enum.map(&Scorer.score_trick(&1, :hearts, variant))
+          |> Scorer.aggregate_team_scores()
+
+        for team <- [:north_south, :east_west] do
+          assert point_cards
+                 |> Enum.filter(&(&1.team == team))
+                 |> Enum.map(& &1.points)
+                 |> Enum.sum() ==
+                   captured[team]
+        end
+      end
+    end
+  end
+
   describe "apply_bid_result/1" do
     test "bidding team makes their bid" do
       state = %{

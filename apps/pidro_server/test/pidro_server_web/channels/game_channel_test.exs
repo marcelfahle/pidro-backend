@@ -1698,6 +1698,44 @@ defmodule PidroServerWeb.GameChannelTest do
       assert wire["last_hand"]["trump"] == to_string(state.last_hand.trump)
     end
 
+    @tag :stable_turn_timer
+    test "reconnection returns the hand history after the last hand is gone", %{
+      user1: user,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      state =
+        1
+        |> Pidro.Test.DeterministicGame.opening()
+        |> Pidro.Test.DeterministicGame.play_until(&(&1.hand_number == 3 and &1.tricks != []))
+
+      assert state.last_hand == nil
+      assert [%{hand_number: 1}, %{hand_number: 2}] = state.hand_history
+      {:ok, pid} = PidroServer.Games.GameRegistry.lookup(room_code)
+      :ok = GenServer.call(pid, {:set_state, state})
+
+      {:ok, initial_reply, joined_socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      leave(joined_socket)
+      :ok = RoomManager.handle_player_disconnect(room_code, user.id)
+      {:ok, new_socket} = create_socket(user)
+
+      {:ok, reconnect_reply, _reconnected_socket} =
+        subscribe_and_join(new_socket, GameChannel, "game:#{room_code}", %{})
+
+      assert reconnect_reply.reconnected == true
+
+      assert reconnect_reply.state.hand_history ==
+               GameStateSerializer.serialize(state).hand_history
+
+      assert reconnect_reply.state.hand_history == initial_reply.state.hand_history
+
+      wire = reconnect_reply.state |> Jason.encode!() |> Jason.decode!()
+      assert Enum.map(wire["hand_history"], & &1["hand_number"]) == [1, 2]
+      assert List.last(wire["hand_history"])["scores"] == wire["scores"]
+    end
+
     test "normal join still works without reconnected flag", %{
       user1: user,
       room_code: room_code,

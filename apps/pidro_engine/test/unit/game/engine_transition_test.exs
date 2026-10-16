@@ -30,12 +30,22 @@ defmodule Pidro.Game.EngineTransitionTest do
         made: made,
         delta: delta,
         scores: total,
+        point_cards: [
+          %{card: {5, :hearts}, points: 5, position: :south, team: :north_south},
+          %{card: {5, :diamonds}, points: 5, position: :south, team: :north_south},
+          %{card: {14, :hearts}, points: 1, position: :north, team: :north_south},
+          %{card: {2, :hearts}, points: 1, position: :east, team: :east_west},
+          %{card: {11, :hearts}, points: 1, position: :north, team: :north_south},
+          %{card: {10, :hearts}, points: 1, position: :north, team: :north_south}
+        ],
         bids: state.bids,
         trump: :hearts,
         tricks: [first_trick, final_trick]
       }
 
       assert scored.last_hand == expected
+      history = [Map.drop(expected, [:bids, :tricks])]
+      assert scored.hand_history == history
       assert scored.cumulative_scores == total
       assert scored.phase == phase
 
@@ -62,6 +72,7 @@ defmodule Pidro.Game.EngineTransitionTest do
           Pidro.Test.DeterministicGame.play_until(before_first_trick, &(&1.tricks != []))
 
         assert after_first_trick.last_hand == nil
+        assert after_first_trick.hand_history == history
       end
     end
   end

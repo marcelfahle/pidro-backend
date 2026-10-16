@@ -142,6 +142,14 @@ defmodule PidroServer.Games.RematchTest do
     test "the last agreement starts a new game in the same room with the same seats" do
       {room, user_ids} = four_player_game()
       first_game = game_pid(room.code)
+
+      played =
+        1
+        |> Pidro.Test.DeterministicGame.opening()
+        |> Pidro.Test.DeterministicGame.play_until(&(&1.hand_number == 2))
+
+      :ok = GenServer.call(first_game, {:set_state, played})
+      assert {:ok, %{hand_history: [_]}} = GameAdapter.get_state(room.code)
       finish_game(room.code)
 
       {early, [last]} = Enum.split(user_ids, 3)
@@ -175,6 +183,7 @@ defmodule PidroServer.Games.RematchTest do
       assert state.phase == :dealer_selection
       assert state.cumulative_scores == %{north_south: 0, east_west: 0}
       assert state.winner == nil
+      assert state.hand_history == []
     end
 
     test "nobody is moved out of the room, so a second rematch works the same way" do

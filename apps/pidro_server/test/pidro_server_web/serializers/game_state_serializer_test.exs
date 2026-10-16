@@ -94,8 +94,15 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert payload.last_hand.trump == live.trump_suit
       assert payload.last_hand.trump in [:hearts, :diamonds, :clubs, :spades]
 
-      assert Map.drop(payload.last_hand, [:bids, :trump, :tricks]) ==
-               Map.drop(last_hand, [:bids, :trump, :tricks])
+      assert Map.drop(payload.last_hand, [:bids, :trump, :tricks, :point_cards]) ==
+               Map.drop(last_hand, [:bids, :trump, :tricks, :point_cards])
+
+      assert payload.last_hand.point_cards ==
+               Enum.map(last_hand.point_cards, fn %{card: {rank, suit}} = point_card ->
+                 %{point_card | card: %{rank: rank, suit: suit}}
+               end)
+
+      assert payload.hand_history == [Map.drop(payload.last_hand, [:bids, :tricks])]
 
       wire = payload |> Jason.encode!() |> Jason.decode!()
       live_wire = live |> Jason.encode!() |> Jason.decode!()
@@ -130,6 +137,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert payload.current_trick == []
       assert payload.current_trick_details == nil
       assert payload.last_hand == nil
+      assert payload.hand_history == []
 
       empty = %Pidro.Core.Types.Trick{number: 1, leader: :north}
 

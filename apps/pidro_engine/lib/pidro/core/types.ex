@@ -330,6 +330,8 @@ defmodule Pidro.Core.Types do
 
     field(:winner, Pidro.Core.Types.team() | nil, default: nil)
     field(:last_hand, map() | nil, default: nil)
+    # Every scored hand of this game, oldest first, without per-trick detail.
+    field(:hand_history, [map()], default: [])
 
     # History (for replay/undo)
     field(:events, [Pidro.Core.Types.event()], default: [])

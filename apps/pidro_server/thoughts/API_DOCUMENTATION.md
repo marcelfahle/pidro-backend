@@ -1352,6 +1352,7 @@ gameChannel.on("game_over", ({ winner, scores }) => {
   "current_trick": [],
   "current_trick_details": null,
   "last_hand": null,
+  "hand_history": [],
   "hand_points": {
     "north_south": 0,
     "east_west": 0
@@ -2039,7 +2040,15 @@ All game state sent through the API or WebSocket channels is serialized by `Pidr
     "captured": {"north_south": 8, "east_west": 6},
     "made": false,
     "delta": {"north_south": -9, "east_west": 6},
-    "scores": {"north_south": -2, "east_west": 21}
+    "scores": {"north_south": -2, "east_west": 21},
+    "point_cards": [
+      {"card": {"rank": 5, "suit": "hearts"}, "points": 5, "position": "south", "team": "north_south"},
+      {"card": {"rank": 14, "suit": "hearts"}, "points": 1, "position": "north", "team": "north_south"},
+      {"card": {"rank": 11, "suit": "hearts"}, "points": 1, "position": "north", "team": "north_south"},
+      {"card": {"rank": 2, "suit": "hearts"}, "points": 1, "position": "south", "team": "north_south"},
+      {"card": {"rank": 5, "suit": "diamonds"}, "points": 5, "position": "east", "team": "east_west"},
+      {"card": {"rank": 10, "suit": "hearts"}, "points": 1, "position": "west", "team": "east_west"}
+    ]
   }
 }
 ```
@@ -2057,6 +2066,47 @@ negative. If both teams reach 62 on the same hand, the bidding team wins;
 the top-level `winner` remains authoritative. These fields do not change the
 existing live `hand_points` calculation, which currently credits all trick
 points to the winner's team until final scoring applies the 2-of-trump split.
+
+`point_cards` lists every card that scored in the hand, in play order, as
+`{card, points, position, team}`. `position` is the seat that took the card:
+the trick winner, or for the 2 of trump the player who played it, who keeps
+it even when the other team wins the trick. Each team's `points` add up to its
+`captured`. The engine attributes the cards under the table's rules, so
+clients should render them rather than compute card points.
+
+**Hand history**:
+
+```json
+{
+  "hand_history": [
+    {
+      "hand_number": 1,
+      "bidding_team": "east_west",
+      "bidder": "east",
+      "bid": 6,
+      "trump": "spades",
+      "captured": {"north_south": 4, "east_west": 10},
+      "made": true,
+      "delta": {"north_south": 4, "east_west": 10},
+      "scores": {"north_south": 4, "east_west": 10},
+      "point_cards": [
+        {"card": {"rank": 14, "suit": "spades"}, "points": 1, "position": "north", "team": "north_south"},
+        {"card": {"rank": 11, "suit": "spades"}, "points": 1, "position": "south", "team": "north_south"},
+        {"card": {"rank": 5, "suit": "spades"}, "points": 5, "position": "west", "team": "east_west"},
+        {"card": {"rank": 5, "suit": "clubs"}, "points": 5, "position": "east", "team": "east_west"},
+        {"card": {"rank": 10, "suit": "spades"}, "points": 1, "position": "north", "team": "north_south"},
+        {"card": {"rank": 2, "suit": "spades"}, "points": 1, "position": "south", "team": "north_south"}
+      ]
+    }
+  ]
+}
+```
+
+`hand_history` is every scored hand of the game, oldest first, with the same
+fields and meaning as `last_hand` except `bids` and `tricks`. It starts empty,
+gains one entry when each hand scores, is not cleared by the next hand's first
+trick, survives reconnects and REST snapshots, and remains at game end. A
+rematch is a new game and starts with an empty `hand_history`.
 
 ### Room Codes
 
