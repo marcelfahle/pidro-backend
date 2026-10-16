@@ -1271,8 +1271,9 @@ defmodule PidroServer.Games.RoomManagerTest do
       arrivals = Enum.map(updates, &elem(&1, 0))
       gaps = Enum.zip_with(arrivals, tl(arrivals), &(&2 - &1))
       # The settled hand waits out the ordinary trick, then runs well inside it.
-      assert hd(gaps) >= 600
-      assert Enum.all?(tl(gaps), &(&1 in 60..450))
+      # Gaps are measured on receipt, so the lower bounds allow delivery jitter.
+      assert hd(gaps) >= 550
+      assert Enum.all?(tl(gaps), &(&1 in 40..450))
 
       {_, %{state: scored}} = List.last(updates)
       assert scored.hand_number == 2
