@@ -1016,7 +1016,37 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           %{
             "card" => %{"rank" => 5, "suit" => "hearts"},
             "points" => 5,
+            "position" => "south",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 14, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "north",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 11, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "north",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 2, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "south",
+            "team" => "north_south"
+          },
+          %{
+            "card" => %{"rank" => 5, "suit" => "diamonds"},
+            "points" => 5,
             "position" => "east",
+            "team" => "east_west"
+          },
+          %{
+            "card" => %{"rank" => 10, "suit" => "hearts"},
+            "points" => 1,
+            "position" => "west",
             "team" => "east_west"
           }
         ]

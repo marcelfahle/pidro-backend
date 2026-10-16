@@ -2042,8 +2042,12 @@ All game state sent through the API or WebSocket channels is serialized by `Pidr
     "delta": {"north_south": -9, "east_west": 6},
     "scores": {"north_south": -2, "east_west": 21},
     "point_cards": [
-      {"card": {"rank": 5, "suit": "hearts"}, "points": 5, "position": "east", "team": "east_west"},
-      {"card": {"rank": 2, "suit": "hearts"}, "points": 1, "position": "south", "team": "north_south"}
+      {"card": {"rank": 5, "suit": "hearts"}, "points": 5, "position": "south", "team": "north_south"},
+      {"card": {"rank": 14, "suit": "hearts"}, "points": 1, "position": "north", "team": "north_south"},
+      {"card": {"rank": 11, "suit": "hearts"}, "points": 1, "position": "north", "team": "north_south"},
+      {"card": {"rank": 2, "suit": "hearts"}, "points": 1, "position": "south", "team": "north_south"},
+      {"card": {"rank": 5, "suit": "diamonds"}, "points": 5, "position": "east", "team": "east_west"},
+      {"card": {"rank": 10, "suit": "hearts"}, "points": 1, "position": "west", "team": "east_west"}
     ]
   }
 }
@@ -2086,7 +2090,12 @@ clients should render them rather than compute card points.
       "delta": {"north_south": 4, "east_west": 10},
       "scores": {"north_south": 4, "east_west": 10},
       "point_cards": [
-        {"card": {"rank": 5, "suit": "spades"}, "points": 5, "position": "west", "team": "east_west"}
+        {"card": {"rank": 14, "suit": "spades"}, "points": 1, "position": "north", "team": "north_south"},
+        {"card": {"rank": 11, "suit": "spades"}, "points": 1, "position": "south", "team": "north_south"},
+        {"card": {"rank": 5, "suit": "spades"}, "points": 5, "position": "west", "team": "east_west"},
+        {"card": {"rank": 5, "suit": "clubs"}, "points": 5, "position": "east", "team": "east_west"},
+        {"card": {"rank": 10, "suit": "spades"}, "points": 1, "position": "north", "team": "north_south"},
+        {"card": {"rank": 2, "suit": "spades"}, "points": 1, "position": "south", "team": "north_south"}
       ]
     }
   ]
