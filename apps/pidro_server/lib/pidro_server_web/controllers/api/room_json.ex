@@ -8,7 +8,7 @@ defmodule PidroServerWeb.API.RoomJSON do
   """
 
   alias PidroServer.Accounts.Auth
-  alias PidroServer.Games.Room.{Config, Positions}
+  alias PidroServer.Games.Room.{Config, Positions, Seat}
   alias PidroServerWeb.Serializers.GameStateSerializer
 
   @doc """
@@ -190,6 +190,7 @@ defmodule PidroServerWeb.API.RoomJSON do
     user = seat_user(seat, users)
 
     seat
+    |> Map.put(:is_bot, bot_seat?(seat))
     |> Map.put(:username, seat_username(seat, user))
     |> Map.put(:display_name, seat_display_name(seat, user))
     |> Map.put(:avatar_url, if(user, do: user.avatar_url, else: nil))
@@ -224,11 +225,16 @@ defmodule PidroServerWeb.API.RoomJSON do
 
   defp seat_user(_seat, _users), do: nil
 
-  defp seat_username(seat, nil), do: if(bot_seat?(seat), do: "Bot", else: nil)
+  defp seat_username(seat, nil), do: bot_name(seat)
   defp seat_username(_seat, user), do: user.username
 
-  defp seat_display_name(seat, nil), do: if(bot_seat?(seat), do: "Bot", else: nil)
+  defp seat_display_name(seat, nil), do: bot_name(seat)
   defp seat_display_name(_seat, user), do: user.display_name
+
+  defp bot_name(%{bot_persona: persona}) when is_binary(persona),
+    do: Seat.bot_display_name(persona)
+
+  defp bot_name(seat), do: if(bot_seat?(seat), do: "Bot", else: nil)
 
   defp bot_seat?(%{occupant_type: :bot}), do: true
   defp bot_seat?(%{user_id: "bot_" <> _}), do: true

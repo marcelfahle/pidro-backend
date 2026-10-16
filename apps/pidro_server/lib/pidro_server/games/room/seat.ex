@@ -38,8 +38,14 @@ defmodule PidroServer.Games.Room.Seat do
           substitute: boolean(),
           decision_id: String.t() | nil,
           decision_player_id: String.t() | nil,
-          vacated_by: String.t() | nil
+          vacated_by: String.t() | nil,
+          bot_persona: bot_persona() | nil
         }
+
+  @typedoc "The crew a real bot seat is named after; substitute bots have none."
+  @type bot_persona :: String.t()
+
+  @bot_personas ~w(marcel antti jocke)
 
   defstruct [
     :position,
@@ -53,6 +59,7 @@ defmodule PidroServer.Games.Room.Seat do
     :decision_id,
     :decision_player_id,
     :vacated_by,
+    :bot_persona,
     is_owner: false,
     joined_at: nil,
     substitute: false
@@ -82,16 +89,31 @@ defmodule PidroServer.Games.Room.Seat do
     }
   end
 
-  @doc "Creates a new seat occupied by a bot."
-  @spec new_bot(position(), pid()) :: t()
-  def new_bot(position, bot_pid) do
+  @doc "Creates a new seat occupied by a bot, named after `bot_persona`."
+  @spec new_bot(position(), pid(), bot_persona() | nil) :: t()
+  def new_bot(position, bot_pid, bot_persona \\ nil) do
     %__MODULE__{
       position: position,
       occupant_type: :bot,
       bot_pid: bot_pid,
-      status: :connected
+      status: :connected,
+      bot_persona: bot_persona
     }
   end
+
+  @doc """
+  The persona for a bot taking a seat: the first of marcel, antti, jocke no
+  other seat holds. A fourth bot reuses marcel.
+  """
+  @spec next_bot_persona(map()) :: bot_persona()
+  def next_bot_persona(seats) when is_map(seats) do
+    taken = for {_position, %__MODULE__{bot_persona: persona}} <- seats, do: persona
+    Enum.find(@bot_personas, hd(@bot_personas), &(&1 not in taken))
+  end
+
+  @doc "The name a bot persona shows at the table."
+  @spec bot_display_name(bot_persona()) :: String.t()
+  def bot_display_name(persona) when persona in @bot_personas, do: String.capitalize(persona)
 
   @doc "Creates a new vacant seat."
   @spec new_vacant(position()) :: t()
@@ -292,6 +314,7 @@ defmodule PidroServer.Games.Room.Seat do
        | status: nil,
          occupant_type: :vacant,
          bot_pid: nil,
+         bot_persona: nil,
          user_id: nil,
          reserved_for: nil,
          disconnected_at: nil,
@@ -402,7 +425,8 @@ defmodule PidroServer.Games.Room.Seat do
       disconnected_at: maybe_to_iso8601(seat.disconnected_at),
       grace_expires_at: maybe_to_iso8601(seat.grace_expires_at),
       has_reservation: seat.reserved_for != nil,
-      joined_at: maybe_to_iso8601(seat.joined_at)
+      joined_at: maybe_to_iso8601(seat.joined_at),
+      bot_persona: seat.bot_persona
     }
 
     if seat.occupant_type == :vacant and is_binary(seat.vacated_by),

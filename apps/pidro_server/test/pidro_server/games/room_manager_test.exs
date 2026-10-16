@@ -112,6 +112,31 @@ defmodule PidroServer.Games.RoomManagerTest do
     end
   end
 
+  describe "bot personas" do
+    test "a bot keeps its persona when another bot leaves and a new one joins" do
+      {:ok, room} = RoomManager.create_room("host", %{name: "Crew"})
+
+      for position <- [:east, :south] do
+        assert {:ok, _, ^position} =
+                 RoomManager.join_bot(room.code, "bot_#{room.code}_#{position}", self(), position)
+      end
+
+      assert {:ok, %{seats: %{east: %{bot_persona: "marcel"}, south: %{bot_persona: "antti"}}}} =
+               RoomManager.get_room(room.code)
+
+      assert :ok = RoomManager.leave_room("bot_#{room.code}_east")
+
+      assert {:ok, _, :west} =
+               RoomManager.join_bot(room.code, "bot_#{room.code}_west", self(), :west)
+
+      assert {:ok, %{seats: seats}} = RoomManager.get_room(room.code)
+      assert seats.east.occupant_type == :vacant
+      assert seats.east.bot_persona == nil
+      assert seats.south.bot_persona == "antti"
+      assert seats.west.bot_persona == "marcel"
+    end
+  end
+
   describe "create_room/2 room code allocation" do
     # The :create_room handler reads an optional generator override from the
     # app env at call time so collisions can be forced deterministically.

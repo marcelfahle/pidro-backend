@@ -2873,7 +2873,12 @@ defmodule PidroServer.Games.RoomManager do
     with :ok <- ensure_room_open(room),
          :ok <- ensure_not_in_other_room(state, bot_id, room_code),
          {:ok, assigned_room, assigned_position} <- Positions.assign(room, bot_id, position) do
-      bot_seat = Seat.new_bot(assigned_position, bot_pid)
+      bot_seat =
+        Seat.new_bot(
+          assigned_position,
+          bot_pid,
+          room.seats |> Map.delete(assigned_position) |> Seat.next_bot_persona()
+        )
 
       updated =
         assigned_room
@@ -5381,7 +5386,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   defp serialize_seat_lifecycle(%Seat{occupant_type: :vacant}) do
-    %{status: :vacant, player_id: nil, username: nil, decision: nil}
+    %{status: :vacant, player_id: nil, username: nil, bot_persona: nil, decision: nil}
   end
 
   defp serialize_seat_lifecycle(%Seat{occupant_type: :human} = seat) do
@@ -5391,6 +5396,7 @@ defmodule PidroServer.Games.RoomManager do
       status: status,
       player_id: seat.user_id,
       username: nil,
+      bot_persona: nil,
       decision: nil
     }
   end
@@ -5401,6 +5407,7 @@ defmodule PidroServer.Games.RoomManager do
       status: :bot_substitute,
       player_id: player_id,
       username: nil,
+      bot_persona: nil,
       decision: nil
     }
   end
@@ -5411,7 +5418,13 @@ defmodule PidroServer.Games.RoomManager do
         %{id: seat.decision_id, player_id: seat.decision_player_id, player_name: nil}
       end
 
-    %{status: :permanent_bot, player_id: nil, username: "Bot", decision: decision}
+    %{
+      status: :permanent_bot,
+      player_id: nil,
+      username: if(seat.bot_persona, do: Seat.bot_display_name(seat.bot_persona), else: "Bot"),
+      bot_persona: seat.bot_persona,
+      decision: decision
+    }
   end
 
   defp lifecycle_owner_id(%Room{} = room) do
