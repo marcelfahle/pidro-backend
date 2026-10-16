@@ -207,9 +207,38 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
         team = Pidro.Core.Types.position_to_team(bidder)
         assert Enum.any?(after_drop, &match?({:hand_scored, ^team, _}, &1))
 
-        # Every substitute move came from a rule, not the fallback.
+        # Every substitute move came from a rule, not the fallback. A hand is
+        # settled when the bidder leads with every other seat cold; the room
+        # sweeps those plays (PID-220), so they carry no reasoning.
         reasons = collect_reasons(bidder)
-        plays = Enum.count(after_drop, &match?({:card_played, ^bidder, _}, &1))
+
+        cold =
+          for {position, player} <- at_drop.players,
+              position == bidder or player.eliminated?,
+              into: MapSet.new(),
+              do: position
+
+        on_table = if at_drop.current_trick, do: length(at_drop.current_trick.plays), else: 0
+
+        {plays, _cold, _on_table} =
+          Enum.reduce(after_drop, {0, cold, on_table}, fn
+            {:player_went_cold, position, _cards}, {plays, cold, on_table} ->
+              {plays, MapSet.put(cold, position), on_table}
+
+            {:trick_won, _position, _points}, {plays, cold, _on_table} ->
+              {plays, cold, 0}
+
+            {:card_played, ^bidder, _card}, {plays, cold, on_table} ->
+              swept? = on_table == 0 and MapSet.size(cold) == 4
+              {if(swept?, do: plays, else: plays + 1), cold, on_table + 1}
+
+            {:card_played, _position, _card}, {plays, cold, on_table} ->
+              {plays, cold, on_table + 1}
+
+            _event, acc ->
+              acc
+          end)
+
         assert length(reasons) == plays
 
         for reason <- reasons,
