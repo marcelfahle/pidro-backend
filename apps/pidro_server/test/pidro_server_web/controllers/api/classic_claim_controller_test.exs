@@ -49,11 +49,83 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
              "games_played" => 88,
              "level" => 14,
              "member_since" => "2011-01-02T00:00:00Z",
-             "name_allowed" => true
+             "name_allowed" => true,
+             "new_account" => %{"username" => "Veteran", "email" => nil}
            }
 
     assert Repo.get_by!(PidroServer.Accounts.ClassicClaimTicket, classic_user_id: 70_000).bound_user_id ==
              guest.id
+  end
+
+  describe "a signed-out Classic password claim" do
+    setup %{conn: conn} do
+      Req.Test.expect(PidroServer.Accounts.ClassicClient, fn classic_conn ->
+        Req.Test.json(classic_conn, %{
+          "classic" => %{
+            "id" => 70_301,
+            "username" => "tiger",
+            "email" => "sonja@example.com",
+            "level" => 1,
+            "games" => %{"total_game" => 6814}
+          }
+        })
+      end)
+
+      response =
+        conn
+        |> post(~p"/api/v1/classic/verify", %{
+          method: "password",
+          login: "tiger",
+          password: "classic-password",
+          install_id: "signed-out-install"
+        })
+        |> json_response(200)
+
+      {:ok, verified: response}
+    end
+
+    test "offers Classic's username and email and asks only for a password", ctx do
+      %{conn: conn, verified: verified} = ctx
+
+      OpenApiSpex.TestAssertions.assert_schema(
+        verified,
+        "Classic ownership verification response",
+        PidroServerWeb.ApiSpec.spec()
+      )
+
+      assert verified["data"]["classic"]["new_account"] ==
+               %{"username" => "tiger", "email" => "sonja@example.com"}
+
+      user =
+        conn
+        |> post(~p"/api/v1/classic/claim", %{
+          ticket: verified["data"]["ticket"],
+          install_id: "signed-out-install",
+          account: %{password: "secret123"}
+        })
+        |> json_response(200)
+        |> get_in(["data", "user"])
+
+      assert user["username"] == "tiger"
+      assert Repo.get!(User, user["id"]).email == "sonja@example.com"
+    end
+
+    test "still accepts an older client's username, email and password", ctx do
+      %{conn: conn, verified: verified} = ctx
+
+      user =
+        conn
+        |> post(~p"/api/v1/classic/claim", %{
+          ticket: verified["data"]["ticket"],
+          install_id: "signed-out-install",
+          account: %{username: "tiger", email: "sonja@example.com", password: "secret123"}
+        })
+        |> json_response(200)
+        |> get_in(["data", "user"])
+
+      assert user["username"] == "tiger"
+      assert Repo.get!(User, user["id"]).classic_user_id == 70_301
+    end
   end
 
   describe "verify of a Classic account that is already linked" do

@@ -23,6 +23,17 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
           type: :boolean,
           description:
             "Whether the Classic name may be public; false requires account.display_name on the initial claim"
+        },
+        new_account: %Schema{
+          type: :object,
+          nullable: true,
+          description:
+            "Only on a password verification by a signed-out player or a guest: the username and email the new account takes from Classic. The player cannot change them; each is null when the player must choose it.",
+          required: [:username, :email],
+          properties: %{
+            username: %Schema{type: :string, nullable: true},
+            email: %Schema{type: :string, nullable: true}
+          }
         }
       }
     })
@@ -163,7 +174,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
         account: %Schema{
           type: :object,
           description:
-            "Required on a fresh install. Password claims need username, email and password; social claims need username. Authenticated initial claims also use account.display_name when the Classic name is not allowed.",
+            "Required on a fresh install. Password claims need a password, plus username and email where the verify preview's new_account has none; a username or email it offers is taken from Classic and the request's value ignored. Social claims need username. Authenticated initial claims also use account.display_name when the Classic name is not allowed.",
           properties: %{
             username: %Schema{type: :string, minLength: 3, maxLength: 20},
             email: %Schema{type: :string, format: :email},

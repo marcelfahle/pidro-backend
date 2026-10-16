@@ -4,7 +4,15 @@ defmodule PidroServer.Accounts.ClassicVerification do
   require Logger
 
   alias PidroServer.Accounts
-  alias PidroServer.Accounts.{ClassicClaims, ClassicClient, FacebookCredential, ProviderIdentity}
+
+  alias PidroServer.Accounts.{
+    ClassicClaims,
+    ClassicClient,
+    FacebookCredential,
+    ProviderIdentity,
+    User
+  }
+
   alias PidroServer.Profiles.LegacyProgression
 
   def verify(params, current_user, opts \\ [])
@@ -16,7 +24,8 @@ defmodule PidroServer.Accounts.ClassicVerification do
     with {:ok, binding} <- binding(current_user, params),
          {:ok, method} <- method(params),
          {:ok, profile, identity, matched_on} <- verify_method(method, params, classic, providers),
-         {:ok, result} <- issue_ticket(binding, method, profile, identity, matched_on) do
+         {:ok, result} <-
+           issue_ticket(binding, method, profile, identity, matched_on, current_user) do
       {:ok, result}
     else
       {:error, :not_found} -> {:error, :invalid_credentials}
@@ -42,7 +51,7 @@ defmodule PidroServer.Accounts.ClassicVerification do
 
     with {:ok, profile, matched_on} <- lookup_provider(classic, identity),
          {:ok, binding} <- binding(nil, params) do
-      issue_ticket(binding, provider, profile, identity, matched_on)
+      issue_ticket(binding, provider, profile, identity, matched_on, nil)
     end
   end
 
@@ -268,12 +277,13 @@ defmodule PidroServer.Accounts.ClassicVerification do
     do:
       fetch(profile, :account_deleted) == true or get_in(profile, ["account", "deleted"]) == true
 
-  defp issue_ticket(binding, method, profile, identity, matched_on) do
+  defp issue_ticket(binding, method, profile, identity, matched_on, current_user) do
     provider_id = if identity, do: identity.subject
 
     with {:ok, classic_user_id} <- classic_user_id(profile),
          legacy = legacy_data(profile),
          {:ok, preview} <- preview(legacy),
+         new_account = new_account(method, profile, classic_user_id, current_user),
          {:ok, ticket} <-
            ClassicClaims.issue_ticket(
              binding
@@ -283,18 +293,32 @@ defmodule PidroServer.Accounts.ClassicVerification do
                matched_on: matched_on,
                provider_id: provider_id,
                provider_identity: identity,
-               legacy_data: legacy
+               legacy_data: legacy,
+               new_account: new_account
              })
            ) do
       {:ok,
        ticket
-       |> Map.put(:classic, preview)
+       |> Map.put(:classic, put_new_account(preview, new_account))
        |> Map.put(
          :already_claimed,
          ClassicClaims.already_claimed(classic_user_id, method, binding[:user_id])
        )}
     end
   end
+
+  # Only a password claim by a signed-out player or a guest creates the
+  # account it names; it takes Classic's username and email.
+  defp new_account(:password, profile, classic_user_id, nil),
+    do: ClassicClaims.new_account(profile, classic_user_id)
+
+  defp new_account(:password, profile, classic_user_id, %User{guest: true} = guest),
+    do: ClassicClaims.new_account(profile, classic_user_id, guest)
+
+  defp new_account(_method, _profile, _classic_user_id, _user), do: nil
+
+  defp put_new_account(preview, nil), do: preview
+  defp put_new_account(preview, new_account), do: Map.put(preview, :new_account, new_account)
 
   defp apple_audience(audience) when is_binary(audience), do: audience
   defp apple_audience([audience | _rest]) when is_binary(audience), do: audience

@@ -744,6 +744,127 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
     end
   end
 
+  describe "new_account/3" do
+    test "offers Classic's username and email when they are valid and free" do
+      assert ClassicClaims.new_account(%{"username" => " tiger ", "email" => "s@example.com"}, 1) ==
+               %{username: "tiger", email: "s@example.com"}
+
+      for {username, email} <- [{nil, nil}, {"", "not-an-email"}, {"Fuckface", 7}, {"ab", ""}] do
+        assert ClassicClaims.new_account(%{"username" => username, "email" => email}, 1) ==
+                 %{username: nil, email: nil}
+      end
+    end
+
+    test "offers nothing another account has, except to that account" do
+      other = AccountsFixtures.user_fixture()
+      classic = %{"username" => other.username, "email" => String.upcase(other.email)}
+
+      assert ClassicClaims.new_account(classic, 1) == %{username: nil, email: nil}
+
+      assert ClassicClaims.new_account(classic, 1, other) ==
+               %{username: other.username, email: String.upcase(other.email)}
+    end
+
+    test "a Classic name is free to its own Classic account only" do
+      assert {:ok, _result} =
+               ClassicNameReservations.import([%{id: 60_010, username: "Reserved Tiger"}])
+
+      assert %{username: "Reserved Tiger"} =
+               ClassicClaims.new_account(%{"username" => "Reserved Tiger"}, 60_010)
+
+      assert %{username: nil} =
+               ClassicClaims.new_account(%{"username" => "Reserved Tiger"}, 60_011)
+    end
+  end
+
+  describe "a password claim offered Classic's username and email" do
+    @offer %{username: "tiger", email: "sonja@example.com"}
+
+    test "creates a signed-out player's account from only a password" do
+      ticket = offer_ticket!(%{install_id: "only-password"}, 60_001, @offer)
+
+      assert {:ok, created} =
+               ClassicClaims.redeem(ticket, nil, %{
+                 "install_id" => "only-password",
+                 "account" => %{"password" => "secret123"}
+               })
+
+      assert {created.username, created.email} == {"tiger", "sonja@example.com"}
+      assert {:ok, signed_in} = Auth.authenticate_user("tiger", "secret123")
+      assert signed_in.id == created.id
+    end
+
+    test "saves a guest from only a password" do
+      guest = AccountsFixtures.guest_fixture()
+      ticket = offer_ticket!(%{user_id: guest.id}, 60_002, @offer)
+
+      assert {:ok, claimed} =
+               ClassicClaims.redeem(ticket, guest, %{account: %{password: "secret123"}})
+
+      assert claimed.id == guest.id
+      refute claimed.guest
+      assert {claimed.username, claimed.email} == {"tiger", "sonja@example.com"}
+      assert {:ok, %User{id: id}} = Auth.authenticate_user("sonja@example.com", "secret123")
+      assert id == guest.id
+    end
+
+    test "keeps them over what an old or edited request sends" do
+      ticket = offer_ticket!(%{install_id: "old-client"}, 60_003, @offer)
+
+      assert {:ok, created} =
+               ClassicClaims.redeem(ticket, nil, %{
+                 install_id: "old-client",
+                 account: %{
+                   username: "other_name",
+                   email: "other@example.com",
+                   password: "secret123"
+                 }
+               })
+
+      assert {created.username, created.email} == {"tiger", "sonja@example.com"}
+    end
+
+    test "lets a player without a Classic username choose one" do
+      offer = %{username: nil, email: "bengt@example.com"}
+      ticket = offer_ticket!(%{install_id: "no-username"}, 60_004, offer)
+      params = %{install_id: "no-username", account: %{password: "secret123"}}
+
+      assert {:error, changeset} = ClassicClaims.redeem(ticket, nil, params)
+      assert %{username: ["can't be blank"]} = errors_on(changeset)
+
+      assert {:ok, created} =
+               ClassicClaims.redeem(ticket, nil, put_in(params.account[:username], "bengt_1914"))
+
+      assert {created.username, created.email} == {"bengt_1914", "bengt@example.com"}
+    end
+
+    test "answers the field error when an offered value was taken since verify" do
+      username_ticket = offer_ticket!(%{install_id: "taken-name"}, 60_005, @offer)
+      email_ticket = offer_ticket!(%{install_id: "taken-email"}, 60_006, @offer)
+      AccountsFixtures.user_fixture(username: "tiger")
+
+      assert {:error, changeset} =
+               ClassicClaims.redeem(username_ticket, nil, %{
+                 install_id: "taken-name",
+                 account: %{password: "secret123"}
+               })
+
+      assert %{username: ["has already been taken"]} = errors_on(changeset)
+
+      Repo.delete_all(from(u in User, where: u.username == "tiger"))
+      AccountsFixtures.user_fixture(email: "sonja@example.com")
+
+      assert {:error, changeset} =
+               ClassicClaims.redeem(email_ticket, nil, %{
+                 install_id: "taken-email",
+                 account: %{password: "secret123"}
+               })
+
+      assert %{email: ["has already been taken"]} = errors_on(changeset)
+      assert Repo.get_by(User, classic_user_id: 60_006) == nil
+    end
+  end
+
   test "a saved account claiming by password is unchanged" do
     user = AccountsFixtures.user_fixture()
     ticket = issue_ticket!(user, 50_005, :password, nil, %{xp: 90})
@@ -793,6 +914,20 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
         user_id: user.id,
         legacy_data: Map.put(legacy_data, :classic_user_id, classic_user_id)
       })
+
+    ticket
+  end
+
+  defp offer_ticket!(binding, classic_user_id, new_account) do
+    {:ok, %{ticket: ticket}} =
+      binding
+      |> Map.merge(%{
+        classic_user_id: classic_user_id,
+        method: :password,
+        new_account: new_account,
+        legacy_data: %{classic_user_id: classic_user_id, xp: 10}
+      })
+      |> ClassicClaims.issue_ticket()
 
     ticket
   end
