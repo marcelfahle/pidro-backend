@@ -11,7 +11,7 @@ defmodule PidroServerWeb.WellKnownController do
   `config :pidro_server, PidroServerWeb.WellKnownController`:
 
     * `:ios_app_ids` — `["TEAMID.bundle.id", ...]`
-    * `:ios_paths` — path patterns in order, e.g. `["/j/*", "/app/*"]`
+    * `:ios_paths` — path patterns in order, e.g. `["/j/*", "/play/*", "/app/*"]`
     * `:android_packages` — `[%{package: "...", fingerprints: ["AA:BB:...", ...]}]`
 
   Defaults live in `config/config.exs` for every environment. `config/runtime.exs`
@@ -40,7 +40,7 @@ defmodule PidroServerWeb.WellKnownController do
     config = config()
 
     components =
-      Enum.map(Keyword.fetch!(config, :ios_paths), &%{"/" => &1, "comment" => "invite links"})
+      Enum.map(Keyword.fetch!(config, :ios_paths), &%{"/" => &1, "comment" => "Pidro links"})
 
     body = %{
       applinks: %{

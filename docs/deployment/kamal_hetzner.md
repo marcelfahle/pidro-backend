@@ -143,7 +143,8 @@ only the key it names, and defaults live in `config/config.exs`.
   invite link: `PidroServer.Invites.url/1` renders `<base>/<CODE>` and
   `share_text` repeats the dashed code. It must point at the host serving the
   invite landing page, which is also the host whose
-  `/.well-known/apple-app-site-association` `AASA_PATHS` must cover `/j/*`. If
+  `/.well-known/apple-app-site-association` `AASA_PATHS` must cover `/j/*` and
+  the player share links `/play/*` (`PidroServer.Invites.play_url/1`). If
   the landing host moves, change this **and** the AASA paths in the same deploy;
   links already in the wild keep pointing at the old host until they expire
   (24 hours).

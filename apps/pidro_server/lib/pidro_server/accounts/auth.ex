@@ -297,17 +297,32 @@ defmodule PidroServer.Accounts.Auth do
   def public_profile(user_id) when is_binary(user_id) do
     with {:ok, id} <- Ecto.UUID.cast(user_id),
          %User{} = user <- Repo.get(User, id) do
-      {:ok,
-       %{
-         user_id: user.id,
-         username: user.username,
-         display_name: user.display_name,
-         avatar_url: PidroServer.Accounts.Avatars.url(Avatars.metadata_for(user.id), user.id),
-         bio: user.bio
-       }}
+      {:ok, public_identity(user)}
     else
       _ -> {:error, :not_found}
     end
+  end
+
+  @doc "Returns `public_profile/1` for the user a share link names."
+  def public_profile_by_slug(slug) when is_binary(slug) do
+    case get_user_by_share_slug(slug) do
+      %User{} = user -> {:ok, public_identity(user)}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  @doc "Gets the user a share slug names, or nil."
+  @spec get_user_by_share_slug(String.t()) :: User.t() | nil
+  def get_user_by_share_slug(slug) when is_binary(slug), do: Repo.get_by(User, share_slug: slug)
+
+  defp public_identity(user) do
+    %{
+      user_id: user.id,
+      username: user.username,
+      display_name: user.display_name,
+      avatar_url: PidroServer.Accounts.Avatars.url(Avatars.metadata_for(user.id), user.id),
+      bio: user.bio
+    }
   end
 
   @doc """

@@ -82,6 +82,7 @@ defmodule PidroServerWeb.Router do
     pipe_through :invite_page
 
     get "/j/:code", InvitePageController, :show, private: %{rate_limit: [:invite_page]}
+    get "/play/:slug", PlayPageController, :show
   end
 
   scope "/", PidroServerWeb do
@@ -182,6 +183,7 @@ defmodule PidroServerWeb.Router do
     get "/profile", ProfileController, :show
     patch "/profile", ProfileController, :update
     get "/profiles/:id", ProfileController, :public
+    get "/players/by-slug/:slug", ProfileController, :by_slug
     post "/profile/avatar", AvatarController, :create, private: %{rate_limit: [:avatar_upload]}
     delete "/profile/avatar", AvatarController, :delete
 

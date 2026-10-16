@@ -32,8 +32,9 @@ defmodule PidroServerWeb.WellKnownControllerTest do
       assert detail["appIDs"] == @app_ids
 
       assert [
-               %{"/" => "/j/*", "comment" => "invite links"},
-               %{"/" => "/app/*", "comment" => "invite links"}
+               %{"/" => "/j/*", "comment" => "Pidro links"},
+               %{"/" => "/play/*", "comment" => "Pidro links"},
+               %{"/" => "/app/*", "comment" => "Pidro links"}
              ] = detail["components"]
 
       assert_association_headers(conn)
@@ -67,7 +68,7 @@ defmodule PidroServerWeb.WellKnownControllerTest do
       assert [detail] = json_response(conn, 200)["applinks"]["details"]
       assert detail["appIDs"] == ["LSFK7YF82G.com.example.one", "LSFK7YF82G.com.example.two"]
       # paths were not overridden, so the defaults stay in place
-      assert [%{"/" => "/j/*"}, %{"/" => "/app/*"}] = detail["components"]
+      assert [%{"/" => "/j/*"}, %{"/" => "/play/*"}, %{"/" => "/app/*"}] = detail["components"]
     end
   end
 

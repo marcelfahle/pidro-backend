@@ -1,7 +1,10 @@
 defmodule PidroServer.Accounts.UserTest do
   use PidroServer.DataCase, async: true
 
-  alias PidroServer.Accounts.User
+  import Ecto.Query, only: [from: 2]
+
+  alias PidroServer.Accounts
+  alias PidroServer.Accounts.{Auth, User}
   alias PidroServer.AccountsFixtures
 
   describe "changeset/2" do
@@ -415,4 +418,87 @@ defmodule PidroServer.Accounts.UserTest do
 
   defp email_changeset(email),
     do: User.changeset(%User{}, %{username: "anna", email: email})
+
+  describe "share_slug/2" do
+    defp slug(username, taken \\ []), do: User.share_slug(username, &(&1 in taken))
+
+    test "transliterates Swedish and German letters and drops other marks" do
+      assert slug("Åsa Öberg") == "asa-oberg"
+      assert slug("Jürgen Häkkinen") == "jurgen-hakkinen"
+      assert slug("Renée") == "renee"
+    end
+
+    test "turns spaces into dashes, strips the rest and collapses dashes" do
+      assert slug("  Bengt  the -- Great!  ") == "bengt-the-great"
+      assert slug("anna_b/c.d") == "annabcd"
+      assert slug("Ünal 🃏 Ok") == "unal-ok"
+    end
+
+    test "prefixes a too-short result" do
+      assert slug("Bo!") == "player-bo"
+      assert slug("日本語") == "player"
+    end
+
+    test "numbers clashes from 2 and keeps every candidate within 30 characters" do
+      assert slug("Bengt", ["bengt"]) == "bengt-2"
+      assert slug("bengt", ["bengt", "bengt-2"]) == "bengt-3"
+
+      long = String.duplicate("a", 28) <> " b"
+      assert slug(long) == String.duplicate("a", 28) <> "-b"
+      assert slug(long, [slug(long)]) == String.duplicate("a", 28) <> "-2"
+    end
+  end
+
+  describe "share slugs on accounts" do
+    test "registration sets the slug once and a case-only clash gets a suffix" do
+      bengt = AccountsFixtures.user_fixture(%{username: "Bengt"})
+      lower = AccountsFixtures.user_fixture(%{username: "bengt"})
+
+      assert {bengt.share_slug, lower.share_slug} == {"bengt", "bengt-2"}
+
+      {:ok, renamed} = Auth.update_user(bengt, %{username: "Bengt Two"})
+      assert renamed.share_slug == "bengt"
+    end
+
+    test "guests have none until they register" do
+      guest = AccountsFixtures.guest_fixture()
+      assert guest.share_slug == nil
+
+      {:ok, upgraded} =
+        Auth.upgrade_guest(guest, %{
+          username: "Göran",
+          email: "goran@example.com",
+          password: AccountsFixtures.valid_user_password()
+        })
+
+      assert upgraded.share_slug == "goran"
+    end
+
+    test "the backfill gives registered accounts slugs, oldest first" do
+      older = AccountsFixtures.user_fixture(%{username: "Märta"})
+      newer = AccountsFixtures.user_fixture(%{username: "marta"})
+      kept = AccountsFixtures.user_fixture(%{username: "Kept"})
+      guest = AccountsFixtures.guest_fixture()
+
+      Repo.update_all(from(u in User, where: u.id in ^[older.id, newer.id]),
+        set: [share_slug: nil]
+      )
+
+      Repo.update_all(from(u in User, where: u.id == ^older.id),
+        set: [inserted_at: ~U[2020-01-01 00:00:00.000000Z]]
+      )
+
+      assert :ok = Accounts.backfill_share_slugs()
+
+      slugs =
+        Map.new([older, newer, kept, guest], &{&1.id, Repo.get!(User, &1.id).share_slug})
+
+      assert slugs == %{
+               older.id => "marta",
+               newer.id => "marta-2",
+               kept.id => "kept",
+               guest.id => nil
+             }
+    end
+  end
 end

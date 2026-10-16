@@ -88,6 +88,13 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             "Optional display name shown at the table (2-20 graphemes); null when unset",
           example: "Anna"
         },
+        share_slug: %Schema{
+          type: :string,
+          nullable: true,
+          pattern: "^[a-z0-9-]{3,30}$",
+          description: "Handle of the share link pidro.online/play/<share_slug>; null for guests",
+          example: "bengt"
+        },
         guest: %Schema{
           type: :boolean,
           description:

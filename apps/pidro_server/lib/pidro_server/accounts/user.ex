@@ -29,6 +29,13 @@ defmodule PidroServer.Accounts.User do
   2 to 20 graphemes long.
   `name_key/1` derives the look-alike key guest creation compares against.
 
+  ## Share slugs
+
+  `share_slug` is the lowercase ASCII handle in `pidro.online/play/<slug>`.
+  Every changeset that gives a registered account its username sets it once,
+  at insert or upgrade time, through `share_slug/2`; it never changes
+  afterwards, so printed links keep working. Guests have none.
+
   `token_version` defaults to 0 both in the schema and in the database so a
   freshly inserted struct signs a valid token without a reload.
   `last_seen_at` is written only by `PidroServer.Accounts.Auth.touch_last_seen/1`;
@@ -38,6 +45,7 @@ defmodule PidroServer.Accounts.User do
 
   use Ecto.Schema
   import Ecto.Changeset
+  import Ecto.Query, only: [from: 2]
 
   alias PidroServer.Mailer
 
@@ -50,6 +58,8 @@ defmodule PidroServer.Accounts.User do
   @username_min_length 3
   @username_max_length 20
   @password_min_length 8
+  @share_slug_min_length 3
+  @share_slug_max_length 30
   @email_format ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
   @bio_edge_whitespace ~r/^[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}-\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+|[\x{0009}-\x{000D}\x{0020}\x{00A0}\x{1680}\x{2000}-\x{200A}\x{2028}-\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]+$/u
 
@@ -67,6 +77,7 @@ defmodule PidroServer.Accounts.User do
     field(:username, :string)
     field(:email, :string)
     field(:display_name, :string)
+    field(:share_slug, :string)
     field(:bio, :string)
     field(:password, :string, virtual: true)
     field(:password_hash, :string)
@@ -134,6 +145,7 @@ defmodule PidroServer.Accounts.User do
     |> validate_username()
     |> validate_display_name()
     |> unique_constraint(:username)
+    |> put_share_slug()
   end
 
   @doc "Builds an account for a verified provider identity."
@@ -200,6 +212,7 @@ defmodule PidroServer.Accounts.User do
     |> unique_constraint(:username)
     |> unique_constraint(:email)
     |> unique_constraint(:email, name: :users_lower_email_index)
+    |> put_share_slug()
   end
 
   @doc "Builds a changeset that can change only the public profile biography."
@@ -304,6 +317,7 @@ defmodule PidroServer.Accounts.User do
     |> unique_constraint(:username)
     |> unique_constraint(:email)
     |> unique_constraint(:email, name: :users_lower_email_index)
+    |> put_share_slug()
   end
 
   @doc """
@@ -385,6 +399,77 @@ defmodule PidroServer.Accounts.User do
     else
       key
     end
+  end
+
+  @doc """
+  Derives the share slug of a username: the first candidate `taken?` rejects
+  not, out of `base`, `base-2`, `base-3`, ...
+
+  The base is the username NFKD-decomposed with combining marks dropped (so
+  `å`, `ä`, `ö` and `ü` become `a`, `a`, `o` and `u`), downcased, whitespace
+  turned into `-`, everything outside `[a-z0-9-]` stripped and dashes
+  collapsed and trimmed. A base shorter than 3 characters is prefixed with
+  `player-`. Every candidate is at most 30 characters.
+
+  ## Examples
+
+      iex> PidroServer.Accounts.User.share_slug("Björn Ågren", fn _ -> false end)
+      "bjorn-agren"
+
+      iex> PidroServer.Accounts.User.share_slug("bengt", &(&1 == "bengt"))
+      "bengt-2"
+  """
+  @spec share_slug(String.t(), (String.t() -> boolean())) :: String.t()
+  def share_slug(username, taken?) when is_binary(username) do
+    base = share_slug_base(username)
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Stream.map(&share_slug_candidate(base, &1))
+    |> Enum.find(&(not taken?.(&1)))
+  end
+
+  defp share_slug_base(username) do
+    slug =
+      username
+      |> nfkd()
+      |> String.replace(@combining_marks, "")
+      |> String.downcase()
+      |> String.replace(~r/\s+/u, "-")
+      |> String.replace(~r/[^a-z0-9-]/, "")
+      |> String.replace(~r/-+/, "-")
+      |> String.trim("-")
+
+    if String.length(slug) < @share_slug_min_length,
+      do: String.trim_trailing("player-" <> slug, "-"),
+      else: slug
+  end
+
+  defp share_slug_candidate(base, 1), do: fit_slug(base, @share_slug_max_length)
+
+  defp share_slug_candidate(base, n) do
+    suffix = "-#{n}"
+    fit_slug(base, @share_slug_max_length - byte_size(suffix)) <> suffix
+  end
+
+  defp fit_slug(base, length), do: base |> String.slice(0, length) |> String.trim_trailing("-")
+
+  # Runs at insert/update time, after the changeset is valid, so the final
+  # `guest` flag and username decide. An existing slug is never replaced.
+  defp put_share_slug(changeset) do
+    changeset
+    |> unique_constraint(:share_slug)
+    |> prepare_changes(fn changeset ->
+      if get_field(changeset, :guest) or get_field(changeset, :share_slug) do
+        changeset
+      else
+        slug =
+          share_slug(get_field(changeset, :username), fn slug ->
+            changeset.repo.exists?(from(u in __MODULE__, where: u.share_slug == ^slug))
+          end)
+
+        put_change(changeset, :share_slug, slug)
+      end
+    end)
   end
 
   @doc false
