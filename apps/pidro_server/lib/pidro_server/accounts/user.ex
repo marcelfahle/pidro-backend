@@ -402,8 +402,8 @@ defmodule PidroServer.Accounts.User do
   end
 
   @doc """
-  Derives the share slug of a username: the first candidate `taken?` rejects
-  not, out of `base`, `base-2`, `base-3`, ...
+  Derives the share slug of a username: the first of `base`, `base-2`,
+  `base-3`, ... for which `taken?` answers false.
 
   The base is the username NFKD-decomposed with combining marks dropped (so
   `å`, `ä`, `ö` and `ü` become `a`, `a`, `o` and `u`), downcased, whitespace
