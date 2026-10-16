@@ -1536,6 +1536,42 @@ defmodule PidroServerWeb.GameChannelTest do
       assert pushed == %{}
     end
 
+    test "a join after game over replies with the summary until a rematch starts", %{
+      users: users,
+      user1: user,
+      user3: partner,
+      room: room,
+      room_code: room_code,
+      sockets: sockets
+    } do
+      game_over = {:game_over, room_code, :north_south, %{north_south: 62, east_west: 45}}
+      send(GenServer.whereis(RoomManager), game_over)
+      {:ok, %{status: :finished}} = RoomManager.get_room(room_code)
+
+      {:ok, reply, socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      assert %{xp_earned: 112, partner: %{user_id: partner_id, games_together: 1}} =
+               reply.progression_summary
+
+      assert partner_id == partner.id
+
+      epoch = reply.readiness.ready_epoch
+      ref = push(socket, "rematch", %{"room_id" => room.id, "ready_epoch" => epoch})
+      assert_reply ref, :ok, _
+
+      for u <- tl(users) do
+        {:ok, _} = RoomManager.confirm_rematch(room_code, room.id, u.id, self(), epoch)
+      end
+
+      {:ok, %{status: :playing}} = RoomManager.get_room(room_code)
+
+      {:ok, reply, _socket} =
+        subscribe_and_join(sockets[user.id], GameChannel, "game:#{room_code}", %{})
+
+      refute Map.has_key?(reply, :progression_summary)
+    end
+
     test "the base game_over push is unchanged (regression guard)", %{
       user1: user,
       room_code: room_code,

@@ -896,6 +896,67 @@ defmodule PidroServer.Stats.ProfileRollupTest do
       assert Repo.aggregate(PlayerProfile, :count) == 0
     end
 
+    test "partner: the run with this partner survives games with others; a loss resets it" do
+      [hero, nora, other, o1, o2] = for _ <- 1..5, do: player_id()
+      Repo.update_all(from(u in User, where: u.id == ^nora), set: [display_name: "Nora"])
+
+      play = fn code, partner, winner, i ->
+        results = %{
+          hero => result_for(:north_south, winner, :north),
+          o1 => result_for(:east_west, winner, :east),
+          partner => result_for(:north_south, winner, :south),
+          o2 => result_for(:east_west, winner, :west)
+        }
+
+        seed_completed(code, winner, results, DateTime.add(@base, i))
+        {:ok, summaries} = Profiles.apply_completed_game(results, winner, %{})
+        summaries
+      end
+
+      play.("RUN1", nora, :north_south, 1)
+      play.("RUN2", nora, :east_west, 2)
+      play.("RUN3", nora, :north_south, 3)
+      # A loss with someone else does not break the run with Nora.
+      play.("RUN4", other, :east_west, 4)
+      summaries = play.("RUN5", nora, :north_south, 5)
+
+      assert summaries[hero].partner == %{
+               user_id: nora,
+               display_name: "Nora",
+               games_together: 4,
+               wins_in_a_row: 2
+             }
+
+      assert %{user_id: ^hero, games_together: 4, wins_in_a_row: 2} = summaries[nora].partner
+      assert %{user_id: ^o2, games_together: 5, wins_in_a_row: 0} = summaries[o1].partner
+
+      summaries = play.("RUN6", nora, :east_west, 6)
+      assert %{games_together: 5, wins_in_a_row: 0} = summaries[hero].partner
+    end
+
+    test "partner is nil beside a bot or a guest" do
+      [hero, o1, o2] = for _ <- 1..3, do: player_id()
+      guest = AccountsFixtures.guest_fixture().id
+
+      solo = %{hero => result_for(:north_south, :north_south, :north)}
+      seed_completed("BOTPART", :north_south, solo)
+
+      assert {:ok, %{^hero => %{partner: nil}}} =
+               Profiles.apply_completed_game(solo, :north_south, %{})
+
+      results = %{
+        hero => result_for(:north_south, :north_south, :north),
+        o1 => result_for(:east_west, :north_south, :east),
+        guest => result_for(:north_south, :north_south, :south),
+        o2 => result_for(:east_west, :north_south, :west)
+      }
+
+      seed_completed("GUESTPART", :north_south, results)
+      assert {:ok, summaries} = Profiles.apply_completed_game(results, :north_south, %{})
+      assert summaries[hero].partner == nil
+      assert %{user_id: ^hero, games_together: 1, wins_in_a_row: 1} = summaries[guest].partner
+    end
+
     test "idempotent re-fire produces no second progression_summary broadcast" do
       [n, e, s, w] = for _ <- 1..4, do: player_id()
 

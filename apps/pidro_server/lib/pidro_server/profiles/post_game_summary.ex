@@ -23,6 +23,13 @@ defmodule PidroServer.Profiles.PostGameSummary do
     * `veteran_progress` — `%{into, span, max}` (normalized; never a raw tuple)
     * `achievements_unlocked` — `[%{key, name, tier}]` (empty when none)
 
+  Partnership (PID-234; `nil` for a bot or guest partner, or no partner):
+
+    * `partner` — `%{user_id, display_name, games_together, wins_in_a_row}`.
+      `games_together` counts this game; `wins_in_a_row` is the current run of
+      wins with this partner (0 when this game was lost). Games with other
+      partners do not break it.
+
   Rated only (`nil` when casual — casual leads with Veteran/Mastery, never a
   loud skill number):
 
@@ -55,6 +62,7 @@ defmodule PidroServer.Profiles.PostGameSummary do
 
   @typedoc "The per-game computed deltas for one participant."
   @type deltas :: %{
+          optional(:partner) => map() | nil,
           xp_earned: non_neg_integer(),
           veteran_xp_after: non_neg_integer(),
           rated?: boolean(),
@@ -91,7 +99,8 @@ defmodule PidroServer.Profiles.PostGameSummary do
       title_changed: title_after != title_before,
       veteran_progress: normalize_progress(Progression.level_progress(xp_after)),
       achievements_unlocked: achievements(deltas.newly_earned_keys),
-      rating: rating_block(before, deltas)
+      rating: rating_block(before, deltas),
+      partner: Map.get(deltas, :partner)
     }
   end
 

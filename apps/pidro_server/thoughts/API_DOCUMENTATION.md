@@ -1253,7 +1253,8 @@ gameChannel.join()
     //   reconnected: false,     // true if this was a reconnection
     //   legal_actions: [],      // available actions for this player
     //   state: { /* ... */ },   // game state (if game has started)
-    //   position: "north"       // player's position (players only)
+    //   position: "north",      // player's position (players only)
+    //   progression_summary: {} // players joining a finished room only, until a rematch starts
     // }
     console.log("Joined game as", response.role)
     console.log("Position:", response.position)
@@ -1282,12 +1283,39 @@ gameChannel.join()
 | `player_left` | `{ player_id }` | Player left the game |
 | `turn_changed` | `{ current_player }` | Current turn changed |
 | `game_over` | `{ winner, scores }` | Game ended |
+| `progression_summary` | See below | This player's post-game summary, pushed once after game over |
 | `invite_redeemed` | `{ position, user_id, display_name }` | Somebody claimed a seat through the invite link |
 | `seat_moved` | `{ user_id, from, to }` | The host (or the player themselves) moved a seat |
 | `player_kicked` | `{ position, user_id }` | The host kicked a seat; sent to everybody else |
 | `kicked` | `{ reason: "kicked" }` | Sent to the kicked player only, then the channel closes |
 | `presence_state` | Presence info | Who's currently online |
 | `presence_diff` | Presence changes | Online status changes |
+
+**Post-game summary**: `progression_summary` carries only the receiving player's
+summary (spectators get `{}`). A player who joins while the room is finished gets
+the same map as `progression_summary` in the join reply, so a reconnect or app
+restart can show the game-over screen again; it is gone once a rematch starts.
+
+```json
+{
+  "rated": true,
+  "xp_earned": 112,
+  "veteran_xp": 1240,
+  "veteran_level_before": 4, "veteran_level": 5, "leveled_up": true,
+  "veteran_title_before": "...", "veteran_title": "...", "title_changed": false,
+  "veteran_progress": { "into": 40, "span": 300, "max": false },
+  "achievements_unlocked": [{ "key": "player", "name": "Player", "tier": 1 }],
+  "rating": { "tier_before": "...", "tier_after": "...", "provisional_before": false,
+              "provisional_after": false, "direction": "up" },
+  "partner": { "user_id": "<uuid>", "display_name": "Nora", "games_together": 7, "wins_in_a_row": 3 }
+}
+```
+
+`rating` is `null` in casual games. `partner` (PID-234) is `null` when the partner
+is a bot or a guest. `games_together` counts the games these two played as
+partners, this one included; `wins_in_a_row` is how many of the most recent of
+those they won in a row (0 when this game was lost). Games either played with
+someone else do not break the run. Show a streak chip from `wins_in_a_row >= 2`.
 
 The full event list, including the waiting-room held-seat semantics of `player_reconnecting`,
 lives in [`thoughts/WEBSOCKET_API.md`](WEBSOCKET_API.md).
