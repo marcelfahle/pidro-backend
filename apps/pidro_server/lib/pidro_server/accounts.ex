@@ -1,6 +1,8 @@
 defmodule PidroServer.Accounts do
   @moduledoc "Public account-name policy shared by every account write path."
 
+  import Ecto.Query, only: [from: 2]
+
   alias Ecto.Changeset
   alias PidroServer.Accounts.User
 
@@ -27,6 +29,37 @@ defmodule PidroServer.Accounts do
         _missing_or_nil -> acc
       end
     end)
+  end
+
+  @doc """
+  Gives every registered account without a share slug its slug, oldest
+  account first so the earliest player keeps the plain name. Schemaless, so
+  the share-slug migration can call it with its own repo.
+  """
+  @spec backfill_share_slugs(module()) :: :ok
+  def backfill_share_slugs(repo \\ PidroServer.Repo) do
+    taken =
+      MapSet.new(
+        repo.all(from(u in "users", where: not is_nil(u.share_slug), select: u.share_slug))
+      )
+
+    pending =
+      repo.all(
+        from(u in "users",
+          where: is_nil(u.share_slug) and not u.guest,
+          order_by: [asc: u.inserted_at, asc: u.id],
+          select: {u.id, u.username}
+        )
+      )
+
+    _taken =
+      Enum.reduce(pending, taken, fn {id, username}, taken ->
+        slug = User.share_slug(username, &MapSet.member?(taken, &1))
+        repo.update_all(from(u in "users", where: u.id == ^id), set: [share_slug: slug])
+        MapSet.put(taken, slug)
+      end)
+
+    :ok
   end
 
   defp validate_changed_name(changeset, field, name) do

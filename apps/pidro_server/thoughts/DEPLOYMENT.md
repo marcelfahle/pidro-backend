@@ -92,7 +92,7 @@ in every environment.
 | `LIFECYCLE_INVITED_WAITING_TTL_MS` | `7200000` (2 hours) | How long a `waiting` room with a **live invite** may sit idle with no connected human or spectator before the periodic sweep closes it. Without a live invite that sweep uses its fixed 5-minute grace period. A room's invite window is the latest `expires_at` of its active invites, recomputed on every mint, revoke and regenerate; minting and redeeming both count as activity. Raise it if hosts report tables disappearing while they are out of the app sharing the link |
 | `TRUST_PROXY_HEADERS` | `true` in prod, `false` elsewhere | `PidroServerWeb.Plugs.TrustedProxy` honours `X-Forwarded-For` (rightmost value) and `X-Forwarded-Proto` when this is true and the TCP peer is a loopback, private, CGNAT, ULA or link-local address. `false` makes every client share the proxy's bucket; use only to diagnose the limiter |
 | `AASA_APP_IDS` | `config/config.exs` value | Comma-separated iOS app IDs (`TEAMID.bundle.id`) for `/.well-known/apple-app-site-association` |
-| `AASA_PATHS` | `/j/*,/app/*` | Comma-separated paths for the same file |
+| `AASA_PATHS` | `/j/*,/play/*,/app/*` | Comma-separated paths for the same file |
 | `ASSETLINKS` | `config/config.exs` value | `package:fp1\|fp2,package2:fp3`: SHA-256 signing-certificate fingerprints per Android package for `/.well-known/assetlinks.json`. A set value is validated at boot; a malformed one fails startup |
 
 Rate limits are numeric only; there is no off switch, raise a limit instead. The production

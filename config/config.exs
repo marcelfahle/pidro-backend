@@ -214,8 +214,10 @@ config :phoenix,
 # Well-known association files (AASA / assetlinks.json), served by
 # PidroServerWeb.WellKnownController. Production-correct defaults for every
 # environment; config/runtime.exs overrides each list from AASA_APP_IDS,
-# AASA_PATHS and ASSETLINKS only when that variable is set. `/app/*` stays
-# listed so the live Unity app's links survive the phase-2 proxy cutover.
+# AASA_PATHS and ASSETLINKS only when that variable is set. `/j/*` carries
+# invite links and `/play/*` player share links; `/app/*` stays listed so the
+# live Unity app's links survive the phase-2 proxy cutover. Android App Links
+# take their paths from the app manifest, so assetlinks.json has none.
 # The Beta (com.oneapps.pidro.beta) and dev Android packages get an entry once
 # their signing fingerprints are known; the list accepts more.
 # ---------------------------------------------------------------------------
@@ -225,7 +227,7 @@ config :pidro_server, PidroServerWeb.WellKnownController,
     "LSFK7YF82G.com.marcelfahle.pidro3.dev",
     "LSFK7YF82G.com.oneapps.pidro.beta"
   ],
-  ios_paths: ["/j/*", "/app/*"],
+  ios_paths: ["/j/*", "/play/*", "/app/*"],
   android_packages: [
     %{
       package: "com.oneapps.pidro",

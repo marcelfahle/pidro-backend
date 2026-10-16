@@ -387,6 +387,13 @@ defmodule PidroServer.Invites do
   @spec url(Invite.t()) :: String.t()
   def url(%Invite{code: code}), do: "#{link_base_url()}/#{code}"
 
+  @doc """
+  A player's share link, `/play/<slug>` on the invite link host, e.g.
+  `https://www.pidro.online/play/bengt`.
+  """
+  @spec play_url(String.t()) :: String.t()
+  def play_url(slug), do: link_base_url() |> URI.merge("/play/#{slug}") |> URI.to_string()
+
   @doc "The origin's share template with the link and the dashed code (R26)."
   @spec share_text(Invite.t()) :: String.t()
   def share_text(%Invite{code: code} = invite) do

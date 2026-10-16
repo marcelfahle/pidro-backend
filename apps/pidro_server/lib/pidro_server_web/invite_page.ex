@@ -1,6 +1,7 @@
 defmodule PidroServerWeb.InvitePage do
   @moduledoc """
-  Pure presentation data for the public invite landing page.
+  Pure presentation data for the public invite landing page and the player
+  share page (`/play/:slug`), which share one layout.
 
   The invite state remains owned by `PidroServer.Invites`; this module only
   turns the public preview into honest copy and safe handoff URLs.
@@ -39,7 +40,7 @@ defmodule PidroServerWeb.InvitePage do
       app_store_url: @app_store_url,
       play_store_url: play_store_url(target.code),
       ios_url: "pidro-mobile://j/#{target.code}",
-      android_url: android_intent(target_url, target.code),
+      android_url: android_intent(target_url, play_store_url(target.code)),
       device: device,
       show_qr: show_qr
     })
@@ -59,6 +60,45 @@ defmodule PidroServerWeb.InvitePage do
       body:
         "The link may be incomplete or no longer available. You can still open Pidro and find a table.",
       table_action: :none,
+      app_store_url: @app_store_url,
+      play_store_url: @play_store_base,
+      device: device
+    }
+  end
+
+  @doc """
+  Builds the page assigns for a player's share link: the player's name and
+  avatar with an open-in-app handoff, or, for an unknown slug, the same page
+  without a name.
+  """
+  @spec player(map() | nil, String.t(), device()) :: map()
+  def player(%{display_name: name, avatar_url: avatar_url}, slug, device) do
+    url = Invites.play_url(slug)
+
+    %{
+      found: true,
+      canonical_url: url,
+      title: "Play Pidro with #{name}",
+      description: "#{name} plays Pidro. Get the app and join them at the table.",
+      heading: "Play Pidro with #{name}",
+      name: name,
+      initial: String.first(name),
+      avatar_url: avatar_url,
+      app_store_url: @app_store_url,
+      play_store_url: @play_store_base,
+      ios_url: "pidro-mobile://play/#{slug}",
+      android_url: android_intent(url, @play_store_base),
+      device: device
+    }
+  end
+
+  def player(nil, _slug, device) do
+    %{
+      found: false,
+      canonical_url: nil,
+      title: "Play Pidro",
+      description: "Pidro is the Finnish card game for four. Get the app and play.",
+      heading: "Play Pidro",
       app_store_url: @app_store_url,
       play_store_url: @play_store_base,
       device: device
@@ -145,10 +185,10 @@ defmodule PidroServerWeb.InvitePage do
     "#{@play_store_base}&referrer=#{referrer}"
   end
 
-  defp android_intent(target_url, code) do
+  defp android_intent(target_url, fallback_url) do
     uri = URI.parse(target_url)
     authority = uri.host <> port_suffix(uri.port, uri.scheme)
-    fallback = play_store_url(code) |> URI.encode_www_form()
+    fallback = URI.encode_www_form(fallback_url)
 
     "intent://#{authority}#{uri.path}#Intent;scheme=#{uri.scheme};" <>
       "package=#{@android_package};S.browser_fallback_url=#{fallback};end"

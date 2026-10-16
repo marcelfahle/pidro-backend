@@ -336,4 +336,40 @@ defmodule PidroServerWeb.API.ProfileControllerTest do
       assert Repo.get!(PidroServer.Accounts.User, guest.id).bio == "Keep me"
     end
   end
+
+  describe "GET /api/v1/players/by-slug/:slug" do
+    test "returns the same public profile as /profiles/:id" do
+      owner = AccountsFixtures.user_fixture(%{username: "Bengt Åberg", display_name: "Bengt"})
+      caller = AccountsFixtures.guest_fixture()
+
+      data =
+        build_conn()
+        |> auth(caller)
+        |> get(~p"/api/v1/players/by-slug/bengt-aberg")
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data ==
+               build_conn()
+               |> auth(caller)
+               |> get(~p"/api/v1/profiles/#{owner.id}")
+               |> json_response(200)
+               |> Map.fetch!("data")
+
+      assert data["user_id"] == owner.id
+    end
+
+    test "an unknown slug is 404 and authentication is required", %{conn: conn} do
+      caller = AccountsFixtures.user_fixture()
+
+      for slug <- ["nobody-here", "Bengt%20Aberg"] do
+        assert build_conn()
+               |> auth(caller)
+               |> get("/api/v1/players/by-slug/#{slug}")
+               |> json_response(404)
+      end
+
+      assert conn |> get(~p"/api/v1/players/by-slug/#{caller.share_slug}") |> json_response(401)
+    end
+  end
 end

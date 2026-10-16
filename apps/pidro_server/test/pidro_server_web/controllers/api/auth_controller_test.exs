@@ -140,6 +140,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert declared["age_band"] == "18_plus"
       assert declared["terms_version"] == "1"
+      assert declared["share_slug"] == "declaredregister"
       assert_age_terms(Auth.get_user_by_username("declared_register"), "18_plus", "1")
 
       omitted =
@@ -931,11 +932,14 @@ defmodule PidroServerWeb.API.AuthControllerTest do
                  "id" => id,
                  "display_name" => nil,
                  "age_band" => "unknown",
-                 "terms_version" => nil
+                 "terms_version" => nil,
+                 "share_slug" => share_slug
                }
              } = json_response(conn, 200)["data"]
 
       assert id == user.id
+      assert share_slug == user.share_slug
+      assert share_slug =~ ~r/\A[a-z0-9-]{3,30}\z/
     end
   end
 
@@ -1712,12 +1716,19 @@ defmodule PidroServerWeb.API.AuthControllerTest do
         |> json_response(200)
 
       assert %{
-               "user" => %{"id" => id, "guest" => false, "display_name" => "Anna"},
+               "user" => %{
+                 "id" => id,
+                 "guest" => false,
+                 "display_name" => "Anna",
+                 "share_slug" => share_slug
+               },
                "token" => token
              } =
                response["data"]
 
       assert id == anna.id
+      assert anna.share_slug == nil
+      assert share_slug == User.share_slug(anna.username, fn _ -> false end)
       assert json_response(me(build_conn(), old_token), 401)
       assert json_response(me(build_conn(), token), 200)
 

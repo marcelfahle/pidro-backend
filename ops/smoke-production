@@ -85,6 +85,7 @@ assert_no_cookie "$tmp_dir/aasa.headers" "well-known AASA"
 grep -Fq 'LSFK7YF82G.com.oneapps.pidro' "$tmp_dir/aasa.body"
 grep -Fq '"/":"/j/*"' "$tmp_dir/aasa.body"
 grep -Fq '"/":"/app/*"' "$tmp_dir/aasa.body"
+grep -Fq '"/":"/play/*"' "$tmp_dir/aasa.body"
 
 root_aasa_status="$(curl --silent --show-error --dump-header "$tmp_dir/root-aasa.headers" --output "$tmp_dir/root-aasa.body" \
   --write-out '%{http_code}' --max-time 15 \

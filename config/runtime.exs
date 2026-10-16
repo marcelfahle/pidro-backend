@@ -422,7 +422,7 @@ end
 # raise). An unset variable is never an error.
 #
 #   AASA_APP_IDS  comma list, e.g. "LSFK7YF82G.com.oneapps.pidro,LSFK7YF82G.com.example.dev"
-#   AASA_PATHS    comma list, e.g. "/j/*,/app/*"
+#   AASA_PATHS    comma list, e.g. "/j/*,/play/*,/app/*"
 #   ASSETLINKS    "package:fp1|fp2,package2:fp3" with SHA-256 cert fingerprints
 #
 # Gated on the variables being present and the module being loadable: this

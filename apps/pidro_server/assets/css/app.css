@@ -128,6 +128,28 @@
   text-wrap: pretty;
 }
 
+.invite-avatar {
+  display: flex;
+  width: 6rem;
+  height: 6rem;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1rem;
+  overflow: hidden;
+  border: 2px solid #f2c94c;
+  border-radius: 50%;
+  background: #0d2a52;
+  color: #f2c94c;
+  font-size: 2.5rem;
+  font-weight: 800;
+}
+
+.invite-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .invite-seat-count {
   display: flex;
   width: fit-content;
