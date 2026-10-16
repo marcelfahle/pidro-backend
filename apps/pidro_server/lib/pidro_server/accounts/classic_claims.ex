@@ -51,6 +51,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
       |> Map.from_struct()
       |> Map.merge(ClassicSocial.legacy_data(fetch(attrs, :legacy_data)))
       |> Map.put(:classic_user_id, classic_user_id)
+      |> put_new_account(fetch(attrs, :new_account))
 
     ticket_attrs = %{
       token_hash: hash_token(token),
@@ -75,6 +76,53 @@ defmodule PidroServer.Accounts.ClassicClaims do
       {:error, changeset} -> {:error, changeset}
     end
   end
+
+  @doc """
+  The username and email a password claim gives a new account, taken from
+  Classic and offered at verify time. Each is nil when the player must choose
+  it: Classic has none, it breaks the account rules, or another Pidro account
+  has it. The Classic name reserved to `classic_user_id` counts as free.
+  """
+  def new_account(classic, classic_user_id, user \\ nil) when is_map(classic) do
+    changeset =
+      %User{}
+      |> User.changeset(%{
+        username: trim(fetch(classic, :username)),
+        email: fetch(classic, :email)
+      })
+      |> Accounts.validate_public_name_changes([:username])
+      |> ClassicNameReservations.validate_changes(classic_user_id)
+
+    others = if user, do: from(u in User, where: u.id != ^user.id), else: User
+
+    %{
+      username: offer(changeset, :username, &from(u in others, where: u.username == ^&1)),
+      email:
+        offer(
+          changeset,
+          :email,
+          &from(u in others, where: fragment("lower(?)", u.email) == ^String.downcase(&1))
+        )
+    }
+  end
+
+  defp offer(changeset, field, holders) do
+    with value when is_binary(value) <- Changeset.get_change(changeset, field),
+         false <- Keyword.has_key?(changeset.errors, field),
+         false <- Repo.exists?(holders.(value)) do
+      value
+    else
+      _choose -> nil
+    end
+  end
+
+  defp trim(value) when is_binary(value), do: String.trim(value)
+  defp trim(value), do: value
+
+  defp put_new_account(legacy_data, nil), do: legacy_data
+
+  defp put_new_account(legacy_data, new_account),
+    do: Map.put(legacy_data, :new_account, new_account)
 
   @doc """
   Says whether a Classic account is linked to someone other than `user_id`.
@@ -124,6 +172,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
                :ok <- validate_expiry(ticket, now),
                :ok <- precheck_claim_owner(ticket, locked_user),
                {:ok, params} <- validate_account(params),
+               params = take_new_account(ticket, params),
                {:ok, display_name} <- claim_display_name(ticket, locked_user, params),
                params = put_account_display_name(params, display_name),
                :ok <- lock_claim_names(current_user, params),
@@ -297,15 +346,31 @@ defmodule PidroServer.Accounts.ClassicClaims do
     end
   end
 
+  # The username and email offered at verify time are Classic's, not the
+  # player's: whatever the request sends for them is replaced.
+  defp take_new_account(ticket, params) do
+    offered = fetch(ticket.legacy_data, :new_account) || %{}
+
+    Enum.reduce([:username, :email], params, fn field, params ->
+      case fetch(offered, field) do
+        value when is_binary(value) -> put_account(params, field, value)
+        _choose -> params
+      end
+    end)
+  end
+
   defp put_account_display_name(params, nil), do: params
 
-  defp put_account_display_name(params, display_name) do
+  defp put_account_display_name(params, display_name),
+    do: put_account(params, :display_name, display_name)
+
+  defp put_account(params, field, value) do
     account = fetch(params, :account) || %{}
 
     if Map.has_key?(params, "account") do
-      Map.put(params, "account", Map.put(account, "display_name", display_name))
+      Map.put(params, "account", Map.put(account, Atom.to_string(field), value))
     else
-      Map.put(params, :account, Map.put(account, :display_name, display_name))
+      Map.put(params, :account, Map.put(account, field, value))
     end
   end
 

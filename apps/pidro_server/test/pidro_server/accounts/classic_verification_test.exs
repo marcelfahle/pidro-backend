@@ -224,6 +224,51 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.legacy_data["blocked_ids"] == [89]
   end
 
+  describe "a password claim's new account" do
+    defp verify_bengt(user, params \\ %{}) do
+      ClassicVerification.verify(
+        Map.merge(
+          %{
+            "method" => "password",
+            "login" => "bengt@example.com",
+            "password" => "correct-password"
+          },
+          params
+        ),
+        user,
+        classic_client: Classic,
+        provider_identity: Providers
+      )
+    end
+
+    test "takes Classic's email, and leaves a missing username to the player" do
+      assert {:ok, result} = verify_bengt(nil, %{"install_id" => "bengt-install"})
+
+      assert result.classic.name == "Bengt"
+      assert result.classic.new_account == %{username: nil, email: "bengt@example.com"}
+
+      assert Repo.get_by!(ClassicClaimTicket, classic_user_id: 50).legacy_data["new_account"] ==
+               %{"username" => nil, "email" => "bengt@example.com"}
+    end
+
+    test "offers no email another Pidro account uses" do
+      AccountsFixtures.user_fixture(email: "Bengt@Example.com")
+
+      assert {:ok, result} = verify_bengt(AccountsFixtures.guest_fixture())
+      assert result.classic.new_account == %{username: nil, email: nil}
+    end
+
+    test "is absent for a signed-in player, who keeps their own account" do
+      assert {:ok, result} = verify_bengt(AccountsFixtures.user_fixture())
+      refute Map.has_key?(result.classic, :new_account)
+
+      refute Map.has_key?(
+               Repo.get_by!(ClassicClaimTicket, classic_user_id: 50).legacy_data,
+               "new_account"
+             )
+    end
+  end
+
   test "an account from before Classic recorded dates previews with no member_since" do
     assert {:ok, result} =
              ClassicVerification.verify(
@@ -258,7 +303,8 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
              games_played: 321,
              level: 87,
              member_since: "2012-04-03T00:00:00Z",
-             name_allowed: true
+             name_allowed: true,
+             new_account: %{username: nil, email: nil}
            }
 
     ticket = Repo.get_by!(ClassicClaimTicket, classic_user_id: 12_345)
@@ -313,7 +359,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
   end
 
   test "Apple proof resolves Classic by email but stores only the stable subject" do
-    assert {:ok, _result} =
+    assert {:ok, result} =
              ClassicVerification.verify(
                %{
                  "method" => "apple",
@@ -333,10 +379,11 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.provider_issuer_app == "com.oneapps.pidro"
     assert ticket.provider_email == "apple@example.com"
     refute inspect(ticket.legacy_data) =~ "apple@example.com"
+    refute Map.has_key?(result.classic, :new_account)
   end
 
   test "Facebook checks every business-scoped id and keeps the current app id" do
-    assert {:ok, _result} =
+    assert {:ok, result} =
              ClassicVerification.verify(
                %{
                  "method" => "facebook",
@@ -352,6 +399,7 @@ defmodule PidroServer.Accounts.ClassicVerificationTest do
     assert ticket.method == :facebook
     assert ticket.matched_on == :facebook_business_id
     assert ticket.provider_id == "current-app-id"
+    refute Map.has_key?(result.classic, :new_account)
   end
 
   test "Facebook records a match on the current app id" do
