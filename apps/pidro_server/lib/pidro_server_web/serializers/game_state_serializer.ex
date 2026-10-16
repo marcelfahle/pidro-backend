@@ -52,6 +52,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       trick_number: Map.get(state, :trick_number),
       hand_points: Map.get(state, :hand_points, %{}),
       last_hand: serialize_last_hand(Map.get(state, :last_hand)),
+      hand_history: Enum.map(Map.get(state, :hand_history, []), &serialize_hand/1),
       scores: Map.get(state, :cumulative_scores, %{}),
       cumulative_scores: Map.get(state, :cumulative_scores, %{}),
       winner: Map.get(state, :winner),
@@ -158,9 +159,18 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
 
   defp serialize_last_hand(last_hand) when is_map(last_hand) do
     last_hand
+    |> serialize_hand()
     |> Map.put(:bids, serialize_bids(Map.get(last_hand, :bids, [])))
     |> Map.put(:trump, Map.get(last_hand, :trump))
     |> Map.put(:tricks, serialize_tricks(Map.get(last_hand, :tricks, [])))
+  end
+
+  # A scored hand's point cards use the payload card shape.
+  @spec serialize_hand(map()) :: map()
+  defp serialize_hand(hand) do
+    Map.update(hand, :point_cards, [], fn point_cards ->
+      Enum.map(point_cards, &%{&1 | card: serialize_card(&1.card)})
+    end)
   end
 
   defp serialize_current_trick_details(%{current_trick: trick} = state) when not is_nil(trick) do

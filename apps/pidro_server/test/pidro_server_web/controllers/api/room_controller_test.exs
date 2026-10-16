@@ -63,6 +63,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     assert payload["last_hand"] == serialized_last_hand |> Jason.encode!() |> Jason.decode!()
     assert [_ | _] = payload["last_hand"]["tricks"]
     assert [_ | _] = payload["last_hand"]["bids"]
+    assert [_ | _] = payload["last_hand"]["point_cards"]
+    assert [%{"hand_number" => 1}] = payload["hand_history"]
     assert payload["scores"] == payload["cumulative_scores"]
     assert payload["current_trick"] == payload["current_trick_details"]["plays"]
 
