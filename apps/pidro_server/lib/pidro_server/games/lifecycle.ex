@@ -39,6 +39,7 @@ defmodule PidroServer.Games.Lifecycle do
           | :trick_transition_delay_ms
           | :sweep_trick_delay_ms
           | :hand_transition_delay_ms
+          | :second_deal_transition_delay_ms
 
   @defaults %{
     hiccup_timeout_ms: 20_000,
@@ -59,7 +60,10 @@ defmodule PidroServer.Games.Lifecycle do
     dealer_selection_delay_ms: 3_000,
     trick_transition_delay_ms: 1_500,
     sweep_trick_delay_ms: 500,
-    hand_transition_delay_ms: 3_000
+    hand_transition_delay_ms: 3_000,
+    # As long as the client plays the second deal out (Classic's pace): each
+    # player's throw, the piles to count, the refill card by card.
+    second_deal_transition_delay_ms: 9_500
   }
 
   @doc """

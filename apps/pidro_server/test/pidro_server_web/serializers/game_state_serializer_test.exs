@@ -131,7 +131,7 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert GameStateSerializer.serialize(state).players.north.revealed_cards == []
     end
 
-    test "every viewer sees what each seat kept and drew in the second deal" do
+    test "every viewer sees what each player dealt to kept and drew in the second deal" do
       state = dealt_state()
       dealer = state.current_dealer
       [first | _] = others = Enum.reject([:north, :east, :south, :west], &(&1 == dealer))
@@ -153,9 +153,23 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
         players = GameStateSerializer.serialize(state, viewer).players
         assert players[first].kept_count == 2
         assert players[first].drawn_count == 4
-        assert players[dealer].kept_count == 2
+        # The dealer's discard is the dealer's edge: never counted.
+        assert players[dealer].kept_count == nil
         assert players[dealer].drawn_count == nil
       end
+    end
+
+    test "a dealer picking from the pack holds their pool to themselves" do
+      state = %{dealt_state() | phase: :second_deal}
+      dealer = state.current_dealer
+      other = Enum.find([:north, :east, :south, :west], &(&1 != dealer))
+
+      assert GameStateSerializer.serialize(state, other).players[dealer].card_count == nil
+      assert GameStateSerializer.serialize(state).players[dealer].card_count == nil
+      assert GameStateSerializer.serialize(state, dealer).players[dealer].card_count == 9
+
+      playing = %{state | phase: :playing}
+      assert GameStateSerializer.serialize(playing, other).players[dealer].card_count == 9
     end
 
     test "no second-deal counts before the discard" do

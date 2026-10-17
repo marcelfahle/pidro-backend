@@ -44,7 +44,13 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       config: Map.get(state, :config, %{}),
       current_turn: Map.get(state, :current_turn),
       current_dealer: Map.get(state, :current_dealer),
-      players: serialize_players(Map.get(state, :players, %{}), position, second_deal(state)),
+      players:
+        serialize_players(
+          Map.get(state, :players, %{}),
+          position,
+          second_deal(state),
+          picking(state)
+        ),
       bids: serialize_bids(Map.get(state, :bids, [])),
       highest_bid: serialize_highest_bid(Map.get(state, :highest_bid)),
       bidding_team: Map.get(state, :bidding_team),
@@ -63,12 +69,26 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
     }
   end
 
-  defp serialize_players(players, viewer_position, second_deal) do
+  defp serialize_players(players, viewer_position, second_deal, picking) do
     Map.new(players, fn {position, player} ->
       visible? = position == viewer_position and viewer_position != nil
-      {position, serialize_player(player, visible?, Map.get(second_deal, position))}
+
+      player =
+        player
+        |> serialize_player(visible?, Map.get(second_deal, position))
+        |> hide_pool(position == picking and not visible?)
+
+      {position, player}
     end)
   end
+
+  # A dealer picking from the pack holds their whole pool: its size would tell
+  # the table how many trumps they kept, the dealer's edge. Only they see it.
+  defp picking(%{phase: :second_deal} = state), do: Map.get(state, :current_dealer)
+  defp picking(_state), do: nil
+
+  defp hide_pool(player, true), do: %{player | card_count: nil}
+  defp hide_pool(player, false), do: player
 
   # What each seat kept and drew in the second deal: everyone at the table
   # sees it, so the client can play it out card by card.

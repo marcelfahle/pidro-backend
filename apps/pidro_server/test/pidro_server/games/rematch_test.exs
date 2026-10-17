@@ -534,6 +534,7 @@ defmodule PidroServer.Games.RematchTest do
           dealer_selection_delay_ms: 1,
           trick_transition_delay_ms: 1,
           hand_transition_delay_ms: 1,
+          second_deal_transition_delay_ms: 1,
           bot_delay_ms: 1,
           bot_delay_variance_ms: 0,
           bot_min_delay_ms: 1
