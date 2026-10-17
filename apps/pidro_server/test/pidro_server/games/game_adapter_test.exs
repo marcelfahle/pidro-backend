@@ -31,6 +31,21 @@ defmodule PidroServer.Games.GameAdapterTest do
                Lifecycle.config(:trick_transition_delay_ms)
     end
 
+    test "holds play for the second deal once trump is named" do
+      old_state = %{phase: :declaring, hand_number: 1, tricks: [], current_trick: nil}
+      new_state = %{phase: :playing, hand_number: 1, tricks: [], current_trick: nil}
+
+      assert GameAdapter.transition_delay_ms(old_state, new_state) ==
+               Lifecycle.config(:second_deal_transition_delay_ms)
+    end
+
+    test "a dealer picking by hand plays on without the second deal's hold" do
+      old_state = %{phase: :second_deal, hand_number: 1, tricks: [], current_trick: nil}
+      new_state = %{phase: :playing, hand_number: 1, tricks: [], current_trick: nil}
+
+      assert GameAdapter.transition_delay_ms(old_state, new_state) == 0
+    end
+
     test "returns zero when the game is complete" do
       old_state = %{phase: :playing, hand_number: 1, tricks: [%{}], current_trick: nil}
       new_state = %{phase: :complete, hand_number: 2, tricks: [%{}, %{}], current_trick: nil}

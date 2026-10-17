@@ -39,6 +39,14 @@ defmodule PidroServer.Games.PacingSettings do
       step: 50
     },
     %{
+      key: :second_deal_transition_delay_ms,
+      label: "Second Deal Pause",
+      description: "Hold play while clients show the discards and the refill.",
+      min: 0,
+      max: 20_000,
+      step: 250
+    },
+    %{
       key: :hand_transition_delay_ms,
       label: "Hand Transition Delay",
       description: "Pause between hands so clients can show scoring.",

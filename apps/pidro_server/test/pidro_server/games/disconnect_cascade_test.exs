@@ -391,6 +391,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
           bot_min_delay_ms: 1,
           trick_transition_delay_ms: 1,
           hand_transition_delay_ms: 1,
+          second_deal_transition_delay_ms: 1,
           turn_timer_bid_ms: 60_000,
           turn_timer_play_ms: 60_000,
           empty_room_ttl_ms: 60_000

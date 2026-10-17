@@ -396,6 +396,9 @@ defmodule PidroServer.Games.GameAdapter do
       hand_completed?(old_state, new_state) ->
         Lifecycle.config(:hand_transition_delay_ms)
 
+      second_deal_completed?(old_state, new_state) ->
+        Lifecycle.config(:second_deal_transition_delay_ms)
+
       trick_completed?(old_state, new_state) and Play.settled_play(old_state) != nil ->
         Lifecycle.config(:sweep_trick_delay_ms)
 
@@ -411,6 +414,13 @@ defmodule PidroServer.Games.GameAdapter do
   defp trick_completed?(old_state, new_state) do
     length(Map.get(new_state, :tricks, [])) > length(Map.get(old_state, :tricks, [])) and
       is_nil(Map.get(new_state, :current_trick))
+  end
+
+  # Trump named, and the discard, the second deal and the dealer's pick done
+  # in one go: the table shows them before anyone plays.
+  @spec second_deal_completed?(map(), map()) :: boolean()
+  defp second_deal_completed?(old_state, new_state) do
+    Map.get(old_state, :phase) == :declaring and Map.get(new_state, :phase) == :playing
   end
 
   @spec hand_completed?(map(), map()) :: boolean()
