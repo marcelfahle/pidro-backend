@@ -60,7 +60,9 @@ defmodule PidroServer.Games.Lifecycle do
     dealer_selection_delay_ms: 3_000,
     trick_transition_delay_ms: 1_500,
     sweep_trick_delay_ms: 500,
-    hand_transition_delay_ms: 3_000,
+    # The hand's result stays ~6 s with no button, then the next hand is
+    # dealt (~4 s): its bidding waits for both.
+    hand_transition_delay_ms: 11_000,
     # As long as the client plays the second deal out (Classic's pace): each
     # player's throw, the piles to count, the refill card by card.
     second_deal_transition_delay_ms: 9_500
