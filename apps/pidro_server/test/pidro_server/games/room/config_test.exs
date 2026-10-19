@@ -36,6 +36,100 @@ defmodule PidroServer.Games.Room.ConfigTest do
     end
   end
 
+  describe "seat passwords" do
+    alias PidroServer.Games.Room.Seat
+
+    test "generated passwords are four digits without an easy pattern" do
+      passwords = for _ <- 1..2_000, do: Config.generate_password()
+
+      assert Enum.all?(passwords, &(&1 =~ ~r/\A\d{4}\z/))
+      refute Enum.any?(passwords, &Config.easy_password?/1)
+      assert length(Enum.uniq(passwords)) > 1_000
+    end
+
+    test "repeats, pairs and straight runs are easy; three different digits are not" do
+      for easy <- ~w(0000 1111 1112 1212 1122 0123 1234 6789 4321 9876 3210 123 12345 12a4) do
+        assert Config.easy_password?(easy), easy
+      end
+
+      for fine <- ~w(4821 0472 1243 9870 1235 5431 0129) do
+        refute Config.easy_password?(fine), fine
+      end
+    end
+
+    test "a create body marks password seats, draws one password and keeps min_games" do
+      body = %{
+        "seats" => %{
+          "seat_2" => %{"type" => "open", "min_games" => 100, "password" => true},
+          "seat_3" => %{"type" => "open", "min_games" => 0, "password" => true},
+          "seat_4" => %{"type" => "open", "min_games" => 0, "password" => false}
+        }
+      }
+
+      assert {:ok, config, @all_open} = Config.parse_create_params(body)
+      assert config.password_seats == [:east, :south]
+      assert config.seat_requirements == %{east: 100}
+      refute Config.easy_password?(config.seat_password)
+      assert {:ok, ^config} = Config.new(config)
+
+      assert Config.serialize_seat(config, Seat.new_vacant(:south)).password
+      refute Config.serialize_seat(config, Seat.new_vacant(:west)).password
+      refute Config.serialize_seat(config, Seat.new_human(:south, "player")).password
+      refute Map.has_key?(Config.serialize(config), :seat_password)
+      refute inspect(config) =~ "seat_password"
+
+      for invalid <- [nil, "yes", 1] do
+        seat = %{"type" => "open", "min_games" => 0, "password" => invalid}
+
+        assert {:error, {:invalid_room_params, [%{field: "seats.seat_3"}]}} =
+                 Config.parse_create_params(%{"seats" => %{"seat_3" => seat}})
+      end
+
+      assert {:ok, %Config{password_seats: [], seat_password: nil}, _} =
+               Config.parse_create_params(%{"seats" => %{"seat_3" => "open"}})
+    end
+
+    test "every password seat shares the first password, and it outlives them" do
+      config = Config.put_password_seat(%Config{}, :east, true)
+      password = config.seat_password
+
+      config = Config.put_password_seat(config, :west, true)
+      assert {config.password_seats, config.seat_password} == {[:east, :west], password}
+
+      config =
+        config |> Config.put_password_seat(:east, false) |> Config.put_password_seat(:west, false)
+
+      assert {config.password_seats, config.seat_password} == {[], password}
+      assert Config.put_password_seat(config, :south, true).seat_password == password
+    end
+
+    test "the password is checked only on password seats, and never for their held user" do
+      config = %{
+        Config.put_password_seat(%Config{}, :south, true)
+        | seat_holds: %{west: "friend"}
+      }
+
+      config = Config.put_password_seat(config, :west, true)
+
+      assert Config.check_password(config, :south, "player", config.seat_password) == :ok
+      assert Config.check_password(config, :east, "player", nil) == :ok
+      assert Config.check_password(config, :west, "friend", nil) == :ok
+
+      for wrong <- [nil, "", "0000", String.to_integer(config.seat_password)] do
+        assert Config.check_password(config, :south, "player", wrong) ==
+                 {:error, :seat_requires_password}
+      end
+
+      assert Config.check_password(config, :west, "player", nil) ==
+               {:error, :seat_requires_password}
+    end
+
+    test "new/1 refuses an easy password" do
+      assert {:error, {:invalid_room_params, [%{field: "seat_password"}]}} =
+               Config.new(password_seats: [:south], seat_password: "1234")
+    end
+  end
+
   test "game-state bid schemas accept both variants' boundaries" do
     alias PidroServerWeb.Schemas.RoomSchemas.{Bid, GameStateResponse}
 

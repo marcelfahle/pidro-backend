@@ -254,12 +254,37 @@ defmodule PidroServerWeb.API.RoomController do
       Reclaims, bots and substitutes in playing rooms do not check it.
       A failed profile lookup refuses admission with 503 `PROFILE_UNAVAILABLE`.
 
+      A seat with `password: true` needs the table's seat password in the body's
+      `password`. Missing or wrong: 403 `SEAT_REQUIRES_PASSWORD`. Every join that
+      sends a password counts against policies `seat_password` (per user) and
+      `seat_password_room` (per room); over either, 429. A seat held for the
+      caller and a reclaim after a disconnect need no password.
+
       Requires authentication via Bearer token.
       """,
       operationId: "RoomController.join",
       tags: ["Rooms"],
       security: [%{"bearer_auth" => []}],
       parameters: [room_code_parameter()],
+      requestBody:
+        Operation.request_body(
+          "Optional seat choice and seat password",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            properties: %{
+              position: %OpenApiSpex.Schema{
+                type: :string,
+                enum: ["north", "east", "south", "west", "north_south", "east_west"]
+              },
+              password: %OpenApiSpex.Schema{
+                type: :string,
+                description: "The table's four-digit seat password, for a password seat",
+                example: "4821"
+              }
+            }
+          }
+        ),
       responses: %{
         200 =>
           Operation.response(
@@ -275,7 +300,7 @@ defmodule PidroServerWeb.API.RoomController do
           ),
         403 =>
           Operation.response(
-            "Account required, kicked, or SEAT_REQUIRES_GAMES",
+            "Account required, kicked, SEAT_REQUIRES_PASSWORD or SEAT_REQUIRES_GAMES",
             "application/json",
             %OpenApiSpex.Schema{
               oneOf: [ErrorSchemas.error_response(), RoomSchemas.SeatRequiresGames]
@@ -351,6 +376,32 @@ defmodule PidroServerWeb.API.RoomController do
               ErrorSchemas.error_response()
             )
         })
+    }
+  end
+
+  @doc false
+  def open_api_operation(action) when action in [:password, :remove_password] do
+    %Operation{
+      summary:
+        if(action == :password,
+          do: "Make a seat need the table's password",
+          else: "Let anyone sit in a seat again"
+        ),
+      description: """
+      Host only, while waiting or ready. The seat must be vacant and not held.
+      The first password seat draws the table's four-digit seat password; every
+      password seat shares it and it never changes for the room. The response is
+      the host's room, with `seat_password`. Removing the last password seat
+      keeps the password for the next one.
+      """,
+      operationId: "RoomController.#{action}",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        room_code_parameter(),
+        Operation.parameter(:position, :path, position_schema(), "Vacant seat", required: true)
+      ],
+      responses: host_control_responses()
     }
   end
 
@@ -1143,11 +1194,25 @@ defmodule PidroServerWeb.API.RoomController do
     user = conn.assigns[:current_user]
     position = parse_position(params["position"])
 
-    with {:ok, room, assigned_position} <- RoomManager.join_room(code, user, position) do
+    password = params["password"]
+
+    with %Plug.Conn{halted: false} = conn <- throttle_password(conn, password),
+         {:ok, room, assigned_position} <-
+           RoomManager.join_room(code, user, position, password) do
       conn
       |> put_view(RoomJSON)
       |> render(:show, %{room: room, assigned_position: assigned_position})
     end
+  end
+
+  # Every join that sends a seat password counts, per player and per table, so
+  # a wrong guess cannot be followed by enough others to find the right one.
+  defp throttle_password(conn, nil), do: conn
+
+  defp throttle_password(conn, _password) do
+    conn
+    |> put_private(:rate_limit, [:seat_password, :seat_password_room])
+    |> PidroServerWeb.Plugs.RateLimit.call([])
   end
 
   @doc false
@@ -1508,6 +1573,22 @@ defmodule PidroServerWeb.API.RoomController do
            |> Ecto.Changeset.apply_action(:insert),
          {:ok, room} <-
            RoomManager.set_seat_hold(code, conn.assigns.current_user.id, position, user_id) do
+      render(conn, :show, room: room)
+    end
+  end
+
+  @doc "Makes a vacant waiting-room seat need the table's seat password."
+  def password(conn, %{"code" => code, "position" => position}),
+    do: set_password(conn, code, position, true)
+
+  @doc "Lets anyone sit in a vacant waiting-room seat again."
+  def remove_password(conn, %{"code" => code, "position" => position}),
+    do: set_password(conn, code, position, false)
+
+  defp set_password(conn, code, position, password?) do
+    with {:ok, position} <- parse_position_strict(position),
+         {:ok, room} <-
+           RoomManager.set_seat_password(code, conn.assigns.current_user.id, position, password?) do
       render(conn, :show, room: room)
     end
   end

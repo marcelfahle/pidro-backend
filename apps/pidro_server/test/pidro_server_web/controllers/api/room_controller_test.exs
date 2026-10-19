@@ -416,6 +416,171 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     assert moved.config.seat_requirements == %{south: 100}
   end
 
+  describe "PID-252 password seats" do
+    test "only the host sees the password; a joiner needs it and a reclaim does not", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      player = AccountsFixtures.user_fixture()
+      previous_level = Logger.level()
+      Logger.configure(level: :debug)
+      on_exit(fn -> Logger.configure(level: previous_level) end)
+
+      {created, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          as_user(conn, host)
+          |> post(~p"/api/v1/rooms", %{
+            "seats" => %{"seat_3" => %{"type" => "open", "min_games" => 0, "password" => true}}
+          })
+          |> json_response(201)
+        end)
+
+      code = created["data"]["code"]
+      password = created["data"]["room"]["seat_password"]
+      assert password =~ ~r/\A\d{4}\z/
+      assert created["data"]["room"]["seats"]["south"]["password"] == true
+      assert created["data"]["room"]["seats"]["east"]["password"] == false
+
+      public = as_user(conn, player) |> get(~p"/api/v1/rooms/#{code}") |> json_response(200)
+      refute Map.has_key?(public["data"]["room"], "seat_password")
+      assert public["data"]["room"]["seats"]["south"]["password"] == true
+
+      lobby = as_user(conn, player) |> get(~p"/api/v1/lobby") |> json_response(200)
+      listed = Enum.find(lobby["data"]["open_tables"], &(&1["code"] == code))
+      assert listed["seats"]["south"]["password"] == true
+      refute Map.has_key?(listed, "seat_password")
+
+      {_, join_log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          for body <- [%{position: "south"}, %{position: "south", password: "0000"}] do
+            assert as_user(conn, player)
+                   |> post(~p"/api/v1/rooms/#{code}/join", body)
+                   |> json_response(403) == %{
+                     "errors" => [
+                       %{
+                         "code" => "SEAT_REQUIRES_PASSWORD",
+                         "title" => "Seat requires password",
+                         "detail" => "This seat needs the table's password"
+                       }
+                     ],
+                     "error_code" => "seat_requires_password",
+                     "error_params" => %{}
+                   }
+          end
+
+          joined =
+            as_user(conn, player)
+            |> post(~p"/api/v1/rooms/#{code}/join", %{position: "south", password: password})
+            |> json_response(200)
+
+          assert joined["data"]["assigned_position"] == "south"
+          refute Map.has_key?(joined["data"]["room"], "seat_password")
+          assert joined["data"]["room"]["seats"]["south"]["password"] == false
+        end)
+
+      for log <- [log, join_log] do
+        assert log =~ "POST /api/v1/rooms"
+        refute log =~ ~s("#{password}")
+        refute log =~ "seat_password"
+      end
+
+      :ok = RoomManager.handle_player_disconnect(code, player.id)
+      assert {:ok, reclaimed} = RoomManager.handle_player_reconnect(code, player.id)
+      assert reclaimed.positions.south == player.id
+      assert reclaimed.config.password_seats == [:south]
+      assert reclaimed.config.seat_password == password
+    end
+
+    test "the host sets and clears password seats; a held friend sits without one", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      friend = AccountsFixtures.user_fixture()
+      stranger = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      assert as_user(conn, stranger)
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/east/password")
+             |> json_response(403)
+
+      assert as_user(conn, host)
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/north/password")
+             |> json_response(422)
+
+      east =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/east/password")
+        |> json_response(200)
+
+      password = east["data"]["room"]["seat_password"]
+      assert east["data"]["room"]["seats"]["east"]["password"] == true
+      assert_received {:readiness_updated, %{seats: %{east: %{password: true}}}}
+
+      south =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/south/password")
+        |> json_response(200)
+
+      assert south["data"]["room"]["seat_password"] == password
+
+      cleared =
+        as_user(conn, host)
+        |> delete(~p"/api/v1/rooms/#{room.code}/seats/east/password")
+        |> json_response(200)
+
+      assert cleared["data"]["room"]["seats"]["east"]["password"] == false
+      assert cleared["data"]["room"]["seat_password"] == password
+
+      {:ok, _} = RoomManager.set_seat_hold(room.code, host.id, :south, friend.id)
+
+      assert as_user(conn, host)
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/south/password")
+             |> json_response(422)
+
+      joined =
+        as_user(conn, friend)
+        |> post(~p"/api/v1/rooms/#{room.code}/join", %{position: "south"})
+        |> json_response(200)
+
+      assert joined["data"]["assigned_position"] == "south"
+
+      {:ok, _, :east} = RoomManager.join_room(room.code, stranger.id, :east)
+
+      {:ok, _} = RoomManager.set_seat_password(room.code, host.id, :west, true)
+
+      assert {:error, :seat_requires_password} =
+               RoomManager.move_seat(room.code, stranger.id, stranger.id, :west)
+
+      assert {:ok, moved} = RoomManager.move_seat(room.code, host.id, stranger.id, :west)
+      assert moved.positions.west == stranger.id
+    end
+
+    test "password guesses are limited per player and per table", %{conn: conn} do
+      with_limit(:seat_password, 2, 60_000)
+      with_limit(:seat_password_room, 2, 60_000)
+      host = AccountsFixtures.user_fixture()
+      [first, second] = for _ <- 1..2, do: AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{password_seats: [:south]})
+      password = room.config.seat_password
+      join = &post(as_user(conn, &1), ~p"/api/v1/rooms/#{room.code}/join", &2)
+
+      # A join without a password is no guess and never counts.
+      for _ <- 1..3, do: assert(json_response(join.(first, %{position: "south"}), 403))
+
+      for _ <- 1..2,
+          do: assert(json_response(join.(first, %{position: "south", password: "0000"}), 403))
+
+      assert %{"errors" => [%{"code" => "RATE_LIMITED"}]} =
+               json_response(join.(first, %{position: "south", password: password}), 429)
+
+      # The denied attempt stopped at the player's bucket; the table's holds the two
+      # wrong guesses, so a second player's first guess is one too many.
+      assert json_response(join.(second, %{position: "south", password: password}), 429)
+      assert {:ok, %{positions: %{south: nil}}} = RoomManager.get_room(room.code)
+    end
+  end
+
   describe "PID-79 explicit admission" do
     test "REST Join promotes a watcher only after an opened seat is explicitly claimed", %{
       conn: conn

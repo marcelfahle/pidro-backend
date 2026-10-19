@@ -76,6 +76,10 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   guest_create_daily: %{limit: 40, scale_ms: 86_400_000, key: :ip},
   guest_create_install: %{limit: 3, scale_ms: 3_600_000, key: :install_id},
   room_join: %{limit: 30, scale_ms: 60_000, key: :user},
+  # Joins that send a seat password, per player and per table, so the
+  # 10_000 four-digit passwords cannot be walked.
+  seat_password: %{limit: 10, scale_ms: 600_000, key: :user},
+  seat_password_room: %{limit: 30, scale_ms: 600_000, key: {:param, "code"}},
   auth_upgrade: %{limit: 10, scale_ms: 600_000, key: :ip},
   auth_age: %{limit: 10, scale_ms: 600_000, key: :user},
   provider_auth: %{limit: 10, scale_ms: 60_000, key: :ip},

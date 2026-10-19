@@ -424,7 +424,7 @@ unnamed room with three open seats.
 | Field | Type | Default | Rules |
 |-------|------|---------|-------|
 | `name` | string | none | Trimmed. At most 60 characters after trimming. Missing or blank means no name (`config.name` is `null`) |
-| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"`, `"open"`, `{ "type": "open", "min_games": 100 }`, or `{ "type": "held", "user_id": "<uuid>" }`. Allowed requirements: integer 0, 100, 1000. A missing seat or bare `"open"` means 0. The host takes north |
+| `seats` | object | all open | Keys `seat_2` (east), `seat_3` (south), `seat_4` (west). Each value is `"ai"`, `"open"`, `{ "type": "open", "min_games": 100 }` (optionally with `"password": true`), or `{ "type": "held", "user_id": "<uuid>" }`. Allowed requirements: integer 0, 100, 1000. A missing seat or bare `"open"` means 0. The host takes north |
 | `bot_difficulty` | string | `"basic"` | One of `"random"`, `"basic"`, `"smart"`. Applies to the bots started for `"ai"` seats |
 
 A bot is started for every `"ai"` seat. When all three seats are `"ai"` the room is a solo room
@@ -435,9 +435,42 @@ Every seat gains `min_games`, including room detail, lobby, invite preview and r
 It is 0 on occupied/bot seats. Existing shapes are preserved: REST and readiness use a
 position-keyed `seats` object; the lobby channel and public invite preview use `seats[]`.
 Invite previews expose no occupant IDs; friend holds expose the invited user's public profile.
-Invalid seat objects (including missing `type`, missing `min_games` on open objects,
+Invalid seat objects (including missing `type`, missing `min_games` on open objects, a non-boolean `password`,
 missing/invalid `user_id` on holds, non-integer/unsupported requirements, or extra keys) return `invalid_room_params`
 on `seats.seat_2`, `seats.seat_3` or `seats.seat_4`.
+
+#### Password seats (PID-252)
+
+An open seat can need the table's seat password, like Classic's Password button. Create one
+with `{"seats":{"seat_3":{"type":"open","min_games":0,"password":true}}}`, or
+from the waiting room, host only, on a vacant seat that is not held:
+- `PUT /api/v1/rooms/:code/seats/:position/password` with no body.
+- `DELETE /api/v1/rooms/:code/seats/:position/password` with no body.
+
+Both return `200 {"data":{"room":...}}`; errors match the hold endpoints below.
+
+The server draws one four-digit password per room when its first seat needs one: at least three
+different digits and no straight run (never `0000`, `1111`, `1212`, `1234` or `4321`). Every
+password seat shares it, it never changes, and it lives in the room config, so it carries over
+on rematch. It is never logged.
+
+Only the host sees it, as `room.seat_password` in their own REST responses (create, join, seat
+controls, hold and password endpoints). `GET /rooms/:code`, channel pushes, lobby, readiness and
+invite previews never carry it. Every seat projection instead gains `password`: `true` on a vacant,
+unheld password seat, otherwise `false`, so Tables can show a lock.
+
+Sitting down needs `password` in the join body:
+```json
+POST /api/v1/rooms/A1B2/join
+{ "position": "south", "password": "4821" }
+```
+Missing or wrong, HTTP 403 with code `SEAT_REQUIRES_PASSWORD` in the standard `errors[]`
+envelope (`error_code: "seat_requires_password"`). Every join that sends a password counts against
+`seat_password` (10 per 600 s per user) and `seat_password_room` (30 per 600 s per room); over
+either, the usual 429 `RATE_LIMITED`. The lobby channel's `join_room` takes no password and answers
+`reason: "seat_requires_password"`. Invite links and seat moves by a non-host need the password
+too, unless the mover already sits in a password seat; the host may move anyone.
+A seat held for the caller, a reclaim after a disconnect, bots and playing-room substitutes skip it.
 
 #### Seats held for friends (PID-208)
 
@@ -1860,6 +1893,8 @@ the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
 | `room_create` | `POST /api/v1/rooms` | 10 per 60 s | authenticated user |
 | `room_lookup` | `GET /api/v1/rooms/:code` | 120 per 60 s | client IP |
 | `room_join` | `POST /api/v1/rooms/:code/join` | 30 per 60 s | authenticated user |
+| `seat_password` | `POST /api/v1/rooms/:code/join` with a `password` | 10 per 600 s | authenticated user |
+| `seat_password_room` | `POST /api/v1/rooms/:code/join` with a `password` | 30 per 600 s | SHA-256 of the room code |
 | `invite_mint` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate` | 10 per 60 s | authenticated user |
 | `invite_preview` | `GET /api/v1/invites/:code` | 60 per 60 s | client IP |
 | `invite_capture` | `POST /j/:code/deferred` | 20 per 1800 s | client IP |

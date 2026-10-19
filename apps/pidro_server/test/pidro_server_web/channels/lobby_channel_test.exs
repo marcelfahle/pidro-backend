@@ -286,6 +286,28 @@ defmodule PidroServerWeb.LobbyChannelTest do
     :ok = RoomManager.leave_room(host.id)
   end
 
+  test "the lobby marks a password seat without its password, and join_room cannot guess", %{
+    socket: socket
+  } do
+    host = PidroServer.AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{password_seats: [:east]})
+    password = room.config.seat_password
+    {:ok, reply, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    listed = Enum.find(reply.lobby.open_tables, &(&1.code == room.code))
+
+    assert Enum.find(listed.seats, &(&1.position == :east)).password
+    refute Enum.find(listed.seats, &(&1.position == :west)).password
+    refute inspect(reply) =~ "seat_password"
+
+    # The channel takes no password: guesses go through the rate-limited REST join.
+    ref = push(socket, "join_room", %{code: room.code, position: "east", password: password})
+
+    assert_reply ref, :error, %{
+      reason: "seat_requires_password",
+      error_code: "seat_requires_password"
+    }
+  end
+
   test "join_room rejects below the bar and accepts the exact combined boundary", %{
     socket: socket,
     user: user
@@ -350,7 +372,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
       spawn(fn ->
         for {reason, _code} <- failures do
           receive do
-            {:"$gen_call", from, {:join_room, "ERROR", _, _, _}} ->
+            {:"$gen_call", from, {:join_room, "ERROR", _, _, _, _}} ->
               GenServer.reply(from, {:error, reason})
           end
         end

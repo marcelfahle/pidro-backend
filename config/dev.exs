@@ -96,6 +96,8 @@ config :pidro_server, dev_routes: true
 #   guest_create_daily         40 per 86_400_000 ms      400 per 86_400_000 ms
 #   guest_create_install       3 per 3_600_000 ms        30 per 3_600_000 ms
 #   room_join                  30 per 60_000 ms          300 per 60_000 ms
+#   seat_password              10 per 600_000 ms         100 per 600_000 ms
+#   seat_password_room         30 per 600_000 ms         300 per 600_000 ms
 #   auth_upgrade               10 per 600_000 ms         100 per 600_000 ms
 #   auth_age                   10 per 600_000 ms         100 per 600_000 ms
 #   classic_help               5 per 3_600_000 ms        50 per 3_600_000 ms
@@ -121,6 +123,8 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   guest_create_daily: %{limit: 400, scale_ms: 86_400_000, key: :ip},
   guest_create_install: %{limit: 30, scale_ms: 3_600_000, key: :install_id},
   room_join: %{limit: 300, scale_ms: 60_000, key: :user},
+  seat_password: %{limit: 100, scale_ms: 600_000, key: :user},
+  seat_password_room: %{limit: 300, scale_ms: 600_000, key: {:param, "code"}},
   auth_upgrade: %{limit: 100, scale_ms: 600_000, key: :ip},
   auth_age: %{limit: 100, scale_ms: 600_000, key: :user},
   provider_auth: %{limit: 100, scale_ms: 60_000, key: :ip},

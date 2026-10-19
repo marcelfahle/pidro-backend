@@ -380,6 +380,20 @@ defmodule PidroServerWeb.API.FallbackController do
     |> json(%{error: "SEAT_REQUIRES_GAMES", min_games: min_games, games_played: games_played})
   end
 
+  def call(conn, {:error, :seat_requires_password}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{
+      errors: [
+        %{
+          code: "SEAT_REQUIRES_PASSWORD",
+          title: "Seat requires password",
+          detail: "This seat needs the table's password"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :profile_unavailable}) do
     conn
     |> put_status(:service_unavailable)

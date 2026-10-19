@@ -67,7 +67,8 @@ defmodule PidroServerWeb.InvitePreview do
         position: position,
         seat_index: index,
         status: if(seat.occupant_type == :vacant, do: "free", else: "occupied"),
-        min_games: seat.min_games
+        min_games: seat.min_games,
+        password: seat.password
       }
       |> Map.merge(Map.take(seat, [:vacated_by, :held_for]))
       |> PidroServerWeb.API.RoomJSON.with_held_user(users)

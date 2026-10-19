@@ -44,6 +44,11 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           enum: [0, 100, 1000],
           description: "Games required for an open seat; zero on occupied and bot seats"
         },
+        password: %Schema{
+          type: :boolean,
+          description:
+            "Whether sitting in this open seat needs the table's seat password; false on occupied, bot and held seats"
+        },
         position: %Schema{
           type: :string,
           enum: [:north, :south, :east, :west],
@@ -182,7 +187,7 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
   end
 
   defmodule SeatPlanEntry do
-    @moduledoc "An initial bot or open seat, optionally requiring experience."
+    @moduledoc "An initial bot, held or open seat, optionally requiring experience or a password."
     OpenApiSpex.schema(%{
       title: "SeatPlanEntry",
       oneOf: [
@@ -193,7 +198,13 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           required: [:type, :min_games],
           properties: %{
             type: %Schema{type: :string, enum: ["open"]},
-            min_games: %Schema{type: :integer, enum: [0, 100, 1000]}
+            min_games: %Schema{type: :integer, enum: [0, 100, 1000]},
+            password: %Schema{
+              type: :boolean,
+              default: false,
+              description:
+                "Sitting here needs the table's seat password, which the server draws and shows only to the host"
+            }
           }
         },
         %Schema{
@@ -382,6 +393,13 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
           example: 10
         },
         config: RoomConfig,
+        seat_password: %Schema{
+          type: :string,
+          pattern: "^[0-9]{4}$",
+          description:
+            "The table's four-digit seat password. Only in the host's own responses, and only once a seat has needed one",
+          example: "4821"
+        },
         seats: %Schema{
           type: :object,
           additionalProperties: Seat,

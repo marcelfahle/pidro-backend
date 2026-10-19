@@ -78,6 +78,7 @@
     {"code":"already_spectating","params":{},"sources":["rooms"],"meaning":"You are already watching a room."},
     {"code":"not_spectating","params":{},"sources":["rooms"],"meaning":"You are not watching a room."},
     {"code":"seat_requires_games","params":{"min_games":{"type":"integer"},"games_played":{"type":"integer"}},"sources":["rooms","lobby","invites"],"meaning":"This seat requires more completed games."},
+    {"code":"seat_requires_password","params":{},"sources":["rooms","lobby","invites"],"meaning":"This seat needs the table's password."},
     {"code":"profile_unavailable","params":{},"sources":["rooms","lobby","invites","auth"],"meaning":"Player eligibility could not be checked; try again shortly."},
     {"code":"seat_taken","params":{},"sources":["rooms","lobby","invites"],"meaning":"The requested seat is occupied."},
     {"code":"team_full","params":{},"sources":["rooms","lobby"],"meaning":"The requested team is full."},
