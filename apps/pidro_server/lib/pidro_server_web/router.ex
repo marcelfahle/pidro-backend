@@ -174,6 +174,8 @@ defmodule PidroServerWeb.Router do
     get "/friends/recent", FriendController, :recent
     put "/friends/:user_id", FriendController, :add, private: %{rate_limit: [:friend_add]}
     delete "/friends/:user_id", FriendController, :remove
+    post "/friends/:user_id/ignore", FriendController, :ignore
+    delete "/friends/:user_id/ignore", FriendController, :unignore
 
     get "/blocks", BlockController, :index
     put "/blocks/:user_id", BlockController, :block

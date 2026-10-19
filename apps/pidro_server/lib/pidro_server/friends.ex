@@ -30,50 +30,72 @@ defmodule PidroServer.Friends do
                {:error, reason} -> Repo.rollback(reason)
              end
            end) do
-      changed(user_id, friend_id)
+      changed([user_id, friend_id])
       {:ok, list(user_id)}
     end
   end
 
-  @doc "Deletes both edges and returns the caller's full list."
+  @doc "Deletes the caller's edge, and the reverse edge only if they were friends."
   @spec remove(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
   def remove(user_id, friend_id) do
     with {:ok, friend_id} <- target(user_id, friend_id) do
-      Repo.delete_all(
-        from f in Friendship,
-          where:
-            (f.user_id == ^user_id and f.friend_id == ^friend_id) or
-              (f.user_id == ^friend_id and f.friend_id == ^user_id)
-      )
+      Repo.transaction(fn ->
+        case Repo.delete_all(edge(user_id, friend_id)) do
+          {0, _} -> :ok
+          _ -> Repo.delete_all(edge(friend_id, user_id))
+        end
+      end)
 
-      changed(user_id, friend_id)
+      changed([user_id, friend_id])
       {:ok, list(user_id)}
     end
   end
 
-  @doc "Returns mutual friends and incoming-only edges, with live presence."
+  @doc "Hides an incoming request from the caller only; the sender's edge stays."
+  @spec ignore(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
+  def ignore(user_id, friend_id), do: mark_ignored(user_id, friend_id, DateTime.utc_now())
+
+  @doc "Undoes an ignore, restoring the incoming request."
+  @spec unignore(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
+  def unignore(user_id, friend_id), do: mark_ignored(user_id, friend_id, nil)
+
+  @doc "Returns mutual friends, unignored incoming and outgoing-only edges, with live presence."
   @spec list(String.t()) :: map()
   def list(user_id) do
-    outgoing = outgoing_ids(user_id)
+    sent =
+      Repo.all(
+        from f in Friendship,
+          where: f.user_id == ^user_id,
+          order_by: [desc: f.inserted_at, asc: f.friend_id],
+          select: {f.friend_id, f.inserted_at}
+      )
 
-    incoming =
+    received =
       Repo.all(
         from f in Friendship,
           where: f.friend_id == ^user_id,
           order_by: [desc: f.inserted_at, asc: f.user_id],
-          select: f.user_id
+          select: {f.user_id, f.ignored_at}
       )
 
-    entries = entries(incoming)
-    {friends, added_you} = Enum.split_with(entries, &MapSet.member?(outgoing, &1.user_id))
+    sent_at = Map.new(sent)
+    received_ids = MapSet.new(received, &elem(&1, 0))
+    friend_ids = for {id, _} <- received, Map.has_key?(sent_at, id), do: id
+    added_you_ids = for {id, nil} <- received, not Map.has_key?(sent_at, id), do: id
+    requested_ids = for {id, _} <- sent, not MapSet.member?(received_ids, id), do: id
+    entries = Map.new(entries(friend_ids ++ added_you_ids ++ requested_ids), &{&1.user_id, &1})
+    pick = fn ids -> for id <- ids, entry = entries[id], do: entry end
+    added_you = pick.(added_you_ids)
 
     %{
       friends:
         Enum.sort_by(
-          friends,
+          pick.(friend_ids),
           &{&1.presence == "offline", User.name_key(&1.display_name), &1.user_id}
         ),
-      added_you: added_you
+      added_you: added_you,
+      requested: Enum.map(pick.(requested_ids), &Map.put(&1, :requested_at, sent_at[&1.user_id])),
+      requests_waiting: length(added_you)
     }
     |> with_classic(user_id)
   end
@@ -223,8 +245,19 @@ defmodule PidroServer.Friends do
     end
   end
 
-  defp changed(user_id, friend_id) do
-    for id <- [user_id, friend_id] do
+  defp mark_ignored(user_id, friend_id, ignored_at) do
+    with {:ok, friend_id} <- target(user_id, friend_id) do
+      Repo.update_all(edge(friend_id, user_id), set: [ignored_at: ignored_at])
+      changed([user_id])
+      {:ok, list(user_id)}
+    end
+  end
+
+  defp edge(user_id, friend_id),
+    do: from(f in Friendship, where: f.user_id == ^user_id and f.friend_id == ^friend_id)
+
+  defp changed(ids) do
+    for id <- ids do
       Phoenix.PubSub.broadcast(PidroServer.PubSub, "lobby:updates", {:friends_changed, id})
     end
   end

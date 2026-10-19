@@ -48,13 +48,27 @@ defmodule PidroServerWeb.API.BlockControllerTest do
                @user_not_found
 
       assert conn |> auth(caller) |> get(~p"/api/v1/friends") |> json_response(200) ==
-               %{"data" => %{"friends" => [], "added_you" => []}}
+               %{
+                 "data" => %{
+                   "friends" => [],
+                   "added_you" => [],
+                   "requested" => [],
+                   "requests_waiting" => 0
+                 }
+               }
     end
 
     assert conn |> auth(a) |> delete(~p"/api/v1/blocks/#{b.id}") |> json_response(200) == empty
 
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) ==
-             %{"data" => %{"friends" => [], "added_you" => []}}
+             %{
+               "data" => %{
+                 "friends" => [],
+                 "added_you" => [],
+                 "requested" => [],
+                 "requests_waiting" => 0
+               }
+             }
   end
 
   test "self is 400, guest callers 403, guest and missing targets 404, missing auth 401", %{

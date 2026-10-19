@@ -52,19 +52,31 @@ defmodule PidroServerWeb.API.FriendControllerTest do
   test "HTTP add, add back, list and remove share the full-list contract", %{conn: conn} do
     a = user_fixture(%{display_name: "Nora"})
     b = user_fixture(%{display_name: "Vera"})
-    empty = %{"data" => %{"friends" => [], "added_you" => []}}
-    assert conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200) == empty
-    assert conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200) == empty
+
+    empty = %{
+      "data" => %{"friends" => [], "added_you" => [], "requested" => [], "requests_waiting" => 0}
+    }
+
+    response = conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200)
+    assert_schema(response, "FriendsResponse")
+
+    assert %{"friends" => [], "added_you" => [], "requested" => [sent], "requests_waiting" => 0} =
+             response["data"]
+
+    assert Map.delete(sent, "requested_at") == player(b)
+    assert {:ok, _, _} = DateTime.from_iso8601(sent["requested_at"])
+    assert conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200) == response
     response = conn |> auth(b) |> get(~p"/api/v1/friends") |> json_response(200)
     assert_schema(response, "FriendsResponse")
     assert response["data"]["added_you"] == [player(a)]
+    assert response["data"]["requests_waiting"] == 1
 
     response = conn |> auth(b) |> put(~p"/api/v1/friends/#{a.id}") |> json_response(200)
     assert_schema(response, "FriendsResponse")
-    assert response == %{"data" => %{"friends" => [player(a)], "added_you" => []}}
+    assert response == put_in(empty, ["data", "friends"], [player(a)])
 
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) ==
-             %{"data" => %{"friends" => [player(b)], "added_you" => []}}
+             put_in(empty, ["data", "friends"], [player(b)])
 
     assert conn |> auth(b) |> delete(~p"/api/v1/friends/#{a.id}") |> json_response(200) == empty
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) == empty
@@ -88,6 +100,30 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert Map.delete(entry, "table_company") == %{player(b) | "presence" => "at_table"}
   end
 
+  test "HTTP ignore hides a request from the recipient only, and un-ignore restores it",
+       %{conn: conn} do
+    a = user_fixture(%{display_name: "Nora"})
+    b = user_fixture(%{display_name: "Vera"})
+    sent = conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200)
+
+    hidden = %{
+      "data" => %{"friends" => [], "added_you" => [], "requested" => [], "requests_waiting" => 0}
+    }
+
+    for _ <- 1..2 do
+      response = conn |> auth(b) |> post(~p"/api/v1/friends/#{a.id}/ignore") |> json_response(200)
+      assert_schema(response, "FriendsResponse")
+      assert response == hidden
+    end
+
+    assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) == sent
+
+    response = conn |> auth(b) |> delete(~p"/api/v1/friends/#{a.id}/ignore") |> json_response(200)
+    assert_schema(response, "FriendsResponse")
+    assert response["data"]["added_you"] == [player(a)]
+    assert response["data"]["requests_waiting"] == 1
+  end
+
   test "guest callers are forbidden on every route; missing auth is unauthorized", %{conn: conn} do
     guest = guest_fixture()
     target = user_fixture()
@@ -97,7 +133,9 @@ defmodule PidroServerWeb.API.FriendControllerTest do
           {:get, "/api/v1/friends/recent"},
           {:get, "/api/v1/users/search?q=nor"},
           {:put, "/api/v1/friends/#{target.id}"},
-          {:delete, "/api/v1/friends/#{target.id}"}
+          {:delete, "/api/v1/friends/#{target.id}"},
+          {:post, "/api/v1/friends/#{target.id}/ignore"},
+          {:delete, "/api/v1/friends/#{target.id}/ignore"}
         ] do
       assert conn |> auth(guest) |> dispatch(method, path) |> json_response(403) ==
                %{
@@ -118,9 +156,12 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     user = user_fixture()
     guest = guest_fixture()
 
-    for method <- [:put, :delete] do
+    for {method, suffix} <- [put: "", delete: "", post: "/ignore", delete: "/ignore"] do
       response =
-        conn |> auth(user) |> dispatch(method, "/api/v1/friends/#{user.id}") |> json_response(400)
+        conn
+        |> auth(user)
+        |> dispatch(method, "/api/v1/friends/#{user.id}#{suffix}")
+        |> json_response(400)
 
       assert response == %{
                "error" => "CANNOT_FRIEND_SELF",
@@ -133,7 +174,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
       for id <- [guest.id, Ecto.UUID.generate(), "invalid"] do
         assert conn
                |> auth(user)
-               |> dispatch(method, "/api/v1/friends/#{id}")
+               |> dispatch(method, "/api/v1/friends/#{id}#{suffix}")
                |> json_response(404) ==
                  %{
                    "error" => "USER_NOT_FOUND",
@@ -211,6 +252,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
 
   defp dispatch(conn, :get, path), do: get(conn, path)
   defp dispatch(conn, :put, path), do: put(conn, path)
+  defp dispatch(conn, :post, path), do: post(conn, path)
   defp dispatch(conn, :delete, path), do: delete(conn, path)
 
   defp player(user),

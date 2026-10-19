@@ -22,8 +22,8 @@ defmodule PidroServer.BlocksTest do
     assert {:ok, %{blocked: [^entry]}} = Blocks.block(a.id, b.id)
     assert Repo.aggregate(Block, :count) == 1
     assert Repo.aggregate(Friendship, :count) == 0
-    assert Friends.list(a.id) == %{friends: [], added_you: []}
-    assert Friends.list(b.id) == %{friends: [], added_you: []}
+    assert Friends.list(a.id) == %{friends: [], added_you: [], requested: [], requests_waiting: 0}
+    assert Friends.list(b.id) == %{friends: [], added_you: [], requested: [], requests_waiting: 0}
     assert Blocks.list(b.id) == %{blocked: []}
 
     for {caller, target} <- [{a, b}, {b, a}] do
@@ -33,8 +33,8 @@ defmodule PidroServer.BlocksTest do
     assert {:ok, %{blocked: []}} = Blocks.unblock(a.id, b.id)
     assert {:ok, %{blocked: []}} = Blocks.unblock(a.id, b.id)
     refute Blocks.blocked?(a.id, b.id)
-    assert Friends.list(a.id) == %{friends: [], added_you: []}
-    assert Friends.list(b.id) == %{friends: [], added_you: []}
+    assert Friends.list(a.id) == %{friends: [], added_you: [], requested: [], requests_waiting: 0}
+    assert Friends.list(b.id) == %{friends: [], added_you: [], requested: [], requests_waiting: 0}
     assert {:ok, _} = Friends.add(a.id, b.id)
   end
 

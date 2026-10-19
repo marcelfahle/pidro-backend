@@ -23,6 +23,22 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
     })
   end
 
+  defmodule RequestedPlayer do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      title: "RequestedFriendPlayer",
+      type: :object,
+      required: [:user_id, :display_name, :avatar_url, :presence, :requested_at],
+      properties: %{
+        user_id: %Schema{type: :string, format: :uuid},
+        display_name: %Schema{type: :string, nullable: true},
+        avatar_url: %Schema{type: :string, nullable: true},
+        presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]},
+        requested_at: %Schema{type: :string, format: :"date-time"}
+      }
+    })
+  end
+
   defmodule DiscoveryPlayer do
     @moduledoc false
     OpenApiSpex.schema(%{
@@ -53,10 +69,24 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
       properties: %{
         data: %Schema{
           type: :object,
-          required: [:friends, :added_you],
+          required: [:friends, :added_you, :requested, :requests_waiting],
           properties: %{
             friends: %Schema{type: :array, items: Player},
-            added_you: %Schema{type: :array, items: Player},
+            added_you: %Schema{
+              type: :array,
+              items: Player,
+              description: "Incoming requests you have not ignored, newest first."
+            },
+            requested: %Schema{
+              type: :array,
+              items: RequestedPlayer,
+              description: "Requests you sent with none back, newest first."
+            },
+            requests_waiting: %Schema{
+              type: :integer,
+              minimum: 0,
+              description: "Count of added_you, for the badge."
+            },
             classic: %Schema{
               type: :object,
               description: "Claimed accounts only: outgoing Classic friends not yet claimed.",

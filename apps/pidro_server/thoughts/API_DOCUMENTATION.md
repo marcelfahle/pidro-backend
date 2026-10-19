@@ -1033,7 +1033,7 @@ link can come back as a fresh guest — the host's answer to that is
 
 ### Friends and Player Discovery (PID-223)
 
-All five routes require bearer authentication and a registered account. Guests receive
+All seven routes require bearer authentication and a registered account. Guests receive
 `403 {"error":"ACCOUNT_REQUIRED"}`. These new routes use the attached friends contract's
 single `error` code shape for domain errors; authentication and rate limiting retain the
 existing `errors` array. Existing endpoints are unchanged.
@@ -1042,26 +1042,37 @@ existing `errors` array. Existing endpoints are unchanged.
 |--------|----------|--------|
 | GET | `/api/v1/friends` | Full friends list |
 | PUT | `/api/v1/friends/:user_id` | Add one directed edge, then return full list |
-| DELETE | `/api/v1/friends/:user_id` | Delete both directions, then return full list |
+| DELETE | `/api/v1/friends/:user_id` | Remove a friend or cancel your request, then return full list |
+| POST | `/api/v1/friends/:user_id/ignore` | Hide their request from you, then return full list |
+| DELETE | `/api/v1/friends/:user_id/ignore` | Undo the ignore, then return full list |
 | GET | `/api/v1/users/search?q=nor` | Up to ten matching registered players |
 | GET | `/api/v1/friends/recent` | Up to ten recent human tablemates |
 
-The first three return:
+The first five return:
 
 ```json
-{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online"}],"added_you":[]}}
+{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online"}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0}}
 ```
 
-Friends have both directed edges; `added_you` has an incoming edge with none back.
-Adding back accepts it; there is no stored request state. PUT is idempotent (200 on
-repeat). DELETE is also idempotent for an existing registered target. Friends sort
+Friends have both directed edges; `added_you` has an incoming edge with none back;
+`requested` (PID-245) has your edge with none back, with `requested_at` when you sent it.
+`requests_waiting` is the length of `added_you`, for the badge. Adding back accepts a
+request. PUT is idempotent (200 on repeat). DELETE deletes your edge, and theirs only if
+you were friends: on a request you sent it cancels it, and it never touches a request
+sent to you. DELETE is idempotent for an existing registered target. Friends sort
 connected first (`online` and `at_table` together), then by folded name; `added_you`
-sorts newest first. Presence comes from existing Presence tracking: a game-channel
-connection while holding a human seat wins as `at_table`, otherwise a lobby or
-game-channel connection (spectating) is `online`, otherwise `offline`. An `at_table`
+and `requested` sort newest first. Presence comes from existing Presence tracking: a
+game-channel connection while holding a human seat wins as `at_table`, otherwise a lobby
+or game-channel connection (spectating) is `online`, otherwise `offline`. An `at_table`
 entry also carries `table_company`: `"bots"` when every other seat is a bot or empty
 (invitable), `"people"` when another human sits there. Older builds ignore the field.
 Avatars use the same URL as room/profile payloads, or null.
+
+Ignore marks the incoming edge as ignored for you only. It leaves `added_you` and
+`requests_waiting`; the sender is not told, gets no `friends_changed`, and still sees the
+request in `requested`. The edge stays, so adding them back makes you friends at once.
+Un-ignore clears the mark. Both are idempotent, and a no-op when there is no incoming
+edge. Remove and block delete the edges, and any ignore mark with them.
 
 Self-add and self-remove return `400 {"error":"CANNOT_FRIEND_SELF"}`. A missing,
 malformed or guest target returns `404 {"error":"USER_NOT_FOUND"}`.

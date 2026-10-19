@@ -12,7 +12,7 @@ defmodule PidroServerWeb.API.FriendController do
   security([%{"bearer_auth" => []}])
 
   operation(:index,
-    summary: "List mutual friends and players who added you",
+    summary: "List friends, requests waiting for you and requests you sent",
     responses: [
       ok: {"Full friends list", "application/json", FriendSchemas.ListResponse},
       forbidden: {"Account required", "application/json", FriendSchemas.Error},
@@ -44,7 +44,9 @@ defmodule PidroServerWeb.API.FriendController do
   end
 
   operation(:remove,
-    summary: "Remove both directions of a friendship",
+    summary: "Remove a friendship, or cancel a request you sent",
+    description:
+      "Deletes your edge, and theirs only if you were friends. An incoming request is untouched.",
     parameters: [user_id: [in: :path, type: :string, required: true]],
     responses: [
       ok: {"Full friends list", "application/json", FriendSchemas.ListResponse},
@@ -58,6 +60,41 @@ defmodule PidroServerWeb.API.FriendController do
 
   def remove(conn, %{"user_id" => id}) do
     respond(conn, Friends.remove(conn.assigns.current_user.id, id))
+  end
+
+  operation(:ignore,
+    summary: "Hide an incoming request from your list; the sender is not told",
+    description: "Their edge stays, so adding them back later makes you friends at once.",
+    parameters: [user_id: [in: :path, type: :string, required: true]],
+    responses: [
+      ok: {"Full friends list", "application/json", FriendSchemas.ListResponse},
+      bad_request: {"Cannot friend self", "application/json", FriendSchemas.Error},
+      not_found: {"Player unavailable", "application/json", FriendSchemas.Error},
+      forbidden: {"Account required", "application/json", FriendSchemas.Error},
+      unauthorized:
+        {"Authentication required", "application/json", ErrorSchemas.unauthorized_error()}
+    ]
+  )
+
+  def ignore(conn, %{"user_id" => id}) do
+    respond(conn, Friends.ignore(conn.assigns.current_user.id, id))
+  end
+
+  operation(:unignore,
+    summary: "Undo an ignore, restoring the incoming request",
+    parameters: [user_id: [in: :path, type: :string, required: true]],
+    responses: [
+      ok: {"Full friends list", "application/json", FriendSchemas.ListResponse},
+      bad_request: {"Cannot friend self", "application/json", FriendSchemas.Error},
+      not_found: {"Player unavailable", "application/json", FriendSchemas.Error},
+      forbidden: {"Account required", "application/json", FriendSchemas.Error},
+      unauthorized:
+        {"Authentication required", "application/json", ErrorSchemas.unauthorized_error()}
+    ]
+  )
+
+  def unignore(conn, %{"user_id" => id}) do
+    respond(conn, Friends.unignore(conn.assigns.current_user.id, id))
   end
 
   operation(:search,
