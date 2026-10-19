@@ -395,6 +395,28 @@ defmodule PidroServerWeb.LobbyChannelTest do
     assert RoomManager.seat_invitations(friend.id) == []
     {:ok, reopened} = RoomManager.get_room(code)
     assert reopened.config.seat_holds == %{}
+
+    # Sitting with people, they can't be invited away from them at all.
+    assert {:error, :already_in_room} =
+             RoomManager.set_seat_hold(code, host.id, :south, friend.id)
+
+    assert {:error, :already_in_room} =
+             RoomManager.set_seat(code, host.id, :west, {:held, friend.id})
+
+    third_host = PidroServer.AccountsFixtures.user_fixture()
+
+    assert {:error, :already_in_room} =
+             RoomManager.create_room(third_host.id, %{seat_holds: %{south: friend.id}})
+
+    refute_push "seat_invitation", _
+    assert RoomManager.seat_invitations(friend.id) == []
+
+    # At a table of bots they still can.
+    :ok = RoomManager.leave_room(friend.id)
+    {:ok, own} = RoomManager.create_room(friend.id)
+    {:ok, _, :east} = RoomManager.join_bot(own.code, "bot_east", self(), :east)
+    assert {:ok, _} = RoomManager.set_seat_hold(code, host.id, :south, friend.id)
+    assert_push "seat_invitation", %{code: ^code, position: :south}
   end
 
   test "a block committed before queued lobby delivery suppresses the invitation", %{user: host} do
