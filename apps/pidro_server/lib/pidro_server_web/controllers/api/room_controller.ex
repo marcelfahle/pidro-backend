@@ -49,6 +49,8 @@ defmodule PidroServerWeb.API.RoomController do
 
   action_fallback PidroServerWeb.API.FallbackController
 
+  plug PidroServerWeb.Plugs.Authenticate, [lenient: true] when action == :show
+
   tags(["Rooms"])
 
   # ==================== OpenAPI Operation Specs ====================
@@ -199,7 +201,10 @@ defmodule PidroServerWeb.API.RoomController do
       summary: "Get room details",
       description: """
       Gets the current state of a room including player list, host information, and
-      room status. This endpoint is publicly accessible and does not require authentication.
+      room status. This endpoint is public, with an optional Bearer token. When the
+      token identifies the host, `data.room.seat_password` includes the table's password
+      if one is set. Missing, invalid, expired or revoked tokens receive the public
+      room without the password, not a 401.
       """,
       operationId: "RoomController.show",
       tags: ["Rooms"],

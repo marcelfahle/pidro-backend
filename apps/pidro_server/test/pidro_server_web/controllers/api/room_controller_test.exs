@@ -498,9 +498,43 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert created["data"]["room"]["seats"]["south"]["password"] == true
       assert created["data"]["room"]["seats"]["east"]["password"] == false
 
-      public = as_user(conn, player) |> get(~p"/api/v1/rooms/#{code}") |> json_response(200)
-      refute Map.has_key?(public["data"]["room"], "seat_password")
-      assert public["data"]["room"]["seats"]["south"]["password"] == true
+      {host_room, read_log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          as_user(conn, host) |> get(~p"/api/v1/rooms/#{code}") |> json_response(200)
+        end)
+
+      assert host_room["data"]["room"]["seat_password"] == password
+
+      revoked = Token.generate(host)
+      {:ok, host} = PidroServer.Accounts.Auth.bump_token_version(host)
+
+      expired =
+        Phoenix.Token.sign(
+          PidroServerWeb.Endpoint,
+          "pidro_auth_salt",
+          %{
+            id: host.id,
+            v: host.token_version
+          },
+          signed_at: System.system_time(:second) - 31 * 86_400
+        )
+
+      for public_conn <- [
+            as_user(conn, player),
+            conn,
+            put_req_header(conn, "authorization", "Bearer garbage"),
+            put_req_header(conn, "authorization", "Bearer #{expired}"),
+            put_req_header(conn, "authorization", "Bearer #{revoked}"),
+            put_req_header(conn, "authorization", "Basic malformed")
+          ] do
+        public = public_conn |> get(~p"/api/v1/rooms/#{code}") |> json_response(200)
+        refute Map.has_key?(public["data"]["room"], "seat_password")
+        assert public["data"]["room"]["seats"]["south"]["password"] == true
+      end
+
+      assert read_log =~ "GET /api/v1/rooms"
+      refute read_log =~ ~s("#{password}")
+      refute read_log =~ "seat_password"
 
       lobby = as_user(conn, player) |> get(~p"/api/v1/lobby") |> json_response(200)
       listed = Enum.find(lobby["data"]["open_tables"], &(&1["code"] == code))
@@ -556,6 +590,9 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       stranger = AccountsFixtures.user_fixture()
       {:ok, room} = RoomManager.create_room(host.id)
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      host_room = as_user(conn, host) |> get(~p"/api/v1/rooms/#{room.code}") |> json_response(200)
+      refute Map.has_key?(host_room["data"]["room"], "seat_password")
 
       password_seat = %{"seat" => %{"type" => "open", "min_games" => 0, "password" => true}}
 

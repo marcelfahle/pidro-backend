@@ -49,6 +49,20 @@ defmodule PidroServerWeb.Plugs.AuthenticateTest do
       conn |> call() |> assert_unauthorized()
     end
 
+    test "optional authentication allows a missing token but still rejects a bad one", %{
+      conn: conn
+    } do
+      opts = Authenticate.init(optional: true)
+      anonymous = Authenticate.call(conn, opts)
+      refute anonymous.halted
+      assert anonymous.assigns.current_user == nil
+
+      conn
+      |> with_bearer("not-a-token")
+      |> Authenticate.call(opts)
+      |> assert_unauthorized()
+    end
+
     test "wrong scheme", %{conn: conn, token: token} do
       conn |> put_req_header("authorization", "Token #{token}") |> call() |> assert_unauthorized()
     end
