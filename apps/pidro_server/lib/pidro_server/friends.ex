@@ -14,6 +14,57 @@ defmodule PidroServer.Friends do
   alias PidroServer.Stats.GameStats
   alias PidroServerWeb.Presence
 
+  @doc "Links a newly registered account to a personal link's owner, after registration commits."
+  @spec link_signup({:ok, User.t()} | {:error, term()}, term()) ::
+          {:ok, User.t()} | {:error, term()}
+  def link_signup({:ok, %User{guest: false} = user}, slug) when is_binary(slug) do
+    with %User{id: friend_id} <- Auth.get_user_by_share_slug(slug),
+         false <- friend_id == user.id,
+         {:ok, new?} <-
+           Repo.transaction(fn ->
+             Blocks.lock_pair(user.id, friend_id)
+             if Blocks.blocked?(user.id, friend_id), do: Repo.rollback(:blocked)
+
+             rows =
+               for {a, b} <- [{user.id, friend_id}, {friend_id, user.id}] do
+                 %{user_id: a, friend_id: b, inserted_at: DateTime.utc_now()}
+               end
+
+             {count, _} =
+               Repo.insert_all(Friendship, rows,
+                 on_conflict: :nothing,
+                 conflict_target: [:user_id, :friend_id]
+               )
+
+             count > 0
+           end) do
+      players =
+        Map.new(entries([user.id, friend_id]), fn player ->
+          viewer_id = if player.user_id == user.id, do: friend_id, else: user.id
+          {player.user_id, hd(with_join_as([player], viewer_id))}
+        end)
+
+      if new? do
+        changed([user.id, friend_id])
+
+        for {recipient, other} <- [{user.id, friend_id}, {friend_id, user.id}] do
+          Phoenix.PubSub.broadcast(
+            PidroServer.PubSub,
+            "lobby:updates",
+            {:friend_event, recipient, "friend_accepted",
+             %{player: players[other], source: "link"}}
+          )
+        end
+      end
+
+      {:ok, %{user | linked_friend: players[friend_id]}}
+    else
+      _ignored -> {:ok, user}
+    end
+  end
+
+  def link_signup(result, _slug), do: result
+
   @doc """
   Adds one edge, idempotently, and returns the caller's full list. A new edge
   tells the other player live: a request, or the acceptance of theirs.

@@ -106,6 +106,21 @@ require a valid token.
 
 **Endpoint**: `POST /api/v1/auth/register`
 
+Register, Apple and Facebook sign-up, guest upgrade, and Classic claim accept an optional
+top-level `friend_slug`. It links both friendship edges only when this request creates a
+registered account or upgrades a guest. Existing sign-ins, guest results, missing/unknown
+slugs, self-links and blocks in either direction leave the normal response unchanged.
+Guest creation never links friends: the app retains the slug until upgrade or claim.
+
+On a successful link, `data.linked_friend` contains the owner's public player entry
+(`user_id`, `display_name`, `avatar_url`, `presence`, `join_as`, and live table fields when at a table),
+as used by `friend_accepted`, without list-only shared-game metadata.
+Both players receive `friends_changed` and `friend_accepted` with the other player's entry
+and `source: "link"`. The pair is locked and both edges inserted in one transaction;
+repeating an already mutual link does not duplicate events. No extra acceptance tap is needed.
+Without a link, `linked_friend` is **absent**, not null. No existing request field is required
+or changed.
+
 **Request Body**:
 ```json
 {
@@ -880,6 +895,17 @@ most 30 minutes. Rendering the page, crawlers, desktop store buttons and the opp
 button never create a hint. Capture is limited at `invite_capture` (per IP) and
 `invite_capture_code` (per hashed normalized code).
 
+#### Personal Player Link
+
+`GET /play/:slug` renders the public player's name/avatar, or a generic 404 for an unknown
+slug. Its matching mobile store button uses the same capture script, coarse signature,
+privacy disclosure, CSP allowance and exact-Origin guard as table invites, posting to
+`POST /play/:slug/deferred`. The shared `invite_capture` IP policy and `friend_capture_slug`
+hashed-slug policy apply. Unknown slugs return 204 without storing a hint. Desktop and
+opposite-platform buttons do not capture. The Play Store URL, including the Android intent
+fallback, carries `referrer=friend%3D<slug>`. Opening an already installed app remains the
+app's profile/Add-button flow. The public website's `/play/*` rewrite is configured separately.
+
 #### Resolve a Deferred Invite
 
 **Endpoint**: `POST /api/v1/invites/deferred`
@@ -887,7 +913,7 @@ button never create a hint. Capture is limited at `invite_capture` (per IP) and
 
 Native clients call this once on first installation with `platform` and a random, uninstall-scoped
 `install_id`. Android may include the Google Play Install Referrer query string in `referrer`; a
-single known `invite=<code>` value is authoritative. Fresh iOS and Android installs can instead
+single known `invite=<code>` or `friend=<slug>` value is authoritative. Fresh installs can instead
 include all five coarse fields: `os_major`, `screen_class`, `locale`, and `timezone` alongside
 `platform`. Android checks both its actual OS major and Chromium's reduced-UA version 10 tuple.
 
@@ -903,12 +929,16 @@ include all five coarse fields: `os_major`, `screen_class`, `locale`, and `timez
 }
 ```
 
-A unique match answers `{"data":{"invite":{"code":"7KQ4M2XB"}}}`. Missing, expired,
-malformed, unknown and ambiguous inputs all answer `{"data":{"invite":null}}`; the API never
+A unique invite match answers `{"data":{"invite":{"code":"7KQ4M2XB"},"friend":null}}`.
+A friend match answers `{"data":{"invite":null,"friend":{"slug":"bertil","display_name":"Bertil","avatar_url":null}}}`.
+Missing, expired, malformed, unknown and ambiguous inputs without a valid fallback answer
+`{"data":{"invite":null,"friend":null}}`; the API never
 guesses or returns room/private invite data. A resolution attempt consumes every queried matcher
 bucket even when a valid Android referrer wins. The `install_id` is only a rotatable fairness key,
 not a device identifier. Limited at `invite_deferred` (five attempts per IP per 30 minutes) and
 `invite_deferred_install` (two per hashed install id per 30 minutes).
+Duplicate or mixed `invite`/`friend` referrer keys are not selected; a unique signature fallback
+may still resolve. Multiple coarse targets, including an invite and a friend, are ambiguous.
 
 #### Redeem an Invite
 
@@ -1185,7 +1215,8 @@ A new edge also tells the other player, in addition to `friends_changed` (PID-24
   when the last completed game both played in ended.
 - `friend_accepted` goes to the player whose request was just answered by adding
   back, also when it had been ignored: `{"player": entry, "source": "accept"}`,
-  with the entry of the player who accepted. Link sign-ups will send `"link"`.
+  with the entry of the player who accepted. Personal-link sign-ups send `"link"`
+  to both players with the other player's entry, plus `friends_changed` to both.
 
 Neither is sent on a repeat add, for Classic edges copied at claim, or by ignore,
 un-ignore, cancel, remove or block. Older builds ignore both.
@@ -2010,8 +2041,9 @@ the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
 | `seat_password_room` | `POST /api/v1/rooms/:code/join` with a `password` | 30 per 600 s | SHA-256 of the room code |
 | `invite_mint` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate` | 10 per 60 s | authenticated user |
 | `invite_preview` | `GET /api/v1/invites/:code` | 60 per 60 s | client IP |
-| `invite_capture` | `POST /j/:code/deferred` | 20 per 1800 s | client IP |
+| `invite_capture` | `POST /j/:code/deferred`, `POST /play/:slug/deferred` | 20 per 1800 s | client IP |
 | `invite_capture_code` | `POST /j/:code/deferred` | 200 per 1800 s | SHA-256 of normalized invite code |
+| `friend_capture_slug` | `POST /play/:slug/deferred` | 200 per 1800 s | SHA-256 of slug |
 | `invite_deferred` | `POST /api/v1/invites/deferred` | 5 per 1800 s | client IP |
 | `invite_deferred_install` | `POST /api/v1/invites/deferred` | 2 per 1800 s | SHA-256 of `install_id` |
 | `invite_redeem` | `POST /api/v1/invites/:code/redeem` | 10 per 60 s | authenticated user |

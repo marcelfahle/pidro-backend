@@ -23,7 +23,8 @@ defmodule PidroServer.Invites.DeferredMatcher do
         }
 
   @type capture_result :: :created | :existing | :capacity | :disabled
-  @type consume_result :: {:ok, String.t()} | :ambiguous | :none
+  @type hint :: String.t() | {:friend, String.t()}
+  @type consume_result :: {:ok, hint()} | :ambiguous | :none
 
   def start_link(opts \\ []) do
     config = Application.get_env(:pidro_server, __MODULE__, [])
@@ -31,7 +32,7 @@ defmodule PidroServer.Invites.DeferredMatcher do
     GenServer.start_link(__MODULE__, Keyword.merge(config, opts), name: name)
   end
 
-  @spec capture(String.t(), signature(), GenServer.server()) :: capture_result()
+  @spec capture(hint(), signature(), GenServer.server()) :: capture_result()
   def capture(invite_code, signature, server \\ __MODULE__) do
     GenServer.call(server, {:capture, signature, invite_code})
   end

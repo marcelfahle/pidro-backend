@@ -259,6 +259,18 @@ defmodule PidroServer.Accounts.AuthTest do
 
       assert Repo.get!(PlayerProfile, profile.id).user_id == guest.id
       refute_receive %Phoenix.Socket.Broadcast{event: "disconnect"}
+
+      owner = AccountsFixtures.user_fixture()
+
+      assert {:error, :not_a_guest} =
+               Auth.upgrade_guest(guest, %{
+                 email: "anna@example.com",
+                 password: "password123",
+                 friend_slug: owner.share_slug
+               })
+
+      assert PidroServer.Friends.list(upgraded.id).friends == []
+      assert Repo.get!(User, guest.id).token_version == 1
     end
 
     test "applies an optional username" do

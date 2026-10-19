@@ -24,6 +24,132 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Repo
 
+  test "a personal link registers mutual friends and tells both players", %{conn: conn} do
+    owner = AccountsFixtures.user_fixture(%{display_name: "Bertil"})
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    data =
+      conn
+      |> post(~p"/api/v1/auth/register", %{
+        user: %{username: "sister", email: "sister@example.com", password: "secret123"},
+        friend_slug: owner.share_slug,
+        age_band: "18_plus",
+        terms_version: "1"
+      })
+      |> json_response(201)
+      |> Map.fetch!("data")
+
+    assert_linked_friend(data, owner)
+  end
+
+  test "absent, unknown and own slugs leave the normal registration response", %{conn: conn} do
+    for {name, slug} <- [{"absent", nil}, {"unknown", "nobody-here"}, {"myself", "myself"}] do
+      params = %{user: %{username: name, email: "#{name}@example.com", password: "secret123"}}
+      params = if slug, do: Map.put(params, :friend_slug, slug), else: params
+
+      data =
+        conn
+        |> post(~p"/api/v1/auth/register", params)
+        |> json_response(201)
+        |> Map.fetch!("data")
+
+      assert Enum.sort(Map.keys(data)) == ["token", "user"]
+      assert PidroServer.Friends.list(data["user"]["id"]).friends == []
+    end
+  end
+
+  test "a guest keeps the slug until upgrade, which links and tells both players", %{conn: conn} do
+    owner = AccountsFixtures.user_fixture()
+
+    guest_data =
+      conn
+      |> post(~p"/api/v1/auth/guest", %{
+        creation_token: Ecto.UUID.generate(),
+        friend_slug: owner.share_slug
+      })
+      |> json_response(201)
+      |> Map.fetch!("data")
+
+    refute Map.has_key?(guest_data, "linked_friend")
+    assert PidroServer.Friends.list(guest_data["user"]["id"]).friends == []
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    data =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{guest_data["token"]}")
+      |> post(~p"/api/v1/auth/upgrade", %{
+        email: "saved@example.com",
+        password: "secret123",
+        friend_slug: owner.share_slug,
+        age_band: "18_plus",
+        terms_version: "1"
+      })
+      |> json_response(200)
+      |> Map.fetch!("data")
+
+    assert_linked_friend(data, owner)
+  end
+
+  test "a block in either direction silently prevents a link on upgrade", %{conn: conn} do
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    for direction <- [:incoming, :outgoing] do
+      owner = AccountsFixtures.user_fixture()
+      guest = AccountsFixtures.guest_fixture()
+      {a, b} = if direction == :incoming, do: {owner, guest}, else: {guest, owner}
+      Repo.insert!(PidroServer.Blocks.Block.changeset(a.id, b.id))
+
+      data =
+        conn
+        |> put_req_header("authorization", "Bearer #{Token.generate(guest)}")
+        |> post(~p"/api/v1/auth/upgrade", %{
+          email: "#{direction}@example.com",
+          password: "secret123",
+          friend_slug: owner.share_slug
+        })
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      assert data["user"]["guest"] == false
+      refute Map.has_key?(data, "linked_friend")
+      assert PidroServer.Friends.list(guest.id).friends == []
+      refute_received {:friend_event, _, "friend_accepted", _}
+    end
+  end
+
+  defp assert_linked_friend(data, owner) do
+    id = data["user"]["id"]
+    owner_id = owner.id
+    assert [%{user_id: ^owner_id}] = PidroServer.Friends.list(id).friends
+    assert [%{user_id: ^id}] = PidroServer.Friends.list(owner_id).friends
+
+    entry = %{
+      user_id: owner_id,
+      display_name: owner.display_name || owner.username,
+      avatar_url: nil,
+      presence: "offline",
+      join_as: nil
+    }
+
+    newcomer = %{
+      user_id: id,
+      display_name: data["user"]["display_name"] || data["user"]["username"],
+      avatar_url: nil,
+      presence: "offline",
+      join_as: nil
+    }
+
+    assert data["linked_friend"] == Jason.decode!(Jason.encode!(entry))
+    assert_receive {:friends_changed, ^id}
+    assert_receive {:friends_changed, ^owner_id}
+    assert_receive {:friend_event, ^id, "friend_accepted", %{player: ^entry, source: "link"}}
+
+    assert_receive {:friend_event, ^owner_id, "friend_accepted",
+                    %{player: ^newcomer, source: "link"}}
+
+    refute_received {:friend_event, _, _, _}
+  end
+
   defmodule ErrorMailer do
     use Swoosh.Adapter
     def deliver(_email, _config), do: {:error, :provider_down}
@@ -420,6 +546,53 @@ defmodule PidroServerWeb.API.AuthControllerTest do
           do: Application.put_env(:pidro_server, :guest_names, previous_names),
           else: Application.delete_env(:pidro_server, :guest_names)
       end)
+    end
+
+    test "new Apple and Facebook accounts link, but signing in again does not", %{conn: conn} do
+      Application.put_env(:pidro_server, :guest_names, RetryGuestNames)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      for {provider, credential} <- [
+            {"apple", %{identity_token: "apple-new"}},
+            {"facebook", %{access_token: "facebook-new"}}
+          ] do
+        owner = AccountsFixtures.user_fixture()
+
+        if provider == "apple" do
+          expect_classic_not_found(:email, "new@example.com")
+        else
+          expect_classic_not_found(:fbid, "facebook-new-id")
+          expect_classic_not_found(:fbid, "facebook-new-old-id")
+          expect_classic_not_found(:email, "facebook-new@example.com")
+        end
+
+        params =
+          Map.merge(credential, %{
+            friend_slug: owner.share_slug,
+            age_band: "18_plus",
+            terms_version: "1"
+          })
+
+        data =
+          conn
+          |> post("/api/v1/auth/#{provider}", params)
+          |> json_response(200)
+          |> Map.fetch!("data")
+
+        assert_linked_friend(data, owner)
+
+        assert {:ok, _} = PidroServer.Friends.remove(data["user"]["id"], owner.id)
+
+        signed_in =
+          conn
+          |> post("/api/v1/auth/#{provider}", params)
+          |> json_response(200)
+          |> Map.fetch!("data")
+
+        refute Map.has_key?(signed_in, "linked_friend")
+        assert PidroServer.Friends.list(owner.id).friends == []
+        refute_received {:friend_event, _, _, _}
+      end
     end
 
     test "Apple returns a linked account without consulting Classic", %{conn: conn} do

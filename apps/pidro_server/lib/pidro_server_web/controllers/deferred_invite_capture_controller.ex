@@ -19,12 +19,12 @@ defmodule PidroServerWeb.DeferredInviteCaptureController do
   alias PidroServerWeb.InvitePreview
 
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def create(conn, %{"code" => code} = params) do
+  def create(conn, params) do
     case allowed_origin(conn) do
       {:ok, origin} ->
         conn
         |> put_capture_cors(origin)
-        |> capture(code, params)
+        |> capture_target(params)
 
       :error ->
         conn
@@ -40,10 +40,26 @@ defmodule PidroServerWeb.DeferredInviteCaptureController do
     "#{endpoint_origin}/j/#{URI.encode(code)}/deferred"
   end
 
+  @doc "Absolute Phoenix URL used by a personal link's store beacon."
+  @spec friend_capture_url(String.t()) :: String.t()
+  def friend_capture_url(slug), do: "#{endpoint_origin()}/play/#{URI.encode(slug)}/deferred"
+
   @doc "The exact Phoenix origin allowed by the invite page CSP."
   @spec endpoint_origin() :: String.t()
   def endpoint_origin,
     do: config() |> Keyword.fetch!(:endpoint_origin) |> String.trim_trailing("/")
+
+  defp capture_target(%{path_params: %{"slug" => slug}} = conn, params) do
+    with {:ok, _profile} <- PidroServer.Accounts.Auth.public_profile_by_slug(slug),
+         {:ok, signature} <- DeferredSignature.build(conn.remote_ip, params) do
+      DeferredMatcher.capture({:friend, slug}, signature)
+    end
+
+    send_resp(conn, :no_content, "")
+  end
+
+  defp capture_target(%{path_params: %{"code" => code}} = conn, params),
+    do: capture(conn, code, params)
 
   defp capture(conn, code, params) do
     with {:ok, preview} <- InvitePreview.get(code),

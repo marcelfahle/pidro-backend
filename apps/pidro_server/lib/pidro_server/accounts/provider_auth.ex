@@ -156,12 +156,12 @@ defmodule PidroServer.Accounts.ProviderAuth do
 
     case verification.verify_provider(identity, params, classic_client: classic) do
       {:ok, result} -> {:classic_found, result}
-      {:error, :not_found} -> create_user(identity, opts, @name_attempts)
+      {:error, :not_found} -> create_user(identity, params, opts, @name_attempts)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp create_user(identity, opts, attempts_left) do
+  defp create_user(identity, params, opts, attempts_left) do
     guest_names =
       Keyword.get_lazy(opts, :guest_names, fn ->
         Application.get_env(:pidro_server, :guest_names, GuestNames)
@@ -179,10 +179,13 @@ defmodule PidroServer.Accounts.ProviderAuth do
 
       case insert_user_and_identity(changeset, identity) do
         {:ok, user} ->
-          {:ok, user}
+          PidroServer.Friends.link_signup(
+            {:ok, user},
+            params["friend_slug"] || params[:friend_slug]
+          )
 
         {:error, reason} ->
-          recover_creation(identity, opts, attempts_left, reason)
+          recover_creation(identity, params, opts, attempts_left, reason)
       end
     end
   end
@@ -198,7 +201,7 @@ defmodule PidroServer.Accounts.ProviderAuth do
     end)
   end
 
-  defp recover_creation(identity, opts, attempts_left, reason) do
+  defp recover_creation(identity, params, opts, attempts_left, reason) do
     case UserIdentities.sign_in(identity) do
       {:ok, %User{} = user} ->
         {:ok, user}
@@ -206,7 +209,7 @@ defmodule PidroServer.Accounts.ProviderAuth do
       {:error, :not_found} ->
         if attempts_left > 1 and is_struct(reason, Ecto.Changeset) and
              generated_name_error?(reason) do
-          create_user(identity, opts, attempts_left - 1)
+          create_user(identity, params, opts, attempts_left - 1)
         else
           {:error, reason}
         end

@@ -147,7 +147,7 @@ defmodule PidroServer.Accounts.ClassicClaims do
         {:error, :claim_state_changed} -> redeem_once(token, current_user, params)
         result -> result
       end
-      |> resolve_social()
+      |> resolve_social(fetch(params, :friend_slug))
 
     record_upgrade(current_user, result)
     result
@@ -179,7 +179,8 @@ defmodule PidroServer.Accounts.ClassicClaims do
                :ok <- lock_classic(ticket.classic_user_id),
                {:ok, user, mode} <- target_user(ticket, current_user, params, locked_user),
                {:ok, user} <- redeem_for_user(ticket, user, mode, now, display_name, params) do
-            {user, is_nil(locked_user) or is_nil(locked_user.classic_user_id)}
+            {user, is_nil(locked_user) or is_nil(locked_user.classic_user_id),
+             is_nil(locked_user) or locked_user.guest}
           else
             nil -> Repo.rollback(:invalid_claim_ticket)
             {:error, reason} -> Repo.rollback(reason)
@@ -190,12 +191,15 @@ defmodule PidroServer.Accounts.ClassicClaims do
 
   # Resolve only a new link, after commit. Retrying a sign-in must not restore
   # friends removed or blocks unblocked since the original claim.
-  defp resolve_social({:ok, {user, new_link?}}) do
+  defp resolve_social({:ok, {user, new_link?, registered?}}, friend_slug) do
     if new_link?, do: ClassicSocial.resolve_classic(user)
-    {:ok, user}
+
+    if registered?,
+      do: PidroServer.Friends.link_signup({:ok, user}, friend_slug),
+      else: {:ok, user}
   end
 
-  defp resolve_social(error), do: error
+  defp resolve_social(error, _friend_slug), do: error
 
   # A guest the claim saved counts as upgraded, as through POST /auth/upgrade.
   # After the commit: a failed event write must not undo the claim.
@@ -476,7 +480,9 @@ defmodule PidroServer.Accounts.ClassicClaims do
     account = fetch(params, :account) || %{}
 
     with :ok <- require_credentials(account) do
-      guest |> Auth.upgrade_guest(account) |> taken_as_changeset()
+      guest
+      |> Auth.upgrade_guest(Map.drop(account, [:friend_slug, "friend_slug"]))
+      |> taken_as_changeset()
     end
   end
 

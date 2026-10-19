@@ -92,6 +92,8 @@ rate_limit_overrides =
     {:invite_capture, :scale_ms, "RATE_LIMIT_INVITE_CAPTURE_SCALE_MS"},
     {:invite_capture_code, :limit, "RATE_LIMIT_INVITE_CAPTURE_CODE_LIMIT"},
     {:invite_capture_code, :scale_ms, "RATE_LIMIT_INVITE_CAPTURE_CODE_SCALE_MS"},
+    {:friend_capture_slug, :limit, "RATE_LIMIT_FRIEND_CAPTURE_SLUG_LIMIT"},
+    {:friend_capture_slug, :scale_ms, "RATE_LIMIT_FRIEND_CAPTURE_SLUG_SCALE_MS"},
     {:invite_deferred, :limit, "RATE_LIMIT_INVITE_DEFERRED_LIMIT"},
     {:invite_deferred, :scale_ms, "RATE_LIMIT_INVITE_DEFERRED_SCALE_MS"},
     {:invite_deferred_install, :limit, "RATE_LIMIT_INVITE_DEFERRED_INSTALL_LIMIT"},

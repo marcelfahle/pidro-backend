@@ -5,6 +5,108 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Repo
 
+  test "a Classic claim links only a new account or a guest it registers", %{conn: conn} do
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    for mode <- [:new, :upgrade, :existing, :guest_result] do
+      owner = AccountsFixtures.user_fixture()
+
+      caller =
+        case mode do
+          :new -> nil
+          :existing -> AccountsFixtures.user_fixture()
+          _ -> AccountsFixtures.guest_fixture()
+        end
+
+      attrs = %{
+        classic_user_id: System.unique_integer([:positive]),
+        method: if(mode == :guest_result, do: :apple, else: :password),
+        provider_id: if(mode == :guest_result, do: "guest-apple"),
+        legacy_data: %{}
+      }
+
+      attrs =
+        if caller,
+          do: Map.put(attrs, :user_id, caller.id),
+          else: Map.put(attrs, :install_id, "link-claim")
+
+      {:ok, ticket} = ClassicClaims.issue_ticket(attrs)
+
+      params = %{
+        ticket: ticket.ticket,
+        install_id: "link-claim",
+        friend_slug: owner.share_slug,
+        account: %{username: "claim_#{mode}", email: "#{mode}@example.com", password: "secret123"},
+        age_band: "18_plus",
+        terms_version: "1"
+      }
+
+      request =
+        if caller,
+          do: put_req_header(conn, "authorization", "Bearer #{Token.generate(caller)}"),
+          else: conn
+
+      data =
+        request
+        |> post(~p"/api/v1/classic/claim", params)
+        |> json_response(200)
+        |> Map.fetch!("data")
+
+      id = data["user"]["id"]
+      owner_id = owner.id
+
+      if mode in [:new, :upgrade] do
+        assert [%{user_id: ^owner_id}] = PidroServer.Friends.list(id).friends
+        assert [%{user_id: ^id}] = PidroServer.Friends.list(owner_id).friends
+
+        entry = %{
+          user_id: owner_id,
+          display_name: owner.display_name || owner.username,
+          avatar_url: nil,
+          presence: "offline",
+          join_as: nil
+        }
+
+        newcomer = %{
+          user_id: id,
+          display_name: data["user"]["display_name"] || data["user"]["username"],
+          avatar_url: nil,
+          presence: "offline",
+          join_as: nil
+        }
+
+        assert data["linked_friend"] == Jason.decode!(Jason.encode!(entry))
+        assert_receive {:friends_changed, ^id}
+        assert_receive {:friends_changed, ^owner_id}
+        assert_receive {:friend_event, ^id, "friend_accepted", %{player: ^entry, source: "link"}}
+
+        assert_receive {:friend_event, ^owner_id, "friend_accepted",
+                        %{player: ^newcomer, source: "link"}}
+
+        {:ok, _} = PidroServer.Friends.remove(id, owner_id)
+
+        retry_conn =
+          if caller,
+            do: put_req_header(conn, "authorization", "Bearer #{data["token"]}"),
+            else: conn
+
+        retry =
+          retry_conn
+          |> post(~p"/api/v1/classic/claim", params)
+          |> json_response(200)
+          |> Map.fetch!("data")
+
+        refute Map.has_key?(retry, "linked_friend")
+        assert PidroServer.Friends.list(owner_id).friends == []
+      else
+        refute Map.has_key?(data, "linked_friend")
+        assert PidroServer.Friends.list(owner_id).friends == []
+      end
+
+      refute_received {:friend_event, _, _, _}
+    end
+  end
+
   test "verifies Classic ownership and returns a user-bound preview ticket", %{conn: conn} do
     guest = AccountsFixtures.guest_fixture()
 

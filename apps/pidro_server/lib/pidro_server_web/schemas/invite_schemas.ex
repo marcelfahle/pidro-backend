@@ -368,13 +368,23 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
               nullable: true,
               properties: %{code: %Schema{type: :string, minLength: 8, maxLength: 8}},
               required: [:code]
+            },
+            friend: %Schema{
+              type: :object,
+              nullable: true,
+              properties: %{
+                slug: %Schema{type: :string},
+                display_name: %Schema{type: :string, nullable: true},
+                avatar_url: %Schema{type: :string, nullable: true}
+              },
+              required: [:slug, :display_name, :avatar_url]
             }
           },
-          required: [:invite]
+          required: [:invite, :friend]
         }
       },
       required: [:data],
-      example: %{"data" => %{"invite" => %{"code" => "7KQ4M2XB"}}}
+      example: %{"data" => %{"invite" => %{"code" => "7KQ4M2XB"}, "friend" => nil}}
     })
   end
 

@@ -55,14 +55,14 @@ defmodule PidroServerWeb.API.ClassicClaimController do
 
   def create(conn, %{"ticket" => ticket} = params) do
     with {:ok, declaration} <- AgeTerms.parse(params),
-         {:ok, user} <- ClassicClaims.redeem(ticket, conn.assigns[:current_user], params),
-         {:ok, user} <- AgeTerms.store(user, declaration) do
+         {:ok, claimed} <- ClassicClaims.redeem(ticket, conn.assigns[:current_user], params),
+         {:ok, user} <- AgeTerms.store(claimed, declaration) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 
       conn
       |> put_view(UserJSON)
-      |> render(:show, %{user: user, token: token})
+      |> render(:show, %{user: user, token: token, linked_friend: claimed.linked_friend})
     end
   end
 

@@ -137,6 +137,76 @@ defmodule PidroServerWeb.DeferredInviteCaptureControllerTest do
     assert response(allowed_same_origin, 204) == ""
   end
 
+  test "known friend captures a typed hint; unknown friend captures nothing", %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+
+    for {slug, last, expected} <- [
+          {user.share_slug, 101, {:ok, {:friend, user.share_slug}}},
+          {"unknown", 102, :none}
+        ] do
+      result =
+        conn
+        |> recycle()
+        |> from_ip({203, 0, 113, last})
+        |> put_req_header("origin", "http://localhost:4002")
+        |> post(~p"/play/#{slug}/deferred", @valid_params)
+
+      assert response(result, 204) == ""
+      assert get_resp_header(result, "set-cookie") == []
+
+      assert DeferredMatcher.consume([
+               Map.put(normalized_params(@valid_params), :ip, "203.0.113.#{last}")
+             ]) == expected
+    end
+
+    assert Repo.aggregate(Event, :count, :id) == 0
+  end
+
+  test "friend capture uses exact origins and same-origin metadata", %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+
+    for origin <- ["https://attacker.example", "http://localhost:4002.attacker.example", "null"] do
+      denied =
+        conn
+        |> recycle()
+        |> put_req_header("origin", origin)
+        |> post(~p"/play/#{user.share_slug}/deferred", @valid_params)
+
+      assert response(denied, 403) == ""
+      assert get_resp_header(denied, "access-control-allow-origin") == []
+    end
+
+    assert conn
+           |> put_req_header("sec-fetch-site", "cross-site")
+           |> post(~p"/play/#{user.share_slug}/deferred", @valid_params)
+           |> response(403) == ""
+
+    assert build_conn()
+           |> put_req_header("sec-fetch-site", "same-origin")
+           |> post(~p"/play/#{user.share_slug}/deferred", @valid_params)
+           |> response(204) == ""
+  end
+
+  test "friend capture enforces shared IP and hashed slug limits", %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+    with_limit(:friend_capture_slug, 1, 1_800_000)
+    with_limit(:invite_capture, 1, 1_800_000)
+
+    request = fn ip, slug ->
+      conn
+      |> recycle()
+      |> from_ip(ip)
+      |> put_req_header("origin", "http://localhost:4002")
+      |> post(~p"/play/#{slug}/deferred", @valid_params)
+    end
+
+    assert request.({203, 0, 113, 103}, user.share_slug) |> response(204) == ""
+    limited = request.({203, 0, 113, 104}, user.share_slug)
+    assert json_response(limited, 429)["errors"] |> hd() |> Map.get("code") == "RATE_LIMITED"
+    assert get_resp_header(limited, "retry-after") != []
+    assert request.({203, 0, 113, 103}, "unknown") |> json_response(429)
+  end
+
   defp capture(conn, code, ip, params) do
     conn
     |> from_ip(ip)

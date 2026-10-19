@@ -16,6 +16,24 @@ repositories:
 
 # Phoenix-Owned Deferred Invite Matching (Phase 4) - Plan
 
+## PID-247 friend-link extension
+
+Known `/play/:slug` pages reuse the invite capture script on the matching mobile
+store badge, with the same exact-Origin checks, credential-free pipeline, CSP
+connect origin, feature gate and 30-minute retention. Unknown slugs capture
+nothing. `POST /play/:slug/deferred` shares the capture IP budget (20/30 minutes)
+and has a hashed-slug target budget (200/30 minutes), matching the invite-code
+policy shape. Google Play receives the URL-encoded `friend=<slug>` referrer.
+
+The existing deferred endpoint adds `data.friend` (public `slug`, `display_name`,
+`avatar_url`, or null) alongside unchanged `data.invite`. Matcher friend hints
+are tagged `{:friend, slug}`; existing invite-code strings remain compatible.
+A single eligible Android `invite` or `friend` referrer wins and still consumes
+fallback buckets. Duplicate recognized keys or mixed invite/friend keys cannot
+select a referrer target; as before, rejected referrers may use a unique coarse
+fallback. Distinct coarse targets across either kind are ambiguous and consumed.
+Resolution does not add a friend or authenticate anyone; sign-up linking is separate.
+
 ## Goal Capsule
 
 - **Objective:** preserve an invite across a native-app installation so a recipient reaches the existing join flow on first launch, while always retaining a visible manual-code escape hatch.

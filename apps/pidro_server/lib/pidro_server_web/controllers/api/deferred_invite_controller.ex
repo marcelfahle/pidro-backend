@@ -26,16 +26,21 @@ defmodule PidroServerWeb.API.DeferredInviteController do
   tags(["Invites"])
 
   operation(:create,
-    summary: "Resolve a first-install invite",
+    summary: "Resolve a first-install invite or friend",
     description: """
     Public one-shot native handoff. Android may provide a Google Play install
-    referrer containing exactly one `invite` query key. Fresh Android and iOS
+    referrer containing exactly one `invite` or `friend` query key (not both).
+    Fresh Android and iOS
     installs may instead provide the complete coarse signature captured from
     the store click; hints expire after 30 minutes and are consumed atomically.
 
     A valid Android referrer wins, but any supplied fallback buckets are still
     consumed. Missing, expired, malformed, unknown and ambiguous inputs all
-    answer 200 with the same null `data.invite`; only a match contains `code`.
+    answer 200 with null `data.invite` and `data.friend`. A match returns either
+    the unchanged invite `{code}` or a public friend `{slug, display_name, avatar_url}`.
+    Duplicate or mixed referrer keys are rejected, retaining unique coarse
+    fallback behavior. Multiple distinct coarse targets, including mixed kinds,
+    are ambiguous and consumed without selection.
     The random `install_id` is an uninstall-scoped fairness key, not identity.
     Limited per client IP and hashed install id.
     """,
@@ -53,17 +58,24 @@ defmodule PidroServerWeb.API.DeferredInviteController do
 
   @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def create(conn, params) do
-    invite =
+    target =
       if DeferredMatcher.enabled?() and valid_request_base?(params) do
         fallback = consume_fallback(conn, params)
         referrer_invite(params) || fallback_invite(fallback)
+      end
+
+    {invite, friend} =
+      case target do
+        %Invite{} = invite -> {invite, nil}
+        {:friend, friend} -> {nil, friend}
+        nil -> {nil, nil}
       end
 
     if invite do
       log_match(invite, params["platform"])
     end
 
-    json(conn, %{data: %{invite: invite_json(invite)}})
+    json(conn, %{data: %{invite: invite_json(invite), friend: friend}})
   end
 
   defp valid_request_base?(%{"platform" => platform, "install_id" => install_id})
@@ -91,9 +103,8 @@ defmodule PidroServerWeb.API.DeferredInviteController do
 
   defp referrer_invite(%{"platform" => "android", "referrer" => referrer})
        when is_binary(referrer) and byte_size(referrer) <= @max_referrer_length do
-    with {:ok, code} <- referrer_code(referrer),
-         %Invite{} = invite <- eligible_invite(code) do
-      invite
+    with {:ok, hint} <- referrer_code(referrer) do
+      fallback_invite({:ok, hint})
     else
       _invalid_or_unknown -> nil
     end
@@ -106,16 +117,27 @@ defmodule PidroServerWeb.API.DeferredInviteController do
       referrer
       |> URI.query_decoder()
       |> Enum.reduce([], fn
-        {"invite", value}, acc -> [value | acc]
+        {key, value}, acc when key in ["invite", "friend"] -> [{key, value} | acc]
         _other, acc -> acc
       end)
 
     case values do
-      [value] -> Codes.normalize(value)
+      [{"invite", value}] -> Codes.normalize(value)
+      [{"friend", slug}] -> {:ok, {:friend, slug}}
       _missing_or_duplicate -> :error
     end
   rescue
     ArgumentError -> :error
+  end
+
+  defp fallback_invite({:ok, {:friend, slug}}) do
+    case PidroServer.Accounts.Auth.public_profile_by_slug(slug) do
+      {:ok, profile} ->
+        {:friend, Map.put(Map.take(profile, [:display_name, :avatar_url]), :slug, slug)}
+
+      _not_found ->
+        nil
+    end
   end
 
   defp fallback_invite({:ok, code}) do

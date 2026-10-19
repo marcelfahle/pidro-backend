@@ -85,9 +85,11 @@ defmodule PidroServerWeb.InvitePage do
       initial: String.first(name),
       avatar_url: avatar_url,
       app_store_url: @app_store_url,
-      play_store_url: @play_store_base,
+      play_store_url: friend_play_store_url(slug),
       ios_url: "pidro-mobile://play/#{slug}",
-      android_url: android_intent(url, @play_store_base),
+      android_url: android_intent(url, friend_play_store_url(slug)),
+      deferred_capture_url:
+        PidroServerWeb.DeferredInviteCaptureController.friend_capture_url(slug),
       device: device
     }
   end
@@ -99,6 +101,7 @@ defmodule PidroServerWeb.InvitePage do
       title: "Play Pidro",
       description: "Pidro is the Finnish card game for four. Get the app and play.",
       heading: "Play Pidro",
+      deferred_capture_url: nil,
       app_store_url: @app_store_url,
       play_store_url: @play_store_base,
       device: device
@@ -183,6 +186,10 @@ defmodule PidroServerWeb.InvitePage do
   defp play_store_url(code) do
     referrer = URI.encode_www_form("invite=#{code}")
     "#{@play_store_base}&referrer=#{referrer}"
+  end
+
+  defp friend_play_store_url(slug) do
+    "#{@play_store_base}&referrer=#{URI.encode_www_form("friend=#{URI.encode_www_form(slug)}")}"
   end
 
   defp android_intent(target_url, fallback_url) do

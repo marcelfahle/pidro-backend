@@ -164,6 +164,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       type: :object,
       title: "Classic claim request",
       properties: %{
+        friend_slug: PidroServerWeb.Schemas.UserSchemas.FriendSlug,
         age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
         terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         ticket: %Schema{
@@ -199,6 +200,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       type: :object,
       title: "Apple sign-in request",
       properties: %{
+        friend_slug: PidroServerWeb.Schemas.UserSchemas.FriendSlug,
         age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
         terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         identity_token: %Schema{type: :string},
@@ -219,6 +221,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       title: "Facebook Graph sign-in request",
       additionalProperties: false,
       properties: %{
+        friend_slug: PidroServerWeb.Schemas.UserSchemas.FriendSlug,
         age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
         terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         access_token: %Schema{type: :string},
@@ -239,6 +242,7 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
       title: "Facebook Limited Login sign-in request",
       additionalProperties: false,
       properties: %{
+        friend_slug: PidroServerWeb.Schemas.UserSchemas.FriendSlug,
         age_band: PidroServerWeb.Schemas.UserSchemas.SubmittedAgeBand,
         terms_version: PidroServerWeb.Schemas.UserSchemas.TermsVersion,
         authentication_token: %Schema{type: :string},

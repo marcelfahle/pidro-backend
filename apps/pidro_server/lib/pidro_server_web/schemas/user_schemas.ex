@@ -13,6 +13,17 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
   require OpenApiSpex
   alias OpenApiSpex.Schema
 
+  defmodule FriendSlug do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :string,
+      title: "Friend link slug",
+      nullable: true,
+      description:
+        "Optional personal-link slug. Only a new registration or guest upgrade links mutual friends. Unknown, self and blocked targets are silently ignored. Successful linking adds data.linked_friend and sends friend_accepted with source link to both players."
+    })
+  end
+
   defmodule SubmittedAgeBand do
     @moduledoc false
     OpenApiSpex.schema(%{
@@ -223,6 +234,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
           description: "Response data envelope",
           properties: %{
             user: User,
+            linked_friend: PidroServerWeb.Schemas.FriendSchemas.Player,
             token: %Schema{
               type: :string,
               description:
@@ -270,6 +282,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Register Request",
       description: "Request body for user registration",
       properties: %{
+        friend_slug: FriendSlug,
         age_band: SubmittedAgeBand,
         terms_version: TermsVersion,
         user: %Schema{
@@ -517,6 +530,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Upgrade Request",
       description: "Request body for upgrading the calling guest in place",
       properties: %{
+        friend_slug: FriendSlug,
         age_band: SubmittedAgeBand,
         terms_version: TermsVersion,
         email: %Schema{
