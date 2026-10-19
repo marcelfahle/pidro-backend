@@ -1064,14 +1064,17 @@ existing `errors` array. Existing endpoints are unchanged.
 The first five return:
 
 ```json
-{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online"}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0}}
+{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online"}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0,"waiting_for_you":0}}
 ```
 
 Friends have both directed edges; `added_you` has an incoming edge with none back;
 `requested` (PID-245) has your edge with none back, with `requested_at` when you sent it.
-`requests_waiting` is the length of `added_you`, for the badge. Adding back accepts a
-request. PUT is idempotent (200 on repeat). DELETE deletes your edge, and theirs only if
-you were friends: on a request you sent it cancels it, and it never touches a request
+`requests_waiting` is the length of `added_you`. `waiting_for_you` (PID-246) is what
+waits for your answer, for the Friends badge: `requests_waiting` plus your live seat
+invitations (the `/me` `seat_invitations`). It drops when you answer, not when you
+look; refetch on `friends_changed`, `seat_invitation` and `seat_invitation_gone`.
+Adding back accepts a request. PUT is idempotent (200 on repeat). DELETE deletes your
+edge, and theirs only if you were friends: on a request you sent it cancels it, and it never touches a request
 sent to you. DELETE is idempotent for an existing registered target. Friends sort
 connected first (`online` and `at_table` together), then by folded name; `added_you`
 and `requested` sort newest first. Presence comes from existing Presence tracking: a
@@ -1114,12 +1117,25 @@ After add/remove/block, each affected user's joined lobby sockets receive
 `friends_changed` with `{}`; unrelated users receive nothing. Refetch `/api/v1/friends`.
 No push notification is sent.
 
+A new edge also tells the other player, in addition to `friends_changed` (PID-246):
+
+- `friend_request` goes to the player a new request reaches, when there is no edge
+  back: `{"player": entry, "played_together_at": "2026-10-18T19:30:00Z" | null}`.
+  `entry` is the sender as the friends list shows them; `played_together_at` is
+  when the last completed game both played in ended.
+- `friend_accepted` goes to the player whose request was just answered by adding
+  back, also when it had been ignored: `{"player": entry, "source": "accept"}`,
+  with the entry of the player who accepted. Link sign-ups will send `"link"`.
+
+Neither is sent on a repeat add, for Classic edges copied at claim, or by ignore,
+un-ignore, cancel, remove or block. Older builds ignore both.
+
 #### Classic friends at claim (PID-226)
 
 For a claimed account, the full friends response also includes:
 
 ```json
-{"data":{"friends":[],"added_you":[],"requested":[],"requests_waiting":0,"classic":{"not_here":7}}}
+{"data":{"friends":[],"added_you":[],"requested":[],"requests_waiting":0,"waiting_for_you":0,"classic":{"not_here":7}}}
 ```
 
 `classic.not_here` counts distinct outgoing Classic friend ids with no claimed user
@@ -1248,6 +1264,8 @@ lobbyChannel.join()
 - `presence_state` - Current lobby presence
 - `presence_diff` - Presence changes
 - `friends_changed` - Refetch `/api/v1/friends`; sent only to affected users
+- `friend_request` - Someone sent you a request (see Friends)
+- `friend_accepted` - Someone accepted your request (see Friends)
 - `seat_invitation` - A seat is held for you; sent only to the invited user's lobbies
 - `seat_invitation_gone` - Remove the invitation matching `code` and `position`
 

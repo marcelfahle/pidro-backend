@@ -53,7 +53,8 @@ defmodule PidroServerWeb.API.BlockControllerTest do
                    "friends" => [],
                    "added_you" => [],
                    "requested" => [],
-                   "requests_waiting" => 0
+                   "requests_waiting" => 0,
+                   "waiting_for_you" => 0
                  }
                }
     end
@@ -66,7 +67,8 @@ defmodule PidroServerWeb.API.BlockControllerTest do
                  "friends" => [],
                  "added_you" => [],
                  "requested" => [],
-                 "requests_waiting" => 0
+                 "requests_waiting" => 0,
+                 "waiting_for_you" => 0
                }
              }
   end

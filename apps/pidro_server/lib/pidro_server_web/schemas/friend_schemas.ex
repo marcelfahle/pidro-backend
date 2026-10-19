@@ -74,7 +74,7 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
       properties: %{
         data: %Schema{
           type: :object,
-          required: [:friends, :added_you, :requested, :requests_waiting],
+          required: [:friends, :added_you, :requested, :requests_waiting, :waiting_for_you],
           properties: %{
             friends: %Schema{type: :array, items: Player},
             added_you: %Schema{
@@ -90,7 +90,13 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
             requests_waiting: %Schema{
               type: :integer,
               minimum: 0,
-              description: "Count of added_you, for the badge."
+              description: "Count of added_you."
+            },
+            waiting_for_you: %Schema{
+              type: :integer,
+              minimum: 0,
+              description:
+                "Friend requests waiting for your answer plus your live seat invitations, for the badge."
             },
             classic: %Schema{
               type: :object,

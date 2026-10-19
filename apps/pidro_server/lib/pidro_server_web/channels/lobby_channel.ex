@@ -22,6 +22,13 @@ defmodule PidroServerWeb.LobbyChannel do
   * `"room_closed"` - Room no longer available: `%{room_code: code}`
   * `"presence_state"` - Presence information (who's online in lobby)
   * `"presence_diff"` - Presence changes
+  * `"friends_changed"` - `%{}`; refetch the friends list. Sent to each affected player
+  * `"friend_request"` - `%{player: entry, played_together_at: iso8601 | nil}`; sent to
+    the player a new request reaches, with the sender's friends-list entry
+  * `"friend_accepted"` - `%{player: entry, source: "accept"}`; sent to the player whose
+    request was just answered, with the entry of the player who accepted
+  * `"seat_invitation"` - A seat held for you, with its host
+  * `"seat_invitation_gone"` - `%{code: code, position: position}`; the hold is over
 
   ## Examples
 
@@ -161,6 +168,11 @@ defmodule PidroServerWeb.LobbyChannel do
 
   def handle_info({:friends_changed, user_id}, socket) do
     if socket.assigns.user_id == user_id, do: push(socket, "friends_changed", %{})
+    {:noreply, socket}
+  end
+
+  def handle_info({:friend_event, user_id, event, payload}, socket) do
+    if socket.assigns.user_id == user_id, do: push(socket, event, payload)
     {:noreply, socket}
   end
 

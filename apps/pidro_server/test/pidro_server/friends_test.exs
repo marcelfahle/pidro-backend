@@ -21,7 +21,15 @@ defmodule PidroServer.FriendsTest do
     assert [%{user_id: other_id}] = Friends.list(a.id).friends
     assert other_id == b.id
     assert {:ok, %{friends: [], added_you: []}} = Friends.remove(a.id, b.id)
-    assert Friends.list(b.id) == %{friends: [], added_you: [], requested: [], requests_waiting: 0}
+
+    assert Friends.list(b.id) == %{
+             friends: [],
+             added_you: [],
+             requested: [],
+             requests_waiting: 0,
+             waiting_for_you: 0
+           }
+
     assert Repo.aggregate(Friendship, :count) == 0
     assert {:ok, %{friends: [], added_you: []}} = Friends.remove(a.id, b.id)
   end
@@ -80,6 +88,91 @@ defmodule PidroServer.FriendsTest do
     assert {:ok, %{friends: [%{user_id: ^id}], requested: []}} = Friends.add(b.id, a.id)
     assert [%{user_id: friend_id}] = Friends.list(a.id).friends
     assert friend_id == b.id
+  end
+
+  test "a new request tells only its receiver, with the sender's entry and last shared game" do
+    a = user_fixture(%{display_name: "Pekka"})
+    b = user_fixture()
+    c = user_fixture()
+    played = ~U[2026-10-18 19:30:00Z]
+    game(a.id, [b.id], DateTime.add(played, -86_400))
+    game(a.id, [b.id], played)
+    game(a.id, [c.id], DateTime.add(played, 60))
+    game(b.id, [c.id], DateTime.add(played, 120))
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    {:ok, _} = Friends.add(a.id, b.id)
+    assert_receive {:friend_event, id, "friend_request", payload} when id == b.id
+    assert payload == %{player: hd(Friends.list(b.id).added_you), played_together_at: played}
+    assert %{user_id: sender_id, display_name: "Pekka"} = payload.player
+    assert sender_id == a.id
+
+    {:ok, _} = Friends.add(user_fixture().id, a.id)
+
+    assert_receive {:friend_event, id, "friend_request", %{played_together_at: nil}}
+                   when id == a.id
+
+    refute_received {:friend_event, _, _, _}
+  end
+
+  test "adding back tells only the original sender, also after an ignore" do
+    for ignore? <- [false, true] do
+      a = user_fixture()
+      b = user_fixture(%{display_name: "Nora"})
+      {:ok, _} = Friends.add(a.id, b.id)
+      if ignore?, do: {:ok, _} = Friends.ignore(b.id, a.id)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      {:ok, _} = Friends.add(b.id, a.id)
+      assert_receive {:friend_event, id, "friend_accepted", payload} when id == a.id
+      assert payload == %{player: hd(Friends.list(a.id).friends), source: "accept"}
+      assert payload.player.user_id == b.id
+      refute_received {:friend_event, _, _, _}
+      Phoenix.PubSub.unsubscribe(PidroServer.PubSub, "lobby:updates")
+    end
+  end
+
+  test "repeat adds, ignore, un-ignore, cancel, remove and block tell nobody" do
+    [a, b, c, d] = for _ <- 1..4, do: user_fixture()
+    {:ok, _} = Friends.add(a.id, b.id)
+
+    for other <- [c, d] do
+      {:ok, _} = Friends.add(a.id, other.id)
+      {:ok, _} = Friends.add(other.id, a.id)
+    end
+
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.add(a.id, c.id)
+    {:ok, _} = Friends.add(c.id, a.id)
+    {:ok, _} = Friends.ignore(b.id, a.id)
+    {:ok, _} = Friends.unignore(b.id, a.id)
+    {:ok, _} = Friends.remove(a.id, b.id)
+    {:ok, _} = Friends.remove(a.id, c.id)
+    {:ok, _} = PidroServer.Blocks.block(a.id, d.id)
+
+    assert_received {:friends_changed, _}
+    refute_received {:friend_event, _, _, _}
+  end
+
+  test "waiting_for_you counts requests until answered and seat invitations until gone" do
+    a = user_fixture()
+    b = user_fixture()
+    c = user_fixture()
+    {:ok, _} = Friends.add(a.id, c.id)
+    {:ok, _} = Friends.add(b.id, c.id)
+    assert %{requests_waiting: 2, waiting_for_you: 2} = Friends.list(c.id)
+    assert %{waiting_for_you: 0} = Friends.list(a.id)
+
+    assert {:ok, %{waiting_for_you: 1}} = Friends.ignore(c.id, a.id)
+    assert {:ok, %{waiting_for_you: 0}} = Friends.add(c.id, b.id)
+
+    {:ok, room} = RoomManager.create_room(b.id, %{seat_holds: %{south: c.id}})
+    on_exit(fn -> RoomManager.close_room(room.code) end)
+    assert %{requests_waiting: 0, waiting_for_you: 1} = Friends.list(c.id)
+
+    {:ok, _} = RoomManager.set_seat_hold(room.code, b.id, :south, nil)
+    assert %{waiting_for_you: 0} = Friends.list(c.id)
   end
 
   test "blocking clears an ignore mark with the edge" do

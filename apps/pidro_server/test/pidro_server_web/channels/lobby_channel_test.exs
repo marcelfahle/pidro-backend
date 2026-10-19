@@ -78,6 +78,40 @@ defmodule PidroServerWeb.LobbyChannelTest do
     end
   end
 
+  test "a request reaches only its receiver's lobby, and its acceptance only the sender's",
+       %{user: user} do
+    friend = PidroServer.AccountsFixtures.user_fixture(%{display_name: "Nora"})
+    stranger = PidroServer.AccountsFixtures.user_fixture()
+
+    [a, b, _] =
+      for account <- [user, friend, stranger] do
+        {:ok, socket} = create_socket(account)
+        {:ok, _, socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+        assert_push("presence_state", _)
+        socket.join_ref
+      end
+
+    user_id = user.id
+    friend_id = friend.id
+    {:ok, _} = PidroServer.Friends.add(user.id, friend.id)
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "friend_request",
+      payload: %{player: %{user_id: ^user_id, presence: "online"}, played_together_at: nil},
+      join_ref: ^b
+    }
+
+    {:ok, _} = PidroServer.Friends.add(friend.id, user.id)
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "friend_accepted",
+      payload: %{player: %{user_id: ^friend_id, display_name: "Nora"}, source: "accept"},
+      join_ref: ^a
+    }
+
+    refute_receive %Phoenix.Socket.Message{event: "friend_" <> _}
+  end
+
   test "lobby snapshots and updates expose holds and channel joins honor them", %{
     socket: socket,
     user: user

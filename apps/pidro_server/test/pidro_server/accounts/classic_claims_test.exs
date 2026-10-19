@@ -89,6 +89,7 @@ defmodule PidroServer.Accounts.ClassicClaimsTest do
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
       assert {:ok, claimed} = ClassicClaims.redeem(ticket, a, %{})
       assert_receive {:friends_changed, id} when id == b.id
+      refute_received {:friend_event, _, _, _}
 
       assert Enum.sort(classic_edges("classic_friendships", :classic_friend_id)) == [
                {20_001, 20_002},
