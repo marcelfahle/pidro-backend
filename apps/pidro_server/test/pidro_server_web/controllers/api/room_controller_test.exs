@@ -686,6 +686,40 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert json_response(join.(second, %{position: "south", password: password}), 429)
       assert {:ok, %{positions: %{south: nil}}} = RoomManager.get_room(room.code)
     end
+
+    test "a join call that fails logs no typed password" do
+      host = AccountsFixtures.user_fixture()
+      player = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      password = "typed-7319"
+      manager = Process.whereis(RoomManager)
+      :sys.suspend(manager)
+
+      try do
+        caller = spawn(fn -> RoomManager.join_room(room.code, player, :east, password) end)
+        call = queued_join_call(manager)
+
+        # The exit a call timeout gives the caller, as the caller logs it. A
+        # room manager crash report prints the same call as its last message.
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            {:ok, pid} =
+              Task.start(fn ->
+                exit({:timeout, {GenServer, :call, [RoomManager, call, 5000]}})
+              end)
+
+            ref = Process.monitor(pid)
+            assert_receive {:DOWN, ^ref, :process, ^pid, _}
+          end)
+
+        assert log =~ ":join_room"
+        refute log =~ password
+        refute inspect(call) =~ password
+        Process.exit(caller, :kill)
+      after
+        :sys.resume(manager)
+      end
+    end
   end
 
   describe "PID-256 set_seat/2" do
@@ -2149,5 +2183,14 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     |> from_ip(ip)
     |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
     |> post(~p"/api/v1/rooms", %{"name" => "Limited"})
+  end
+
+  defp queued_join_call(manager) do
+    {:messages, messages} = Process.info(manager, :messages)
+
+    case for({:"$gen_call", _from, {:join_room, _, _, _, _, _} = call} <- messages, do: call) do
+      [call] -> call
+      [] -> queued_join_call(manager)
+    end
   end
 end

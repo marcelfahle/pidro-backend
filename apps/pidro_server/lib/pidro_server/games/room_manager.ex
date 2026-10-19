@@ -414,9 +414,13 @@ defmodule PidroServer.Games.RoomManager do
   def join_room(room_code, player, position \\ nil, password \\ nil) do
     {player_id, guest?} = admission_identity(player)
 
+    # The password travels as a closure, so a crash report, a call timeout or an
+    # inspect of this call shows a function, never the digits.
+    secret = if password, do: fn -> password end
+
     GenServer.call(
       __MODULE__,
-      {:join_room, String.upcase(room_code), player_id, position, guest?, password}
+      {:join_room, String.upcase(room_code), player_id, position, guest?, secret}
     )
   end
 
@@ -3321,7 +3325,8 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_can_leave_other_room(state, player_id, room_code),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position),
-         :ok <- ensure_seat_requirement(room, player_id, assigned_position, password) do
+         :ok <-
+           ensure_seat_requirement(room, player_id, assigned_position, password && password.()) do
       next_state = maybe_evict_from_other_room(state, player_id, room_code)
 
       with :ok <- ensure_not_in_other_room(next_state, player_id, room_code) do
