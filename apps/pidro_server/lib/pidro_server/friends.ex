@@ -38,14 +38,16 @@ defmodule PidroServer.Friends do
   @doc "Deletes the caller's edge, and the reverse edge only if they were friends."
   @spec remove(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
   def remove(user_id, friend_id) do
-    with {:ok, friend_id} <- target(user_id, friend_id) do
-      Repo.transaction(fn ->
-        case Repo.delete_all(edge(user_id, friend_id)) do
-          {0, _} -> :ok
-          _ -> Repo.delete_all(edge(friend_id, user_id))
-        end
-      end)
+    with {:ok, friend_id} <- target(user_id, friend_id),
+         {:ok, _} <-
+           Repo.transaction(fn ->
+             Blocks.lock_pair(user_id, friend_id)
 
+             case Repo.delete_all(edge(user_id, friend_id)) do
+               {0, _} -> :ok
+               _ -> Repo.delete_all(edge(friend_id, user_id))
+             end
+           end) do
       changed([user_id, friend_id])
       {:ok, list(user_id)}
     end

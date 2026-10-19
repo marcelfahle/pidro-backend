@@ -93,8 +93,8 @@ defmodule PidroServer.Blocks do
   end
 
   @doc false
-  # Friend adds and blocks lock the same rows in order, so a racing add cannot
-  # restore an edge after a block's delete. Recheck existence under the locks
+  # Friend adds, removes and blocks lock the same rows in order, so a racing add
+  # cannot restore an edge after a block's delete, nor lose one to a remove. Recheck existence under the locks
   # because account deletion may have committed since validation.
   @spec lock_pair(String.t(), String.t()) :: :ok
   def lock_pair(user_id, other_id) do
