@@ -34,6 +34,11 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
         display_name: %Schema{type: :string, nullable: true},
         avatar_url: %Schema{type: :string, nullable: true},
         presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]},
+        table_company: %Schema{
+          type: :string,
+          enum: ["bots", "people"],
+          description: "Only when at_table: seated with bots alone, or with other people"
+        },
         requested_at: %Schema{type: :string, format: :"date-time"}
       }
     })

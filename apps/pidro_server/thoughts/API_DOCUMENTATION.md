@@ -1069,8 +1069,9 @@ entry also carries `table_company`: `"bots"` when every other seat is a bot or e
 Avatars use the same URL as room/profile payloads, or null.
 
 Ignore marks the incoming edge as ignored for you only. The request drops out of your
-`added_you` and is no longer counted in `requests_waiting`; the sender is not told, gets no `friends_changed`, and still sees the
-request in `requested`. The edge stays, so adding them back makes you friends at once.
+`added_you` and is no longer counted in `requests_waiting`. The sender is not told, gets
+no `friends_changed`, and still sees the request in `requested`. The edge stays, so
+adding them back makes you friends at once.
 Un-ignore clears the mark. Both are idempotent, and a no-op when there is no incoming
 edge. Remove and block delete the edges, and any ignore mark with them.
 
