@@ -708,7 +708,8 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
       refute logs =~ "dead bot_pid"
     end
 
-    test "all bots finish the game and persist every departed human's result" do
+    # The last to leave sits with bots alone, which abandons nobody.
+    test "all bots finish the game and persist the result of everyone who left a human behind" do
       user_ids = Enum.map(1..4, fn _ -> Ecto.UUID.generate() end)
       {room, _} = create_playing_room(user_ids)
       for user_id <- user_ids, do: assert(:ok = RoomManager.leave_room(user_id))
@@ -719,7 +720,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
           4_000
         )
 
-      assert Enum.sort(saved.player_ids) == Enum.sort(user_ids)
+      assert Enum.sort(saved.player_ids) == Enum.sort(Enum.take(user_ids, 3))
 
       assert Enum.all?(saved.player_results, fn {_, result} ->
                result["participation"] == "abandoned"
@@ -727,7 +728,7 @@ defmodule PidroServer.Games.DisconnectCascadeTest do
 
       {:ok, finished} = RoomManager.get_room(room.code)
       assert finished.status == :finished
-      assert length(PidroServer.Stats.list_abandonments_for_room(room.code)) == 4
+      assert length(PidroServer.Stats.list_abandonments_for_room(room.code)) == 3
     end
   end
 

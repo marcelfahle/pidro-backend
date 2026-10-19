@@ -396,6 +396,9 @@ http://localhost:4000/api/v1
 - `POST /rooms` - Create a new room (requires auth)
 - `POST /rooms/:code/join` - Join a room with optional seat selection (requires auth)
 - `DELETE /rooms/:code/leave` - Leave that room; 404 NOT_IN_ROOM if not in it. `current` leaves whichever room the player is in (requires auth)
+  Leaving a live game hands the seat to a bot and records an abandonment, unless every other
+  seat is a bot or empty (a bot keeping a disconnected human's seat counts as that human):
+  then nothing is recorded and the game counts nowhere for the leaver, like a solo game.
 - `POST /rooms/:code/watch` - Join as spectator (requires auth)
 - `DELETE /rooms/:code/unwatch` - Leave spectating (requires auth)
 - `POST /rooms/:code/open-seat` - Open a bot seat for substitute (requires auth)
@@ -1238,13 +1241,16 @@ waiting-room seat contains one entry:
   "host_id": "<uuid>",
   "host": { "user_id": "<uuid>", "display_name": "Nora", "avatar_url": null },
   "rule_set": "finnish",
-  "held_since": "2026-10-15T12:00:00Z"
+  "held_since": "2026-10-15T12:00:00Z",
+  "join_as": "partner"
 }
 ```
 
 This is also the enriched `/me` entry. `host_id` stays for existing clients;
 `host` is a player entry without presence. `held_since` is the hold's creation
 time, unchanged by an identical repeated hold. `rule_set` is `finnish` or `louisiana`.
+`join_as` is `partner` when the held seat is across from the host's seat, otherwise
+`opponent`; older builds ignore it.
 Blocked pairs receive no invitation, and `/me` excludes their holds.
 Refetch `/me` on `friends_changed` and after unblocking: blocks do not revoke
 holds or emit invitation events, but change which existing holds `/me` lists.

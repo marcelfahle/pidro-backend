@@ -8,6 +8,7 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
   alias PidroServer.AccountsFixtures
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Profiles.{GameXp, PlayerProfile}
   alias PidroServer.RoomManagerCase
   alias PidroServer.Stats
   alias PidroServer.Stats.{AbandonmentEvent, GameStats}
@@ -304,6 +305,59 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       assert Repo.aggregate(GameStats, :count) == 1
     end
 
+    test "leaving a solo bot game leaves no abandonment and no counted game" do
+      player = AccountsFixtures.user_fixture()
+      room = bot_table(player.id, [], [:east, :south, :west], %{solo: true})
+
+      assert :ok = RoomManager.leave_room(player.id)
+
+      assert {:error, :room_not_found} = RoomManager.get_room(room.code)
+      assert Stats.list_abandonments_for_room(room.code) == []
+      assert Repo.get_by(GameStats, room_code: room.code) == nil
+      assert_uncounted(player.id)
+    end
+
+    test "leaving a live room of bots leaves no abandonment and no counted game" do
+      player = AccountsFixtures.user_fixture()
+      room = bot_table(player.id, [], [:east, :south, :west])
+
+      assert :ok = RoomManager.leave_room(player.id)
+      assert Stats.list_abandonments_for_room(room.code) == []
+
+      saved = finish(room.code)
+      assert saved.player_results == %{}
+      assert saved.player_ids == []
+      assert_uncounted(player.id)
+    end
+
+    test "leaving a live room with another human still records the abandonment" do
+      [host, guest] = for _ <- 1..2, do: AccountsFixtures.user_fixture()
+      room = bot_table(host.id, [guest.id], [:south, :west])
+
+      assert :ok = RoomManager.leave_room(guest.id)
+      assert [%{user_id: guest_id}] = Stats.list_abandonments_for_room(room.code)
+      assert guest_id == guest.id
+
+      saved = finish(room.code)
+      assert saved.player_results[guest.id]["participation"] == "abandoned"
+      assert Stats.get_user_stats(guest.id).games_abandoned == 1
+      assert Repo.get_by(PlayerProfile, user_id: guest.id).games_played == 1
+    end
+
+    test "a bot holding a disconnected human's seat counts as that human" do
+      [host, guest] = for _ <- 1..2, do: AccountsFixtures.user_fixture()
+      room = bot_table(host.id, [guest.id], [:south, :west])
+
+      :ok = RoomManager.handle_player_disconnect(room.code, guest.id)
+      {:ok, held} = RoomManagerCase.expire_phase(room.code, :east, :phase2_start)
+      assert %Seat{occupant_type: :bot, reserved_for: reserved_for} = held.seats.east
+      assert reserved_for == guest.id
+
+      assert :ok = RoomManager.leave_room(host.id)
+      assert [%{user_id: host_id}] = Stats.list_abandonments_for_room(room.code)
+      assert host_id == host.id
+    end
+
     test "pre-start abandonment does not record a game or abandonment" do
       {:ok, room} = RoomManager.create_room("user1", %{name: "Waiting Room"})
       {:ok, _, _} = RoomManager.join_room(room.code, "user2")
@@ -313,6 +367,40 @@ defmodule PidroServer.Stats.ScoreProtectionTest do
       assert Stats.list_abandonments_for_room(room.code) == []
       assert Repo.get_by(GameStats, room_code: room.code) == nil
     end
+  end
+
+  # A live table: the host north, guests from east, bots on `bot_positions`.
+  defp bot_table(host_id, guest_ids, bot_positions, config \\ %{}) do
+    {:ok, room} = RoomManager.create_room(host_id, config)
+    for guest <- guest_ids, do: {:ok, _, _} = RoomManager.join_room(room.code, guest)
+
+    for position <- bot_positions,
+        do:
+          {:ok, _, ^position} =
+            RoomManager.join_bot(room.code, "bot_#{position}", self(), position)
+
+    PidroServer.RoomFixtures.ready_room(room.code)
+    {:ok, %{status: :playing} = room} = RoomManager.get_room(room.code)
+    room
+  end
+
+  defp finish(room_code) do
+    send(RoomManager, {:game_over, room_code, :east_west, %{north_south: 30, east_west: 62}})
+    wait_until(fn -> Repo.get_by(GameStats, room_code: room_code) end)
+  end
+
+  # Nothing that counts against the player: no abandonment, no game in their
+  # stats or the leaderboard, no profile counters, no XP for a league.
+  defp assert_uncounted(user_id) do
+    stats = Stats.get_user_stats(user_id)
+    assert {stats.games_played, stats.games_abandoned, stats.abandonment_rate} == {0, 0, 0.0}
+    refute Enum.any?(Stats.get_leaderboard(limit: 100), &(&1.player_id == user_id))
+
+    refute Repo.exists?(
+             from p in PlayerProfile, where: p.user_id == ^user_id and p.games_played > 0
+           )
+
+    refute Repo.exists?(from x in GameXp, where: x.user_id == ^user_id)
   end
 
   defp position_for(room, user_id) do

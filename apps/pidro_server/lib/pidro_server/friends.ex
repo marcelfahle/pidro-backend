@@ -6,6 +6,7 @@ defmodule PidroServer.Friends do
   alias PidroServer.Blocks
   alias PidroServer.ClassicSocial
   alias PidroServer.Friends.Friendship
+  alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
   alias PidroServer.Repo
   alias PidroServer.Stats.GameStats
@@ -217,10 +218,8 @@ defmodule PidroServer.Friends do
   # Connected players holding a human seat, with whether anyone else human sits
   # there. A connected spectator holds no seat and stays online.
   defp seated_company({room, connected}) do
-    humans = for {_, %{occupant_type: :human, user_id: id}} <- room.seats, do: id
-
-    for id <- humans, Map.has_key?(connected, id) do
-      {id, if(Enum.any?(humans, &(&1 != id)), do: "people", else: "bots")}
+    for {_, %{occupant_type: :human, user_id: id}} <- room.seats, Map.has_key?(connected, id) do
+      {id, if(Seat.alone_with_bots?(room.seats, id), do: "bots", else: "people")}
     end
   end
 
