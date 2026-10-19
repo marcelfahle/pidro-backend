@@ -445,7 +445,9 @@ defmodule PidroServer.Friends do
       from g in GameStats,
         join: u in User,
         on: u.id in g.player_ids,
-        where: ^user_id in g.player_ids and u.id in ^ids and not is_nil(g.completed_at),
+        # `@>` lets the GIN index on player_ids find the player's games.
+        where: fragment("? @> ?", g.player_ids, type(^[user_id], {:array, Ecto.UUID})),
+        where: u.id in ^ids and not is_nil(g.completed_at),
         group_by: u.id,
         select: {u.id, max(g.completed_at)}
     )
