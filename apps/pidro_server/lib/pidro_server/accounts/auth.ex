@@ -884,6 +884,10 @@ defmodule PidroServer.Accounts.Auth do
       from b in PidroServer.Blocks.Block, where: b.user_id == ^id or b.blocked_id == ^id
     )
 
+    Repo.delete_all(
+      from i in PidroServer.Friends.Ignore, where: i.user_id == ^id or i.ignored_id == ^id
+    )
+
     case Repo.delete(user) do
       {:ok, deleted} -> {deleted, hosted_rooms}
       {:error, changeset} -> Repo.rollback(changeset)
