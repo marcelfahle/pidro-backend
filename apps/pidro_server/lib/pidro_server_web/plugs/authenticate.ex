@@ -34,6 +34,9 @@ defmodule PidroServerWeb.Plugs.Authenticate do
   - On success: assigns the user to `:current_user` and returns the connection
   - On failure (missing, malformed, invalid, expired or revoked token, or an
     unknown user): returns 401 Unauthorized JSON response and halts the connection
+
+  With `optional: true`, a missing token is allowed, but a bad token still returns
+  401. With `lenient: true`, any authentication failure continues anonymously.
   """
 
   import Plug.Conn
@@ -44,7 +47,7 @@ defmodule PidroServerWeb.Plugs.Authenticate do
   @doc """
   Initializes the plug options.
 
-  Returns the options as-is since this plug doesn't require configuration.
+  Returns the options as-is.
   """
   @spec init(opts :: Keyword.t()) :: Keyword.t()
   def init(opts) do
@@ -61,28 +64,31 @@ defmodule PidroServerWeb.Plugs.Authenticate do
   ## Parameters
 
     * `conn` - The Plug.Conn connection struct
-    * `_opts` - Plug options (unused)
+    * `opts` - `optional: true` allows missing tokens; `lenient: true` allows
+      all authentication failures to continue anonymously
 
   ## Returns
 
     * Updated connection with user assigned to `:current_user` on success
-    * Halted connection with 401 response on failure
+    * Anonymous connection when allowed by the options, otherwise 401 on failure
   """
   @spec call(conn :: Plug.Conn.t(), opts :: Keyword.t()) :: Plug.Conn.t()
   def call(conn, opts) do
     optional? = Keyword.get(opts, :optional, false)
+    lenient? = Keyword.get(opts, :lenient, false)
 
-    case extract_token(conn) do
-      {:ok, token} ->
-        authenticate_token(conn, token)
-
+    with {:ok, token} <- extract_token(conn),
+         {:ok, claims} <- Token.verify(token),
+         {:ok, user} <- Auth.fetch_user_for_token(claims) do
+      assign(conn, :current_user, user)
+    else
       :missing when optional? ->
         assign(conn, :current_user, nil)
 
-      :error ->
-        unauthorized_response(conn)
+      _ when lenient? ->
+        assign(conn, :current_user, nil)
 
-      :missing ->
+      _ ->
         unauthorized_response(conn)
     end
   end
@@ -101,16 +107,6 @@ defmodule PidroServerWeb.Plugs.Authenticate do
 
       _ ->
         :error
-    end
-  end
-
-  @doc false
-  defp authenticate_token(conn, token) do
-    with {:ok, claims} <- Token.verify(token),
-         {:ok, user} <- Auth.fetch_user_for_token(claims) do
-      assign(conn, :current_user, user)
-    else
-      {:error, _reason} -> unauthorized_response(conn)
     end
   end
 

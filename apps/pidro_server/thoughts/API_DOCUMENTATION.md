@@ -470,9 +470,11 @@ password seat shares it, it never changes, and it lives in the room config, so i
 on rematch. It is never logged.
 
 Only the host sees it, as `room.seat_password` in their own REST responses (create, join, seat
-controls, hold and set-seat endpoints). `GET /rooms/:code`, channel pushes, lobby, readiness and
-invite previews never carry it. Every seat projection instead gains `password`: `true` on a vacant,
-unheld password seat, otherwise `false`, so Tables can show a lock.
+controls, hold and set-seat endpoints), including `GET /rooms/:code` with the host's valid Bearer
+token. That GET stays public: missing, bad, expired or revoked tokens get the public room without
+the password, never a 401. Channel pushes, lobby, readiness and invite previews never carry it.
+Every seat projection instead gains `password`: `true` on a vacant, unheld password seat,
+otherwise `false`, so Tables can show a lock.
 
 Sitting down needs `password` in the join body:
 ```json
