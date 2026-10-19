@@ -103,7 +103,12 @@ defmodule PidroServer.FriendsTest do
 
     {:ok, _} = Friends.add(a.id, b.id)
     assert_receive {:friend_event, id, "friend_request", payload} when id == b.id
-    assert payload == %{player: hd(Friends.list(b.id).added_you), played_together_at: played}
+
+    assert payload == %{
+             player: Map.delete(hd(Friends.list(b.id).added_you), :requested_at),
+             played_together_at: played
+           }
+
     assert %{user_id: sender_id, display_name: "Pekka"} = payload.player
     assert sender_id == a.id
 
@@ -125,7 +130,12 @@ defmodule PidroServer.FriendsTest do
 
       {:ok, _} = Friends.add(b.id, a.id)
       assert_receive {:friend_event, id, "friend_accepted", payload} when id == a.id
-      assert payload == %{player: hd(Friends.list(a.id).friends), source: "accept"}
+
+      assert payload == %{
+               player: Map.delete(hd(Friends.list(a.id).friends), :played_together_at),
+               source: "accept"
+             }
+
       assert payload.player.user_id == b.id
       refute_received {:friend_event, _, _, _}
       Phoenix.PubSub.unsubscribe(PidroServer.PubSub, "lobby:updates")
@@ -224,6 +234,75 @@ defmodule PidroServer.FriendsTest do
              {"Zora", "online"},
              {"Aaron", "offline"}
            ]
+
+    for entry <- Friends.list(caller.id).friends, entry.presence != "at_table" do
+      refute Map.has_key?(entry, :table_open_seats)
+      refute Map.has_key?(entry, :table_hand)
+    end
+  end
+
+  test "table facts exclude held seats and follow the deal and redeal" do
+    caller = user_fixture()
+    host = user_fixture(%{display_name: "Nora"})
+    invited = user_fixture()
+    {:ok, _} = Friends.add(caller.id, host.id)
+    {:ok, _} = Friends.add(host.id, caller.id)
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: invited.id}})
+    on_exit(fn -> RoomManager.close_room(room.code) end)
+    {:ok, _} = Presence.track(self(), "game:" <> room.code, host.id, %{})
+
+    assert [%{table_open_seats: 2, table_hand: nil}] = Friends.list(caller.id).friends
+    assert {:ok, [%{table_open_seats: 2, table_hand: nil}]} = Friends.search(caller.id, "nor")
+    played = ~U[2026-10-18 19:30:00Z]
+    game(invited.id, [host.id], played)
+    assert [%{table_open_seats: 2, table_hand: nil}] = Friends.recent(invited.id)
+
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+    {:ok, _} = Friends.add(host.id, invited.id)
+    assert_receive {:friend_event, id, "friend_request", payload} when id == invited.id
+    assert %{table_open_seats: 2, table_hand: nil} = payload.player
+
+    {:ok, _, :south} = RoomManager.join_room(room.code, invited.id, :south)
+
+    for position <- [:east, :west] do
+      {:ok, _, ^position} = RoomManager.join_room(room.code, user_fixture().id, position)
+    end
+
+    PidroServer.RoomFixtures.ready_room(room.code)
+    assert [%{table_open_seats: 0, table_hand: 1}] = Friends.list(caller.id).friends
+
+    {:ok, snapshot} = PidroServer.Games.GameAdapter.get_snapshot(room.code)
+
+    update = %{
+      snapshot
+      | state: %{snapshot.state | hand_number: 2},
+        state_revision: snapshot.state_revision + 1
+    }
+
+    send(RoomManager, {:state_update, room.code, update})
+    assert [%{table_open_seats: 0, table_hand: 2}] = Friends.list(caller.id).friends
+  end
+
+  test "friends carry the latest completed game shared with this viewer, or nil" do
+    caller = user_fixture()
+    [friend, other, never] = for _ <- 1..3, do: user_fixture()
+
+    for user <- [friend, other, never] do
+      {:ok, _} = Friends.add(caller.id, user.id)
+      {:ok, _} = Friends.add(user.id, caller.id)
+    end
+
+    played = ~U[2026-10-18 19:30:00Z]
+    older = DateTime.add(played, -86_400)
+    game(caller.id, [friend.id, other.id], older)
+    game(caller.id, [friend.id], played)
+    game(friend.id, [other.id, never.id], DateTime.add(played, 60))
+
+    assert Map.new(Friends.list(caller.id).friends, &{&1.user_id, &1.played_together_at}) == %{
+             friend.id => played,
+             other.id => older,
+             never.id => nil
+           }
   end
 
   test "a seated player is at_table with bots alone or with people; spectators stay online" do
@@ -281,6 +360,11 @@ defmodule PidroServer.FriendsTest do
     {:ok, _} = Friends.add(old.id, caller.id)
     {:ok, _} = Friends.add(new.id, caller.id)
     assert Enum.map(Friends.list(caller.id).added_you, & &1.user_id) == [new.id, old.id]
+
+    for entry <- Friends.list(caller.id).added_you do
+      edge = Repo.get_by!(Friendship, user_id: entry.user_id, friend_id: caller.id)
+      assert entry.requested_at == edge.inserted_at
+    end
   end
 
   test "search uses name_key prefix, excludes self and guests, and derives all four relations" do
@@ -356,6 +440,13 @@ defmodule PidroServer.FriendsTest do
 
     game(caller.id, [newer.id, newest.id], DateTime.add(now, 2))
     assert Enum.map(Friends.recent(caller.id), & &1.user_id) == [newer.id, newest.id]
+    assert Enum.all?(Friends.recent(caller.id), &(&1.played_together_at == DateTime.add(now, 2)))
+    game(caller.id, [newest.id], DateTime.add(now, 3))
+
+    assert Enum.map(Friends.recent(caller.id), &{&1.user_id, &1.played_together_at}) == [
+             {newest.id, DateTime.add(now, 3)},
+             {newer.id, DateTime.add(now, 2)}
+           ]
   end
 
   test "recent returns at most ten distinct tablemates" do

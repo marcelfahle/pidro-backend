@@ -90,22 +90,27 @@ defmodule PidroServer.Friends do
         from f in Friendship,
           where: f.friend_id == ^user_id,
           order_by: [desc: f.inserted_at, asc: f.user_id],
-          select: {f.user_id, f.ignored_at}
+          select: {f.user_id, f.ignored_at, f.inserted_at}
       )
 
     sent_at = Map.new(sent)
+    received_at = Map.new(received, fn {id, _, at} -> {id, at} end)
     received_ids = MapSet.new(received, &elem(&1, 0))
-    friend_ids = for {id, _} <- received, Map.has_key?(sent_at, id), do: id
-    added_you_ids = for {id, nil} <- received, not Map.has_key?(sent_at, id), do: id
+    friend_ids = for {id, _, _} <- received, Map.has_key?(sent_at, id), do: id
+    added_you_ids = for {id, nil, _} <- received, not Map.has_key?(sent_at, id), do: id
     requested_ids = for {id, _} <- sent, not MapSet.member?(received_ids, id), do: id
     entries = Map.new(entries(friend_ids ++ added_you_ids ++ requested_ids), &{&1.user_id, &1})
     pick = fn ids -> for id <- ids, entry = entries[id], do: entry end
-    added_you = pick.(added_you_ids)
+
+    added_you =
+      Enum.map(pick.(added_you_ids), &Map.put(&1, :requested_at, received_at[&1.user_id]))
+
+    played_at = played_together_at(user_id, friend_ids)
 
     %{
       friends:
         Enum.sort_by(
-          pick.(friend_ids),
+          Enum.map(pick.(friend_ids), &Map.put(&1, :played_together_at, played_at[&1.user_id])),
           &{&1.presence == "offline", User.name_key(&1.display_name), &1.user_id}
         ),
       added_you: added_you,
@@ -156,15 +161,23 @@ defmodule PidroServer.Friends do
       |> Enum.filter(&MapSet.member?(outgoing, &1))
       |> MapSet.new()
 
-    ids =
+    games =
       Repo.all(
         from g in GameStats,
           where: ^user_id in g.player_ids and not is_nil(g.completed_at),
           order_by: [desc: g.completed_at, desc: g.id],
           limit: 20,
-          select: g.player_ids
+          select: {g.player_ids, g.completed_at}
       )
-      |> List.flatten()
+
+    played_at =
+      Enum.reduce(games, %{}, fn {ids, at}, acc ->
+        Enum.reduce(ids, acc, &Map.put_new(&2, &1, at))
+      end)
+
+    ids =
+      games
+      |> Enum.flat_map(&elem(&1, 0))
       |> Enum.uniq()
       |> Enum.reject(&(&1 == user_id or MapSet.member?(mutual, &1)))
 
@@ -174,7 +187,9 @@ defmodule PidroServer.Friends do
       |> Repo.all()
       |> MapSet.new()
 
-    related_entries(user_id, Enum.filter(ids, &MapSet.member?(visible, &1))) |> Enum.take(10)
+    related_entries(user_id, Enum.filter(ids, &MapSet.member?(visible, &1)))
+    |> Enum.take(10)
+    |> Enum.map(&Map.put(&1, :played_together_at, played_at[&1.user_id]))
   end
 
   defp with_classic(list, user_id) do
@@ -241,8 +256,15 @@ defmodule PidroServer.Friends do
       }
 
       cond do
-        company = tables[id] ->
-          %{entry | presence: "at_table"} |> Map.put(:table_company, company)
+        table = tables[id] ->
+          {company, room} = table
+
+          Map.merge(entry, %{
+            presence: "at_table",
+            table_company: company,
+            table_open_seats: length(RoomManager.available_positions(room)),
+            table_hand: if(room.status == :playing, do: room.game[:hand])
+          })
 
         MapSet.member?(connected, id) ->
           %{entry | presence: "online"}
@@ -257,7 +279,7 @@ defmodule PidroServer.Friends do
   # there. A connected spectator holds no seat and stays online.
   defp seated_company({room, connected}) do
     for {_, %{occupant_type: :human, user_id: id}} <- room.seats, Map.has_key?(connected, id) do
-      {id, if(Seat.alone_with_bots?(room.seats, id), do: "bots", else: "people")}
+      {id, {if(Seat.alone_with_bots?(room.seats, id), do: "bots", else: "people"), room}}
     end
   end
 
@@ -280,7 +302,10 @@ defmodule PidroServer.Friends do
           do: {"friend_accepted", %{player: player, source: "accept"}},
           else:
             {"friend_request",
-             %{player: player, played_together_at: played_together_at(user_id, recipient_id)}}
+             %{
+               player: player,
+               played_together_at: played_together_at(user_id, [recipient_id])[recipient_id]
+             }}
 
       Phoenix.PubSub.broadcast(
         PidroServer.PubSub,
@@ -290,12 +315,18 @@ defmodule PidroServer.Friends do
     end
   end
 
-  defp played_together_at(a, b) do
-    Repo.one(
+  defp played_together_at(_user_id, []), do: %{}
+
+  defp played_together_at(user_id, ids) do
+    Repo.all(
       from g in GameStats,
-        where: ^a in g.player_ids and ^b in g.player_ids and not is_nil(g.completed_at),
-        select: max(g.completed_at)
+        join: u in User,
+        on: u.id in g.player_ids,
+        where: ^user_id in g.player_ids and u.id in ^ids and not is_nil(g.completed_at),
+        group_by: u.id,
+        select: {u.id, max(g.completed_at)}
     )
+    |> Map.new()
   end
 
   defp changed(ids) do

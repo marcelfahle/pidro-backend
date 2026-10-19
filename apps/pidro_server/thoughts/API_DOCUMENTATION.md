@@ -1083,11 +1083,17 @@ existing `errors` array. Existing endpoints are unchanged.
 The first five return:
 
 ```json
-{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online"}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0,"waiting_for_you":0}}
+{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online","played_together_at":null}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0,"waiting_for_you":0}}
 ```
 
 Friends have both directed edges; `added_you` has an incoming edge with none back;
 `requested` (PID-245) has your edge with none back, with `requested_at` when you sent it.
+Every `added_you` entry also has `requested_at`: when its sender added you (PID-260).
+Every `friends` entry has `played_together_at`: the ISO 8601 `completed_at` of the
+latest game you both finished, or `null` if none. This is specific to the viewer.
+Only completed games in the new app count; Classic history and abandoned games do not.
+A request copied from Classic at claim uses the claim time as `requested_at`, since
+Classic has no request date.
 `requests_waiting` is the length of `added_you`. `waiting_for_you` (PID-246) is what
 waits for your answer, for the Friends badge: `requests_waiting` plus your live seat
 invitations (the `/me` `seat_invitations`). It drops when you answer, not when you
@@ -1100,7 +1106,11 @@ and `requested` sort newest first. Presence comes from existing Presence trackin
 game-channel connection while holding a human seat wins as `at_table`, otherwise a lobby
 or game-channel connection (spectating) is `online`, otherwise `offline`. An `at_table`
 entry also carries `table_company`: `"bots"` when every other seat is a bot or empty
-(invitable), `"people"` when another human sits there. Older builds ignore the field.
+(invitable), `"people"` when another human sits there. It also has `table_open_seats`,
+the publicly open seat count the lobby shows (held seats do not count), and
+`table_hand`, the room's current `game.hand` while playing, or `null` before the
+first deal. These three keys are absent unless `presence` is `at_table`, across
+list, search, recent and live friend-event entries. Older builds ignore the new keys.
 Avatars use the same URL as room/profile payloads, or null.
 
 Ignore marks the incoming edge as ignored for you only. The request drops out of your
@@ -1129,6 +1139,8 @@ names using that existing Elixir fold; no duplicate folded-name column is stored
 Recent uses the caller's last twenty `game_stats` rows by `completed_at`, deduplicates
 players most-recent-first, and excludes self, mutual friends, guests and non-account
 identities (including bots). Outgoing-only and incoming-only edges remain discoverable.
+Every recent entry has `played_together_at`, the newest shared `completed_at` in
+those twenty completed games. Search entries do not have this field.
 Search and recent exclude blocked pairs in either direction, in SQL before the result
 cap. Adding a friend across a block returns `404 {"error":"USER_NOT_FOUND"}`.
 
@@ -1140,7 +1152,7 @@ A new edge also tells the other player, in addition to `friends_changed` (PID-24
 
 - `friend_request` goes to the player a new request reaches, when there is no edge
   back: `{"player": entry, "played_together_at": "2026-10-18T19:30:00Z" | null}`.
-  `entry` is the sender as the friends list shows them; `played_together_at` is
+  `entry` is the sender's public entry (including table facts, not request dates); `played_together_at` is
   when the last completed game both played in ended.
 - `friend_accepted` goes to the player whose request was just answered by adding
   back, also when it had been ignored: `{"player": entry, "source": "accept"}`,
