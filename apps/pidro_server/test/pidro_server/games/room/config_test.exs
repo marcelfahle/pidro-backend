@@ -719,4 +719,52 @@ defmodule PidroServer.Games.Room.ConfigTest do
                ["name"]
     end
   end
+
+  describe "put_seat/3" do
+    test "replaces whatever the config said about the seat and nothing else" do
+      friend = Ecto.UUID.generate()
+
+      {:ok, config} =
+        Config.new(%{
+          seat_requirements: %{east: 100, south: 1000},
+          seat_holds: %{west: friend},
+          password_seats: [:east]
+        })
+
+      password = config.seat_password
+
+      assert %{seat_requirements: %{south: 1000}, seat_holds: %{west: ^friend}} =
+               bot = Config.put_seat(config, :east, :bot)
+
+      assert bot.password_seats == []
+      assert bot.seat_password == password
+
+      held = Config.put_seat(config, :south, {:held, friend})
+      assert held.seat_requirements == %{east: 100}
+      assert held.seat_holds == %{west: friend, south: friend}
+
+      opened = Config.put_seat(config, :west, {:open, 1000, true})
+      assert opened.seat_holds == %{}
+      assert opened.seat_requirements == %{east: 100, south: 1000, west: 1000}
+      assert opened.password_seats == [:east, :west]
+      assert opened.seat_password == password
+
+      assert Config.put_seat(config, :east, {:open, 100, true}) == config
+      assert Config.put_seat(%Config{}, :east, {:open, 0, true}).seat_password =~ ~r/\A\d{4}\z/
+    end
+
+    test "parse_seat_entry/1 takes a create request's seat values and names the field seat" do
+      friend = Ecto.UUID.generate()
+
+      assert Config.parse_seat_entry("ai") == {:ok, :bot}
+      assert Config.parse_seat_entry("open") == {:ok, {:open, 0, false}}
+
+      assert Config.parse_seat_entry(%{"type" => "held", "user_id" => friend}) ==
+               {:ok, {:held, friend}}
+
+      for bad <- [nil, "closed", %{"type" => "open", "min_games" => 50}] do
+        assert {:error, {:invalid_room_params, [%{field: "seat"}]}} = Config.parse_seat_entry(bad)
+      end
+    end
+  end
 end

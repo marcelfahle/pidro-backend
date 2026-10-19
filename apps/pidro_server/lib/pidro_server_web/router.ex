@@ -206,9 +206,8 @@ defmodule PidroServerWeb.Router do
     post "/rooms/:code/bot", RoomController, :seat_bot
     put "/rooms/:code/seats/:position/hold", RoomController, :hold
     delete "/rooms/:code/seats/:position/hold", RoomController, :release_hold
-    put "/rooms/:code/seats/:position/password", RoomController, :password
-    delete "/rooms/:code/seats/:position/password", RoomController, :remove_password
     post "/rooms/:code/seats/:position/decline", RoomController, :decline_hold
+    put "/rooms/:code/seats/:position", RoomController, :set_seat
 
     # Invite routes (R1, R5, R6, R7); the mint bucket also covers regenerate
     post "/rooms/:code/invites", RoomController, :create_invite,
