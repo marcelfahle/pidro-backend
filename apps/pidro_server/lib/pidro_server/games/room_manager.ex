@@ -1335,7 +1335,8 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_owner(room, host_id),
          :ok <- ensure_waiting(room),
          :ok <- ensure_unblocked_holds(host_id, [user_id]),
-         :ok <- ensure_hold_position(room, position, user_id) do
+         :ok <- ensure_hold_position(room, position, user_id),
+         :ok <- ensure_invitable(state, code, [user_id]) do
       updated = put_seat_hold(room, position, user_id, "released")
       {:reply, {:ok, updated}, put_room(state, updated)}
     else
@@ -1348,7 +1349,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_owner(room, host_id),
          :ok <- ensure_waiting(room),
          {:ok, cleared, bot} <- clear_seat(room, position, entry),
-         :ok <- ensure_seat_entry(cleared, host_id, position, entry) do
+         :ok <- ensure_seat_entry(state, cleared, host_id, position, entry) do
       config = Config.put_seat(room.config, position, entry)
 
       updated = %{
@@ -1410,6 +1411,7 @@ defmodule PidroServer.Games.RoomManager do
     # The collision retry runs inside this callback so `state.rooms` is the
     # authoritative set of live codes for the whole check-then-insert.
     with :ok <- ensure_not_in_other_room(state, host_id, nil),
+         :ok <- ensure_invitable(state, nil, Map.values(config.seat_holds)),
          {:ok, room_code} <-
            RoomCodes.generate_unique(
              &Map.has_key?(state.rooms, &1),
@@ -3527,12 +3529,28 @@ defmodule PidroServer.Games.RoomManager do
   defp release_bot(%Seat{bot_pid: pid}), do: pid
   defp release_bot(nil), do: nil
 
-  defp ensure_seat_entry(room, host_id, position, {:held, user_id}) do
+  defp ensure_seat_entry(state, room, host_id, position, {:held, user_id}) do
     with :ok <- ensure_unblocked_holds(host_id, [user_id]),
-         do: ensure_hold_position(room, position, user_id)
+         :ok <- ensure_hold_position(room, position, user_id),
+         do: ensure_invitable(state, room.code, [user_id])
   end
 
-  defp ensure_seat_entry(_room, _host_id, _position, _entry), do: :ok
+  defp ensure_seat_entry(_state, _room, _host_id, _position, _entry), do: :ok
+
+  # A seat invitation never asks a player to leave a table with other people,
+  # the same rule that releases their holds once they sit down with people.
+  defp ensure_invitable(%State{} = state, room_code, user_ids) do
+    with_people? = fn user_id ->
+      with code when code not in [nil, room_code] <- state.player_rooms[user_id],
+           %Room{seats: seats} <- state.rooms[code] do
+        not Seat.alone_with_bots?(seats, user_id)
+      else
+        _ -> false
+      end
+    end
+
+    if Enum.any?(user_ids, with_people?), do: {:error, :already_in_room}, else: :ok
+  end
 
   defp ensure_hold_position(room, position, user_id) do
     cond do

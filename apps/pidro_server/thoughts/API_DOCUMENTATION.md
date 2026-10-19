@@ -515,7 +515,9 @@ errors for `held` (`422 ALREADY_SEATED` for a friend seated or held elsewhere, `
 
 Create a hold with `{"seats":{"seat_3":{"type":"held","user_id":"<uuid>"}}}`.
 The user must exist, must not already be seated at this table, and may have only one hold
-per table. No friendship requirement is imposed.
+per table. No friendship requirement is imposed. A user seated at another table with other
+people can't be held (`422 ALREADY_IN_ROOM`, on create, hold and set-seat); a table of bots
+doesn't count.
 
 From the waiting room, the host may use:
 - `PUT /api/v1/rooms/:code/seats/:position/hold` with `{"user_id":"<uuid>"}`.

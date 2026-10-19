@@ -648,6 +648,21 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert moved.positions.west == stranger.id
     end
 
+    test "a join that names no seat skips a password seat while an ordinary one is free", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      [auto, team, last] = for _ <- 1..3, do: AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{password_seats: [:east, :south]})
+      join = &post(as_user(conn, &1), ~p"/api/v1/rooms/#{room.code}/join", &2)
+
+      assert data(join.(auto, %{}), 200)["assigned_position"] == "west"
+      assert json_response(join.(team, %{position: "north_south"}), 403)
+
+      assert data(join.(last, %{password: room.config.seat_password}), 200)["assigned_position"] ==
+               "east"
+    end
+
     test "password guesses are limited per player and per table", %{conn: conn} do
       with_limit(:seat_password, 2, 60_000)
       with_limit(:seat_password_room, 2, 60_000)
