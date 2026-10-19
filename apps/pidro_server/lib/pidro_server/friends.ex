@@ -12,25 +12,38 @@ defmodule PidroServer.Friends do
   alias PidroServer.Stats.GameStats
   alias PidroServerWeb.Presence
 
-  @doc "Adds one edge, idempotently, and returns the caller's full list."
+  @doc """
+  Adds one edge, idempotently, and returns the caller's full list. A new edge
+  tells the other player live: a request, or the acceptance of theirs.
+  """
   @spec add(String.t(), String.t()) :: {:ok, map()} | {:error, atom() | Ecto.Changeset.t()}
   def add(user_id, friend_id) do
     with {:ok, friend_id} <- target(user_id, friend_id),
-         {:ok, _} <-
+         {:ok, owners} <-
            Repo.transaction(fn ->
              Blocks.lock_pair(user_id, friend_id)
 
              if Blocks.blocked?(user_id, friend_id), do: Repo.rollback(:user_not_found)
 
+             owners =
+               Repo.all(
+                 from f in Friendship,
+                   where:
+                     (f.user_id == ^user_id and f.friend_id == ^friend_id) or
+                       (f.user_id == ^friend_id and f.friend_id == ^user_id),
+                   select: f.user_id
+               )
+
              case Repo.insert(Friendship.changeset(user_id, friend_id),
                     on_conflict: :nothing,
                     conflict_target: [:user_id, :friend_id]
                   ) do
-               {:ok, edge} -> edge
+               {:ok, _} -> owners
                {:error, reason} -> Repo.rollback(reason)
              end
            end) do
       changed([user_id, friend_id])
+      if user_id not in owners, do: tell(friend_id, user_id, friend_id in owners)
       {:ok, list(user_id)}
     end
   end
@@ -97,7 +110,8 @@ defmodule PidroServer.Friends do
         ),
       added_you: added_you,
       requested: Enum.map(pick.(requested_ids), &Map.put(&1, :requested_at, sent_at[&1.user_id])),
-      requests_waiting: length(added_you)
+      requests_waiting: length(added_you),
+      waiting_for_you: length(added_you) + length(RoomManager.seat_invitations(user_id))
     }
     |> with_classic(user_id)
   end
@@ -257,6 +271,32 @@ defmodule PidroServer.Friends do
 
   defp edge(user_id, friend_id),
     do: from(f in Friendship, where: f.user_id == ^user_id and f.friend_id == ^friend_id)
+
+  # Only the new edge's recipient hears of it: a request, or their request accepted.
+  defp tell(recipient_id, user_id, accepted?) do
+    for player <- entries([user_id]) do
+      {event, payload} =
+        if accepted?,
+          do: {"friend_accepted", %{player: player, source: "accept"}},
+          else:
+            {"friend_request",
+             %{player: player, played_together_at: played_together_at(user_id, recipient_id)}}
+
+      Phoenix.PubSub.broadcast(
+        PidroServer.PubSub,
+        "lobby:updates",
+        {:friend_event, recipient_id, event, payload}
+      )
+    end
+  end
+
+  defp played_together_at(a, b) do
+    Repo.one(
+      from g in GameStats,
+        where: ^a in g.player_ids and ^b in g.player_ids and not is_nil(g.completed_at),
+        select: max(g.completed_at)
+    )
+  end
 
   defp changed(ids) do
     for id <- ids do

@@ -54,7 +54,13 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     b = user_fixture(%{display_name: "Vera"})
 
     empty = %{
-      "data" => %{"friends" => [], "added_you" => [], "requested" => [], "requests_waiting" => 0}
+      "data" => %{
+        "friends" => [],
+        "added_you" => [],
+        "requested" => [],
+        "requests_waiting" => 0,
+        "waiting_for_you" => 0
+      }
     }
 
     response = conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200)
@@ -70,6 +76,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert_schema(response, "FriendsResponse")
     assert response["data"]["added_you"] == [player(a)]
     assert response["data"]["requests_waiting"] == 1
+    assert response["data"]["waiting_for_you"] == 1
 
     response = conn |> auth(b) |> put(~p"/api/v1/friends/#{a.id}") |> json_response(200)
     assert_schema(response, "FriendsResponse")
@@ -107,7 +114,13 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     sent = conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200)
 
     hidden = %{
-      "data" => %{"friends" => [], "added_you" => [], "requested" => [], "requests_waiting" => 0}
+      "data" => %{
+        "friends" => [],
+        "added_you" => [],
+        "requested" => [],
+        "requests_waiting" => 0,
+        "waiting_for_you" => 0
+      }
     }
 
     for _ <- 1..2 do
@@ -122,7 +135,12 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert_schema(response, "FriendsResponse")
 
     assert response == %{
-             "data" => %{hidden["data"] | "added_you" => [player(a)], "requests_waiting" => 1}
+             "data" => %{
+               hidden["data"]
+               | "added_you" => [player(a)],
+                 "requests_waiting" => 1,
+                 "waiting_for_you" => 1
+             }
            }
   end
 
