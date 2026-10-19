@@ -4,9 +4,11 @@ defmodule PidroServerWeb.API.FriendController do
   use OpenApiSpex.ControllerSpecs
 
   alias PidroServer.Friends
+  alias PidroServerWeb.API.RoomJSON
   alias PidroServerWeb.ErrorContract
-  alias PidroServerWeb.Schemas.{ErrorSchemas, FriendSchemas}
+  alias PidroServerWeb.Schemas.{ErrorSchemas, FriendSchemas, RoomSchemas}
 
+  action_fallback PidroServerWeb.API.FallbackController
   plug :require_account
   tags(["Friends"])
   security([%{"bearer_auth" => []}])
@@ -95,6 +97,51 @@ defmodule PidroServerWeb.API.FriendController do
 
   def unignore(conn, %{"user_id" => id}) do
     respond(conn, Friends.unignore(conn.assigns.current_user.id, id))
+  end
+
+  operation(:join,
+    summary: "Sit down at a mutual friend's table in one tap",
+    description: """
+    Takes the friend's partner seat when it is open to the caller, else the first
+    open seat they may take; `join_as` in the friends list says which beforehand.
+    A seat held for someone else, a password seat (there is no password to give
+    here), or one whose `min_games` the caller misses is not open to them; a
+    substitute seat at a playing table asks for neither. The seat is then joined
+    exactly as `POST /rooms/:code/join` with that `position`, so its rules and
+    errors apply unchanged (a blocked host still answers 422 `SEAT_TAKEN`). Not a mutual friend, or a block either way: 404
+    `USER_NOT_FOUND`. The friend is not seated at a waiting, ready or playing table:
+    404 `ROOM_NOT_FOUND`. No seat the caller may take: 409 `NO_SEAT_FOR_YOU`.
+    Limited at policy `room_join` (per user).
+    """,
+    parameters: [user_id: [in: :path, type: :string, required: true]],
+    responses: [
+      ok: {"Seated at the friend's table", "application/json", RoomSchemas.RoomResponse},
+      not_found:
+        {"USER_NOT_FOUND or ROOM_NOT_FOUND", "application/json",
+         %OpenApiSpex.Schema{oneOf: [FriendSchemas.Error, ErrorSchemas.not_found_error()]}},
+      conflict: {"NO_SEAT_FOR_YOU", "application/json", ErrorSchemas.conflict_error()},
+      forbidden:
+        {"Account required, kicked, or SEAT_REQUIRES_GAMES", "application/json",
+         %OpenApiSpex.Schema{oneOf: [FriendSchemas.Error, RoomSchemas.SeatRequiresGames]}},
+      unprocessable_entity:
+        {"Room full, seat taken or already in room", "application/json",
+         ErrorSchemas.validation_error()},
+      locked: {"Table locked", "application/json", ErrorSchemas.locked_error()},
+      service_unavailable:
+        {"PROFILE_UNAVAILABLE; retry later", "application/json", ErrorSchemas.error_response()},
+      unauthorized:
+        {"Authentication required", "application/json", ErrorSchemas.unauthorized_error()},
+      too_many_requests:
+        {"Rate limited", "application/json", ErrorSchemas.too_many_requests_error()}
+    ]
+  )
+
+  def join(conn, %{"user_id" => id}) do
+    with {:ok, room, position} <- Friends.join(conn.assigns.current_user, id) do
+      conn
+      |> put_view(RoomJSON)
+      |> render(:show, %{room: room, assigned_position: position})
+    end
   end
 
   operation(:search,

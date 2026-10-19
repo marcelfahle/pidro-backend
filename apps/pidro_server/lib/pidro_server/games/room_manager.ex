@@ -587,6 +587,49 @@ defmodule PidroServer.Games.RoomManager do
   def available_positions(%Room{}), do: []
 
   @doc """
+  The seat `user_id` takes at `friend_id`'s table, and whether it makes them the
+  friend's partner: the partner seat when it is open to them, else the first
+  open seat they may take, or `nil`. A seat held for someone else, a password
+  seat, or one whose games requirement `games_played` misses is not open to
+  them; as in `join_room/3`, a substitute seat at a playing table asks for
+  neither password nor games. Who may join at all (a locked table, a kick, a
+  block) stays with `join_room/3`.
+  """
+  @spec friend_seat(Room.t(), String.t(), String.t(), non_neg_integer()) ::
+          {Positions.position(), :partner | :opponent} | nil
+  def friend_seat(%Room{} = room, user_id, friend_id, games_played) do
+    partner = Positions.partner(Seat.position_of(room.seats, friend_id))
+
+    open =
+      Enum.filter([:north, :east, :south, :west], &open_to?(room, &1, user_id, games_played))
+
+    cond do
+      partner == nil or room.status not in [:waiting, :ready, :playing] -> nil
+      Positions.has_player?(room, user_id) -> nil
+      partner in open -> {partner, :partner}
+      open != [] -> {hd(open), :opponent}
+      true -> nil
+    end
+  end
+
+  # At a playing table any vacant seat takes a substitute, as join_room/3 does;
+  # its old player may still be in `positions` after a permanent bot.
+  defp open_to?(%Room{status: :playing} = room, position, _user_id, _games_played),
+    do: match?(%Seat{occupant_type: :vacant}, room.seats[position])
+
+  # Before play: free, not held for someone else, no password to give, and
+  # enough games. A seat held for the player asks for neither.
+  defp open_to?(%Room{config: config} = room, position, user_id, games_played) do
+    held_for_you? = config.seat_holds[position] == user_id
+
+    room.positions[position] == nil and
+      match?(%Seat{occupant_type: :vacant}, room.seats[position]) and
+      config.seat_holds[position] in [nil, user_id] and
+      Config.check_password(config, position, user_id, nil) == :ok and
+      (held_for_you? or games_played >= Map.get(config.seat_requirements, position, 0))
+  end
+
+  @doc """
   Updates the status of a room.
 
   ## Parameters

@@ -176,6 +176,7 @@ defmodule PidroServerWeb.Router do
     delete "/friends/:user_id", FriendController, :remove
     post "/friends/:user_id/ignore", FriendController, :ignore
     delete "/friends/:user_id/ignore", FriendController, :unignore
+    post "/friends/:user_id/join", FriendController, :join, private: %{rate_limit: [:room_join]}
 
     get "/blocks", BlockController, :index
     put "/blocks/:user_id", BlockController, :block

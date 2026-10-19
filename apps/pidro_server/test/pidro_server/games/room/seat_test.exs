@@ -378,6 +378,25 @@ defmodule PidroServer.Games.Room.SeatTest do
     test "owner? is false when is_owner is false" do
       refute Seat.owner?(Seat.new_human(:north, "user-1"))
     end
+
+    test "position_of finds a seated player, connected or not, but not one a bot plays for" do
+      {:ok, reconnecting} = Seat.disconnect(Seat.new_human(:south, "dropped"))
+
+      {:ok, permanent} =
+        Seat.make_permanent_bot(%{build_bot_substitute("gone") | position: :west})
+
+      seats = %{
+        north: Seat.new_human(:north, "seated"),
+        east: %{build_bot_substitute("away") | position: :east},
+        south: reconnecting,
+        west: permanent
+      }
+
+      assert Seat.position_of(seats, "seated") == :north
+      assert Seat.position_of(seats, "dropped") == :south
+      assert Seat.position_of(seats, "away") == nil
+      assert Seat.position_of(seats, "gone") == nil
+    end
   end
 
   describe "bot personas" do

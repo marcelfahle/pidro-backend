@@ -37,6 +37,14 @@ defmodule PidroServer.Games.Room.Positions do
     Enum.filter(available(room), &(&1 in @teams[team]))
   end
 
+  @doc "The seat across the table, where the partner of whoever sits at `position` sits"
+  @spec partner(position() | nil) :: position() | nil
+  def partner(:north), do: :south
+  def partner(:south), do: :north
+  def partner(:east), do: :west
+  def partner(:west), do: :east
+  def partner(nil), do: nil
+
   @doc "Returns list of player IDs in canonical order (N, E, S, W)"
   def player_ids(%Room{positions: positions}) do
     @positions

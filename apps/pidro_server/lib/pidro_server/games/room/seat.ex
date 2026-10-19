@@ -391,6 +391,15 @@ defmodule PidroServer.Games.Room.Seat do
   end
 
   @doc """
+  The position `user_id` sits in, connected or not. A seat a bot plays for
+  them, held for their reclaim or permanent, does not count.
+  """
+  @spec position_of(map(), String.t()) :: position() | nil
+  def position_of(seats, user_id) when is_map(seats) do
+    Enum.find_value(seats, fn {position, seat} -> if seat.user_id == user_id, do: position end)
+  end
+
+  @doc """
   Returns true if any seat in the seats map is reserved for the given user.
 
   Checks both:

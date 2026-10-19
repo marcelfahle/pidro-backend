@@ -39,6 +39,13 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
           type: :string,
           format: :"date-time",
           description: "For incoming requests: when the sender added the viewer"
+        },
+        join_as: %Schema{
+          type: :string,
+          enum: ["partner", "opponent"],
+          nullable: true,
+          description:
+            "Mutual friends only: what POST /friends/:user_id/join would make you at their table; null when they are not at one or there is no seat for you"
         }
       }
     })
