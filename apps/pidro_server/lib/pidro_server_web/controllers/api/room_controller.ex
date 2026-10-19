@@ -208,6 +208,7 @@ defmodule PidroServerWeb.API.RoomController do
       """,
       operationId: "RoomController.show",
       tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}, %{}],
       parameters: [
         Operation.parameter(
           :code,
