@@ -188,10 +188,12 @@ defmodule PidroServer.Games.Room.Positions do
       else: {:error, :seat_taken}
   end
 
+  # A seat held for the player comes first and a password seat last, so a
+  # player who names no seat is not sent to one that needs the password.
   defp available_for(room, player_id, positions) do
     positions
     |> Enum.filter(&(room.positions[&1] == nil and hold_allows?(room, player_id, &1)))
-    |> Enum.sort_by(&(room.config.seat_holds[&1] != player_id))
+    |> Enum.sort_by(&{room.config.seat_holds[&1] != player_id, &1 in room.config.password_seats})
   end
 
   defp hold_allows?(room, player_id, position) do
