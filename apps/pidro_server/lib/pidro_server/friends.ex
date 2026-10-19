@@ -5,7 +5,7 @@ defmodule PidroServer.Friends do
   alias PidroServer.Accounts.{Auth, User}
   alias PidroServer.Blocks
   alias PidroServer.ClassicSocial
-  alias PidroServer.Friends.Friendship
+  alias PidroServer.Friends.{Friendship, Ignore}
   alias PidroServer.Games.Room.{Positions, Seat}
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -14,52 +14,22 @@ defmodule PidroServer.Friends do
   alias PidroServer.Stats.GameStats
   alias PidroServerWeb.Presence
 
-  @doc "Links a newly registered account to a personal link's owner, after registration commits."
+  @doc """
+  Sends a personal link's owner a friend request from the newly registered
+  account, after registration commits, exactly as a request sent by hand. An
+  owner who blocked or ignored the newcomer hears nothing, and nothing is sent.
+  """
   @spec link_signup({:ok, User.t()} | {:error, term()}, term()) ::
           {:ok, User.t()} | {:error, term()}
   def link_signup({:ok, %User{guest: false} = user}, slug) when is_binary(slug) do
     with %User{id: friend_id} <- Auth.get_user_by_share_slug(slug),
-         false <- friend_id == user.id,
-         {:ok, new?} <-
-           Repo.transaction(fn ->
-             Blocks.lock_pair(user.id, friend_id)
-             if Blocks.blocked?(user.id, friend_id), do: Repo.rollback(:blocked)
-
-             rows =
-               for {a, b} <- [{user.id, friend_id}, {friend_id, user.id}] do
-                 %{user_id: a, friend_id: b, inserted_at: DateTime.utc_now()}
-               end
-
-             {count, _} =
-               Repo.insert_all(Friendship, rows,
-                 on_conflict: :nothing,
-                 conflict_target: [:user_id, :friend_id]
-               )
-
-             count > 0
-           end) do
-      players =
-        Map.new(entries([user.id, friend_id]), fn player ->
-          viewer_id = if player.user_id == user.id, do: friend_id, else: user.id
-          {player.user_id, hd(with_join_as([player], viewer_id))}
-        end)
-
-      if new? do
-        changed([user.id, friend_id])
-
-        for {recipient, other} <- [{user.id, friend_id}, {friend_id, user.id}] do
-          Phoenix.PubSub.broadcast(
-            PidroServer.PubSub,
-            "lobby:updates",
-            {:friend_event, recipient, "friend_accepted",
-             %{player: players[other], source: "link"}}
-          )
-        end
-      end
-
-      {:ok, %{user | linked_friend: players[friend_id]}}
+         false <- ignored?(friend_id, user.id),
+         {:ok, list} <- add(user.id, friend_id) do
+      [owner] = entries([friend_id])
+      join_as = Enum.find_value(list.friends, &(&1.user_id == friend_id && &1.join_as))
+      {:ok, %{user | linked_friend: Map.put(owner, :join_as, join_as)}}
     else
-      _ignored -> {:ok, user}
+      _skipped -> {:ok, user}
     end
   end
 
@@ -87,6 +57,9 @@ defmodule PidroServer.Friends do
                    select: f.user_id
                )
 
+             # Adding someone is answering them, so the caller's ignore of them ends.
+             Repo.delete_all(ignores(user_id, friend_id))
+
              case Repo.insert(Friendship.changeset(user_id, friend_id),
                     on_conflict: :nothing,
                     conflict_target: [:user_id, :friend_id]
@@ -96,7 +69,10 @@ defmodule PidroServer.Friends do
              end
            end) do
       changed([user_id, friend_id])
-      if user_id not in owners, do: tell(friend_id, user_id, friend_id in owners)
+
+      if user_id not in owners and not ignored?(friend_id, user_id),
+        do: tell(friend_id, user_id, friend_id in owners)
+
       {:ok, list(user_id)}
     end
   end
@@ -119,13 +95,42 @@ defmodule PidroServer.Friends do
     end
   end
 
-  @doc "Hides an incoming request from the caller only; the sender's edge stays."
+  @doc """
+  Hides an incoming request from the caller only; the sender's edge stays. A
+  request the sender cancels and sends again stays hidden too.
+  """
   @spec ignore(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
-  def ignore(user_id, friend_id), do: mark_ignored(user_id, friend_id, DateTime.utc_now())
+  def ignore(user_id, friend_id) do
+    with {:ok, friend_id} <- target(user_id, friend_id) do
+      now = DateTime.utc_now()
+
+      Repo.insert_all(
+        Ignore,
+        from(f in edge(friend_id, user_id),
+          select: %{
+            user_id: type(^user_id, :binary_id),
+            ignored_id: f.user_id,
+            inserted_at: type(^now, :utc_datetime_usec)
+          }
+        ),
+        on_conflict: :nothing,
+        conflict_target: [:user_id, :ignored_id]
+      )
+
+      changed([user_id])
+      {:ok, list(user_id)}
+    end
+  end
 
   @doc "Undoes an ignore, restoring the incoming request."
   @spec unignore(String.t(), String.t()) :: {:ok, map()} | {:error, atom()}
-  def unignore(user_id, friend_id), do: mark_ignored(user_id, friend_id, nil)
+  def unignore(user_id, friend_id) do
+    with {:ok, friend_id} <- target(user_id, friend_id) do
+      Repo.delete_all(ignores(user_id, friend_id))
+      changed([user_id])
+      {:ok, list(user_id)}
+    end
+  end
 
   @doc "Returns mutual friends, unignored incoming and outgoing-only edges, with live presence."
   @spec list(String.t()) :: map()
@@ -143,15 +148,22 @@ defmodule PidroServer.Friends do
         from f in Friendship,
           where: f.friend_id == ^user_id,
           order_by: [desc: f.inserted_at, asc: f.user_id],
-          select: {f.user_id, f.ignored_at, f.inserted_at}
+          select: {f.user_id, f.inserted_at}
       )
 
+    ignored =
+      MapSet.new(Repo.all(from i in Ignore, where: i.user_id == ^user_id, select: i.ignored_id))
+
     sent_at = Map.new(sent)
-    received_at = Map.new(received, fn {id, _, at} -> {id, at} end)
-    received_ids = MapSet.new(received, &elem(&1, 0))
-    friend_ids = for {id, _, _} <- received, Map.has_key?(sent_at, id), do: id
-    added_you_ids = for {id, nil, _} <- received, not Map.has_key?(sent_at, id), do: id
-    requested_ids = for {id, _} <- sent, not MapSet.member?(received_ids, id), do: id
+    received_at = Map.new(received)
+    friend_ids = for {id, _} <- received, Map.has_key?(sent_at, id), do: id
+
+    added_you_ids =
+      for {id, _} <- received,
+          not Map.has_key?(sent_at, id) and not MapSet.member?(ignored, id),
+          do: id
+
+    requested_ids = for {id, _} <- sent, not Map.has_key?(received_at, id), do: id
     entries = Map.new(entries(friend_ids ++ added_you_ids ++ requested_ids), &{&1.user_id, &1})
     pick = fn ids -> for id <- ids, entry = entries[id], do: entry end
 
@@ -404,16 +416,13 @@ defmodule PidroServer.Friends do
     end
   end
 
-  defp mark_ignored(user_id, friend_id, ignored_at) do
-    with {:ok, friend_id} <- target(user_id, friend_id) do
-      Repo.update_all(edge(friend_id, user_id), set: [ignored_at: ignored_at])
-      changed([user_id])
-      {:ok, list(user_id)}
-    end
-  end
-
   defp edge(user_id, friend_id),
     do: from(f in Friendship, where: f.user_id == ^user_id and f.friend_id == ^friend_id)
+
+  defp ignores(user_id, ignored_id),
+    do: from(i in Ignore, where: i.user_id == ^user_id and i.ignored_id == ^ignored_id)
+
+  defp ignored?(user_id, ignored_id), do: Repo.exists?(ignores(user_id, ignored_id))
 
   # Only the new edge's recipient hears of it: a request, or their request accepted.
   defp tell(recipient_id, user_id, accepted?) do

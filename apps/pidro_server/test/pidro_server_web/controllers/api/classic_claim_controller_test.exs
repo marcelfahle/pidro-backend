@@ -56,8 +56,10 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
       owner_id = owner.id
 
       if mode in [:new, :upgrade] do
-        assert [%{user_id: ^owner_id}] = PidroServer.Friends.list(id).friends
-        assert [%{user_id: ^id}] = PidroServer.Friends.list(owner_id).friends
+        assert %{friends: [], requested: [%{user_id: ^owner_id}]} = PidroServer.Friends.list(id)
+
+        assert %{friends: [], added_you: [%{user_id: ^id}]} =
+                 PidroServer.Friends.list(owner_id)
 
         entry = %{
           user_id: owner_id,
@@ -71,17 +73,15 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
           user_id: id,
           display_name: data["user"]["display_name"] || data["user"]["username"],
           avatar_url: nil,
-          presence: "offline",
-          join_as: nil
+          presence: "offline"
         }
 
         assert data["linked_friend"] == Jason.decode!(Jason.encode!(entry))
         assert_receive {:friends_changed, ^id}
         assert_receive {:friends_changed, ^owner_id}
-        assert_receive {:friend_event, ^id, "friend_accepted", %{player: ^entry, source: "link"}}
 
-        assert_receive {:friend_event, ^owner_id, "friend_accepted",
-                        %{player: ^newcomer, source: "link"}}
+        assert_receive {:friend_event, ^owner_id, "friend_request",
+                        %{player: ^newcomer, played_together_at: nil}}
 
         {:ok, _} = PidroServer.Friends.remove(id, owner_id)
 
@@ -97,10 +97,10 @@ defmodule PidroServerWeb.API.ClassicClaimControllerTest do
           |> Map.fetch!("data")
 
         refute Map.has_key?(retry, "linked_friend")
-        assert PidroServer.Friends.list(owner_id).friends == []
+        assert %{friends: [], added_you: []} = PidroServer.Friends.list(owner_id)
       else
         refute Map.has_key?(data, "linked_friend")
-        assert PidroServer.Friends.list(owner_id).friends == []
+        assert %{friends: [], added_you: []} = PidroServer.Friends.list(owner_id)
       end
 
       refute_received {:friend_event, _, _, _}

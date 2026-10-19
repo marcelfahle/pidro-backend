@@ -271,8 +271,9 @@ defmodule PidroServer.Games.RoomManager do
   @doc """
   Makes a seat of a waiting room what the host picked for it (see
   `Config.put_seat/3`); host only. A human's seat never changes. A bot leaves
-  the seat unless `entry` is `:bot`; seating a new bot is the caller's next
-  step, because a bot joins from its own process.
+  the seat unless `entry` is `:bot`. A `:bot` entry seats the bot in the same
+  call; starting its process is the caller's next step, and the process takes
+  the seat it finds waiting for it.
   """
   @spec set_seat(String.t(), String.t(), Positions.position(), Config.seat_entry()) ::
           {:ok, Room.t()} | {:error, term()}
@@ -414,9 +415,13 @@ defmodule PidroServer.Games.RoomManager do
   def join_room(room_code, player, position \\ nil, password \\ nil) do
     {player_id, guest?} = admission_identity(player)
 
+    # The password travels as a closure, so a crash report, a call timeout or an
+    # inspect of this call shows a function, never the digits.
+    secret = if password, do: fn -> password end
+
     GenServer.call(
       __MODULE__,
-      {:join_room, String.upcase(room_code), player_id, position, guest?, password}
+      {:join_room, String.upcase(room_code), player_id, position, guest?, secret}
     )
   end
 
@@ -1349,22 +1354,27 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_owner(room, host_id),
          :ok <- ensure_waiting(room),
          {:ok, cleared, bot} <- clear_seat(room, position, entry),
-         :ok <- ensure_seat_entry(state, cleared, host_id, position, entry) do
-      config = Config.put_seat(room.config, position, entry)
-
-      updated = %{
-        cleared
-        | config: config,
-          seat_hold_started_at: hold_started_at(room, position, config.seat_holds[position])
-      }
-
+         :ok <- ensure_seat_entry(state, cleared, host_id, position, entry),
+         config = Config.put_seat(room.config, position, entry),
+         {:ok, updated, new_bot_id} <-
+           seat_entry_bot(
+             %{
+               cleared
+               | config: config,
+                 seat_hold_started_at:
+                   hold_started_at(room, position, config.seat_holds[position])
+             },
+             position,
+             entry
+           ) do
       if updated == room do
         {:reply, {:ok, room, nil}, state}
       else
         updated =
           updated
           |> reset_readiness()
-          |> maybe_bump_seat_lifecycle_revision(bot != nil)
+          |> maybe_set_ready()
+          |> maybe_bump_seat_lifecycle_revision(bot != nil or new_bot_id != nil)
           |> touch_last_activity()
 
         {bot_id, bot_seat} = bot || {nil, nil}
@@ -1374,6 +1384,9 @@ defmodule PidroServer.Games.RoomManager do
             do: Map.delete(state.player_rooms, bot_id),
             else: state.player_rooms
 
+        player_rooms =
+          if new_bot_id, do: Map.put(player_rooms, new_bot_id, code), else: player_rooms
+
         bot_pid = release_bot(bot_seat)
         state = %{put_room(state, updated) | player_rooms: player_rooms}
 
@@ -1381,7 +1394,7 @@ defmodule PidroServer.Games.RoomManager do
         broadcast_room(code, updated)
         broadcast_lobby_event({:room_updated, updated})
         broadcast_readiness(updated)
-        if bot, do: broadcast_seat_lifecycle(updated)
+        if bot || new_bot_id, do: broadcast_seat_lifecycle(updated)
         {:reply, {:ok, updated, bot_pid}, state}
       end
     else
@@ -3321,7 +3334,8 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_can_leave_other_room(state, player_id, room_code),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position),
-         :ok <- ensure_seat_requirement(room, player_id, assigned_position, password) do
+         :ok <-
+           ensure_seat_requirement(room, player_id, assigned_position, password && password.()) do
       next_state = maybe_evict_from_other_room(state, player_id, room_code)
 
       with :ok <- ensure_not_in_other_room(next_state, player_id, room_code) do
@@ -3516,6 +3530,27 @@ defmodule PidroServer.Games.RoomManager do
         {:ok, room, nil}
     end
   end
+
+  # A bot entry seats its bot in the host's own call, so nobody can take the
+  # seat first. The bot's process, started by the caller, attaches to the seat
+  # from its own `init/1` like a restarted bot does.
+  defp seat_entry_bot(room, position, :bot) do
+    bot_id = "bot_#{room.code}_#{position}"
+
+    case room.seats[position] do
+      %Seat{occupant_type: :vacant} ->
+        with {:ok, assigned, ^position} <- Positions.assign(room, bot_id, position) do
+          persona = room.seats |> Map.delete(position) |> Seat.next_bot_persona()
+          seats = Map.put(room.seats, position, Seat.new_bot(position, nil, persona))
+          {:ok, %{assigned | seats: seats}, bot_id}
+        end
+
+      _ ->
+        {:ok, room, nil}
+    end
+  end
+
+  defp seat_entry_bot(room, _position, _entry), do: {:ok, room, nil}
 
   # A substitute is this manager's own child and stops here. A seated bot
   # belongs to the bot manager; its pid goes back for the caller to stop.
@@ -4561,8 +4596,12 @@ defmodule PidroServer.Games.RoomManager do
       end
     end
 
+    # A host who moves seats turns a partner seat into an opponent seat, so that
+    # invitation goes out again with its new `join_as`.
     if after_room do
-      for {position, user_id} <- new_holds, old_holds[position] != user_id do
+      for {position, user_id} <- new_holds,
+          old_holds[position] != user_id or
+            join_as(before, position) != join_as(after_room, position) do
         Phoenix.PubSub.broadcast(
           PidroServer.PubSub,
           "lobby:invitations:#{user_id}",

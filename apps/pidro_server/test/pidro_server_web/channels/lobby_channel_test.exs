@@ -259,6 +259,35 @@ defmodule PidroServerWeb.LobbyChannelTest do
     RoomManager.close_room(room.code)
   end
 
+  test "a host who moves seats re-sends each invitation whose partner or opponent changed",
+       %{user: host} do
+    [east, south] = for _ <- 1..2, do: PidroServer.AccountsFixtures.user_fixture()
+
+    for friend <- [east, south] do
+      {:ok, socket} = create_socket(friend)
+      {:ok, _, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+      assert_push "presence_state", _
+    end
+
+    {:ok, room} =
+      RoomManager.create_room(host.id, %{seat_holds: %{east: east.id, south: south.id}})
+
+    assert_push "seat_invitation", %{position: :east, join_as: "opponent"}
+    assert_push "seat_invitation", %{position: :south, join_as: "partner"}
+
+    {:ok, _} = RoomManager.move_seat(room.code, host.id, host.id, :west)
+    assert_push "seat_invitation", %{position: :east, join_as: "partner"}
+    assert_push "seat_invitation", %{position: :south, join_as: "opponent"}
+    refute_push "seat_invitation_gone", _
+
+    # Someone else sitting down changes no invitation's meaning.
+    stranger = PidroServer.AccountsFixtures.user_fixture()
+    {:ok, _, :north} = RoomManager.join_room(room.code, stranger.id, :north)
+    refute_push "seat_invitation", _
+
+    RoomManager.close_room(room.code)
+  end
+
   test "replacement, room start and host departure remove invitations", %{user: host} do
     friends = for _ <- 1..2, do: PidroServer.AccountsFixtures.user_fixture()
     [first, second] = friends

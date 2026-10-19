@@ -107,17 +107,21 @@ require a valid token.
 **Endpoint**: `POST /api/v1/auth/register`
 
 Register, Apple and Facebook sign-up, guest upgrade, and Classic claim accept an optional
-top-level `friend_slug`. It links both friendship edges only when this request creates a
-registered account or upgrades a guest. Existing sign-ins, guest results, missing/unknown
-slugs, self-links and blocks in either direction leave the normal response unchanged.
-Guest creation never links friends: the app retains the slug until upgrade or claim.
+top-level `friend_slug`. Only when this request creates a registered account or upgrades a
+guest, it sends the link's owner a friend request from the new player, exactly as
+`PUT /api/v1/friends/:user_id` does. It does not make them friends: the owner sees the
+request in `added_you` and accepts it with one tap, and the new player sees it in `requested`.
+If the owner had already sent the new player a request, this accepts it, as adding back does.
+Existing sign-ins, guest results, missing/unknown slugs, self-links, blocks in either
+direction and an owner who ignored the new player leave the normal response unchanged and
+tell nobody. Guest creation never links friends: the app retains the slug until upgrade or claim.
 
 On a successful link, `data.linked_friend` contains the owner's public player entry
 (`user_id`, `display_name`, `avatar_url`, `presence`, `join_as`, and live table fields when at a table),
-as used by `friend_accepted`, without list-only shared-game metadata.
-Both players receive `friends_changed` and `friend_accepted` with the other player's entry
-and `source: "link"`. The pair is locked and both edges inserted in one transaction;
-repeating an already mutual link does not duplicate events. No extra acceptance tap is needed.
+so the app can show who the link was from. `join_as` is `null` unless the link made them friends.
+Both players receive `friends_changed`; the owner receives `friend_request` (or
+`friend_accepted` with `source: "accept"` when the link accepted the owner's own request).
+Repeating a link does not duplicate events.
 Without a link, `linked_friend` is **absent**, not null. No existing request field is required
 or changed.
 
@@ -503,6 +507,7 @@ the invitee gets `seat_invitation_gone` (reason `released`), a requirement or pa
 as at creation: `"ai"` seats a bot at the room's difficulty, password seats follow the rules
 above, holds follow the hold rules below. `solo` keeps its value from creation. The same entry again
 changes nothing. Otherwise the room, the lobby and readiness (reset, as for a hold) all hear it.
+`"ai"` releases a hold and seats the bot in one step, so nobody can take the seat in between.
 
 Returns `200 {"data":{"room":...}}` (the host's room, with `seat_password` once there is one).
 Errors: `403 NOT_OWNER`, `409 ROOM_NOT_WAITING`, `422 SEAT_NOT_VACANT` for a human's seat
@@ -1152,8 +1157,10 @@ Ignore marks the incoming edge as ignored for you only. The request drops out of
 `added_you` and is no longer counted in `requests_waiting`. The sender is not told, gets
 no `friends_changed`, and still sees the request in `requested`. The edge stays, so
 adding them back makes you friends at once. Search and recent still report the sender
-as `added_you`. Un-ignore clears the mark. Both are idempotent, and a no-op when there
-is no incoming edge. Remove and block delete the edges, and any ignore mark with them.
+as `added_you`. If the sender cancels and sends the request again, it stays hidden the
+same way and tells you nothing. Un-ignore, adding the sender yourself or a block ends
+the ignore. Ignore and un-ignore are idempotent, and ignore is a no-op when there is no
+incoming edge. Remove and block delete the edges.
 
 Self-add and self-remove return `400 {"error":"CANNOT_FRIEND_SELF"}`. A missing,
 malformed or guest target returns `404 {"error":"USER_NOT_FOUND"}`.
@@ -1219,8 +1226,8 @@ A new edge also tells the other player, in addition to `friends_changed` (PID-24
   when the last completed game both played in ended.
 - `friend_accepted` goes to the player whose request was just answered by adding
   back, also when it had been ignored: `{"player": entry, "source": "accept"}`,
-  with the entry of the player who accepted. Personal-link sign-ups send `"link"`
-  to both players with the other player's entry, plus `friends_changed` to both.
+  with the entry of the player who accepted. A personal-link sign-up sends the
+  owner the same `friend_request` (see Register a New User).
 
 Neither is sent on a repeat add, for Classic edges copied at claim, or by ignore,
 un-ignore, cancel, remove or block. Older builds ignore both.
@@ -1388,7 +1395,8 @@ This is also the enriched `/me` entry. `host_id` stays for existing clients;
 `host` is a player entry without presence. `held_since` is the hold's creation
 time, unchanged by an identical repeated hold. `rule_set` is `finnish` or `louisiana`.
 `join_as` is `partner` when the held seat is across from the host's seat, otherwise
-`opponent`; older builds ignore it.
+`opponent`; older builds ignore it. When the host moves seats, every live invitation
+whose `join_as` changed is sent again as `seat_invitation`; upsert it by `(code, position)`.
 Blocked pairs receive no invitation, and `/me` excludes their holds.
 Refetch `/me` on `friends_changed` and after unblocking: blocks do not revoke
 holds or emit invitation events, but change which existing holds `/me` lists.

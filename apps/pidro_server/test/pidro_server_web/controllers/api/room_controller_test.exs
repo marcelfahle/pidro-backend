@@ -686,6 +686,40 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert json_response(join.(second, %{position: "south", password: password}), 429)
       assert {:ok, %{positions: %{south: nil}}} = RoomManager.get_room(room.code)
     end
+
+    test "a join call that fails logs no typed password" do
+      host = AccountsFixtures.user_fixture()
+      player = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      password = "typed-7319"
+      manager = Process.whereis(RoomManager)
+      :sys.suspend(manager)
+
+      try do
+        caller = spawn(fn -> RoomManager.join_room(room.code, player, :east, password) end)
+        call = queued_join_call(manager)
+
+        # The exit a call timeout gives the caller, as the caller logs it. A
+        # room manager crash report prints the same call as its last message.
+        log =
+          ExUnit.CaptureLog.capture_log(fn ->
+            {:ok, pid} =
+              Task.start(fn ->
+                exit({:timeout, {GenServer, :call, [RoomManager, call, 5000]}})
+              end)
+
+            ref = Process.monitor(pid)
+            assert_receive {:DOWN, ^ref, :process, ^pid, _}
+          end)
+
+        assert log =~ ":join_room"
+        refute log =~ password
+        refute inspect(call) =~ password
+        Process.exit(caller, :kill)
+      after
+        :sys.resume(manager)
+      end
+    end
   end
 
   describe "PID-256 set_seat/2" do
@@ -813,6 +847,25 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert opened["room"]["positions"]["east"] == nil
       assert_receive {:DOWN, ^ref, :process, ^pid, _}
       assert :sys.get_state(RoomManager).player_rooms[departed.id] == "ELSE"
+    end
+
+    test "a held seat becomes a bot in the host's one call, so nobody takes it between" do
+      host = AccountsFixtures.user_fixture()
+      friend = AccountsFixtures.user_fixture()
+      stranger = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{east: friend.id}})
+
+      {:ok, botted} = RoomManager.set_seat(room.code, host.id, :east, :bot)
+      assert %{occupant_type: :bot, bot_pid: nil} = botted.seats[:east]
+      assert botted.positions[:east] == "bot_#{room.code}_east"
+      assert botted.config.seat_holds == %{}
+      assert {:error, _} = RoomManager.join_room(room.code, stranger.id, :east)
+
+      # The bot's process takes the seat that waits for it.
+      {:ok, pid} = BotManager.start_bot(room.code, :east, room.config.bot_difficulty)
+
+      assert {:ok, %{seats: %{east: %{occupant_type: :bot, bot_pid: ^pid}}}} =
+               RoomManager.get_room(room.code)
     end
 
     test "a held seat becomes a bot or another friend, and the invitee hears it went", %{
@@ -2149,5 +2202,14 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     |> from_ip(ip)
     |> put_req_header("authorization", "Bearer #{Token.generate(user)}")
     |> post(~p"/api/v1/rooms", %{"name" => "Limited"})
+  end
+
+  defp queued_join_call(manager) do
+    {:messages, messages} = Process.info(manager, :messages)
+
+    case for({:"$gen_call", _from, {:join_room, _, _, _, _, _} = call} <- messages, do: call) do
+      [call] -> call
+      [] -> queued_join_call(manager)
+    end
   end
 end

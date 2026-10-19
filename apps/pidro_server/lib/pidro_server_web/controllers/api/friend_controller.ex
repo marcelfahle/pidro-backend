@@ -66,7 +66,8 @@ defmodule PidroServerWeb.API.FriendController do
 
   operation(:ignore,
     summary: "Hide an incoming request from your list; the sender is not told",
-    description: "Their edge stays, so adding them back later makes you friends at once.",
+    description:
+      "Their edge stays, so adding them back later makes you friends at once. A request they cancel and send again stays hidden until you un-ignore or add them.",
     parameters: [user_id: [in: :path, type: :string, required: true]],
     responses: [
       ok: {"Full friends list", "application/json", FriendSchemas.ListResponse},

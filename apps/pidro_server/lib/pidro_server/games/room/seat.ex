@@ -89,8 +89,8 @@ defmodule PidroServer.Games.Room.Seat do
     }
   end
 
-  @doc "Creates a new seat occupied by a bot, named after `bot_persona`."
-  @spec new_bot(position(), pid(), bot_persona() | nil) :: t()
+  @doc "Creates a new seat occupied by a bot, named after `bot_persona`; its process may attach later."
+  @spec new_bot(position(), pid() | nil, bot_persona() | nil) :: t()
   def new_bot(position, bot_pid, bot_persona \\ nil) do
     %__MODULE__{
       position: position,

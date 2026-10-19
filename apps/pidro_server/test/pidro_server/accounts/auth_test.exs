@@ -495,13 +495,16 @@ defmodule PidroServer.Accounts.AuthTest do
       assert_receive %Phoenix.Socket.Broadcast{event: "disconnect"}
     end
 
-    test "removes both friendship directions without deleting unrelated edges" do
+    test "removes both friendship directions and ignores without deleting unrelated ones" do
       user = AccountsFixtures.user_fixture()
       friend = AccountsFixtures.user_fixture()
       other = AccountsFixtures.user_fixture()
       {:ok, _} = PidroServer.Friends.add(user.id, friend.id)
       {:ok, _} = PidroServer.Friends.add(friend.id, user.id)
       {:ok, _} = PidroServer.Friends.add(friend.id, other.id)
+      {:ok, _} = PidroServer.Friends.add(other.id, user.id)
+      {:ok, _} = PidroServer.Friends.ignore(user.id, other.id)
+      {:ok, _} = PidroServer.Friends.ignore(other.id, friend.id)
 
       assert {:ok, %User{}} = Auth.delete_user(user)
 
@@ -509,6 +512,11 @@ defmodule PidroServer.Accounts.AuthTest do
                Repo.all(PidroServer.Friends.Friendship)
 
       assert {user_id, friend_id} == {friend.id, other.id}
+
+      assert [%{user_id: ignorer_id, ignored_id: ignored_id}] =
+               Repo.all(PidroServer.Friends.Ignore)
+
+      assert {ignorer_id, ignored_id} == {other.id, friend.id}
     end
   end
 

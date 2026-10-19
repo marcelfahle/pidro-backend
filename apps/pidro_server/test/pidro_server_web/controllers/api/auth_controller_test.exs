@@ -24,7 +24,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
   alias PidroServer.Profiles.PlayerProfile
   alias PidroServer.Repo
 
-  test "a personal link registers mutual friends and tells both players", %{conn: conn} do
+  test "a personal link sends the owner a friend request, not a friendship", %{conn: conn} do
     owner = AccountsFixtures.user_fixture(%{display_name: "Bertil"})
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
 
@@ -58,7 +58,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
     end
   end
 
-  test "a guest keeps the slug until upgrade, which links and tells both players", %{conn: conn} do
+  test "a guest keeps the slug until upgrade, which sends the owner a request", %{conn: conn} do
     owner = AccountsFixtures.user_fixture()
 
     guest_data =
@@ -112,16 +112,17 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert data["user"]["guest"] == false
       refute Map.has_key?(data, "linked_friend")
-      assert PidroServer.Friends.list(guest.id).friends == []
-      refute_received {:friend_event, _, "friend_accepted", _}
+      assert %{friends: [], requested: []} = PidroServer.Friends.list(guest.id)
+      refute_received {:friend_event, _, _, _}
     end
   end
 
+  # A link asks the owner, as a request sent by hand would: it makes no friends.
   defp assert_linked_friend(data, owner) do
     id = data["user"]["id"]
     owner_id = owner.id
-    assert [%{user_id: ^owner_id}] = PidroServer.Friends.list(id).friends
-    assert [%{user_id: ^id}] = PidroServer.Friends.list(owner_id).friends
+    assert %{friends: [], requested: [%{user_id: ^owner_id}]} = PidroServer.Friends.list(id)
+    assert %{friends: [], added_you: [%{user_id: ^id}]} = PidroServer.Friends.list(owner_id)
 
     entry = %{
       user_id: owner_id,
@@ -135,17 +136,15 @@ defmodule PidroServerWeb.API.AuthControllerTest do
       user_id: id,
       display_name: data["user"]["display_name"] || data["user"]["username"],
       avatar_url: nil,
-      presence: "offline",
-      join_as: nil
+      presence: "offline"
     }
 
     assert data["linked_friend"] == Jason.decode!(Jason.encode!(entry))
     assert_receive {:friends_changed, ^id}
     assert_receive {:friends_changed, ^owner_id}
-    assert_receive {:friend_event, ^id, "friend_accepted", %{player: ^entry, source: "link"}}
 
-    assert_receive {:friend_event, ^owner_id, "friend_accepted",
-                    %{player: ^newcomer, source: "link"}}
+    assert_receive {:friend_event, ^owner_id, "friend_request",
+                    %{player: ^newcomer, played_together_at: nil}}
 
     refute_received {:friend_event, _, _, _}
   end
@@ -590,7 +589,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
           |> Map.fetch!("data")
 
         refute Map.has_key?(signed_in, "linked_friend")
-        assert PidroServer.Friends.list(owner.id).friends == []
+        assert %{friends: [], added_you: []} = PidroServer.Friends.list(owner.id)
         refute_received {:friend_event, _, _, _}
       end
     end
