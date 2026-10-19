@@ -46,7 +46,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     response = conn |> auth(b) |> get(~p"/api/v1/friends") |> json_response(200)
     assert_schema(response, "FriendsResponse")
     assert response["data"]["classic"] == %{"not_here" => 0}
-    assert response["data"]["added_you"] == [player(a)]
+    assert response["data"]["added_you"] == [request(a, b)]
   end
 
   test "HTTP add, add back, list and remove share the full-list contract", %{conn: conn} do
@@ -74,28 +74,30 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert conn |> auth(a) |> put(~p"/api/v1/friends/#{b.id}") |> json_response(200) == response
     response = conn |> auth(b) |> get(~p"/api/v1/friends") |> json_response(200)
     assert_schema(response, "FriendsResponse")
-    assert response["data"]["added_you"] == [player(a)]
+    assert response["data"]["added_you"] == [request(a, b)]
     assert response["data"]["requests_waiting"] == 1
     assert response["data"]["waiting_for_you"] == 1
 
     response = conn |> auth(b) |> put(~p"/api/v1/friends/#{a.id}") |> json_response(200)
     assert_schema(response, "FriendsResponse")
-    assert response == put_in(empty, ["data", "friends"], [player(a)])
+
+    assert response ==
+             put_in(empty, ["data", "friends"], [Map.put(player(a), "played_together_at", nil)])
 
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) ==
-             put_in(empty, ["data", "friends"], [player(b)])
+             put_in(empty, ["data", "friends"], [Map.put(player(b), "played_together_at", nil)])
 
     assert conn |> auth(b) |> delete(~p"/api/v1/friends/#{a.id}") |> json_response(200) == empty
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) == empty
   end
 
-  test "table company is an extra field; presence stays in the old three-value enum",
+  test "old clients decode the serialized list while ignoring additive row facts",
        %{conn: conn} do
     a = user_fixture()
     b = user_fixture()
     {:ok, _} = Friends.add(a.id, b.id)
     {:ok, _} = Friends.add(b.id, a.id)
-    {:ok, room} = RoomManager.create_room(b.id, %{})
+    {:ok, room} = RoomManager.create_room(b.id, %{seat_holds: %{south: a.id}})
     on_exit(fn -> RoomManager.close_room(room.code) end)
     {:ok, _} = Presence.track(self(), "game:" <> room.code, b.id, %{})
 
@@ -103,8 +105,12 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert_schema(response, "FriendsResponse")
     assert [entry] = response["data"]["friends"]
     assert entry["table_company"] == "bots"
-    # An old build ignores the new key and sees exactly the entry it always decoded.
-    assert Map.delete(entry, "table_company") == %{player(b) | "presence" => "at_table"}
+    assert entry["table_open_seats"] == 2
+    assert Map.has_key?(entry, "table_hand") and is_nil(entry["table_hand"])
+    assert Map.has_key?(entry, "played_together_at") and is_nil(entry["played_together_at"])
+    # Old clients read only their known fields, as do the Account e2e journeys.
+    assert Map.take(entry, Map.keys(player(b))) == %{player(b) | "presence" => "at_table"}
+    assert Enum.map(response["data"]["friends"], & &1["user_id"]) == [b.id]
   end
 
   test "HTTP ignore hides a request from the recipient only, and un-ignore restores it",
@@ -137,7 +143,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert response == %{
              "data" => %{
                hidden["data"]
-               | "added_you" => [player(a)],
+               | "added_you" => [request(a, b)],
                  "requests_waiting" => 1,
                  "waiting_for_you" => 1
              }
@@ -229,17 +235,29 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert_schema(response, "FriendUsersResponse")
     assert response == %{"data" => %{"users" => []}}
 
+    played = ~U[2026-10-18 19:30:00Z]
+
     %PidroServer.Stats.GameStats{}
     |> PidroServer.Stats.GameStats.changeset(%{
       room_code: "TEST",
-      completed_at: DateTime.utc_now() |> DateTime.truncate(:second),
+      completed_at: played,
       player_ids: [user.id, nora.id]
     })
     |> PidroServer.Repo.insert!()
 
     response = conn |> auth(user) |> get(~p"/api/v1/friends/recent") |> json_response(200)
     assert_schema(response, "FriendUsersResponse")
-    assert response == %{"data" => %{"users" => [Map.put(player(nora), "relation", "added_you")]}}
+
+    assert response == %{
+             "data" => %{
+               "users" => [
+                 Map.merge(player(nora), %{
+                   "relation" => "added_you",
+                   "played_together_at" => DateTime.to_iso8601(played)
+                 })
+               ]
+             }
+           }
   end
 
   test "search and add limits are independent per user and preserve existing 429s", %{conn: conn} do
@@ -274,6 +292,16 @@ defmodule PidroServerWeb.API.FriendControllerTest do
   defp dispatch(conn, :put, path), do: put(conn, path)
   defp dispatch(conn, :post, path), do: post(conn, path)
   defp dispatch(conn, :delete, path), do: delete(conn, path)
+
+  defp request(sender, viewer) do
+    edge =
+      PidroServer.Repo.get_by!(PidroServer.Friends.Friendship,
+        user_id: sender.id,
+        friend_id: viewer.id
+      )
+
+    Map.put(player(sender), "requested_at", DateTime.to_iso8601(edge.inserted_at))
+  end
 
   defp player(user),
     do: %{

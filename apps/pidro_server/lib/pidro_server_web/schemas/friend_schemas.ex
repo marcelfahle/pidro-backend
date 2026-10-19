@@ -18,6 +18,27 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
           type: :string,
           enum: ["bots", "people"],
           description: "Only when at_table: seated with bots alone, or with other people"
+        },
+        table_open_seats: %Schema{
+          type: :integer,
+          minimum: 0,
+          description: "Only when at_table: publicly open seats, excluding holds"
+        },
+        table_hand: %Schema{
+          type: :integer,
+          nullable: true,
+          description: "Only when at_table: current hand while playing, otherwise null"
+        },
+        played_together_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          nullable: true,
+          description: "For mutual friends: latest completed game shared with the viewer, or null"
+        },
+        requested_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          description: "For incoming requests: when the sender added the viewer"
         }
       }
     })
@@ -39,7 +60,21 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
           enum: ["bots", "people"],
           description: "Only when at_table: seated with bots alone, or with other people"
         },
-        requested_at: %Schema{type: :string, format: :"date-time"}
+        table_open_seats: %Schema{
+          type: :integer,
+          minimum: 0,
+          description: "Only when at_table: publicly open seats, excluding holds"
+        },
+        table_hand: %Schema{
+          type: :integer,
+          nullable: true,
+          description: "Only when at_table: current hand while playing, otherwise null"
+        },
+        requested_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          description: "When the viewer sent this request"
+        }
       }
     })
   end
@@ -59,6 +94,22 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
           type: :string,
           enum: ["bots", "people"],
           description: "Only when at_table: seated with bots alone, or with other people"
+        },
+        table_open_seats: %Schema{
+          type: :integer,
+          minimum: 0,
+          description: "Only when at_table: publicly open seats, excluding holds"
+        },
+        table_hand: %Schema{
+          type: :integer,
+          nullable: true,
+          description: "Only when at_table: current hand while playing, otherwise null"
+        },
+        played_together_at: %Schema{
+          type: :string,
+          format: :"date-time",
+          nullable: true,
+          description: "Recent only: newest shared completion in the viewer's last twenty games"
         },
         relation: %Schema{type: :string, enum: ["none", "friend", "added_you", "added"]}
       }
