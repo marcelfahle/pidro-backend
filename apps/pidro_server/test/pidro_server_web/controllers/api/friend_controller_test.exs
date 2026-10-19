@@ -5,6 +5,8 @@ defmodule PidroServerWeb.API.FriendControllerTest do
   import PidroServer.AccountsFixtures
   alias PidroServer.Accounts.Token
   alias PidroServer.Friends
+  alias PidroServer.Games.RoomManager
+  alias PidroServerWeb.Presence
 
   test "Classic count includes only distinct outgoing friends who have not claimed", %{conn: conn} do
     a = user_fixture()
@@ -66,6 +68,24 @@ defmodule PidroServerWeb.API.FriendControllerTest do
 
     assert conn |> auth(b) |> delete(~p"/api/v1/friends/#{a.id}") |> json_response(200) == empty
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) == empty
+  end
+
+  test "table company is an extra field; presence stays in the old three-value enum",
+       %{conn: conn} do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.add(b.id, a.id)
+    {:ok, room} = RoomManager.create_room(b.id, %{})
+    on_exit(fn -> RoomManager.close_room(room.code) end)
+    {:ok, _} = Presence.track(self(), "game:" <> room.code, b.id, %{})
+
+    response = conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200)
+    assert_schema(response, "FriendsResponse")
+    assert [entry] = response["data"]["friends"]
+    assert entry["table_company"] == "bots"
+    # An old build ignores the new key and sees exactly the entry it always decoded.
+    assert Map.delete(entry, "table_company") == %{player(b) | "presence" => "at_table"}
   end
 
   test "guest callers are forbidden on every route; missing auth is unauthorized", %{conn: conn} do

@@ -65,6 +65,54 @@ defmodule PidroServer.FriendsTest do
            ]
   end
 
+  test "a seated player is at_table with bots alone or with people; spectators stay online" do
+    caller = user_fixture()
+
+    [solo, pair_a, pair_b, mixed_a, mixed_b, spectator, lobby, offline] =
+      users =
+      for name <- ~w(Solo PairA PairB MixedA MixedB Spectator Lobby Offline),
+          do: user_fixture(%{display_name: name})
+
+    for user <- users do
+      {:ok, _} = Friends.add(caller.id, user.id)
+      {:ok, _} = Friends.add(user.id, caller.id)
+    end
+
+    solo_room = table([solo], [:east, :south, :west])
+    pair_room = table([pair_a, pair_b], [])
+    mixed_room = table([mixed_a, mixed_b], [:south, :west])
+
+    for {room, user} <- [
+          {solo_room, solo},
+          {pair_room, pair_a},
+          {pair_room, pair_b},
+          {mixed_room, mixed_a},
+          {mixed_room, mixed_b},
+          {solo_room, spectator}
+        ] do
+      {:ok, _} = Presence.track(self(), "game:" <> room.code, user.id, %{})
+    end
+
+    {:ok, _} = Presence.track(self(), "lobby", lobby.id, %{})
+
+    presence =
+      Map.new(
+        Friends.list(caller.id).friends,
+        &{&1.display_name, {&1.presence, &1[:table_company]}}
+      )
+
+    assert presence == %{
+             "Solo" => {"at_table", "bots"},
+             "PairA" => {"at_table", "people"},
+             "PairB" => {"at_table", "people"},
+             "MixedA" => {"at_table", "people"},
+             "MixedB" => {"at_table", "people"},
+             "Spectator" => {"online", nil},
+             "Lobby" => {"online", nil},
+             "Offline" => {"offline", nil}
+           }
+  end
+
   test "incoming-only entries are newest first, not alphabetical" do
     caller = user_fixture()
     old = user_fixture(%{display_name: "Aaron"})
@@ -192,5 +240,18 @@ defmodule PidroServer.FriendsTest do
       player_ids: [caller | others]
     })
     |> Repo.insert!()
+  end
+
+  defp table([host | guests], bot_positions) do
+    {:ok, room} = RoomManager.create_room(host.id, %{})
+    on_exit(fn -> RoomManager.close_room(room.code) end)
+    for guest <- guests, do: {:ok, _, :east} = RoomManager.join_room(room.code, guest.id, :east)
+
+    for position <- bot_positions,
+        do:
+          {:ok, _, ^position} =
+            RoomManager.join_bot(room.code, "bot_#{room.code}_#{position}", self(), position)
+
+    room
   end
 end

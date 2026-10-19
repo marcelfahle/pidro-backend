@@ -1021,8 +1021,11 @@ Adding back accepts it; there is no stored request state. PUT is idempotent (200
 repeat). DELETE is also idempotent for an existing registered target. Friends sort
 connected first (`online` and `at_table` together), then by folded name; `added_you`
 sorts newest first. Presence comes from existing Presence tracking: a game-channel
-connection wins as `at_table`, otherwise a lobby connection is `online`, otherwise
-`offline`. Avatars use the same URL as room/profile payloads, or null.
+connection while holding a human seat wins as `at_table`, otherwise a lobby or
+game-channel connection (spectating) is `online`, otherwise `offline`. An `at_table`
+entry also carries `table_company`: `"bots"` when every other seat is a bot or empty
+(invitable), `"people"` when another human sits there. Older builds ignore the field.
+Avatars use the same URL as room/profile payloads, or null.
 
 Self-add and self-remove return `400 {"error":"CANNOT_FRIEND_SELF"}`. A missing,
 malformed or guest target returns `404 {"error":"USER_NOT_FOUND"}`.

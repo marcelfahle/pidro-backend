@@ -188,25 +188,39 @@ defmodule PidroServer.Friends do
     users = Auth.get_users_map(ids)
     lobby = Presence.list("lobby")
 
-    at_table =
-      RoomManager.list_rooms()
-      |> Enum.flat_map(fn room -> Map.keys(Presence.list("game:" <> room.code)) end)
-      |> MapSet.new()
+    games = for room <- RoomManager.list_rooms(), do: {room, Presence.list("game:" <> room.code)}
+    tables = games |> Enum.flat_map(&seated_company/1) |> Map.new()
+    watching = games |> Enum.flat_map(fn {_room, connected} -> Map.keys(connected) end)
+    connected = lobby |> Map.keys() |> Enum.concat(watching) |> MapSet.new()
 
     for id <- ids, user = users[id], user && user.guest == false do
-      presence =
-        cond do
-          MapSet.member?(at_table, id) -> "at_table"
-          Map.has_key?(lobby, id) -> "online"
-          true -> "offline"
-        end
-
-      %{
+      entry = %{
         user_id: id,
         display_name: User.public_name(user),
         avatar_url: user.avatar_url,
-        presence: presence
+        presence: "offline"
       }
+
+      cond do
+        company = tables[id] ->
+          %{entry | presence: "at_table"} |> Map.put(:table_company, company)
+
+        MapSet.member?(connected, id) ->
+          %{entry | presence: "online"}
+
+        true ->
+          entry
+      end
+    end
+  end
+
+  # Connected players holding a human seat, with whether anyone else human sits
+  # there. A connected spectator holds no seat and stays online.
+  defp seated_company({room, connected}) do
+    humans = for {_, %{occupant_type: :human, user_id: id}} <- room.seats, do: id
+
+    for id <- humans, Map.has_key?(connected, id) do
+      {id, if(Enum.any?(humans, &(&1 != id)), do: "people", else: "bots")}
     end
   end
 
