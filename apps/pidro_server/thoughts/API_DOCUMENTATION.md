@@ -1043,7 +1043,7 @@ existing `errors` array. Existing endpoints are unchanged.
 | GET | `/api/v1/friends` | Full friends list |
 | PUT | `/api/v1/friends/:user_id` | Add one directed edge, then return full list |
 | DELETE | `/api/v1/friends/:user_id` | Remove a friend or cancel your request, then return full list |
-| POST | `/api/v1/friends/:user_id/ignore` | Hide their request from you, then return full list |
+| POST | `/api/v1/friends/:user_id/ignore` | Hide their request from your friends list, then return it |
 | DELETE | `/api/v1/friends/:user_id/ignore` | Undo the ignore, then return full list |
 | GET | `/api/v1/users/search?q=nor` | Up to ten matching registered players |
 | GET | `/api/v1/friends/recent` | Up to ten recent human tablemates |
@@ -1071,9 +1071,9 @@ Avatars use the same URL as room/profile payloads, or null.
 Ignore marks the incoming edge as ignored for you only. The request drops out of your
 `added_you` and is no longer counted in `requests_waiting`. The sender is not told, gets
 no `friends_changed`, and still sees the request in `requested`. The edge stays, so
-adding them back makes you friends at once.
-Un-ignore clears the mark. Both are idempotent, and a no-op when there is no incoming
-edge. Remove and block delete the edges, and any ignore mark with them.
+adding them back makes you friends at once. Search and recent still report the sender
+as `added_you`. Un-ignore clears the mark. Both are idempotent, and a no-op when there
+is no incoming edge. Remove and block delete the edges, and any ignore mark with them.
 
 Self-add and self-remove return `400 {"error":"CANNOT_FRIEND_SELF"}`. A missing,
 malformed or guest target returns `404 {"error":"USER_NOT_FOUND"}`.
