@@ -20,7 +20,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
       title: "Friend link slug",
       nullable: true,
       description:
-        "Optional personal-link slug. Only a new registration or guest upgrade links mutual friends. Unknown, self and blocked targets are silently ignored. Successful linking adds data.linked_friend and sends friend_accepted with source link to both players."
+        "Optional personal-link slug. Only a new registration or guest upgrade sends the link owner a friend request from the new player, as adding them by hand does; it makes no friendship. Unknown, self, blocked and ignoring owners are silently skipped. A sent request adds data.linked_friend and sends friend_request to the owner."
     })
   end
 

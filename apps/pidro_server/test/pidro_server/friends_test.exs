@@ -8,7 +8,28 @@ defmodule PidroServer.FriendsTest do
   alias PidroServer.Stats.GameStats
   alias PidroServerWeb.Presence
 
-  test "link signup completes a one-way edge idempotently, without repeating events" do
+  test "link signup sends the owner a request; nothing when the owner ignored the newcomer" do
+    a = user_fixture()
+    b = user_fixture()
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+    assert {:ok, linked} = Friends.link_signup({:ok, a}, b.share_slug)
+    assert %{user_id: b_id, join_as: nil} = linked.linked_friend
+    assert b_id == b.id
+    assert %{friends: [], requested: [%{user_id: ^b_id}]} = Friends.list(a.id)
+    assert %{friends: [], added_you: [%{user_id: a_id}]} = Friends.list(b.id)
+    assert a_id == a.id
+    assert_receive {:friend_event, ^b_id, "friend_request", %{player: %{user_id: ^a_id}}}
+    refute_received {:friend_event, ^a_id, _, _}
+
+    {:ok, _} = Friends.ignore(b.id, a.id)
+    {:ok, _} = Friends.remove(a.id, b.id)
+    assert {:ok, unlinked} = Friends.link_signup({:ok, a}, b.share_slug)
+    assert unlinked.linked_friend == nil
+    assert Repo.aggregate(Friendship, :count) == 0
+    refute_received {:friend_event, _, _, _}
+  end
+
+  test "link signup accepts the owner's own request, once" do
     a = user_fixture()
     b = user_fixture()
     {:ok, room} = RoomManager.create_room(b.id, %{})
@@ -22,19 +43,14 @@ defmodule PidroServer.FriendsTest do
     a_id = a.id
     b_id = b.id
 
-    assert_receive {:friend_event, ^a_id, "friend_accepted",
-                    %{player: %{join_as: "partner"}, source: "link"}}
-
     assert_receive {:friend_event, ^b_id, "friend_accepted",
-                    %{player: %{join_as: nil}, source: "link"}}
+                    %{player: %{user_id: ^a_id}, source: "accept"}}
 
-    assert_receive {:friends_changed, _}
-    assert_receive {:friends_changed, _}
+    refute_received {:friend_event, ^a_id, _, _}
 
     assert {:ok, _} = Friends.link_signup({:ok, a}, b.share_slug)
     assert Repo.aggregate(Friendship, :count) == 2
     refute_received {:friend_event, _, _, _}
-    refute_received {:friends_changed, _}
   end
 
   test "one edge is incoming only; adding back is mutual; remove deletes both" do

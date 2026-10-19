@@ -107,17 +107,21 @@ require a valid token.
 **Endpoint**: `POST /api/v1/auth/register`
 
 Register, Apple and Facebook sign-up, guest upgrade, and Classic claim accept an optional
-top-level `friend_slug`. It links both friendship edges only when this request creates a
-registered account or upgrades a guest. Existing sign-ins, guest results, missing/unknown
-slugs, self-links and blocks in either direction leave the normal response unchanged.
-Guest creation never links friends: the app retains the slug until upgrade or claim.
+top-level `friend_slug`. Only when this request creates a registered account or upgrades a
+guest, it sends the link's owner a friend request from the new player, exactly as
+`PUT /api/v1/friends/:user_id` does. It does not make them friends: the owner sees the
+request in `added_you` and accepts it with one tap, and the new player sees it in `requested`.
+If the owner had already sent the new player a request, this accepts it, as adding back does.
+Existing sign-ins, guest results, missing/unknown slugs, self-links, blocks in either
+direction and an owner who ignored the new player leave the normal response unchanged and
+tell nobody. Guest creation never links friends: the app retains the slug until upgrade or claim.
 
 On a successful link, `data.linked_friend` contains the owner's public player entry
 (`user_id`, `display_name`, `avatar_url`, `presence`, `join_as`, and live table fields when at a table),
-as used by `friend_accepted`, without list-only shared-game metadata.
-Both players receive `friends_changed` and `friend_accepted` with the other player's entry
-and `source: "link"`. The pair is locked and both edges inserted in one transaction;
-repeating an already mutual link does not duplicate events. No extra acceptance tap is needed.
+so the app can show who the link was from. `join_as` is `null` unless the link made them friends.
+Both players receive `friends_changed`; the owner receives `friend_request` (or
+`friend_accepted` with `source: "accept"` when the link accepted the owner's own request).
+Repeating a link does not duplicate events.
 Without a link, `linked_friend` is **absent**, not null. No existing request field is required
 or changed.
 
@@ -1221,8 +1225,8 @@ A new edge also tells the other player, in addition to `friends_changed` (PID-24
   when the last completed game both played in ended.
 - `friend_accepted` goes to the player whose request was just answered by adding
   back, also when it had been ignored: `{"player": entry, "source": "accept"}`,
-  with the entry of the player who accepted. Personal-link sign-ups send `"link"`
-  to both players with the other player's entry, plus `friends_changed` to both.
+  with the entry of the player who accepted. A personal-link sign-up sends the
+  owner the same `friend_request` (see Register a New User).
 
 Neither is sent on a repeat add, for Classic edges copied at claim, or by ignore,
 un-ignore, cancel, remove or block. Older builds ignore both.
