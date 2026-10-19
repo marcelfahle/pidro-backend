@@ -446,11 +446,8 @@ on `seats.seat_2`, `seats.seat_3` or `seats.seat_4`.
 
 An open seat can need the table's seat password, like Classic's Password button. Create one
 with `{"seats":{"seat_3":{"type":"open","min_games":0,"password":true}}}`, or
-from the waiting room, host only, on a vacant seat that is not held:
-- `PUT /api/v1/rooms/:code/seats/:position/password` with no body.
-- `DELETE /api/v1/rooms/:code/seats/:position/password` with no body.
-
-Both return `200 {"data":{"room":...}}`; errors match the hold endpoints below.
+from the waiting room with the same entry through `PUT /api/v1/rooms/:code/seats/:position`
+(see "Changing a seat of a waiting table" below).
 
 The server draws one four-digit password per room when its first seat needs one: at least three
 different digits and no straight run (never `0000`, `1111`, `1212`, `1234` or `4321`). Every
@@ -458,7 +455,7 @@ password seat shares it, it never changes, and it lives in the room config, so i
 on rematch. It is never logged.
 
 Only the host sees it, as `room.seat_password` in their own REST responses (create, join, seat
-controls, hold and password endpoints). `GET /rooms/:code`, channel pushes, lobby, readiness and
+controls, hold and set-seat endpoints). `GET /rooms/:code`, channel pushes, lobby, readiness and
 invite previews never carry it. Every seat projection instead gains `password`: `true` on a vacant,
 unheld password seat, otherwise `false`, so Tables can show a lock.
 
@@ -474,6 +471,28 @@ either, the usual 429 `RATE_LIMITED`. The lobby channel's `join_room` takes no p
 `reason: "seat_requires_password"`. Invite links and seat moves by a non-host need the password
 too, unless the mover already sits in a password seat; the host may move anyone.
 A seat held for the caller, a reclaim after a disconnect, bots and playing-room substitutes skip it.
+
+#### Changing a seat of a waiting table (PID-256)
+
+The seat picker sends one entry per choice, the same values a create request's seat takes:
+```json
+PUT /api/v1/rooms/A1B2/seats/east
+{ "seat": { "type": "open", "min_games": 100, "password": true } }
+```
+`seat` is `"ai"`, `"open"`, `{ "type": "open", "min_games": 0 | 100 | 1000, "password"?: bool }`
+or `{ "type": "held", "user_id": "<uuid>" }`. Host only, while waiting or ready. The entry
+replaces whatever the seat is: a bot in it leaves (its process stops), a hold is released and
+the invitee gets `seat_invitation_gone`, a requirement or password goes. Then the entry applies
+as at creation: `"ai"` seats a bot at the room's difficulty, password seats follow the rules
+above, holds follow the hold rules below. `solo` keeps its value from creation. The same entry again
+changes nothing. Otherwise the room, the lobby and readiness (reset, as for a hold) all hear it.
+
+Returns `200 {"data":{"room":...}}` (the host's room, with `seat_password` once there is one).
+Errors: `403 NOT_OWNER`, `409 ROOM_NOT_WAITING`, `422 SEAT_NOT_VACANT` for a human's seat
+(the host's included), `422` `invalid_room_params` on field `seat` for a bad entry, and the hold
+errors for `held` (`422 ALREADY_SEATED` for a friend seated or held elsewhere, `422` on field
+`seats` for an unknown user, `404 USER_NOT_FOUND` for a blocked pair). The hold, release and
+`POST /rooms/:code/bot` endpoints are unchanged.
 
 #### Seats held for friends (PID-208)
 

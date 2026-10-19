@@ -380,28 +380,53 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc false
-  def open_api_operation(action) when action in [:password, :remove_password] do
+  def open_api_operation(:set_seat) do
     %Operation{
-      summary:
-        if(action == :password,
-          do: "Make a seat need the table's password",
-          else: "Let anyone sit in a seat again"
-        ),
+      summary: "Set a seat to anything the seat picker offers",
       description: """
-      Host only, while waiting or ready. The seat must be vacant and not held.
+      Host only, while waiting or ready. Replaces whatever the seat is, vacant,
+      a bot, held for a friend, with a games requirement or a password, with
+      `seat`, validated as a create request's seat is. A bot in the seat leaves
+      and a released friend's invitation goes. A human's seat cannot change:
+      422 SEAT_NOT_VACANT. The same entry again changes nothing.
+
       The first password seat draws the table's four-digit seat password; every
       password seat shares it and it never changes for the room. The response is
-      the host's room, with `seat_password`. Removing the last password seat
-      keeps the password for the next one.
+      the host's room, with `seat_password`.
       """,
-      operationId: "RoomController.#{action}",
+      operationId: "RoomController.set_seat",
       tags: ["Rooms"],
       security: [%{"bearer_auth" => []}],
       parameters: [
         room_code_parameter(),
-        Operation.parameter(:position, :path, position_schema(), "Vacant seat", required: true)
+        Operation.parameter(:position, :path, position_schema(), "Seat to set", required: true)
       ],
-      responses: host_control_responses()
+      requestBody:
+        Operation.request_body(
+          "What the seat becomes",
+          "application/json",
+          %OpenApiSpex.Schema{
+            type: :object,
+            required: [:seat],
+            properties: %{seat: RoomSchemas.SeatPlanEntry}
+          },
+          required: true
+        ),
+      responses:
+        Map.merge(host_control_responses(), %{
+          404 =>
+            Operation.response(
+              "Room not found or held player unavailable",
+              "application/json",
+              %OpenApiSpex.Schema{oneOf: [ErrorSchemas.not_found_error(), BlockSchemas.Error]}
+            ),
+          503 =>
+            Operation.response(
+              "PROFILE_UNAVAILABLE; retry later",
+              "application/json",
+              ErrorSchemas.error_response()
+            )
+        })
     }
   end
 
@@ -1619,21 +1644,24 @@ defmodule PidroServerWeb.API.RoomController do
     end
   end
 
-  @doc "Makes a vacant waiting-room seat need the table's seat password."
-  def password(conn, %{"code" => code, "position" => position}),
-    do: set_password(conn, code, position, true)
-
-  @doc "Lets anyone sit in a vacant waiting-room seat again."
-  def remove_password(conn, %{"code" => code, "position" => position}),
-    do: set_password(conn, code, position, false)
-
-  defp set_password(conn, code, position, password?) do
+  @doc "Makes a waiting-room seat whatever the seat picker chose."
+  def set_seat(conn, %{"code" => code, "position" => position} = params) do
     with {:ok, position} <- parse_position_strict(position),
+         {:ok, entry} <- Config.parse_seat_entry(params["seat"]),
          {:ok, room} <-
-           RoomManager.set_seat_password(code, conn.assigns.current_user.id, position, password?) do
+           RoomManager.set_seat(code, conn.assigns.current_user.id, position, entry),
+         {:ok, room} <- seat_bot_for(room, position, entry) do
       render(conn, :show, room: room)
     end
   end
+
+  defp seat_bot_for(room, position, :bot) do
+    if match?(%{occupant_type: :bot}, room.seats[position]),
+      do: {:ok, room},
+      else: start_seated_bot(room, position)
+  end
+
+  defp seat_bot_for(room, _position, _entry), do: {:ok, room}
 
   @doc "Releases a waiting-room hold without changing any other seat."
   def release_hold(conn, %{"code" => code, "position" => position}) do

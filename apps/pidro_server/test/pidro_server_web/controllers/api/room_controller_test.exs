@@ -557,17 +557,19 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       {:ok, room} = RoomManager.create_room(host.id)
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
 
+      password_seat = %{"seat" => %{"type" => "open", "min_games" => 0, "password" => true}}
+
       assert as_user(conn, stranger)
-             |> put(~p"/api/v1/rooms/#{room.code}/seats/east/password")
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/east", password_seat)
              |> json_response(403)
 
       assert as_user(conn, host)
-             |> put(~p"/api/v1/rooms/#{room.code}/seats/north/password")
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/north", password_seat)
              |> json_response(422)
 
       east =
         as_user(conn, host)
-        |> put(~p"/api/v1/rooms/#{room.code}/seats/east/password")
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/east", password_seat)
         |> json_response(200)
 
       password = east["data"]["room"]["seat_password"]
@@ -576,24 +578,20 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       south =
         as_user(conn, host)
-        |> put(~p"/api/v1/rooms/#{room.code}/seats/south/password")
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/south", password_seat)
         |> json_response(200)
 
       assert south["data"]["room"]["seat_password"] == password
 
       cleared =
         as_user(conn, host)
-        |> delete(~p"/api/v1/rooms/#{room.code}/seats/east/password")
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{"seat" => "open"})
         |> json_response(200)
 
       assert cleared["data"]["room"]["seats"]["east"]["password"] == false
       assert cleared["data"]["room"]["seat_password"] == password
 
       {:ok, _} = RoomManager.set_seat_hold(room.code, host.id, :south, friend.id)
-
-      assert as_user(conn, host)
-             |> put(~p"/api/v1/rooms/#{room.code}/seats/south/password")
-             |> json_response(422)
 
       joined =
         as_user(conn, friend)
@@ -604,7 +602,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       {:ok, _, :east} = RoomManager.join_room(room.code, stranger.id, :east)
 
-      {:ok, _} = RoomManager.set_seat_password(room.code, host.id, :west, true)
+      {:ok, _} = RoomManager.set_seat(room.code, host.id, :west, {:open, 0, true})
 
       assert {:error, :seat_requires_password} =
                RoomManager.move_seat(room.code, stranger.id, stranger.id, :west)
@@ -635,6 +633,218 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       # wrong guesses, so a second player's first guess is one too many.
       assert json_response(join.(second, %{position: "south", password: password}), 429)
       assert {:ok, %{positions: %{south: nil}}} = RoomManager.get_room(room.code)
+    end
+  end
+
+  describe "PID-256 set_seat/2" do
+    test "an open seat goes 100+, 1000+, password and back to anyone, for everyone", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      viewer = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+      steps = [
+        {%{"type" => "open", "min_games" => 100}, 100, false},
+        {%{"type" => "open", "min_games" => 1000}, 1000, false},
+        {%{"type" => "open", "min_games" => 1000, "password" => true}, 1000, true},
+        {"open", 0, false}
+      ]
+
+      for {{entry, min_games, password?}, epoch} <- Enum.with_index(steps, room.ready_epoch + 1) do
+        seat =
+          as_user(conn, host)
+          |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{"seat" => entry})
+          |> data(200)
+          |> get_in(["room", "seats", "east"])
+
+        assert %{"min_games" => ^min_games, "password" => ^password?, "occupant_type" => "vacant"} =
+                 seat
+
+        listed =
+          as_user(conn, viewer)
+          |> get(~p"/api/v1/lobby")
+          |> data(200)
+          |> Map.fetch!("open_tables")
+          |> Enum.find(&(&1["code"] == room.code))
+
+        assert %{"min_games" => ^min_games, "password" => ^password?} = listed["seats"]["east"]
+
+        assert_receive {:readiness_updated,
+                        %{ready_epoch: ^epoch, seats: %{east: %{min_games: ^min_games}}}}
+
+        assert_receive {:room_updated, %{code: code}} when code == room.code
+      end
+
+      {:ok, final} = RoomManager.get_room(room.code)
+      assert final.config.seat_requirements == %{}
+      assert final.config.password_seats == []
+      assert final.config.solo == false
+      assert final.config.seat_password =~ ~r/\A\d{4}\z/
+
+      # The same entry again is no change at all.
+      assert as_user(conn, host)
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{"seat" => "open"})
+             |> data(200)
+
+      refute_receive {:readiness_updated, _}
+      assert {:ok, ^final} = RoomManager.get_room(room.code)
+    end
+
+    test "a bot seat opens again and its bot is gone", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
+
+      botted =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/west", %{"seat" => "ai"})
+        |> data(200)
+
+      assert botted["room"]["positions"]["west"] == "bot_#{room.code}_west"
+      pid = BotManager.bot_pid(room.code, :west)
+      assert Process.alive?(pid)
+      ref = Process.monitor(pid)
+
+      # Bot again is no change and keeps the same bot.
+      assert as_user(conn, host)
+             |> put(~p"/api/v1/rooms/#{room.code}/seats/west", %{"seat" => "ai"})
+             |> data(200)
+
+      assert BotManager.bot_pid(room.code, :west) == pid
+      {:ok, before} = RoomManager.get_room(room.code)
+
+      opened =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/west", %{
+          "seat" => %{"type" => "open", "min_games" => 100}
+        })
+        |> data(200)
+
+      assert opened["room"]["positions"]["west"] == nil
+      assert %{"occupant_type" => "vacant", "min_games" => 100} = opened["room"]["seats"]["west"]
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+      assert BotManager.bot_pid(room.code, :west) == nil
+      refute Map.has_key?(:sys.get_state(RoomManager).player_rooms, "bot_#{room.code}_west")
+
+      epoch = before.ready_epoch + 1
+      assert_receive {:readiness_updated, %{ready_epoch: ^epoch, positions: %{west: nil}}}
+      assert {:ok, %{seat_lifecycle_revision: revision}} = RoomManager.get_room(room.code)
+      assert revision > before.seat_lifecycle_revision
+    end
+
+    test "a held seat becomes a bot or another friend, and the invitee hears it went", %{
+      conn: conn
+    } do
+      host = AccountsFixtures.user_fixture()
+      [friend, other_friend] = for _ <- 1..2, do: AccountsFixtures.user_fixture()
+
+      {:ok, room} =
+        RoomManager.create_room(host.id, %{seat_holds: %{east: friend.id, south: other_friend.id}})
+
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:invitations:#{friend.id}")
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:invitations:#{other_friend.id}")
+
+      # A friend held in another seat cannot be held here too.
+      assert %{"errors" => [%{"code" => "ALREADY_SEATED"}]} =
+               as_user(conn, host)
+               |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{
+                 "seat" => %{"type" => "held", "user_id" => other_friend.id}
+               })
+               |> json_response(422)
+
+      botted =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{"seat" => "ai"})
+        |> data(200)
+
+      assert botted["room"]["seats"]["east"]["occupant_type"] == "bot"
+      refute Map.has_key?(botted["room"]["seats"]["east"], "held_for")
+      friend_id = friend.id
+
+      assert_receive {:seat_invitation_gone, ^friend_id, %{code: code, position: :east}}
+                     when code == room.code
+
+      assert RoomManager.seat_invitations(friend.id) == []
+
+      # The bot seat can be held again, and its bot goes.
+      bot = BotManager.bot_pid(room.code, :east)
+
+      held =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{
+          "seat" => %{"type" => "held", "user_id" => friend.id}
+        })
+        |> data(200)
+
+      assert held["room"]["seats"]["east"]["held_for"]["user_id"] == friend.id
+      assert_receive {:seat_invitation, ^friend_id, %{position: :east}}
+      refute Process.alive?(bot)
+
+      swapped =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/south", %{
+          "seat" => %{"type" => "held", "user_id" => host.id}
+        })
+        |> json_response(422)
+
+      assert %{"errors" => [%{"code" => "ALREADY_SEATED"}]} = swapped
+
+      third = AccountsFixtures.user_fixture()
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:invitations:#{third.id}")
+
+      rehold =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/south", %{
+          "seat" => %{"type" => "held", "user_id" => third.id}
+        })
+        |> data(200)
+
+      assert rehold["room"]["seats"]["south"]["held_for"]["user_id"] == third.id
+      other_id = other_friend.id
+      third_id = third.id
+      assert_receive {:seat_invitation_gone, ^other_id, %{position: :south}}
+      assert_receive {:seat_invitation, ^third_id, %{position: :south}}
+
+      assert %{"field_errors" => [%{"field" => "seats"}]} =
+               as_user(conn, host)
+               |> put(~p"/api/v1/rooms/#{room.code}/seats/south", %{
+                 "seat" => %{"type" => "held", "user_id" => Ecto.UUID.generate()}
+               })
+               |> json_response(422)
+    end
+
+    test "a human's seat, a stranger, a playing room and a bad entry are refused", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      player = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      {:ok, _, :east} = RoomManager.join_room(room.code, player.id, :east)
+      put_seat = &put(as_user(conn, &1), ~p"/api/v1/rooms/#{room.code}/seats/#{&2}", &3)
+
+      for position <- ["north", "east"] do
+        assert %{"errors" => [%{"code" => "SEAT_NOT_VACANT"}]} =
+                 json_response(put_seat.(host, position, %{"seat" => "ai"}), 422)
+      end
+
+      assert %{"errors" => [%{"code" => "NOT_OWNER"}]} =
+               json_response(put_seat.(player, "south", %{"seat" => "ai"}), 403)
+
+      assert %{"field_errors" => [%{"field" => "seat"}]} =
+               json_response(put_seat.(host, "south", %{"seat" => %{"type" => "open"}}), 422)
+
+      assert json_response(put_seat.(host, "south", %{}), 422)
+
+      :ok = RoomManager.update_room_status(room.code, :playing)
+
+      assert %{"errors" => [%{"code" => "ROOM_NOT_WAITING"}]} =
+               json_response(put_seat.(host, "south", %{"seat" => "open"}), 409)
+
+      assert {:ok, %{positions: %{east: east}, seats: %{south: %{occupant_type: :vacant}}}} =
+               RoomManager.get_room(room.code)
+
+      assert east == player.id
     end
   end
 

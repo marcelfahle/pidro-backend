@@ -53,6 +53,7 @@ defmodule PidroServer.Games.Room.Config do
           south: :bot | :open | :held,
           west: :bot | :open | :held
         }
+  @type seat_entry :: :bot | {:open, 0 | 100 | 1000, boolean()} | {:held, Ecto.UUID.t()}
   @type error :: %{field: String.t(), message: String.t()}
   @type errors :: {:invalid_room_params, [error()]}
 
@@ -288,6 +289,56 @@ defmodule PidroServer.Games.Room.Config do
     if held_user_id,
       do: Map.merge(data, %{status: "free", held_for: %{user_id: held_user_id}}),
       else: data
+  end
+
+  # ---------------------------------------------------------------------------
+  # Seat Changes
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Parses one seat of an existing room as the seat picker sends it: any value a
+  create request's seat takes.
+
+      iex> PidroServer.Games.Room.Config.parse_seat_entry(%{"type" => "open", "min_games" => 100})
+      {:ok, {:open, 100, false}}
+  """
+  @spec parse_seat_entry(term()) :: {:ok, seat_entry()} | {:error, errors()}
+  def parse_seat_entry(value) do
+    case parse_seat(%{"seat" => value}, "seat") do
+      {:ok, :bot, _} -> {:ok, :bot}
+      {:ok, :open, {games, password?}} -> {:ok, {:open, games, password?}}
+      {:ok, :held, user_id} -> {:ok, {:held, user_id}}
+      {:error, message} -> {:error, {:invalid_room_params, [error("seat", message)]}}
+    end
+  end
+
+  @doc """
+  Makes `position` the seat `entry` asks for. Whatever the config said about the
+  seat before, a requirement, a password or a hold, goes.
+  """
+  @spec put_seat(t(), atom(), seat_entry()) :: t()
+  def put_seat(%__MODULE__{} = config, position, entry) do
+    config = %{
+      config
+      | seat_requirements: Map.delete(config.seat_requirements, position),
+        seat_holds: Map.delete(config.seat_holds, position)
+    }
+
+    case entry do
+      {:open, 0, password?} ->
+        put_password_seat(config, position, password?)
+
+      {:open, games, password?} ->
+        requirements = Map.put(config.seat_requirements, position, games)
+        put_password_seat(%{config | seat_requirements: requirements}, position, password?)
+
+      {:held, user_id} ->
+        holds = Map.put(config.seat_holds, position, user_id)
+        put_password_seat(%{config | seat_holds: holds}, position, false)
+
+      :bot ->
+        put_password_seat(config, position, false)
+    end
   end
 
   # ---------------------------------------------------------------------------

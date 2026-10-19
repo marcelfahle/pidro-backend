@@ -49,7 +49,7 @@ defmodule PidroServer.Games.RoomManager do
   alias Pidro.Core.SeatView
   alias Pidro.Game.{Engine, Play}
   alias PidroServer.Accounts.User
-  alias PidroServer.Games.Bots.{BotBrain, SubstituteBot, TimeoutStrategy}
+  alias PidroServer.Games.Bots.{BotBrain, BotManager, SubstituteBot, TimeoutStrategy}
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomCodes, TurnTimer}
   alias PidroServer.Games.Room.Config
   alias PidroServer.Games.Room.Positions
@@ -269,16 +269,30 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @doc """
-  Makes a vacant, unheld waiting-room seat a password seat, or an ordinary one
-  again; host only. The first password seat draws the room's password.
+  Makes a seat of a waiting room what the host picked for it (see
+  `Config.put_seat/3`); host only. A human's seat never changes. A bot leaves
+  the seat unless `entry` is `:bot`; seating a new bot is the caller's next
+  step, because a bot joins from its own process.
   """
-  @spec set_seat_password(String.t(), String.t(), Positions.position(), boolean()) ::
+  @spec set_seat(String.t(), String.t(), Positions.position(), Config.seat_entry()) ::
           {:ok, Room.t()} | {:error, term()}
-  def set_seat_password(code, host_id, position, password?) when is_boolean(password?) do
-    GenServer.call(
-      __MODULE__,
-      {:set_seat_password, String.upcase(code), host_id, position, password?}
-    )
+  def set_seat(code, host_id, position, entry) do
+    holds =
+      case entry do
+        {:held, user_id} -> %{position => user_id}
+        _ -> %{}
+      end
+
+    with :ok <- validate_hold_users(holds, []),
+         {:ok, room, bot_pid} <-
+           GenServer.call(__MODULE__, {:set_seat, String.upcase(code), host_id, position, entry}) do
+      # Stopped here, not in the room manager: the bot manager may be waiting
+      # on the room manager for a bot it is starting.
+      if bot_pid && BotManager.bot_pid(room.code, position) == bot_pid,
+        do: BotManager.stop_bot(room.code, position)
+
+      {:ok, room}
+    end
   end
 
   @doc """
@@ -1286,20 +1300,39 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  def handle_call({:set_seat_password, code, host_id, position, password?}, _from, state) do
+  def handle_call({:set_seat, code, host_id, position, entry}, _from, state) do
     with {:ok, room} <- fetch_room(state, code),
          :ok <- ensure_owner(room, host_id),
          :ok <- ensure_waiting(room),
-         :ok <- ensure_hold_position(room, position, nil),
-         :ok <- if(room.config.seat_holds[position], do: {:error, :seat_taken}, else: :ok) do
-      updated =
-        %{room | config: Config.put_password_seat(room.config, position, password?)}
-        |> touch_last_activity()
+         {:ok, cleared, bot} <- clear_seat(room, position, entry),
+         :ok <- ensure_seat_entry(cleared, host_id, position, entry) do
+      config = Config.put_seat(room.config, position, entry)
 
-      broadcast_room(code, updated)
-      broadcast_lobby_event({:room_updated, updated})
-      broadcast_readiness(updated)
-      {:reply, {:ok, updated}, put_room(state, updated)}
+      updated = %{
+        cleared
+        | config: config,
+          seat_hold_started_at: hold_started_at(room, position, config.seat_holds[position])
+      }
+
+      if updated == room do
+        {:reply, {:ok, room, nil}, state}
+      else
+        updated =
+          updated
+          |> reset_readiness()
+          |> maybe_bump_seat_lifecycle_revision(bot != nil)
+          |> touch_last_activity()
+
+        {bot_id, bot_pid} = bot || {nil, nil}
+        state = %{put_room(state, updated) | player_rooms: Map.delete(state.player_rooms, bot_id)}
+
+        broadcast_seat_invitation_changes(room, updated)
+        broadcast_room(code, updated)
+        broadcast_lobby_event({:room_updated, updated})
+        broadcast_readiness(updated)
+        if bot, do: broadcast_seat_lifecycle(updated)
+        {:reply, {:ok, updated, bot_pid}, state}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -3405,6 +3438,40 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  # A hold keeps the time it started while it stays with the same friend.
+  defp hold_started_at(room, position, user_id) do
+    cond do
+      is_nil(user_id) -> Map.delete(room.seat_hold_started_at, position)
+      room.config.seat_holds[position] == user_id -> room.seat_hold_started_at
+      true -> Map.put(room.seat_hold_started_at, position, DateTime.utc_now())
+    end
+  end
+
+  # The seat a host is changing, emptied of the bot in it unless it stays a bot.
+  defp clear_seat(_room, position, _entry) when position not in [:north, :east, :south, :west],
+    do: {:error, :invalid_position}
+
+  defp clear_seat(room, position, entry) do
+    case room.seats[position] do
+      %Seat{occupant_type: :human} ->
+        {:error, :seat_not_vacant}
+
+      %Seat{occupant_type: :bot, bot_pid: pid} when entry != :bot ->
+        bot_id = room.positions[position]
+        {:ok, room |> Positions.remove(bot_id) |> vacate_seat(position), {bot_id, pid}}
+
+      _ ->
+        {:ok, room, nil}
+    end
+  end
+
+  defp ensure_seat_entry(room, host_id, position, {:held, user_id}) do
+    with :ok <- ensure_unblocked_holds(host_id, [user_id]),
+         do: ensure_hold_position(room, position, user_id)
+  end
+
+  defp ensure_seat_entry(_room, _host_id, _position, _entry), do: :ok
+
   defp ensure_hold_position(room, position, user_id) do
     cond do
       position not in [:north, :east, :south, :west] ->
@@ -4333,15 +4400,12 @@ defmodule PidroServer.Games.RoomManager do
         do: Map.put(room.config.seat_holds, position, user_id),
         else: Map.delete(room.config.seat_holds, position)
 
-    started_at =
-      cond do
-        is_nil(user_id) -> Map.delete(room.seat_hold_started_at, position)
-        room.config.seat_holds[position] == user_id -> room.seat_hold_started_at
-        true -> Map.put(room.seat_hold_started_at, position, DateTime.utc_now())
-      end
-
     updated =
-      %{room | config: %{room.config | seat_holds: holds}, seat_hold_started_at: started_at}
+      %{
+        room
+        | config: %{room.config | seat_holds: holds},
+          seat_hold_started_at: hold_started_at(room, position, user_id)
+      }
       |> reset_readiness()
       |> touch_last_activity()
 
