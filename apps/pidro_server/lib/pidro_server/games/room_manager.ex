@@ -1299,6 +1299,7 @@ defmodule PidroServer.Games.RoomManager do
 
       broadcast_room(code, updated)
       broadcast_lobby_event({:room_updated, updated})
+      broadcast_readiness(updated)
       {:reply, {:ok, updated}, put_room(state, updated)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}

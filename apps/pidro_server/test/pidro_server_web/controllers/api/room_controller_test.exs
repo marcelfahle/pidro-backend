@@ -498,6 +498,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       friend = AccountsFixtures.user_fixture()
       stranger = AccountsFixtures.user_fixture()
       {:ok, room} = RoomManager.create_room(host.id)
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
 
       assert as_user(conn, stranger)
              |> put(~p"/api/v1/rooms/#{room.code}/seats/east/password")
@@ -514,6 +515,7 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       password = east["data"]["room"]["seat_password"]
       assert east["data"]["room"]["seats"]["east"]["password"] == true
+      assert_received {:readiness_updated, %{seats: %{east: %{password: true}}}}
 
       south =
         as_user(conn, host)
