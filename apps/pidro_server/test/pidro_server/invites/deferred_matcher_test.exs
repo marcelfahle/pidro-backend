@@ -49,6 +49,18 @@ defmodule PidroServer.Invites.DeferredMatcherTest do
     assert :none = DeferredMatcher.consume([actual, reduced], matcher)
   end
 
+  test "friend hints deduplicate but never alias invite strings", context do
+    matcher = start_matcher(context)
+    candidate = signature()
+    assert :created = DeferredMatcher.capture({:friend, "ABCD2345"}, candidate, matcher)
+    assert :existing = DeferredMatcher.capture({:friend, "ABCD2345"}, candidate, matcher)
+    assert {:ok, {:friend, "ABCD2345"}} = DeferredMatcher.consume([candidate], matcher)
+    assert :created = DeferredMatcher.capture({:friend, "ABCD2345"}, candidate, matcher)
+    assert :created = DeferredMatcher.capture("ABCD2345", candidate, matcher)
+    assert :ambiguous = DeferredMatcher.consume([candidate], matcher)
+    assert :none = DeferredMatcher.consume([candidate], matcher)
+  end
+
   test "repeat capture does not extend the original deadline", context do
     matcher = start_matcher(context, retention_ms: 60)
     candidate = signature()

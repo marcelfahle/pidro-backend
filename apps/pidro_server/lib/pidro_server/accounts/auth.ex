@@ -120,6 +120,7 @@ defmodule PidroServer.Accounts.Auth do
     |> Accounts.validate_public_name_changes([:username, :display_name])
     |> ClassicNameReservations.validate_changes()
     |> Repo.insert()
+    |> PidroServer.Friends.link_signup(fetch_attr(attrs, :friend_slug))
   end
 
   @doc """
@@ -416,17 +417,30 @@ defmodule PidroServer.Accounts.Auth do
           | {:error, :not_a_guest | :email_taken | :username_taken | Changeset.t()}
   def upgrade_guest(%User{guest: false}, _attrs), do: {:error, :not_a_guest}
 
-  def upgrade_guest(%User{guest: true, id: id} = guest, attrs) when is_map(attrs) do
+  def upgrade_guest(%User{guest: true, id: id}, attrs) when is_map(attrs) do
+    friend_slug = fetch_attr(attrs, :friend_slug)
     attrs = upgrade_attrs(attrs)
 
     with :ok <- ensure_email_free(Map.get(attrs, :email), id),
          :ok <- ensure_username_free(Map.get(attrs, :username), id) do
-      guest
-      |> User.upgrade_changeset(attrs)
-      |> Accounts.validate_public_name_changes([:username])
-      |> ClassicNameReservations.validate_changes(guest.classic_user_id)
-      |> update_and_bump_version()
+      Repo.transaction(fn ->
+        guest = Repo.one!(from u in User, where: u.id == ^id, lock: "FOR UPDATE")
+        if not guest.guest, do: Repo.rollback(:not_a_guest)
+
+        result =
+          guest
+          |> User.upgrade_changeset(attrs)
+          |> Accounts.validate_public_name_changes([:username])
+          |> ClassicNameReservations.validate_changes(guest.classic_user_id)
+          |> update_and_bump_version()
+
+        case result do
+          {:ok, user} -> user
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
       |> map_upgrade_result()
+      |> PidroServer.Friends.link_signup(friend_slug)
     end
   end
 

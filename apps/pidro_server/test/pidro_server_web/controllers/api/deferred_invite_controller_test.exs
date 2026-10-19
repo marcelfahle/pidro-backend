@@ -50,7 +50,7 @@ defmodule PidroServerWeb.API.DeferredInviteControllerTest do
       })
       |> json_response(200)
 
-    assert response == %{"data" => %{"invite" => %{"code" => invite.code}}}
+    assert response == %{"data" => %{"invite" => %{"code" => invite.code}, "friend" => nil}}
     refute inspect(response) =~ invite.room_code
     assert [%Event{kind: "deferred_matched", platform: "android"}] = events(invite)
   end
@@ -107,7 +107,7 @@ defmodule PidroServerWeb.API.DeferredInviteControllerTest do
         })
         |> json_response(200)
 
-      assert response == %{"data" => %{"invite" => nil}}
+      assert response == %{"data" => %{"invite" => nil, "friend" => nil}}
     end
 
     assert events(invite) == []
@@ -261,6 +261,111 @@ defmodule PidroServerWeb.API.DeferredInviteControllerTest do
              |> json_response(200)
 
     assert events(invite) == []
+  end
+
+  test "friend referrer is authoritative, public-only, and consumes invite fallback", %{
+    conn: conn
+  } do
+    user = AccountsFixtures.user_fixture(%{display_name: "Friend"})
+    invite = open_invite!()
+    android = Map.put(@fingerprint, "platform", "android")
+    sig = signature(android, {203, 0, 113, 81})
+    DeferredMatcher.capture(invite.code, sig)
+
+    result =
+      conn
+      |> from_ip({203, 0, 113, 81})
+      |> resolve(
+        Map.merge(android, %{
+          "install_id" => @install_id,
+          "referrer" => "friend=#{URI.encode_www_form(user.share_slug)}"
+        })
+      )
+      |> json_response(200)
+
+    {:ok, profile} = PidroServer.Accounts.Auth.public_profile_by_slug(user.share_slug)
+
+    assert result == %{
+             "data" => %{
+               "invite" => nil,
+               "friend" => %{
+                 "slug" => user.share_slug,
+                 "display_name" => profile.display_name,
+                 "avatar_url" => profile.avatar_url
+               }
+             }
+           }
+
+    assert :none = DeferredMatcher.consume([sig])
+    assert events(invite) == []
+  end
+
+  test "friend signature resolves once and mixed hint kinds are ambiguous", %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+    sig = signature(@fingerprint, {203, 0, 113, 82})
+    DeferredMatcher.capture({:friend, user.share_slug}, sig)
+    params = Map.put(@fingerprint, "install_id", Ecto.UUID.generate())
+
+    assert %{"data" => %{"invite" => nil, "friend" => %{"slug" => slug}}} =
+             conn |> from_ip({203, 0, 113, 82}) |> resolve(params) |> json_response(200)
+
+    assert slug == user.share_slug
+    assert :none = DeferredMatcher.consume([sig])
+
+    DeferredMatcher.capture({:friend, user.share_slug}, sig)
+    DeferredMatcher.capture(open_invite!().code, sig)
+
+    assert %{"data" => %{"invite" => nil, "friend" => nil}} =
+             build_conn()
+             |> from_ip({203, 0, 113, 82})
+             |> resolve(%{params | "install_id" => Ecto.UUID.generate()})
+             |> json_response(200)
+
+    assert :none = DeferredMatcher.consume([sig])
+  end
+
+  test "duplicate and mixed referrers never select a target; invalid referrer still permits unique fallback",
+       %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+    invite = open_invite!()
+
+    for {referrer, index} <-
+          Enum.with_index([
+            "friend=#{user.share_slug}&friend=#{user.share_slug}",
+            "invite=#{invite.code}&friend=#{user.share_slug}",
+            "friend=unknown",
+            "friend=%ZZ"
+          ]) do
+      params = %{
+        "platform" => "android",
+        "install_id" => Ecto.UUID.generate(),
+        "referrer" => referrer
+      }
+
+      assert %{"data" => %{"invite" => nil, "friend" => nil}} =
+               conn
+               |> recycle()
+               |> from_ip({203, 0, 113, 90 + index})
+               |> resolve(params)
+               |> json_response(200)
+    end
+
+    android = Map.put(@fingerprint, "platform", "android")
+    sig = signature(android, {203, 0, 113, 95})
+    DeferredMatcher.capture({:friend, user.share_slug}, sig)
+
+    assert %{"data" => %{"friend" => %{"slug" => slug}}} =
+             build_conn()
+             |> from_ip({203, 0, 113, 95})
+             |> resolve(
+               Map.merge(android, %{
+                 "install_id" => Ecto.UUID.generate(),
+                 "referrer" => "invite=#{invite.code}&friend=#{user.share_slug}"
+               })
+             )
+             |> json_response(200)
+
+    assert slug == user.share_slug
   end
 
   defp resolve(conn, params), do: post(conn, ~p"/api/v1/invites/deferred", params)

@@ -33,7 +33,7 @@
 
     <link rel="stylesheet" href={static_url(@conn, ~p"/assets/css/app.css")} />
     <script
-      :if={!@crawler? and Map.get(@page, :code)}
+      :if={!@crawler? and (Map.get(@page, :code) || Map.get(@page, :deferred_capture_url))}
       defer
       src={static_url(@conn, ~p"/assets/js/invite.js")}
     >

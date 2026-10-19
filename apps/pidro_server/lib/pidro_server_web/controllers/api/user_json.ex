@@ -21,8 +21,13 @@ defmodule PidroServerWeb.API.UserJSON do
       iex> show(%{user: user})
       %{data: %{user: user_data}}
   """
-  def show(%{user: user, token: token}) do
-    %{data: %{user: user(user), token: token}}
+  def show(%{user: user, token: token} = assigns) do
+    data = %{user: user(user), token: token}
+
+    case assigns[:linked_friend] do
+      nil -> %{data: data}
+      entry -> %{data: Map.put(data, :linked_friend, entry)}
+    end
   end
 
   def show(%{user: user, seat_invitations: invitations}) do

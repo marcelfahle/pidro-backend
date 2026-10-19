@@ -129,16 +129,18 @@ defmodule PidroServerWeb.API.AuthController do
   """
   @spec register(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def register(conn, %{"user" => user_params} = params) do
+    user_params = Map.put(user_params, "friend_slug", params["friend_slug"])
+
     with {:ok, declaration} <- AgeTerms.parse(params),
-         {:ok, user} <- Auth.register_user(user_params),
-         {:ok, user} <- AgeTerms.store(user, declaration) do
+         {:ok, registered} <- Auth.register_user(user_params),
+         {:ok, user} <- AgeTerms.store(registered, declaration) do
       token = Token.generate(user)
       Auth.touch_last_seen(user)
 
       conn
       |> put_status(:created)
       |> put_view(UserJSON)
-      |> render(:show, %{user: user, token: token})
+      |> render(:show, %{user: user, token: token, linked_friend: registered.linked_friend})
     end
   end
 
@@ -292,14 +294,14 @@ defmodule PidroServerWeb.API.AuthController do
 
   defp provider_login(conn, provider, provider_token, params, declaration) do
     case ProviderAuth.authenticate(provider, provider_token, params) do
-      {:ok, user} ->
-        with {:ok, user} <- AgeTerms.store(user, declaration) do
+      {:ok, authenticated} ->
+        with {:ok, user} <- AgeTerms.store(authenticated, declaration) do
           token = Token.generate(user)
           Auth.touch_last_seen(user)
 
           conn
           |> put_view(UserJSON)
-          |> render(:show, %{user: user, token: token})
+          |> render(:show, %{user: user, token: token, linked_friend: authenticated.linked_friend})
         end
 
       {:classic_found, result} ->
@@ -419,14 +421,14 @@ defmodule PidroServerWeb.API.AuthController do
 
     with {:ok, declaration} <- AgeTerms.parse(params),
          {:ok, upgraded} <- Auth.upgrade_guest(user, upgrade_attrs(params)),
-         {:ok, upgraded} <- AgeTerms.store(upgraded, declaration) do
-      Invites.record_upgrade(upgraded.id)
-      Auth.touch_last_seen(upgraded)
-      token = Token.generate(upgraded)
+         {:ok, declared} <- AgeTerms.store(upgraded, declaration) do
+      Invites.record_upgrade(declared.id)
+      Auth.touch_last_seen(declared)
+      token = Token.generate(declared)
 
       conn
       |> put_view(UserJSON)
-      |> render(:show, %{user: upgraded, token: token})
+      |> render(:show, %{user: declared, token: token, linked_friend: upgraded.linked_friend})
     end
   end
 
@@ -741,11 +743,11 @@ defmodule PidroServerWeb.API.AuthController do
     }
   end
 
-  defp upgrade_attrs(%{"user" => user_params}) when is_map(user_params),
-    do: upgrade_attrs(user_params)
+  defp upgrade_attrs(%{"user" => user_params} = params) when is_map(user_params),
+    do: user_params |> upgrade_attrs() |> Map.put("friend_slug", params["friend_slug"])
 
   defp upgrade_attrs(params) when is_map(params) do
-    Map.take(params, ["email", "password", "username"])
+    Map.take(params, ["email", "password", "username", "friend_slug"])
   end
 
   # The look-alike keys of the players connected at the invite's table (R11):

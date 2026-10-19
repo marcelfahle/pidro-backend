@@ -8,6 +8,35 @@ defmodule PidroServer.FriendsTest do
   alias PidroServer.Stats.GameStats
   alias PidroServerWeb.Presence
 
+  test "link signup completes a one-way edge idempotently, without repeating events" do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, room} = RoomManager.create_room(b.id, %{})
+    on_exit(fn -> RoomManager.close_room(room.code) end)
+    {:ok, _} = Friends.add(b.id, a.id)
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+    assert {:ok, linked} = Friends.link_signup({:ok, a}, b.share_slug)
+    assert linked.linked_friend.user_id == b.id
+    assert linked.linked_friend.join_as == "partner"
+    assert Repo.aggregate(Friendship, :count) == 2
+    a_id = a.id
+    b_id = b.id
+
+    assert_receive {:friend_event, ^a_id, "friend_accepted",
+                    %{player: %{join_as: "partner"}, source: "link"}}
+
+    assert_receive {:friend_event, ^b_id, "friend_accepted",
+                    %{player: %{join_as: nil}, source: "link"}}
+
+    assert_receive {:friends_changed, _}
+    assert_receive {:friends_changed, _}
+
+    assert {:ok, _} = Friends.link_signup({:ok, a}, b.share_slug)
+    assert Repo.aggregate(Friendship, :count) == 2
+    refute_received {:friend_event, _, _, _}
+    refute_received {:friends_changed, _}
+  end
+
   test "one edge is incoming only; adding back is mutual; remove deletes both" do
     a = user_fixture()
     b = user_fixture()

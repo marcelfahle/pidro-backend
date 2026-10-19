@@ -90,6 +90,9 @@ defmodule PidroServerWeb.Router do
 
     post "/j/:code/deferred", DeferredInviteCaptureController, :create,
       private: %{rate_limit: [:invite_capture, :invite_capture_code]}
+
+    post "/play/:slug/deferred", DeferredInviteCaptureController, :create,
+      private: %{rate_limit: [:invite_capture, :friend_capture_slug]}
   end
 
   # OpenAPI documentation routes

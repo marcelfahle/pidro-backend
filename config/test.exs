@@ -114,6 +114,7 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
     scale_ms: 1_800_000,
     key: {:param, "code"}
   },
+  friend_capture_slug: %{limit: 1_000_000, scale_ms: 1_800_000, key: {:param, "slug"}},
   invite_deferred: %{limit: 1_000_000, scale_ms: 1_800_000, key: :ip},
   invite_deferred_install: %{
     limit: 1_000_000,
