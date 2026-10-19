@@ -3158,7 +3158,10 @@ defmodule PidroServer.Games.RoomManager do
         |> touch_last_activity()
         |> restore_owner(position)
 
-      new_state = put_room_and_player(state, updated_room, player_id)
+      new_state =
+        state
+        |> put_room_and_player(updated_room, player_id)
+        |> release_holds_elsewhere(updated_room, player_id)
 
       {updated_room, new_state} =
         reconcile_turn_timer_for_current_state(updated_room, room_code, new_state)
