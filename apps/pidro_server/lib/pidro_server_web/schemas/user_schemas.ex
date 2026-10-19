@@ -175,7 +175,12 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
                     }
                   },
                   rule_set: %Schema{type: :string, enum: [:finnish, :louisiana]},
-                  held_since: %Schema{type: :string, format: :"date-time"}
+                  held_since: %Schema{type: :string, format: :"date-time"},
+                  join_as: %Schema{
+                    type: :string,
+                    enum: ["partner", "opponent"],
+                    description: "partner when the held seat is across from the host's seat"
+                  }
                 }
               }
             }

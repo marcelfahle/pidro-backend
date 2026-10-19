@@ -140,7 +140,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
                  "avatar_url" => nil
                },
                "rule_set" => "finnish",
-               "held_since" => DateTime.to_iso8601(live_room.created_at)
+               "held_since" => DateTime.to_iso8601(live_room.created_at),
+               "join_as" => "partner"
              }
            ]
 
@@ -178,6 +179,28 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     assert RoomManager.seat_invitations(friend.id) == []
     {:ok, after_join} = RoomManager.get_room(code)
     assert after_join.config.seat_holds == %{}
+  end
+
+  test "/auth/me says which held seat is the host's partner", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    [east, south, west] = for _ <- 1..3, do: AccountsFixtures.user_fixture()
+
+    holds = %{
+      seat_2: %{type: "held", user_id: east.id},
+      seat_3: %{type: "held", user_id: south.id},
+      seat_4: %{type: "held", user_id: west.id}
+    }
+
+    as_user(conn, host) |> post(~p"/api/v1/rooms", %{seats: holds}) |> json_response(201)
+
+    for {friend, position, join_as} <- [
+          {east, "east", "opponent"},
+          {south, "south", "partner"},
+          {west, "west", "opponent"}
+        ] do
+      me = as_user(conn, friend) |> get(~p"/api/v1/auth/me") |> json_response(200)
+      assert [%{"position" => ^position, "join_as" => ^join_as}] = me["data"]["seat_invitations"]
+    end
   end
 
   test "only the waiting host can hold and release; holds bypass experience and block start", %{

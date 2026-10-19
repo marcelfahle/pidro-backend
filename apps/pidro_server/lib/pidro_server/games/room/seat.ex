@@ -405,6 +405,20 @@ defmodule PidroServer.Games.Room.Seat do
     end)
   end
 
+  @doc """
+  Returns true if no human other than `user_id` holds a seat: everyone else at
+  the table is a bot or an empty seat. A bot keeping a seat for a disconnected
+  human counts as that human.
+  """
+  @spec alone_with_bots?(map(), String.t()) :: boolean()
+  def alone_with_bots?(seats, user_id) when is_map(seats) do
+    Enum.all?(seats, fn {_pos, seat} -> held_for(seat) in [nil, user_id] end)
+  end
+
+  defp held_for(%__MODULE__{occupant_type: :human, user_id: user_id}), do: user_id
+  defp held_for(%__MODULE__{occupant_type: :bot, reserved_for: user_id}), do: user_id
+  defp held_for(%__MODULE__{}), do: nil
+
   # ---------------------------------------------------------------------------
   # Serialization
   # ---------------------------------------------------------------------------

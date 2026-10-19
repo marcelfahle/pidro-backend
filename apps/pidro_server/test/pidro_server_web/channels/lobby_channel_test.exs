@@ -130,7 +130,8 @@ defmodule PidroServerWeb.LobbyChannelTest do
       host_id: host.id,
       host: %{user_id: host.id, display_name: host.username, avatar_url: nil},
       rule_set: "louisiana",
-      held_since: DateTime.to_iso8601(room.created_at)
+      held_since: DateTime.to_iso8601(room.created_at),
+      join_as: "partner"
     }
 
     for ref <- [friend_ref, other_friend_ref] do
@@ -165,8 +166,10 @@ defmodule PidroServerWeb.LobbyChannelTest do
         join_ref: ^ref
       }
 
-      assert Map.drop(invitation, [:position, :held_since]) ==
-               Map.drop(expected, [:position, :held_since])
+      assert Map.drop(invitation, [:position, :held_since, :join_as]) ==
+               Map.drop(expected, [:position, :held_since, :join_as])
+
+      assert invitation.join_as == "opponent"
 
       assert {:ok, time, 0} = DateTime.from_iso8601(held_since)
       assert DateTime.compare(time, room.created_at) == :gt
@@ -197,6 +200,29 @@ defmodule PidroServerWeb.LobbyChannelTest do
     end
 
     refute_receive %Phoenix.Socket.Message{event: "seat_invitation_gone"}
+  end
+
+  test "a seat invitation says whether it is the host's partner or an opponent", %{user: host} do
+    friends = for _ <- 1..3, do: PidroServer.AccountsFixtures.user_fixture()
+
+    for friend <- friends do
+      {:ok, socket} = create_socket(friend)
+      {:ok, _, _socket} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+      assert_push "presence_state", _
+    end
+
+    holds = Map.new(Enum.zip([:east, :south, :west], Enum.map(friends, & &1.id)))
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: holds})
+    assert room.seats.north.user_id == host.id
+
+    for {position, join_as} <- [east: "opponent", south: "partner", west: "opponent"] do
+      assert_receive %Phoenix.Socket.Message{
+        event: "seat_invitation",
+        payload: %{position: ^position, join_as: ^join_as}
+      }
+    end
+
+    RoomManager.close_room(room.code)
   end
 
   test "replacement, room start and host departure remove invitations", %{user: host} do

@@ -3729,7 +3729,8 @@ defmodule PidroServer.Games.RoomManager do
     seat = Map.get(room.seats, position)
 
     with {:ok, bot_pid} <- departure_bot(room, seat) do
-      if position do
+      # Leaving a table of bots, say to join a friend, abandons nobody.
+      if position && not Seat.alone_with_bots?(room.seats, player_id) do
         PidroServer.Stats.record_abandonment(player_id, room.code, position)
       end
 
@@ -4292,8 +4293,15 @@ defmodule PidroServer.Games.RoomManager do
       position: position,
       host_id: room.host_id,
       rule_set: Atom.to_string(room.config.rule_set),
-      held_since: DateTime.to_iso8601(Map.fetch!(room.seat_hold_started_at, position))
+      held_since: DateTime.to_iso8601(Map.fetch!(room.seat_hold_started_at, position)),
+      join_as: join_as(room, position)
     }
+  end
+
+  defp join_as(room, position) do
+    if Positions.get_position(room, room.host_id) == partner_position(position),
+      do: "partner",
+      else: "opponent"
   end
 
   defp invitation_holds(%Room{status: status} = room) when status in [:waiting, :ready],
