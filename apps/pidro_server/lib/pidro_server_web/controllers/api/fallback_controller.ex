@@ -248,6 +248,20 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :invitation_gone}) do
+    conn
+    |> put_status(:not_found)
+    |> json(%{
+      errors: [
+        %{
+          code: "INVITATION_GONE",
+          title: "Invitation gone",
+          detail: "No seat is held for you here"
+        }
+      ]
+    })
+  end
+
   def call(conn, {:error, :room_full}) do
     conn
     |> put_status(:unprocessable_entity)

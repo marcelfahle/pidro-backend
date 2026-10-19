@@ -78,6 +78,7 @@ defmodule PidroServer.Games.GameTopicContractTest do
         assert_push "game_over", %{winner: :east_west, scores: %{east_west: 64, north_south: 42}}
         assert_push "progression_summary", %{xp: 17}
         assert_push "player_kicked", %{position: :south}
+        assert_push "seat_invitation_declined", %{position: :south, reason: "not_now"}
       end
     end
   end
@@ -200,7 +201,8 @@ defmodule PidroServer.Games.GameTopicContractTest do
       {:invite_redeemed,
        %{position: :south, user_id: "other", username: "guest", display_name: "Guest"}},
       {:seat_moved, %{user_id: "other", from: :south, to: :west}},
-      {:kicked, %{position: :south, user_id: "other"}}
+      {:kicked, %{position: :south, user_id: "other"}},
+      {:seat_invitation_declined, %{position: :south, user_id: user_id, reason: "not_now"}}
     ]
   end
 end

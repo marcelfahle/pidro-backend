@@ -152,7 +152,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
     for ref <- [friend_ref, other_friend_ref] do
       assert_receive %Phoenix.Socket.Message{
         event: "seat_invitation_gone",
-        payload: %{code: ^code, position: :south},
+        payload: %{code: ^code, position: :south, reason: "released"},
         join_ref: ^ref
       }
     end
@@ -180,7 +180,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
     for ref <- [friend_ref, other_friend_ref] do
       assert_receive %Phoenix.Socket.Message{
         event: "seat_invitation_gone",
-        payload: %{code: ^code, position: :east},
+        payload: %{code: ^code, position: :east, reason: "declined"},
         join_ref: ^ref
       }
     end
@@ -244,7 +244,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
     assert_receive %Phoenix.Socket.Message{
       event: "seat_invitation_gone",
-      payload: %{code: ^code, position: :west},
+      payload: %{code: ^code, position: :west, reason: "released"},
       join_ref: ^first_ref
     }
 
@@ -255,7 +255,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
     }
 
     :ok = RoomManager.update_room_status(code, :playing)
-    assert_push "seat_invitation_gone", %{code: ^code, position: :west}
+    assert_push "seat_invitation_gone", %{code: ^code, position: :west, reason: "started"}
     assert RoomManager.seat_invitations(second.id) == []
     :ok = RoomManager.close_room(code)
     refute_push "seat_invitation_gone", _
@@ -264,7 +264,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
     code = room.code
     assert_push "seat_invitation", %{code: ^code, position: :east}
     :ok = RoomManager.leave_room(host.id)
-    assert_push "seat_invitation_gone", %{code: ^code, position: :east}
+    assert_push "seat_invitation_gone", %{code: ^code, position: :east, reason: "closed"}
     assert RoomManager.seat_invitations(first.id) == []
 
     {:ok, room} =
@@ -277,7 +277,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
     assert_receive %Phoenix.Socket.Message{
       event: "seat_invitation_gone",
-      payload: %{code: ^code, position: :south},
+      payload: %{code: ^code, position: :south, reason: "closed"},
       join_ref: ^first_ref
     }
 
@@ -286,6 +286,81 @@ defmodule PidroServerWeb.LobbyChannelTest do
       payload: %{code: ^code, position: :west},
       join_ref: ^second_ref
     }
+  end
+
+  test "declining, or sitting down with people elsewhere, opens the seat and tells the host", %{
+    user: host
+  } do
+    friend = PidroServer.AccountsFixtures.user_fixture(%{display_name: "Maija"})
+    stranger = PidroServer.AccountsFixtures.user_fixture()
+
+    {:ok, socket} = create_socket(friend)
+    {:ok, _, lobby} = subscribe_and_join(socket, LobbyChannel, "lobby", %{})
+    assert_push "presence_state", _
+
+    {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{south: friend.id}})
+    code = room.code
+    {:ok, socket} = create_socket(host)
+    {:ok, _, table} = subscribe_and_join(socket, PidroServerWeb.GameChannel, "game:#{code}", %{})
+    assert_push "seat_invitation", %{code: ^code, position: :south}
+
+    assert {:error, :invitation_gone} = RoomManager.decline_seat_hold(code, stranger.id, :south)
+    assert {:error, :invitation_gone} = RoomManager.decline_seat_hold(code, friend.id, :east)
+
+    assert {:ok, declined} =
+             RoomManager.decline_seat_hold(String.downcase(code), friend.id, :south)
+
+    assert declined.config.seat_holds == %{}
+    assert :south in PidroServer.Games.Room.Positions.available(declined)
+
+    maija = %{user_id: friend.id, display_name: "Maija", avatar_url: nil}
+    table_ref = table.join_ref
+    lobby_ref = lobby.join_ref
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_declined",
+      payload: %{position: :south, user: ^maija, reason: "not_now"},
+      join_ref: ^table_ref
+    }
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_gone",
+      payload: %{code: ^code, position: :south, reason: "declined"} = gone,
+      join_ref: ^lobby_ref
+    }
+
+    # An old client reads only code and position.
+    assert %{"code" => ^code, "position" => "south"} = Jason.decode!(Jason.encode!(gone))
+    assert {:error, :invitation_gone} = RoomManager.decline_seat_hold(code, friend.id, :south)
+
+    {:ok, _} = RoomManager.set_seat_hold(code, host.id, :south, friend.id)
+    assert_push "seat_invitation", %{code: ^code, position: :south}
+
+    # Alone, then with bots only: still coming.
+    {:ok, own} = RoomManager.create_room(friend.id)
+    {:ok, _, :east} = RoomManager.join_bot(own.code, "bot_east", self(), :east)
+    assert [%{code: ^code}] = RoomManager.seat_invitations(friend.id)
+    :ok = RoomManager.leave_room(friend.id)
+
+    other_host = PidroServer.AccountsFixtures.user_fixture()
+    {:ok, elsewhere} = RoomManager.create_room(other_host.id)
+    {:ok, _, _} = RoomManager.join_room(elsewhere.code, friend.id)
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_declined",
+      payload: %{position: :south, user: ^maija, reason: "sat_elsewhere"},
+      join_ref: ^table_ref
+    }
+
+    assert_receive %Phoenix.Socket.Message{
+      event: "seat_invitation_gone",
+      payload: %{code: ^code, position: :south, reason: "declined"},
+      join_ref: ^lobby_ref
+    }
+
+    assert RoomManager.seat_invitations(friend.id) == []
+    {:ok, reopened} = RoomManager.get_room(code)
+    assert reopened.config.seat_holds == %{}
   end
 
   test "a block committed before queued lobby delivery suppresses the invitation", %{user: host} do

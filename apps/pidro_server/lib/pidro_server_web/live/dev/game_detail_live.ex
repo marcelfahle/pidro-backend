@@ -261,7 +261,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
              :readiness_updated,
              :invite_redeemed,
              :seat_moved,
-             :kicked
+             :kicked,
+             :seat_invitation_declined
            ],
       do: {:noreply, socket}
 
