@@ -1152,8 +1152,10 @@ Ignore marks the incoming edge as ignored for you only. The request drops out of
 `added_you` and is no longer counted in `requests_waiting`. The sender is not told, gets
 no `friends_changed`, and still sees the request in `requested`. The edge stays, so
 adding them back makes you friends at once. Search and recent still report the sender
-as `added_you`. Un-ignore clears the mark. Both are idempotent, and a no-op when there
-is no incoming edge. Remove and block delete the edges, and any ignore mark with them.
+as `added_you`. If the sender cancels and sends the request again, it stays hidden the
+same way and tells you nothing. Un-ignore, adding the sender yourself or a block ends
+the ignore. Ignore and un-ignore are idempotent, and ignore is a no-op when there is no
+incoming edge. Remove and block delete the edges.
 
 Self-add and self-remove return `400 {"error":"CANNOT_FRIEND_SELF"}`. A missing,
 malformed or guest target returns `404 {"error":"USER_NOT_FOUND"}`.

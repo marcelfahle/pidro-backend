@@ -119,6 +119,38 @@ defmodule PidroServer.FriendsTest do
     assert friend_id == b.id
   end
 
+  test "an ignored request stays ignored when the sender cancels and sends it again" do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.ignore(b.id, a.id)
+    {:ok, _} = Friends.remove(a.id, b.id)
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    assert {:ok, %{requested: [%{user_id: b_id}]}} = Friends.add(a.id, b.id)
+    assert b_id == b.id
+    assert %{added_you: [], requests_waiting: 0, waiting_for_you: 0} = Friends.list(b.id)
+    refute_received {:friend_event, _, _, _}
+
+    assert {:ok, %{added_you: [%{user_id: a_id}]}} = Friends.unignore(b.id, a.id)
+    assert a_id == a.id
+    {:ok, _} = Friends.remove(a.id, b.id)
+    {:ok, _} = Friends.add(a.id, b.id)
+    assert_receive {:friend_event, ^b_id, "friend_request", _}
+  end
+
+  test "answering an ignored player ends the ignore" do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.ignore(b.id, a.id)
+    {:ok, _} = Friends.add(b.id, a.id)
+    {:ok, _} = Friends.remove(b.id, a.id)
+    {:ok, _} = Friends.add(a.id, b.id)
+    assert [%{user_id: id}] = Friends.list(b.id).added_you
+    assert id == a.id
+  end
+
   test "a new request tells only its receiver, with the sender's entry and last shared game" do
     a = user_fixture(%{display_name: "Pekka"})
     b = user_fixture()

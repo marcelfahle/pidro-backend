@@ -4,10 +4,10 @@ defmodule PidroServer.Blocks do
 
   alias PidroServer.Accounts.User
   alias PidroServer.Blocks.Block
-  alias PidroServer.Friends.Friendship
+  alias PidroServer.Friends.{Friendship, Ignore}
   alias PidroServer.Repo
 
-  @doc "Blocks a player and removes friendship in both directions atomically."
+  @doc "Blocks a player and removes friendship and ignores in both directions atomically."
   @spec block(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def block(user_id, blocked_id) do
     with {:ok, id} <- target(user_id, blocked_id),
@@ -28,6 +28,13 @@ defmodule PidroServer.Blocks do
                  where:
                    (f.user_id == ^user_id and f.friend_id == ^id) or
                      (f.user_id == ^id and f.friend_id == ^user_id)
+             )
+
+             Repo.delete_all(
+               from i in Ignore,
+                 where:
+                   (i.user_id == ^user_id and i.ignored_id == ^id) or
+                     (i.user_id == ^id and i.ignored_id == ^user_id)
              )
            end) do
       for affected_id <- [user_id, id] do
