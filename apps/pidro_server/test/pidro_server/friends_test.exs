@@ -21,16 +21,84 @@ defmodule PidroServer.FriendsTest do
     assert [%{user_id: other_id}] = Friends.list(a.id).friends
     assert other_id == b.id
     assert {:ok, %{friends: [], added_you: []}} = Friends.remove(a.id, b.id)
-    assert Friends.list(b.id) == %{friends: [], added_you: []}
+    assert Friends.list(b.id) == %{friends: [], added_you: [], requested: [], requests_waiting: 0}
     assert Repo.aggregate(Friendship, :count) == 0
     assert {:ok, %{friends: [], added_you: []}} = Friends.remove(a.id, b.id)
+  end
+
+  test "a sent request is listed as requested, newest first, until cancelled" do
+    caller = user_fixture()
+    old = user_fixture()
+    new = user_fixture()
+    {:ok, _} = Friends.add(caller.id, old.id)
+    {:ok, _} = Friends.add(caller.id, new.id)
+    {:ok, _} = Friends.add(new.id, caller.id)
+    newest = user_fixture()
+    {:ok, _} = Friends.add(caller.id, newest.id)
+
+    assert %{friends: [%{user_id: friend_id}], requested: requested} = Friends.list(caller.id)
+    assert friend_id == new.id
+    assert Enum.map(requested, & &1.user_id) == [newest.id, old.id]
+    assert Enum.all?(requested, &match?(%DateTime{}, &1.requested_at))
+    assert Friends.list(old.id).requests_waiting == 1
+
+    assert {:ok, %{requested: [%{user_id: id}]}} = Friends.remove(caller.id, newest.id)
+    assert id == old.id
+  end
+
+  test "cancel removes only the caller's edge and never an incoming request" do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, _} = Friends.add(b.id, a.id)
+
+    assert {:ok, %{added_you: [%{user_id: id}], requests_waiting: 1}} = Friends.remove(a.id, b.id)
+    assert id == b.id
+    assert [%{user_id: ^id}] = Friends.list(a.id).added_you
+
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.remove(a.id, b.id)
+    assert Repo.aggregate(Friendship, :count) == 0
+  end
+
+  test "ignore hides a request from the recipient only; add back still makes friends" do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, sender_view} = Friends.add(a.id, b.id)
+    Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+
+    assert {:ok, %{added_you: [], requests_waiting: 0}} = Friends.ignore(b.id, a.id)
+    assert_receive {:friends_changed, id} when id == b.id
+    refute_received {:friends_changed, _}
+    assert Friends.list(a.id) == sender_view
+
+    assert {:ok, %{added_you: [%{user_id: id}], requests_waiting: 1}} =
+             Friends.unignore(b.id, a.id)
+
+    assert id == a.id
+
+    {:ok, _} = Friends.ignore(b.id, a.id)
+    assert {:ok, %{friends: [%{user_id: ^id}], requested: []}} = Friends.add(b.id, a.id)
+    assert [%{user_id: friend_id}] = Friends.list(a.id).friends
+    assert friend_id == b.id
+  end
+
+  test "blocking clears an ignore mark with the edge" do
+    a = user_fixture()
+    b = user_fixture()
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.ignore(b.id, a.id)
+    {:ok, _} = PidroServer.Blocks.block(b.id, a.id)
+    {:ok, _} = PidroServer.Blocks.unblock(b.id, a.id)
+    {:ok, _} = Friends.add(a.id, b.id)
+    assert [%{user_id: id}] = Friends.list(b.id).added_you
+    assert id == a.id
   end
 
   test "self, guests, missing and malformed targets are rejected without edges" do
     a = user_fixture()
     guest = guest_fixture()
 
-    for operation <- [&Friends.add/2, &Friends.remove/2] do
+    for operation <- [&Friends.add/2, &Friends.remove/2, &Friends.ignore/2, &Friends.unignore/2] do
       assert {:error, :cannot_friend_self} = operation.(a.id, a.id)
 
       for id <- [guest.id, Ecto.UUID.generate(), "invalid"] do

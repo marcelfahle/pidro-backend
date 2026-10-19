@@ -7,6 +7,8 @@ defmodule PidroServer.Friends.Friendship do
   schema "friendships" do
     field :user_id, :binary_id
     field :friend_id, :binary_id
+    # Set by the recipient only; the sender's view never changes.
+    field :ignored_at, :utc_datetime_usec
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
 
