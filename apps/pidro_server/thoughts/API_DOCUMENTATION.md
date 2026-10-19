@@ -1395,7 +1395,8 @@ This is also the enriched `/me` entry. `host_id` stays for existing clients;
 `host` is a player entry without presence. `held_since` is the hold's creation
 time, unchanged by an identical repeated hold. `rule_set` is `finnish` or `louisiana`.
 `join_as` is `partner` when the held seat is across from the host's seat, otherwise
-`opponent`; older builds ignore it.
+`opponent`; older builds ignore it. When the host moves seats, every live invitation
+whose `join_as` changed is sent again as `seat_invitation`; upsert it by `(code, position)`.
 Blocked pairs receive no invitation, and `/me` excludes their holds.
 Refetch `/me` on `friends_changed` and after unblocking: blocks do not revoke
 holds or emit invitation events, but change which existing holds `/me` lists.

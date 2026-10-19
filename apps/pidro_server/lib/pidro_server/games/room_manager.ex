@@ -4596,8 +4596,12 @@ defmodule PidroServer.Games.RoomManager do
       end
     end
 
+    # A host who moves seats turns a partner seat into an opponent seat, so that
+    # invitation goes out again with its new `join_as`.
     if after_room do
-      for {position, user_id} <- new_holds, old_holds[position] != user_id do
+      for {position, user_id} <- new_holds,
+          old_holds[position] != user_id or
+            join_as(before, position) != join_as(after_room, position) do
         Phoenix.PubSub.broadcast(
           PidroServer.PubSub,
           "lobby:invitations:#{user_id}",
