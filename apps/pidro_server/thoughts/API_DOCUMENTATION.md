@@ -482,7 +482,7 @@ PUT /api/v1/rooms/A1B2/seats/east
 `seat` is `"ai"`, `"open"`, `{ "type": "open", "min_games": 0 | 100 | 1000, "password"?: bool }`
 or `{ "type": "held", "user_id": "<uuid>" }`. Host only, while waiting or ready. The entry
 replaces whatever the seat is: a bot in it leaves (its process stops), a hold is released and
-the invitee gets `seat_invitation_gone`, a requirement or password goes. Then the entry applies
+the invitee gets `seat_invitation_gone` (reason `released`), a requirement or password goes. Then the entry applies
 as at creation: `"ai"` seats a bot at the room's difficulty, password seats follow the rules
 above, holds follow the hold rules below. `solo` keeps its value from creation. The same entry again
 changes nothing. Otherwise the room, the lobby and readiness (reset, as for a hold) all hear it.

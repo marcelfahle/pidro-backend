@@ -792,7 +792,8 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       refute Map.has_key?(botted["room"]["seats"]["east"], "held_for")
       friend_id = friend.id
 
-      assert_receive {:seat_invitation_gone, ^friend_id, %{code: code, position: :east}}
+      assert_receive {:seat_invitation_gone, ^friend_id,
+                      %{code: code, position: :east, reason: "released"}}
                      when code == room.code
 
       assert RoomManager.seat_invitations(friend.id) == []
