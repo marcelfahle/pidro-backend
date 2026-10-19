@@ -13,7 +13,12 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
         user_id: %Schema{type: :string, format: :uuid},
         display_name: %Schema{type: :string, nullable: true},
         avatar_url: %Schema{type: :string, nullable: true},
-        presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]}
+        presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]},
+        table_company: %Schema{
+          type: :string,
+          enum: ["bots", "people"],
+          description: "Only when at_table: seated with bots alone, or with other people"
+        }
       }
     })
   end
@@ -29,6 +34,11 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
         display_name: %Schema{type: :string, nullable: true},
         avatar_url: %Schema{type: :string, nullable: true},
         presence: %Schema{type: :string, enum: ["online", "at_table", "offline"]},
+        table_company: %Schema{
+          type: :string,
+          enum: ["bots", "people"],
+          description: "Only when at_table: seated with bots alone, or with other people"
+        },
         relation: %Schema{type: :string, enum: ["none", "friend", "added_you", "added"]}
       }
     })
