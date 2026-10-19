@@ -120,8 +120,10 @@ defmodule PidroServerWeb.API.FriendControllerTest do
 
     response = conn |> auth(b) |> delete(~p"/api/v1/friends/#{a.id}/ignore") |> json_response(200)
     assert_schema(response, "FriendsResponse")
-    assert response["data"]["added_you"] == [player(a)]
-    assert response["data"]["requests_waiting"] == 1
+
+    assert response == %{
+             "data" => %{hidden["data"] | "added_you" => [player(a)], "requests_waiting" => 1}
+           }
   end
 
   test "guest callers are forbidden on every route; missing auth is unauthorized", %{conn: conn} do
