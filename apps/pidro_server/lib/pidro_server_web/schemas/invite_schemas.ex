@@ -153,7 +153,11 @@ defmodule PidroServerWeb.Schemas.InviteSchemas do
               status: %Schema{type: :string, enum: ["free", "occupied"]},
               held_for: RoomSchemas.HeldFor,
               vacated_by: %Schema{type: :string, description: "Departed player's display name"},
-              min_games: %Schema{type: :integer, enum: [0, 100, 1000]}
+              min_games: %Schema{type: :integer, enum: [0, 100, 1000]},
+              password: %Schema{
+                type: :boolean,
+                description: "Whether sitting here needs the table's seat password"
+              }
             }
           }
         },

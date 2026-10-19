@@ -7,8 +7,10 @@ defmodule PidroServer.Games.Room.Config do
   still validated and echoed, but every accepted value uses the same production
   rulebook. New clients should omit it.
 
-  Seat requirements and friend holds stay in the config; holds are consumed
-  when their user sits down or released by the host. The initial bot/open
+  Seat requirements, password seats and friend holds stay in the config; holds
+  are consumed when their user sits down or released by the host. A room has
+  at most one seat password, drawn when its first seat needs one and kept for
+  the life of the room, so it carries over on rematch. The initial bot/open
   plan is returned beside it because occupants change during play.
 
   There are two ways in, and both end at the same validation:
@@ -25,7 +27,8 @@ defmodule PidroServer.Games.Room.Config do
       name            := string, trimmed, at most 60 chars; missing or blank -> none
                          at most 4096 bytes as sent, whatever the char count
       seats           := { seat_2?, seat_3?, seat_4? }      any other key -> error "seats.<key>"
-      seat            := "ai" | "open" | { type: "open", min_games: 0 | 100 | 1000 }
+      seat            := "ai" | "open" | open_seat | { type: "held", user_id: uuid }
+      open_seat       := { type: "open", min_games: 0 | 100 | 1000, password?: boolean }
       bot_difficulty  := "random" | "basic" | "smart"       missing -> "basic"
       rule_set        := "finnish" | "louisiana"             missing -> "finnish"
 
@@ -40,7 +43,8 @@ defmodule PidroServer.Games.Room.Config do
   `"settings"`, `"bot_difficulty"` or `"seats.seat_5"`. Caller input is never
   converted to an atom.
 
-  This module is pure: it reads no application config, no repo and no process.
+  This module reads no application config, no repo and no process. The only
+  impure step is drawing a seat password from `:crypto`.
   """
 
   @type bot_difficulty :: :random | :basic | :smart
@@ -58,15 +62,21 @@ defmodule PidroServer.Games.Room.Config do
           rule_set: :finnish | :louisiana,
           solo: boolean(),
           seat_requirements: %{optional(atom()) => 0 | 100 | 1000},
-          seat_holds: %{optional(atom()) => Ecto.UUID.t()}
+          seat_holds: %{optional(atom()) => Ecto.UUID.t()},
+          password_seats: [atom()],
+          seat_password: String.t() | nil
         }
 
+  # The seat password must never reach a log, crash report included.
+  @derive {Inspect, except: [:seat_password]}
   defstruct name: nil,
             bot_difficulty: :basic,
             rule_set: :finnish,
             solo: false,
             seat_requirements: %{},
-            seat_holds: %{}
+            seat_holds: %{},
+            password_seats: [],
+            seat_password: nil
 
   @max_name_length 60
 
@@ -82,14 +92,25 @@ defmodule PidroServer.Games.Room.Config do
   @difficulty_wire_values Enum.map(@difficulties, &Atom.to_string/1)
 
   # Validation and error order for the config's own fields.
-  @fields [:name, :bot_difficulty, :rule_set, :solo, :seat_requirements, :seat_holds]
+  @fields [
+    :name,
+    :bot_difficulty,
+    :rule_set,
+    :solo,
+    :seat_requirements,
+    :seat_holds,
+    :password_seats,
+    :seat_password
+  ]
   @field_by_wire %{
     "name" => :name,
     "bot_difficulty" => :bot_difficulty,
     "rule_set" => :rule_set,
     "solo" => :solo,
     "seat_requirements" => :seat_requirements,
-    "seat_holds" => :seat_holds
+    "seat_holds" => :seat_holds,
+    "password_seats" => :password_seats,
+    "seat_password" => :seat_password
   }
   @rule_set_by_wire %{"finnish" => :finnish, "louisiana" => :louisiana}
 
@@ -102,6 +123,7 @@ defmodule PidroServer.Games.Room.Config do
   # What a seat may be asked to hold, in the order the error message lists them.
   @seat_occupants [{"ai", :bot}, {"open", :open}]
   @seat_values Enum.map(@seat_occupants, &elem(&1, 0))
+  @open_seat_message "must be an open seat with min_games of 0, 100 or 1000 and a boolean password"
 
   # ---------------------------------------------------------------------------
   # Constructors
@@ -162,7 +184,7 @@ defmodule PidroServer.Games.Room.Config do
   """
   @spec parse_create_params(term()) :: {:ok, t(), seat_plan()} | {:error, errors()}
   def parse_create_params(body) when is_map(body) and not is_struct(body) do
-    {seat_plan, requirements, holds, seat_errors} = parse_seats(body)
+    {seat_plan, requirements, holds, password_seats, seat_errors} = parse_seats(body)
     unknown_errors = unknown_key_errors(Map.keys(body), @accepted_fields, "", &body_label/1)
 
     {config, config_errors} =
@@ -171,6 +193,7 @@ defmodule PidroServer.Games.Room.Config do
       |> Map.put("solo", solo_plan?(seat_plan))
       |> Map.put("seat_requirements", requirements)
       |> Map.put("seat_holds", holds)
+      |> Map.put("password_seats", password_seats)
       |> build()
       |> split_result()
 
@@ -253,12 +276,79 @@ defmodule PidroServer.Games.Room.Config do
         do: Map.get(config.seat_requirements, seat.position, 0),
         else: 0
 
-    data = seat |> PidroServer.Games.Room.Seat.serialize() |> Map.put(:min_games, min_games)
+    password? =
+      seat.occupant_type == :vacant and is_nil(held_user_id) and
+        seat.position in config.password_seats
+
+    data =
+      seat
+      |> PidroServer.Games.Room.Seat.serialize()
+      |> Map.merge(%{min_games: min_games, password: password?})
 
     if held_user_id,
       do: Map.merge(data, %{status: "free", held_for: %{user_id: held_user_id}}),
       else: data
   end
+
+  # ---------------------------------------------------------------------------
+  # Seat Passwords
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Makes `position` a password seat, or an ordinary one again.
+
+  The first password seat draws the room's password; later seats share it, and
+  clearing every password seat keeps it, so the host never has to read out a
+  second one.
+  """
+  @spec put_password_seat(t(), atom(), boolean()) :: t()
+  def put_password_seat(%__MODULE__{} = config, position, true) do
+    %{
+      config
+      | password_seats: Enum.sort(Enum.uniq([position | config.password_seats])),
+        seat_password: config.seat_password || generate_password()
+    }
+  end
+
+  def put_password_seat(%__MODULE__{} = config, position, false),
+    do: %{config | password_seats: List.delete(config.password_seats, position)}
+
+  @doc """
+  Checks the password for sitting at `position`. A seat without a password, or
+  one held for `user_id`, needs none.
+  """
+  @spec check_password(t(), atom(), String.t(), term()) :: :ok | {:error, :seat_requires_password}
+  def check_password(%__MODULE__{} = config, position, user_id, password) do
+    cond do
+      position not in config.password_seats -> :ok
+      config.seat_holds[position] == user_id -> :ok
+      is_binary(password) and Plug.Crypto.secure_compare(password, config.seat_password) -> :ok
+      true -> {:error, :seat_requires_password}
+    end
+  end
+
+  @doc """
+  Draws a four-digit seat password that is easy to read out but not to guess:
+  at least three different digits and no straight run like 1234 or 4321.
+  """
+  @spec generate_password() :: String.t()
+  def generate_password do
+    <<n::32>> = :crypto.strong_rand_bytes(4)
+    password = n |> rem(10_000) |> Integer.to_string() |> String.pad_leading(4, "0")
+    if easy_password?(password), do: generate_password(), else: password
+  end
+
+  @doc "True for a four-digit password a person would guess first."
+  @spec easy_password?(String.t()) :: boolean()
+  def easy_password?(<<_::binary-size(4)>> = password) do
+    digits = for <<d <- password>>, do: d - ?0
+    steps = digits |> Enum.chunk_every(2, 1, :discard) |> Enum.map(fn [a, b] -> b - a end)
+
+    not Enum.all?(digits, &(&1 in 0..9)) or length(Enum.uniq(digits)) < 3 or
+      steps in [[1, 1, 1], [-1, -1, -1]]
+  end
+
+  def easy_password?(_password), do: true
 
   # ---------------------------------------------------------------------------
   # Validation
@@ -284,7 +374,8 @@ defmodule PidroServer.Games.Room.Config do
 
     case field_errors ++ unknown_key_errors(unknown, [], "", &attr_label/1) do
       [] ->
-        {:ok, struct!(__MODULE__, for({field, {:ok, value}} <- results, do: {field, value}))}
+        config = struct!(__MODULE__, for({field, {:ok, value}} <- results, do: {field, value}))
+        {:ok, Enum.reduce(config.password_seats, config, &put_password_seat(&2, &1, true))}
 
       errors ->
         {:error, {:invalid_room_params, errors}}
@@ -364,6 +455,22 @@ defmodule PidroServer.Games.Room.Config do
 
   defp validate(:seat_holds, _), do: {:error, "must be a map"}
 
+  defp validate(:password_seats, positions) when is_list(positions) do
+    if Enum.all?(positions, &(&1 in [:north, :east, :south, :west])),
+      do: {:ok, positions |> Enum.uniq() |> Enum.sort()},
+      else: {:error, "must list north, east, south or west"}
+  end
+
+  defp validate(:password_seats, _), do: {:error, "must be a list"}
+
+  defp validate(:seat_password, nil), do: {:ok, nil}
+
+  defp validate(:seat_password, password) do
+    if easy_password?(password),
+      do: {:error, "must be four digits without an easy pattern"},
+      else: {:ok, password}
+  end
+
   defp validate(:rule_set, value) when value in [:finnish, :louisiana], do: {:ok, value}
 
   defp validate(:rule_set, value) do
@@ -382,7 +489,7 @@ defmodule PidroServer.Games.Room.Config do
   defp parse_seats(body) do
     case Map.fetch(body, "seats") do
       :error ->
-        {open_plan(), %{}, %{}, []}
+        {open_plan(), %{}, %{}, [], []}
 
       {:ok, seats} when is_map(seats) and not is_struct(seats) ->
         results =
@@ -395,7 +502,7 @@ defmodule PidroServer.Games.Room.Config do
           end)
 
         requirements =
-          for {_key, position, {:ok, :open, min_games}} <- results,
+          for {_key, position, {:ok, :open, {min_games, _password?}}} <- results,
               min_games > 0,
               into: %{},
               do: {position, min_games}
@@ -405,14 +512,17 @@ defmodule PidroServer.Games.Room.Config do
               into: %{},
               do: {position, user_id}
 
+        password_seats =
+          for {_key, position, {:ok, :open, {_min_games, true}}} <- results, do: position
+
         value_errors =
           for {key, _position, {:error, message}} <- results, do: error("seats." <> key, message)
 
-        {plan, requirements, holds,
+        {plan, requirements, holds, password_seats,
          value_errors ++ unknown_key_errors(Map.keys(seats), @seat_keys, "seats.", &body_label/1)}
 
       {:ok, _other} ->
-        {open_plan(), %{}, %{}, [error("seats", "must be an object")]}
+        {open_plan(), %{}, %{}, [], [error("seats", "must be an object")]}
     end
   end
 
@@ -422,11 +532,10 @@ defmodule PidroServer.Games.Room.Config do
         {:ok, :bot, 0}
 
       "open" ->
-        {:ok, :open, 0}
+        {:ok, :open, {0, false}}
 
-      %{"type" => "open", "min_games" => games} = value
-      when games in [0, 100, 1000] and map_size(value) == 2 ->
-        {:ok, :open, games}
+      %{"type" => "open"} = value ->
+        parse_open_seat(value)
 
       %{"type" => "held", "user_id" => user_id} = value when map_size(value) == 2 ->
         case Ecto.UUID.cast(user_id) do
@@ -435,11 +544,21 @@ defmodule PidroServer.Games.Room.Config do
         end
 
       value when is_map(value) ->
-        {:error, "must be an open seat with min_games of 0, 100 or 1000"}
+        {:error, @open_seat_message}
 
       _ ->
         {:error, "must be one of: #{Enum.join(@seat_values, ", ")}"}
     end
+  end
+
+  defp parse_open_seat(value) do
+    games = Map.get(value, "min_games")
+    password? = Map.get(value, "password", false)
+
+    if games in [0, 100, 1000] and is_boolean(password?) and
+         Enum.all?(Map.keys(value), &(&1 in ["type", "min_games", "password"])),
+       do: {:ok, :open, {games, password?}},
+       else: {:error, @open_seat_message}
   end
 
   defp open_plan, do: Map.new(@seats, fn {_key, position} -> {position, :open} end)

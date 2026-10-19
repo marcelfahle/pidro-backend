@@ -19,7 +19,7 @@ defmodule PidroServerWeb.ErrorContract do
     room_full already_in_room already_in_this_room not_in_room
     player_not_in_room seat_not_controlled invalid_locked
     room_not_available_for_spectators spectators_full already_spectating not_spectating
-    profile_unavailable seat_taken team_full invalid_position room_not_available
+    profile_unavailable seat_requires_password seat_taken team_full invalid_position room_not_available
     not_owner room_not_playing seat_not_bot_substitute seat_not_vacant already_seated
     no_vacant_seat table_full room_not_waiting invite_limit table_started table_closed
     invite_expired invite_revoked invite_moved table_locked kicked seat_not_kickable

@@ -26,7 +26,7 @@ defmodule PidroServerWeb.API.RoomJSON do
       %{data: %{room: room_data, assigned_position: "north"}}
   """
   def show(assigns) do
-    data = %{room: room(assigns.room, users_for_rooms([assigns.room]))}
+    data = %{room: host_room(assigns.room, assigns[:current_user])}
     data = maybe_add_assigned_position(data, assigns)
     %{data: data}
   end
@@ -57,8 +57,22 @@ defmodule PidroServerWeb.API.RoomJSON do
       iex> created(%{room: room})
       %{data: %{room: room_data, code: "A1B2"}}
   """
-  def created(%{room: room}) do
-    %{data: %{room: room(room, users_for_rooms([room])), code: room.code}}
+  def created(%{room: room} = assigns) do
+    %{data: %{room: host_room(room, assigns[:current_user]), code: room.code}}
+  end
+
+  # The seat password is the host's to read out; nobody else's payload has it.
+  defp host_room(room, current_user) do
+    data = room(room, users_for_rooms([room]))
+
+    case {current_user, Map.get(room, :config)} do
+      {%{id: id}, %Config{seat_password: password}}
+      when id == room.host_id and is_binary(password) ->
+        Map.put(data, :seat_password, password)
+
+      _ ->
+        data
+    end
   end
 
   @doc """

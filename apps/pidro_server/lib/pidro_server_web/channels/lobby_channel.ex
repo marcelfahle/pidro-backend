@@ -288,7 +288,8 @@ defmodule PidroServerWeb.LobbyChannel do
         seat_index: index,
         status: if(player_id, do: "occupied", else: "free"),
         player: player_data,
-        min_games: 0
+        min_games: 0,
+        password: false
       }
 
       case seat do
@@ -298,6 +299,7 @@ defmodule PidroServerWeb.LobbyChannel do
 
           Map.merge(base, %{
             min_games: seat_data.min_games,
+            password: seat_data.password,
             occupant_type: seat_data.occupant_type,
             lifecycle_status: seat_data.status,
             is_owner: seat_data.is_owner,

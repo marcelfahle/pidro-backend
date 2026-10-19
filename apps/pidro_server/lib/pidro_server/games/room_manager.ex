@@ -267,6 +267,19 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  @doc """
+  Makes a vacant, unheld waiting-room seat a password seat, or an ordinary one
+  again; host only. The first password seat draws the room's password.
+  """
+  @spec set_seat_password(String.t(), String.t(), Positions.position(), boolean()) ::
+          {:ok, Room.t()} | {:error, term()}
+  def set_seat_password(code, host_id, position, password?) when is_boolean(password?) do
+    GenServer.call(
+      __MODULE__,
+      {:set_seat_password, String.upcase(code), host_id, position, password?}
+    )
+  end
+
   @doc "Pending seat invitations derived from live waiting-room holds."
   @spec seat_invitations(String.t()) :: [map()]
   def seat_invitations(user_id) do
@@ -338,6 +351,8 @@ defmodule PidroServer.Games.RoomManager do
   - `{:error, :table_locked}` - The host locked the table (see `set_locked/3`)
   - `{:error, :kicked}` - The host kicked this player from the room (see `kick_player/3`)
   - `{:error, :account_required}` - A guest tried to claim an ordinary open seat
+  - `{:error, :seat_requires_password}` - The seat needs the room's password and
+    `password` is missing or wrong
 
   ## Examples
 
@@ -361,13 +376,14 @@ defmodule PidroServer.Games.RoomManager do
              | :kicked
              | :account_required
              | :profile_unavailable
+             | :seat_requires_password
              | {:seat_requires_games, pos_integer(), non_neg_integer()}}
-  def join_room(room_code, player, position \\ nil) do
+  def join_room(room_code, player, position \\ nil, password \\ nil) do
     {player_id, guest?} = admission_identity(player)
 
     GenServer.call(
       __MODULE__,
-      {:join_room, String.upcase(room_code), player_id, position, guest?}
+      {:join_room, String.upcase(room_code), player_id, position, guest?, password}
     )
   end
 
@@ -997,6 +1013,7 @@ defmodule PidroServer.Games.RoomManager do
              | :room_full
              | :invalid_position
              | :profile_unavailable
+             | :seat_requires_password
              | {:seat_requires_games, pos_integer(), non_neg_integer()}
              | {:seat_taken, [Positions.position()]}}
   def claim_seat(room_code, room_id, user_id, opts \\ []) do
@@ -1061,6 +1078,7 @@ defmodule PidroServer.Games.RoomManager do
              | :seat_taken
              | :invalid_position
              | :profile_unavailable
+             | :seat_requires_password
              | {:seat_requires_games, pos_integer(), non_neg_integer()}}
   def move_seat(room_code, requesting_user_id, target_user_id, position) do
     GenServer.call(
@@ -1269,6 +1287,24 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
+  def handle_call({:set_seat_password, code, host_id, position, password?}, _from, state) do
+    with {:ok, room} <- fetch_room(state, code),
+         :ok <- ensure_owner(room, host_id),
+         :ok <- ensure_waiting(room),
+         :ok <- ensure_hold_position(room, position, nil),
+         :ok <- if(room.config.seat_holds[position], do: {:error, :seat_taken}, else: :ok) do
+      updated =
+        %{room | config: Config.put_password_seat(room.config, position, password?)}
+        |> touch_last_activity()
+
+      broadcast_room(code, updated)
+      broadcast_lobby_event({:room_updated, updated})
+      {:reply, {:ok, updated}, put_room(state, updated)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   @impl true
   def handle_call({:create_room, host_id, %Config{} = config}, _from, %State{} = state) do
     # If the player is stuck in a room from a previous disconnected session
@@ -1349,14 +1385,14 @@ defmodule PidroServer.Games.RoomManager do
 
   @impl true
   def handle_call(
-        {:join_room, room_code, player_id, position, guest?},
+        {:join_room, room_code, player_id, position, guest?, password},
         _from,
         %State{} = state
       ) do
     with {:ok, %Room{} = room} <- fetch_room(state, room_code) do
       if room.status == :playing,
         do: join_substitute(state, room, player_id, position, guest?),
-        else: join_open_seat(state, room, player_id, position, guest?)
+        else: join_open_seat(state, room, player_id, position, guest?, password)
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -1436,7 +1472,13 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_can_move(room, requesting_user_id, target_user_id),
          :ok <- ensure_waiting(room),
          {:ok, moved_room, from} <- Positions.move(room, target_user_id, position),
-         :ok <- ensure_seat_requirement(room, target_user_id, position) do
+         :ok <-
+           ensure_seat_requirement(
+             room,
+             target_user_id,
+             position,
+             move_password(room, requesting_user_id, from)
+           ) do
       updated_room =
         moved_room
         |> move_seat_struct(from, position)
@@ -3138,7 +3180,7 @@ defmodule PidroServer.Games.RoomManager do
          {:ok, hint} <- resolve_hint(room, Map.get(claim, :hint)),
          {:ok, updated_room, position, hint_honored} <-
            claim_position(room, user_id, Map.get(claim, :position), hint),
-         :ok <- ensure_seat_requirement(room, user_id, position) do
+         :ok <- ensure_seat_requirement(room, user_id, position, nil) do
       next_state = maybe_evict_from_other_room(state, user_id, room_code)
 
       with :ok <- ensure_not_in_other_room(next_state, user_id, room_code) do
@@ -3173,13 +3215,14 @@ defmodule PidroServer.Games.RoomManager do
          %Room{code: room_code} = room,
          player_id,
          position,
-         guest?
+         guest?,
+         password
        ) do
     with :ok <- ensure_room_joinable(room, player_id),
          :ok <- ensure_ordinary_admission(room, player_id, guest?),
          :ok <- ensure_can_leave_other_room(state, player_id, room_code),
          {:ok, updated_room, assigned_position} <- Positions.assign(room, player_id, position),
-         :ok <- ensure_seat_requirement(room, player_id, assigned_position) do
+         :ok <- ensure_seat_requirement(room, player_id, assigned_position, password) do
       next_state = maybe_evict_from_other_room(state, player_id, room_code)
 
       with :ok <- ensure_not_in_other_room(next_state, player_id, room_code) do
@@ -3195,7 +3238,14 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  defp ensure_seat_requirement(room, user_id, position) do
+  # A move keeps the password the mover already gave: from one password seat to
+  # another, or wherever the host puts them.
+  defp move_password(room, requesting_user_id, from) do
+    if requesting_user_id == room.host_id or from in room.config.password_seats,
+      do: room.config.seat_password
+  end
+
+  defp ensure_seat_requirement(room, user_id, position, password) do
     current_seat = room.seats[Positions.get_position(room, user_id)]
 
     requirement =
@@ -3203,20 +3253,24 @@ defmodule PidroServer.Games.RoomManager do
         do: 0,
         else: Map.get(room.config.seat_requirements, position, 0)
 
-    case {requirement, current_seat} do
-      {0, _} ->
+    case current_seat do
+      %Seat{occupant_type: :bot} ->
         :ok
 
-      {_, %Seat{occupant_type: :bot}} ->
-        :ok
-
-      {min_games, _} ->
-        games_played = PidroServer.Profiles.record(user_id).games
-
-        if games_played >= min_games,
-          do: :ok,
-          else: {:error, {:seat_requires_games, min_games, games_played}}
+      _ ->
+        with :ok <- Config.check_password(room.config, position, user_id, password),
+             do: ensure_games_played(user_id, requirement)
     end
+  end
+
+  defp ensure_games_played(_user_id, 0), do: :ok
+
+  defp ensure_games_played(user_id, min_games) do
+    games_played = PidroServer.Profiles.record(user_id).games
+
+    if games_played >= min_games,
+      do: :ok,
+      else: {:error, {:seat_requires_games, min_games, games_played}}
   rescue
     error in [DBConnection.ConnectionError, Postgrex.Error, Ecto.Query.CastError] ->
       Logger.error("Seat requirement lookup failed: #{Exception.message(error)}")
