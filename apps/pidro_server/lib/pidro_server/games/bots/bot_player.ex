@@ -167,6 +167,8 @@ defmodule PidroServer.Games.Bots.BotPlayer do
   def handle_info({:seat_moved, _}, state), do: {:noreply, state}
   @impl true
   def handle_info({:kicked, _}, state), do: {:noreply, state}
+  @impl true
+  def handle_info({:seat_invitation_declined, _}, state), do: {:noreply, state}
 
   # Ignore Phoenix Channel broadcast messages (presence_diff, game_state, etc.).
   # BotPlayer subscribes to the same PubSub topic as GameChannel, so it receives

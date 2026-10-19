@@ -41,6 +41,10 @@ defmodule PidroServerWeb.GameChannel do
   * `"seat_moved"` - The host moved a seat: `%{user_id: id, from: :east, to: :west}`;
     the moved player's own channel follows the seat
   * `"player_kicked"` - The host kicked a seat: `%{position: :east, user_id: id}`
+  * `"seat_invitation_declined"` - A held seat opened again because its invitee
+    answered Not now or sat down with other people elsewhere:
+    `%{position: :south, user: %{user_id: id, display_name: "Maija", avatar_url: nil},
+    reason: "not_now" | "sat_elsewhere"}`
   * `"kicked"` - Pushed to the kicked player only, then the channel closes with
     reason `{:shutdown, :kicked}`
   * `"presence_state"` - Presence information (who's online)
@@ -854,6 +858,16 @@ defmodule PidroServerWeb.GameChannel do
 
   def handle_info({:kicked, %{position: position, user_id: user_id}}, socket) do
     push(socket, "player_kicked", %{position: position, user_id: user_id})
+    {:noreply, socket}
+  end
+
+  def handle_info({:seat_invitation_declined, %{user_id: user_id} = declined}, socket) do
+    push(socket, "seat_invitation_declined", %{
+      position: declined.position,
+      user: RoomManager.public_user(user_id),
+      reason: declined.reason
+    })
+
     {:noreply, socket}
   end
 

@@ -22,7 +22,8 @@ defmodule PidroServer.Games.RoomManager do
   - `lobby:updates` - Notifies all clients about room list changes
   - `room:<room_code>` - Notifies players in a specific room about room changes
   - `game:<room_code>` - Seat events for game channels: the disconnect cascade,
-    substitutes, `invite_redeemed`, `seat_moved`, `kicked` and `readiness_updated`
+    substitutes, `invite_redeemed`, `seat_moved`, `kicked`, `readiness_updated`
+    and `seat_invitation_declined`
 
   ## Examples
 
@@ -280,6 +281,18 @@ defmodule PidroServer.Games.RoomManager do
     )
   end
 
+  @doc """
+  The invited player answers Not now: releases their hold at `position` like a
+  host release and tells the room `{:seat_invitation_declined, %{position,
+  user_id, reason: "not_now"}}` on `game:<code>`. Anyone else, or no hold,
+  answers `{:error, :invitation_gone}`.
+  """
+  @spec decline_seat_hold(String.t(), String.t(), Positions.position()) ::
+          {:ok, Room.t()} | {:error, :invitation_gone}
+  def decline_seat_hold(code, user_id, position) do
+    GenServer.call(__MODULE__, {:decline_seat_hold, String.upcase(code), user_id, position})
+  end
+
   @doc "Pending seat invitations derived from live waiting-room holds."
   @spec seat_invitations(String.t()) :: [map()]
   def seat_invitations(user_id) do
@@ -292,13 +305,19 @@ defmodule PidroServer.Games.RoomManager do
   @doc "Resolves a seat invitation's host outside the room manager, without presence."
   @spec seat_invitation_with_host(map()) :: map()
   def seat_invitation_with_host(invitation) do
-    user = PidroServer.Accounts.Auth.get_users_map([invitation.host_id])[invitation.host_id]
+    Map.put(invitation, :host, public_user(invitation.host_id))
+  end
 
-    Map.put(invitation, :host, %{
-      user_id: invitation.host_id,
+  @doc "A user's public identity for invitation events, resolved outside the room manager."
+  @spec public_user(String.t()) :: map()
+  def public_user(user_id) do
+    user = PidroServer.Accounts.Auth.get_users_map([user_id])[user_id]
+
+    %{
+      user_id: user_id,
       display_name: user && User.public_name(user),
       avatar_url: user && user.avatar_url
-    })
+    }
   end
 
   defp validate_hold_users(holds, seated_ids) do
@@ -1260,27 +1279,7 @@ defmodule PidroServer.Games.RoomManager do
          :ok <- ensure_waiting(room),
          :ok <- ensure_unblocked_holds(host_id, [user_id]),
          :ok <- ensure_hold_position(room, position, user_id) do
-      holds =
-        if user_id,
-          do: Map.put(room.config.seat_holds, position, user_id),
-          else: Map.delete(room.config.seat_holds, position)
-
-      started_at =
-        cond do
-          is_nil(user_id) -> Map.delete(room.seat_hold_started_at, position)
-          room.config.seat_holds[position] == user_id -> room.seat_hold_started_at
-          true -> Map.put(room.seat_hold_started_at, position, DateTime.utc_now())
-        end
-
-      updated =
-        %{room | config: %{room.config | seat_holds: holds}, seat_hold_started_at: started_at}
-        |> reset_readiness()
-        |> touch_last_activity()
-
-      broadcast_seat_invitation_changes(room, updated)
-      broadcast_room(code, updated)
-      broadcast_lobby_event({:room_updated, updated})
-      broadcast_readiness(updated)
+      updated = put_seat_hold(room, position, user_id, "released")
       {:reply, {:ok, updated}, put_room(state, updated)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -1303,6 +1302,16 @@ defmodule PidroServer.Games.RoomManager do
       {:reply, {:ok, updated}, put_room(state, updated)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:decline_seat_hold, code, user_id, position}, _from, state) do
+    with {:ok, room} <- fetch_room(state, code),
+         ^user_id <- invitation_holds(room)[position] do
+      updated = answer_seat_hold(room, position, "not_now")
+      {:reply, {:ok, updated}, put_room(state, updated)}
+    else
+      _ -> {:reply, {:error, :invitation_gone}, state}
     end
   end
 
@@ -2745,7 +2754,8 @@ defmodule PidroServer.Games.RoomManager do
              :readiness_updated,
              :invite_redeemed,
              :seat_moved,
-             :kicked
+             :kicked,
+             :seat_invitation_declined
            ],
       do: {:noreply, state}
 
@@ -3148,7 +3158,10 @@ defmodule PidroServer.Games.RoomManager do
         |> touch_last_activity()
         |> restore_owner(position)
 
-      new_state = put_room_and_player(state, updated_room, player_id)
+      new_state =
+        state
+        |> put_room_and_player(updated_room, player_id)
+        |> release_holds_elsewhere(updated_room, player_id)
 
       {updated_room, new_state} =
         reconcile_turn_timer_for_current_state(updated_room, room_code, new_state)
@@ -4112,7 +4125,10 @@ defmodule PidroServer.Games.RoomManager do
       |> bump_seat_lifecycle_revision()
       |> touch_last_activity()
 
-    new_state = put_room_and_player(state, final_room, player_id)
+    new_state =
+      state
+      |> put_room_and_player(final_room, player_id)
+      |> release_holds_elsewhere(final_room, player_id)
 
     broadcast_seat_invitation_changes(state.rooms[room_code], final_room)
 
@@ -4309,7 +4325,80 @@ defmodule PidroServer.Games.RoomManager do
 
   defp invitation_holds(_room), do: %{}
 
-  defp broadcast_seat_invitation_changes(before, after_room) do
+  # Sets or releases one hold: the seat goes back to open with its requirement,
+  # readiness resets and the room, lobby and invitee hear about it.
+  defp put_seat_hold(room, position, user_id, gone_reason) do
+    holds =
+      if user_id,
+        do: Map.put(room.config.seat_holds, position, user_id),
+        else: Map.delete(room.config.seat_holds, position)
+
+    started_at =
+      cond do
+        is_nil(user_id) -> Map.delete(room.seat_hold_started_at, position)
+        room.config.seat_holds[position] == user_id -> room.seat_hold_started_at
+        true -> Map.put(room.seat_hold_started_at, position, DateTime.utc_now())
+      end
+
+    updated =
+      %{room | config: %{room.config | seat_holds: holds}, seat_hold_started_at: started_at}
+      |> reset_readiness()
+      |> touch_last_activity()
+
+    broadcast_seat_invitation_changes(room, updated, gone_reason)
+    broadcast_room(room.code, updated)
+    broadcast_lobby_event({:room_updated, updated})
+    broadcast_readiness(updated)
+    updated
+  end
+
+  # The invitee answered the hold at `position`: "not_now", or "sat_elsewhere".
+  defp answer_seat_hold(room, position, reason) do
+    user_id = room.config.seat_holds[position]
+    updated = put_seat_hold(room, position, nil, "declined")
+
+    Phoenix.PubSub.broadcast(
+      PidroServer.PubSub,
+      "game:#{room.code}",
+      {:seat_invitation_declined, %{position: position, user_id: user_id, reason: reason}}
+    )
+
+    updated
+  end
+
+  # Sitting down with another human answers every invitation those humans hold
+  # in other rooms; sitting alone or with bots answers none.
+  defp release_holds_elsewhere(%State{} = state, %Room{code: code} = room, player_id) do
+    if Seat.alone_with_bots?(room.seats, player_id) do
+      state
+    else
+      humans = for {_, %Seat{occupant_type: :human, user_id: id}} <- room.seats, do: id
+
+      declined =
+        for {other_code, other} <- state.rooms,
+            other_code != code,
+            {position, user_id} <- invitation_holds(other),
+            user_id in humans,
+            do: {other_code, position}
+
+      Enum.reduce(declined, state, fn {other_code, position}, acc ->
+        put_room(acc, answer_seat_hold(acc.rooms[other_code], position, "sat_elsewhere"))
+      end)
+    end
+  end
+
+  # Why a held seat stopped inviting its user. Taking the seat drops it quietly
+  # like declining; a host release passes "released".
+  defp gone_reason(nil, _user_id, _reason), do: "closed"
+
+  defp gone_reason(%Room{status: status}, _user_id, _reason)
+       when status not in [:waiting, :ready],
+       do: "started"
+
+  defp gone_reason(room, user_id, reason),
+    do: if(Positions.has_player?(room, user_id), do: "declined", else: reason)
+
+  defp broadcast_seat_invitation_changes(before, after_room, reason \\ "released") do
     old_holds = invitation_holds(before)
     new_holds = invitation_holds(after_room)
 
@@ -4318,7 +4407,12 @@ defmodule PidroServer.Games.RoomManager do
         Phoenix.PubSub.broadcast(
           PidroServer.PubSub,
           "lobby:invitations:#{user_id}",
-          {:seat_invitation_gone, user_id, %{code: before.code, position: position}}
+          {:seat_invitation_gone, user_id,
+           %{
+             code: before.code,
+             position: position,
+             reason: gone_reason(after_room, user_id, reason)
+           }}
         )
       end
     end

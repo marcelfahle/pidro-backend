@@ -157,7 +157,7 @@ defmodule PidroServerWeb.Schemas.UserSchemas do
             seat_invitations: %Schema{
               type: :array,
               description:
-                "GET /auth/me: live waiting-room holds for this user, excluding hosts blocked in either direction; disappears on release, seating, game start or room end. code is the four-character room code for normal join, not an invite secret.",
+                "GET /auth/me: live waiting-room holds for this user, excluding hosts blocked in either direction; disappears on release, decline, seating, game start or room end; the lobby event seat_invitation_gone then carries {code, position, reason}, reason being declined, released, started or closed. Decline with POST /rooms/{code}/seats/{position}/decline. code is the four-character room code for normal join, not an invite secret.",
               items: %Schema{
                 type: :object,
                 required: [:code, :position, :host_id],

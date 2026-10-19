@@ -255,6 +255,40 @@ defmodule PidroServerWeb.API.RoomControllerTest do
     assert as_user(conn, host) |> delete(path) |> json_response(409)
   end
 
+  test "only the invited player can decline a held seat, once", %{conn: conn} do
+    host = AccountsFixtures.user_fixture()
+    friend = AccountsFixtures.user_fixture()
+
+    {:ok, room} =
+      RoomManager.create_room(host.id, %{
+        seat_holds: %{south: friend.id},
+        seat_requirements: %{south: 100}
+      })
+
+    path = ~p"/api/v1/rooms/#{room.code}/seats/south/decline"
+
+    for user <- [host, AccountsFixtures.user_fixture()] do
+      assert %{"errors" => [%{"code" => "INVITATION_GONE"}], "error_code" => "invitation_gone"} =
+               as_user(conn, user) |> post(path) |> json_response(404)
+    end
+
+    assert as_user(conn, friend)
+           |> post(~p"/api/v1/rooms/#{room.code}/seats/up/decline")
+           |> json_response(422)
+
+    declined = as_user(conn, friend) |> post(path) |> json_response(200)
+    assert declined["data"]["room"]["available_positions"] == ["east", "south", "west"]
+    assert declined["data"]["room"]["seats"]["south"]["min_games"] == 100
+    assert RoomManager.seat_invitations(friend.id) == []
+
+    assert %{"errors" => [%{"code" => "INVITATION_GONE"}]} =
+             as_user(conn, friend) |> post(path) |> json_response(404)
+
+    assert as_user(conn, friend)
+           |> post(~p"/api/v1/rooms/ZZZZ/seats/south/decline")
+           |> json_response(404)
+  end
+
   test "ending a room removes pending invitations and invalid held create bodies fail", %{
     conn: conn
   } do

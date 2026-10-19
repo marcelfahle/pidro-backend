@@ -406,6 +406,48 @@ defmodule PidroServerWeb.API.RoomController do
   end
 
   @doc false
+  def open_api_operation(:decline_hold) do
+    %Operation{
+      summary: "Decline a seat invitation",
+      description: """
+      The invited player answers Not now. The hold at this seat must be the caller's; anyone else, or no hold, answers 404 INVITATION_GONE. The seat goes back to open with its requirement and readiness resets, as on a host release.
+
+      The room's `game:<code>` channel receives `seat_invitation_declined` `{position, user: {user_id, display_name, avatar_url}, reason}` with reason `not_now`; sitting down at a table with another human sends the same with `sat_elsewhere` for every hold that player had in other rooms. The invitee's lobby receives `seat_invitation_gone` `{code, position, reason}`, reason being `declined` (declined, sat down elsewhere or took the seat), `released` (the host changed the seat), `started` (the room left waiting) or `closed` (the room is gone).
+      """,
+      operationId: "RoomController.decline_hold",
+      tags: ["Rooms"],
+      security: [%{"bearer_auth" => []}],
+      parameters: [
+        room_code_parameter(),
+        Operation.parameter(:position, :path, position_schema(), "Seat held for the caller",
+          required: true
+        )
+      ],
+      responses: %{
+        200 => Operation.response("Declined", "application/json", RoomSchemas.RoomResponse),
+        401 =>
+          Operation.response(
+            "Unauthorized",
+            "application/json",
+            ErrorSchemas.unauthorized_error()
+          ),
+        404 =>
+          Operation.response(
+            "INVITATION_GONE: no hold for the caller at this seat",
+            "application/json",
+            ErrorSchemas.not_found_error()
+          ),
+        422 =>
+          Operation.response(
+            "Invalid position",
+            "application/json",
+            ErrorSchemas.validation_error()
+          )
+      }
+    }
+  end
+
+  @doc false
   def open_api_operation(:create_invite) do
     %Operation{
       summary: "Mint the room's invite link",
@@ -1598,6 +1640,15 @@ defmodule PidroServerWeb.API.RoomController do
     with {:ok, position} <- parse_position_strict(position),
          {:ok, room} <-
            RoomManager.set_seat_hold(code, conn.assigns.current_user.id, position, nil) do
+      render(conn, :show, room: room)
+    end
+  end
+
+  @doc "The invited player declines their held seat. See `open_api_operation(:decline_hold)`."
+  def decline_hold(conn, %{"code" => code, "position" => position}) do
+    with {:ok, position} <- parse_position_strict(position),
+         {:ok, room} <-
+           RoomManager.decline_seat_hold(code, conn.assigns.current_user.id, position) do
       render(conn, :show, room: room)
     end
   end

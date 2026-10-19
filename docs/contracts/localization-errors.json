@@ -5,7 +5,7 @@
   "sources": {
     "auth": ["POST /api/v1/auth/register", "POST /api/v1/auth/login", "POST /api/v1/auth/apple", "POST /api/v1/auth/facebook", "POST /api/v1/auth/guest", "POST /api/v1/auth/upgrade", "POST /api/v1/auth/age", "GET /api/v1/auth/me", "DELETE /api/v1/auth/me", "POST /api/v1/auth/password-reset", "POST /api/v1/auth/password-reset/confirm"],
     "classic": ["POST /api/v1/classic/verify", "POST /api/v1/classic/claim", "POST /api/v1/classic/help"],
-    "rooms": ["GET /api/v1/rooms/:code", "GET /api/v1/rooms/:code/state", "POST /api/v1/rooms", "POST /api/v1/rooms/:code/join", "DELETE /api/v1/rooms/:code/leave", "POST /api/v1/rooms/:code/watch", "DELETE /api/v1/rooms/:code/unwatch", "POST /api/v1/rooms/:code/open-seat", "POST /api/v1/rooms/:code/close-seat", "POST /api/v1/rooms/:code/seat", "POST /api/v1/rooms/:code/lock", "POST /api/v1/rooms/:code/kick", "POST /api/v1/rooms/:code/bot", "PUT /api/v1/rooms/:code/seats/:position/hold", "DELETE /api/v1/rooms/:code/seats/:position/hold"],
+    "rooms": ["GET /api/v1/rooms/:code", "GET /api/v1/rooms/:code/state", "POST /api/v1/rooms", "POST /api/v1/rooms/:code/join", "DELETE /api/v1/rooms/:code/leave", "POST /api/v1/rooms/:code/watch", "DELETE /api/v1/rooms/:code/unwatch", "POST /api/v1/rooms/:code/open-seat", "POST /api/v1/rooms/:code/close-seat", "POST /api/v1/rooms/:code/seat", "POST /api/v1/rooms/:code/lock", "POST /api/v1/rooms/:code/kick", "POST /api/v1/rooms/:code/bot", "PUT /api/v1/rooms/:code/seats/:position/hold", "DELETE /api/v1/rooms/:code/seats/:position/hold", "POST /api/v1/rooms/:code/seats/:position/decline"],
     "invites": ["GET /api/v1/invites/:code", "POST /api/v1/rooms/:code/invites", "POST /api/v1/invites/:code/redeem", "DELETE /api/v1/invites/:code", "POST /api/v1/invites/:code/regenerate"],
     "friends": ["GET /api/v1/friends", "GET /api/v1/friends/recent", "PUT /api/v1/friends/:user_id", "DELETE /api/v1/friends/:user_id", "GET /api/v1/users/search"],
     "blocks": ["GET /api/v1/blocks", "PUT /api/v1/blocks/:user_id", "DELETE /api/v1/blocks/:user_id"],
@@ -89,6 +89,7 @@
     {"code":"seat_not_bot_substitute","params":{},"sources":["rooms","seats"],"meaning":"This seat must contain a substitute bot."},
     {"code":"seat_not_vacant","params":{},"sources":["rooms","seats"],"meaning":"Only vacant seats can be closed."},
     {"code":"already_seated","params":{},"sources":["rooms","lobby"],"meaning":"You are already seated in this room."},
+    {"code":"invitation_gone","params":{},"sources":["rooms"],"meaning":"That seat is no longer held for you."},
     {"code":"no_vacant_seat","params":{},"sources":["rooms","lobby"],"meaning":"No vacant seat is available."},
     {"code":"table_full","params":{},"sources":["invites"],"meaning":"Every seat at this table is taken."},
     {"code":"room_not_waiting","params":{},"sources":["rooms","invites","readiness"],"meaning":"The room is no longer waiting for players."},

@@ -233,6 +233,25 @@ defmodule PidroServer.Games.SubstituteSeatTest do
       assert seat.user_id == "stranger1"
     end
 
+    test "sitting in as a substitute with people releases the player's holds elsewhere" do
+      {room, _positions} = create_playing_room()
+      {_room_with_bot, position} = make_seat_bot_substitute(room, "user2")
+      {:ok, _} = RoomManager.open_seat(room.code, position, "user1")
+
+      [host, friend] = for _ <- 1..2, do: AccountsFixtures.user_fixture()
+      {:ok, held} = RoomManager.create_room(host.id, %{seat_holds: %{south: friend.id}})
+      held_code = held.code
+      Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{held_code}")
+
+      {:ok, _, ^position} = RoomManager.join_as_substitute(room.code, friend.id)
+
+      assert_receive {:seat_invitation_declined,
+                      %{position: :south, user_id: _, reason: "sat_elsewhere"}}
+
+      assert {:ok, %{config: %{seat_holds: holds}}} = RoomManager.get_room(held_code)
+      assert holds == %{}
+    end
+
     test "a requested seat is honoured, and a taken one answers seat_taken" do
       {room, _positions} = create_playing_room()
       {_room_with_bot, position} = make_seat_bot_substitute(room, "user2")

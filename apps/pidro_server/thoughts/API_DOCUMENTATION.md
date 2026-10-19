@@ -503,6 +503,19 @@ with a bot. A hold has no separate timeout: it lasts until host release/replacem
 user sitting there, or room closure. Consumed holds are removed from config, not resurrected
 by rematch; a rematch waiting for a replacement carries its hold with the rest of the config.
 
+**Answering an invitation (PID-254):** the invited player may answer Not now with
+`POST /api/v1/rooms/:code/seats/:position/decline` (no body). The hold at that seat must be
+the caller's; anyone else, a second decline, or a room that is gone or no longer waiting answers
+`404 INVITATION_GONE`. Otherwise it releases the hold exactly like the host's `DELETE .../hold`
+and answers `200 {"data":{"room":...}}`.
+When a seat is filled and its room then seats two or more humans, every hold those humans have
+in other rooms is released the same way. Sitting alone or with bots only releases nothing.
+Both tell the held room's `game:<code>` channel:
+```json
+{ "position": "south", "user": { "user_id": "<uuid>", "display_name": "Maija", "avatar_url": null }, "reason": "not_now" }
+```
+as `seat_invitation_declined`, with `reason` `not_now` or `sat_elsewhere`.
+
 **In-app notice:** `GET /api/v1/auth/me` adds `data.seat_invitations`:
 ```json
 { "data": { "user": {}, "seat_invitations": [
@@ -1267,8 +1280,11 @@ Blocked pairs receive no invitation, and `/me` excludes their holds.
 Refetch `/me` on `friends_changed` and after unblocking: blocks do not revoke
 holds or emit invitation events, but change which existing holds `/me` lists.
 
-`seat_invitation_gone` carries `{ "code": "ABCD", "position": "south" }` on
-release, replacement, seating, game start or room end. On replacement the previous
+`seat_invitation_gone` carries `{ "code": "ABCD", "position": "south", "reason": "released" }` on
+release, replacement, seating, game start or room end. `reason` (PID-254) is `declined` (you
+declined, sat down with others elsewhere, or took the seat: drop it quietly), `released` (the host
+released or replaced the hold), `started` (the room left waiting) or `closed` (the room is gone).
+Older clients read only `code` and `position`. On replacement the previous
 invitee receives gone and the new invitee receives the new entry. Join normally
 by `code` with that `position`; redeeming and seat-taken errors are unchanged.
 Push notifications and device registration are not part of this delivery.
@@ -1341,6 +1357,7 @@ gameChannel.join()
 | `invite_redeemed` | `{ position, user_id, display_name }` | Somebody claimed a seat through the invite link |
 | `seat_moved` | `{ user_id, from, to }` | The host (or the player themselves) moved a seat |
 | `player_kicked` | `{ position, user_id }` | The host kicked a seat; sent to everybody else |
+| `seat_invitation_declined` | `{ position, user: { user_id, display_name, avatar_url }, reason }` | A held seat is open again: its invitee answered `not_now` or sat down with others elsewhere (`sat_elsewhere`) |
 | `kicked` | `{ reason: "kicked" }` | Sent to the kicked player only, then the channel closes |
 | `presence_state` | Presence info | Who's currently online |
 | `presence_diff` | Presence changes | Online status changes |

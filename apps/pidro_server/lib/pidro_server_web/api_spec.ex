@@ -110,7 +110,7 @@ defmodule PidroServerWeb.ApiSpec do
         - `204 No Content` - Request succeeded with no response body
         - `401 Unauthorized` - Authentication required or token invalid
         - `403 Forbidden` - Not the host (`NOT_OWNER`) or kicked from the table (`KICKED`)
-        - `404 Not Found` - Resource not found
+        - `404 Not Found` - Resource not found (`INVITATION_GONE` when declining a seat no longer held for you)
         - `409 Conflict` - The target refuses the action in its current state (`SEAT_TAKEN` with `next_open`, `TABLE_FULL`, `ROOM_NOT_WAITING`, `INVITE_LIMIT`, `NOT_A_GUEST`, `EMAIL_TAKEN`, `USERNAME_TAKEN`)
         - `410 Gone` - The invite or its table no longer accepts players (`TABLE_STARTED`, `TABLE_CLOSED`, `INVITE_EXPIRED`, `INVITE_REVOKED`, `INVITE_MOVED` with `next_code`)
         - `422 Unprocessable Entity` - Validation error
