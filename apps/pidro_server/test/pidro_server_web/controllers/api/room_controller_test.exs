@@ -849,6 +849,25 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert :sys.get_state(RoomManager).player_rooms[departed.id] == "ELSE"
     end
 
+    test "a held seat becomes a bot in the host's one call, so nobody takes it between" do
+      host = AccountsFixtures.user_fixture()
+      friend = AccountsFixtures.user_fixture()
+      stranger = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id, %{seat_holds: %{east: friend.id}})
+
+      {:ok, botted} = RoomManager.set_seat(room.code, host.id, :east, :bot)
+      assert %{occupant_type: :bot, bot_pid: nil} = botted.seats[:east]
+      assert botted.positions[:east] == "bot_#{room.code}_east"
+      assert botted.config.seat_holds == %{}
+      assert {:error, _} = RoomManager.join_room(room.code, stranger.id, :east)
+
+      # The bot's process takes the seat that waits for it.
+      {:ok, pid} = BotManager.start_bot(room.code, :east, room.config.bot_difficulty)
+
+      assert {:ok, %{seats: %{east: %{occupant_type: :bot, bot_pid: ^pid}}}} =
+               RoomManager.get_room(room.code)
+    end
+
     test "a held seat becomes a bot or another friend, and the invitee hears it went", %{
       conn: conn
     } do

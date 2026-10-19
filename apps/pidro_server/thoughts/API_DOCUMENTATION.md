@@ -507,6 +507,7 @@ the invitee gets `seat_invitation_gone` (reason `released`), a requirement or pa
 as at creation: `"ai"` seats a bot at the room's difficulty, password seats follow the rules
 above, holds follow the hold rules below. `solo` keeps its value from creation. The same entry again
 changes nothing. Otherwise the room, the lobby and readiness (reset, as for a hold) all hear it.
+`"ai"` releases a hold and seats the bot in one step, so nobody can take the seat in between.
 
 Returns `200 {"data":{"room":...}}` (the host's room, with `seat_password` once there is one).
 Errors: `403 NOT_OWNER`, `409 ROOM_NOT_WAITING`, `422 SEAT_NOT_VACANT` for a human's seat

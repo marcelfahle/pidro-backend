@@ -1661,10 +1661,12 @@ defmodule PidroServerWeb.API.RoomController do
     end
   end
 
+  # The room manager already sat the bot; its process takes the seat on start.
   defp seat_bot_for(room, position, :bot) do
-    if match?(%{occupant_type: :bot}, room.seats[position]),
-      do: {:ok, room},
-      else: start_seated_bot(room, position)
+    case room.seats[position] do
+      %{occupant_type: :bot, bot_pid: pid} when is_pid(pid) -> {:ok, room}
+      _ -> start_seated_bot(room, position)
+    end
   end
 
   defp seat_bot_for(room, _position, _entry), do: {:ok, room}
