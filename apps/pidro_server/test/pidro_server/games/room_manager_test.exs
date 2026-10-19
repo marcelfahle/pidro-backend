@@ -1276,7 +1276,7 @@ defmodule PidroServer.Games.RoomManagerTest do
       on_exit(fn -> Application.put_env(:pidro_server, Lifecycle, previous) end)
     end
 
-    test "plays out a lone trump holder's trumps quickly, then scores the hand" do
+    test "plays out a lone trump holder's trumps quickly once the others are out, then scores the hand" do
       room_code = create_playing_room()
       {:ok, pid} = GameAdapter.get_game(room_code)
       :ok = GenServer.call(pid, {:set_state, west_about_to_go_cold()})
@@ -1284,14 +1284,24 @@ defmodule PidroServer.Games.RoomManagerTest do
 
       {:ok, _} = GameAdapter.apply_action(room_code, :west, {:play_card, {4, :hearts}})
 
-      # West's last trump completes an ordinary trick; south's four follow alone.
-      updates = for _ <- 1..5, do: receive_state_update()
-      [{_, last_ordinary} | sweep] = updates
+      # West's last trump completes an ordinary trick, and west is still in.
+      {_, after_last_trump} = receive_state_update()
+      assert after_last_trump.transition_delay_ms == 600
+      refute after_last_trump.state.players.west.eliminated?
 
-      assert last_ordinary.transition_delay_ms == 600
+      # South leads the next trick on an ordinary turn; west goes out on theirs.
+      assert_receive {:turn_timer_started, %{position: :south, phase: :playing}}, 1_000
+      {:ok, _} = GameAdapter.apply_action(room_code, :south, {:play_card, {14, :hearts}})
+
+      # South's ace takes the trick alone; their last three follow as a sweep.
+      updates = for _ <- 1..4, do: receive_state_update()
+      [{_, west_out} | sweep] = updates
+
+      assert west_out.transition_delay_ms == 600
+      assert west_out.state.players.west.eliminated?
 
       assert Enum.map(sweep, &elem(&1, 1).transition_delay_ms) ==
-               [60, 60, 60, Lifecycle.config(:hand_transition_delay_ms)]
+               [60, 60, Lifecycle.config(:hand_transition_delay_ms)]
 
       arrivals = Enum.map(updates, &elem(&1, 0))
       gaps = Enum.zip_with(arrivals, tl(arrivals), &(&2 - &1))
@@ -1310,10 +1320,17 @@ defmodule PidroServer.Games.RoomManagerTest do
       refute_received {:turn_timer_started, %{position: :south, phase: :playing}}
     end
 
-    test "a bot holding the last trumps leaves them to the sweep" do
-      {:ok, settled} =
+    test "a bot holding the last trumps leaves them to the sweep once the others are out" do
+      {:ok, last_trump} =
         Pidro.Game.Engine.apply_action(west_about_to_go_cold(), :west, {:play_card, {4, :hearts}})
 
+      assert last_trump.current_turn == :south
+      assert BotBrain.should_make_move?(last_trump, :south)
+
+      {:ok, settled} =
+        Pidro.Game.Engine.apply_action(last_trump, :south, {:play_card, {14, :hearts}})
+
+      assert settled.players.west.eliminated?
       assert settled.current_turn == :south
       refute BotBrain.should_make_move?(settled, :south)
       assert BotBrain.should_make_move?(west_about_to_go_cold(), :west)

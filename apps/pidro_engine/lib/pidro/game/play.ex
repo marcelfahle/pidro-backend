@@ -19,7 +19,8 @@ defmodule Pidro.Game.Play do
   - The trick winner leads the next trick
 
   ### Going "Cold"
-  - When a player runs out of trump cards, they go "cold" (eliminated)
+  - A player whose turn comes with no trump to play goes "cold" (eliminated)
+    there and then, and the turn moves on; playing a last trump does not
   - Their remaining non-trump cards are revealed to all players
   - They no longer participate in the remaining tricks
   - Their team can still win points through their partner
@@ -132,8 +133,7 @@ defmodule Pidro.Game.Play do
     |> GameState.update(:killed_cards, killed_cards)
     |> GameState.update(:players, new_players)
     |> record_cards_killed_event(killed_cards)
-    |> eliminate_players_without_trumps()
-    |> ensure_current_turn_is_active()
+    |> open_play()
   end
 
   # =============================================================================
@@ -161,7 +161,7 @@ defmodule Pidro.Game.Play do
   - Adds play to current trick
   - Advances turn to next player (or trick leader if trick complete)
   - Records `{:card_played, position, card}` event
-  - If player has no more trumps after playing, marks them as eliminated
+  - A player the turn reaches with no trumps goes cold and the turn moves on
   - If trick is complete, determines winner and awards points
 
   ## Validation
@@ -191,8 +191,7 @@ defmodule Pidro.Game.Play do
          {:ok, state} <- remove_card_from_hand(state, position, card),
          {:ok, state} <- add_card_to_trick(state, position, card),
          {:ok, state} <- record_card_played_event(state, position, card),
-         {:ok, state} <- check_player_elimination(state, position),
-         {:ok, state} <- advance_turn_or_complete_trick(state) do
+         {:ok, state} <- pass_turn(state, Types.next_position(position)) do
       {:ok, state}
     end
   end
@@ -357,7 +356,7 @@ defmodule Pidro.Game.Play do
          {:ok, state} <- award_trick_points(state, winner, points),
          {:ok, state} <- record_trick_won_event(state, winner, points),
          {:ok, state} <- move_trick_to_history(state),
-         {:ok, state} <- set_next_trick_leader(state, winner),
+         {:ok, state} <- pass_turn(state, winner),
          {:ok, state} <- maybe_start_next_trick(state) do
       {:ok, state}
     end
@@ -591,89 +590,48 @@ defmodule Pidro.Game.Play do
     {:ok, updated_state}
   end
 
-  # Checks if player should be eliminated after playing a card
-  @spec check_player_elimination(game_state(), position()) :: {:ok, game_state()}
-  defp check_player_elimination(state, position) do
-    player = state.players[position]
-    trump_suit = state.trump_suit
+  # Play opens on the leader's turn, which may find them already cold. The
+  # engine runs this after every play too, when the turn is already settled.
+  defp open_play(%Types.GameState{phase: :playing, trump_suit: trump, current_turn: turn} = state)
+       when not is_nil(trump) and not is_nil(turn) do
+    {:ok, state} = pass_turn(state, turn)
+    state
+  end
 
-    if not player.eliminated? and
-         Pidro.Rules.for_variant(state.variant).eliminate?(player.hand, trump_suit) do
-      eliminate_player(state, position)
-    else
-      {:ok, state}
+  defp open_play(%Types.GameState{} = state), do: state
+
+  # The turn reaches `position`. A player whose turn comes with no trump to
+  # play goes cold there and then, and the turn moves on; once every player
+  # still in has played, the trick is complete and its winner's turn comes.
+  @spec pass_turn(game_state(), position()) :: {:ok, game_state()} | {:error, error()}
+  defp pass_turn(state, position) do
+    cond do
+      Enum.all?(state.players, fn {_pos, player} -> player.eliminated? end) ->
+        {:ok, GameState.update(state, :current_turn, nil)}
+
+      trick_complete?(state) ->
+        complete_trick(state)
+
+      not match?(%Player{eliminated?: false}, state.players[position]) ->
+        pass_turn(state, Types.next_position(position))
+
+      goes_cold?(state, state.players[position]) ->
+        {:ok, state} = eliminate_player(state, position)
+        pass_turn(state, Types.next_position(position))
+
+      true ->
+        {:ok, GameState.update(state, :current_turn, position)}
     end
   end
 
-  defp eliminate_players_without_trumps(%Types.GameState{trump_suit: nil} = state), do: state
-
-  defp eliminate_players_without_trumps(%Types.GameState{} = state) do
-    Enum.reduce(Types.all_positions(), state, fn position, acc_state ->
-      player = acc_state.players[position]
-
-      cond do
-        is_nil(player) or player.eliminated? ->
-          acc_state
-
-        not Pidro.Rules.for_variant(acc_state.variant).eliminate?(
-          player.hand,
-          acc_state.trump_suit
-        ) ->
-          acc_state
-
-        true ->
-          {:ok, updated_state} = eliminate_player(acc_state, position)
-          updated_state
-      end
-    end)
-  end
-
-  defp ensure_current_turn_is_active(%Types.GameState{phase: :playing} = state) do
-    case state.players[state.current_turn] do
-      %Player{eliminated?: false} ->
-        state
-
-      _ ->
-        GameState.update(
-          state,
-          :current_turn,
-          next_active_player_after(state.current_turn, state.players)
-        )
-    end
-  end
-
-  defp ensure_current_turn_is_active(%Types.GameState{} = state), do: state
-
-  defp next_active_player_after(nil, players) do
-    Enum.find(Types.all_positions(), &active_player?(players, &1))
-  end
-
-  defp next_active_player_after(position, players) do
-    position
-    |> Stream.iterate(&Types.next_position/1)
-    |> Stream.drop(1)
-    |> Stream.take(4)
-    |> Enum.find(&active_player?(players, &1))
-  end
-
-  defp active_player?(players, position) do
-    match?(%Player{eliminated?: false}, players[position])
-  end
-
-  # Advances turn to next player or completes trick if all have played
-  @spec advance_turn_or_complete_trick(game_state()) :: {:ok, game_state()}
-  defp advance_turn_or_complete_trick(state) do
-    if trick_complete?(state) do
-      complete_trick(state)
-    else
-      next_turn = find_next_active_player(state)
-      updated_state = GameState.update(state, :current_turn, next_turn)
-      {:ok, updated_state}
-    end
+  defp goes_cold?(state, %Player{hand: hand}) do
+    Pidro.Rules.for_variant(state.variant).eliminate?(hand, state.trump_suit)
   end
 
   # Checks if current trick is complete (all active players have played)
   @spec trick_complete?(game_state()) :: boolean()
+  defp trick_complete?(%Types.GameState{current_trick: nil}), do: false
+
   defp trick_complete?(state) do
     played_positions =
       state.current_trick.plays
@@ -686,19 +644,6 @@ defmodule Pidro.Game.Play do
 
     # Check if all active positions are in played positions
     Enum.all?(active_positions, fn pos -> pos in played_positions end)
-  end
-
-  # Finds next non-eliminated player clockwise from current turn
-  @spec find_next_active_player(game_state()) :: position()
-  defp find_next_active_player(state) do
-    current = state.current_turn
-
-    current
-    |> Stream.iterate(&Types.next_position/1)
-    |> Stream.drop(1)
-    |> Enum.find(fn pos ->
-      not state.players[pos].eliminated?
-    end)
   end
 
   # Awards trick points to winning team
@@ -748,36 +693,6 @@ defmodule Pidro.Game.Play do
     state = GameState.update(state, :current_trick, nil)
     state = GameState.update(state, :last_hand, nil)
     {:ok, state}
-  end
-
-  # Sets the leader for the next trick
-  @spec set_next_trick_leader(game_state(), position()) :: {:ok, game_state()}
-  defp set_next_trick_leader(state, leader) do
-    players = state.players
-
-    next_leader =
-      case players[leader] do
-        # Winner is still active – they lead next trick as usual
-        %Player{eliminated?: false} ->
-          leader
-
-        # Winner went cold – choose next active clockwise from them
-        _ ->
-          leader
-          |> Stream.iterate(&Types.next_position/1)
-          |> Stream.drop(1)
-          # Limit the stream to avoid infinite loops if everyone is cold
-          |> Stream.take(4)
-          |> Enum.find(fn pos ->
-            case players[pos] do
-              %Player{eliminated?: false} -> true
-              _ -> false
-            end
-          end)
-      end
-
-    updated_state = GameState.update(state, :current_turn, next_leader)
-    {:ok, updated_state}
   end
 
   # Maybe starts next trick if there are cards remaining
