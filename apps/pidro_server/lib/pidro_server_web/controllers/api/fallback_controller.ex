@@ -17,8 +17,8 @@ defmodule PidroServerWeb.API.FallbackController do
     `:creation_conflict` answer 409; `:table_started`, `:table_closed`,
     `:invite_expired`, `:invite_revoked` and `{:invite_moved, next_code}` answer
     410; `:table_locked` answers 423; `:kicked` answers 403;
-    `{:seat_taken, next_open}` answers 409 with the open positions while the bare
-    `:seat_taken` keeps its 422 for room joins
+    `:no_seat_for_you` answers 409; `{:seat_taken, next_open}` answers 409 with
+    the open positions while the bare `:seat_taken` keeps its 422 for room joins
   - `{:error, {:invalid_room_params, errors}}` - Room config validation errors;
     answers 422 with one entry per error and the field path as the code
   - Any other atom answers 422 with the atom upcased as the code
@@ -588,6 +588,15 @@ defmodule PidroServerWeb.API.FallbackController do
         }
       ]
     })
+  end
+
+  def call(conn, {:error, :no_seat_for_you}) do
+    conflict(
+      conn,
+      "NO_SEAT_FOR_YOU",
+      "No seat for you",
+      "Your friend's table has no open seat you can take"
+    )
   end
 
   def call(conn, {:error, :table_full}) do

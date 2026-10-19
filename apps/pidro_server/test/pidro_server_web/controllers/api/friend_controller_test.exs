@@ -4,6 +4,7 @@ defmodule PidroServerWeb.API.FriendControllerTest do
 
   import PidroServer.AccountsFixtures
   alias PidroServer.Accounts.Token
+  alias PidroServer.Blocks
   alias PidroServer.Friends
   alias PidroServer.Games.RoomManager
   alias PidroServerWeb.Presence
@@ -82,10 +83,10 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert_schema(response, "FriendsResponse")
 
     assert response ==
-             put_in(empty, ["data", "friends"], [Map.put(player(a), "played_together_at", nil)])
+             put_in(empty, ["data", "friends"], [Map.put(listed(a), "played_together_at", nil)])
 
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) ==
-             put_in(empty, ["data", "friends"], [Map.put(player(b), "played_together_at", nil)])
+             put_in(empty, ["data", "friends"], [Map.put(listed(b), "played_together_at", nil)])
 
     assert conn |> auth(b) |> delete(~p"/api/v1/friends/#{a.id}") |> json_response(200) == empty
     assert conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200) == empty
@@ -161,7 +162,8 @@ defmodule PidroServerWeb.API.FriendControllerTest do
           {:put, "/api/v1/friends/#{target.id}"},
           {:delete, "/api/v1/friends/#{target.id}"},
           {:post, "/api/v1/friends/#{target.id}/ignore"},
-          {:delete, "/api/v1/friends/#{target.id}/ignore"}
+          {:delete, "/api/v1/friends/#{target.id}/ignore"},
+          {:post, "/api/v1/friends/#{target.id}/join"}
         ] do
       assert conn |> auth(guest) |> dispatch(method, path) |> json_response(403) ==
                %{
@@ -285,6 +287,192 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     assert conn |> auth(a) |> delete(~p"/api/v1/friends/#{b.id}") |> json_response(200)
   end
 
+  describe "join a friend's table" do
+    test "the partner seat when it is free, else an opponent seat", %{conn: conn} do
+      nora = user_fixture(%{display_name: "Nora"})
+      me = user_fixture()
+      other = user_fixture()
+      befriend(me, nora)
+      befriend(other, nora)
+      room = table(nora)
+
+      assert join_as(conn, me, nora) == "partner"
+      assert seated(conn, me, nora) == "south"
+
+      assert join_as(conn, other, nora) == "opponent"
+      assert seated(conn, other, nora) == "east"
+      assert {:ok, %{positions: %{north: _, east: _, south: _}}} = RoomManager.get_room(room.code)
+    end
+
+    test "a seat held for someone else is skipped; one held for you is yours", %{conn: conn} do
+      nora = user_fixture()
+      me = user_fixture()
+      invited = user_fixture()
+      befriend(me, nora)
+      befriend(invited, nora)
+      table(nora, %{seat_holds: %{south: invited.id}})
+
+      assert join_as(conn, invited, nora) == "partner"
+      assert join_as(conn, me, nora) == "opponent"
+      assert seated(conn, me, nora) == "east"
+      assert seated(conn, invited, nora) == "south"
+    end
+
+    test "a password seat is skipped: this route has no password to give", %{conn: conn} do
+      nora = user_fixture()
+      me = user_fixture()
+      befriend(me, nora)
+      room = table(nora)
+      {:ok, _} = RoomManager.set_seat(room.code, nora.id, :south, {:open, 0, true})
+
+      assert join_as(conn, me, nora) == "opponent"
+      assert seated(conn, me, nora) == "east"
+    end
+
+    test "seats you lack the games for are skipped, then there is no seat for you", %{
+      conn: conn
+    } do
+      nora = user_fixture()
+      me = user_fixture()
+      second = user_fixture()
+
+      for user <- [me, second] do
+        befriend(user, nora)
+        games(user, 120)
+      end
+
+      room = table(nora, %{seat_requirements: %{south: 1000, east: 100}})
+      {:ok, _, :west} = RoomManager.join_room(room.code, user_fixture().id, :west)
+
+      assert join_as(conn, me, nora) == "opponent"
+      assert seated(conn, me, nora) == "east"
+
+      assert join_as(conn, second, nora) == nil
+      response = conn |> auth(second) |> post(join_path(nora)) |> json_response(409)
+      assert [%{"code" => "NO_SEAT_FOR_YOU"}] = response["errors"]
+      assert response["error_code"] == "no_seat_for_you"
+      {:ok, unchanged} = RoomManager.get_room(room.code)
+      assert unchanged.positions.south == nil
+    end
+
+    test "at a playing table a substitute seat needs no games, as in the room join",
+         %{conn: conn} do
+      nora = user_fixture()
+      me = user_fixture()
+      [east, south, west] = for _ <- 1..3, do: user_fixture()
+      befriend(me, nora)
+      room = table(nora, %{seat_requirements: %{south: 1000}})
+
+      for {user, position} <- [{east, :east}, {south, :south}, {west, :west}] do
+        games(user, 1000)
+        {:ok, _, ^position} = RoomManager.join_room(room.code, user.id, position)
+      end
+
+      PidroServer.RoomFixtures.ready_room(room.code)
+      :ok = RoomManager.leave_room(south.id)
+      {:ok, opened} = RoomManager.open_seat(room.code, :south, nora.id)
+      # A seat a timed-out player lost to a permanent bot keeps their id in positions.
+      stale = %{opened | positions: %{opened.positions | south: south.id}}
+      assert RoomManager.friend_seat(stale, me.id, nora.id, 0) == {:south, :partner}
+
+      assert join_as(conn, me, nora) == "partner"
+      assert seated(conn, me, nora) == "south"
+    end
+
+    test "a locked table and a kick keep the room join's own errors", %{conn: conn} do
+      nora = user_fixture()
+      me = user_fixture()
+      befriend(me, nora)
+      room = table(nora)
+      {:ok, _, :south} = RoomManager.join_room(room.code, me.id, :south)
+      {:ok, _} = RoomManager.kick_player(room.code, nora.id, :south)
+
+      assert join_as(conn, me, nora) == nil
+      response = conn |> auth(me) |> post(join_path(nora)) |> json_response(403)
+      assert [%{"code" => "KICKED"}] = response["errors"]
+
+      {:ok, _} = RoomManager.set_locked(room.code, nora.id, true)
+      assert join_as(conn, me, nora) == nil
+      response = conn |> auth(me) |> post(join_path(nora)) |> json_response(423)
+      assert [%{"code" => "TABLE_LOCKED"}] = response["errors"]
+    end
+
+    test "a host blocked either way refuses the join as SEAT_TAKEN", %{conn: conn} do
+      for direction <- [:outgoing, :incoming] do
+        host = user_fixture()
+        nora = user_fixture()
+        me = user_fixture()
+        befriend(me, nora)
+        room = table(host)
+        {:ok, _, :east} = RoomManager.join_room(room.code, nora.id, :east)
+        {a, b} = if direction == :outgoing, do: {me, host}, else: {host, me}
+        {:ok, _} = Blocks.block(a.id, b.id)
+
+        assert join_as(conn, me, nora) == nil
+        response = conn |> auth(me) |> post(join_path(nora)) |> json_response(422)
+        assert [%{"code" => "SEAT_TAKEN"}] = response["errors"]
+      end
+    end
+
+    test "a friend not at a table, a non-friend and a blocked friend", %{conn: conn} do
+      nora = user_fixture()
+      me = user_fixture()
+      befriend(me, nora)
+
+      assert join_as(conn, me, nora) == nil
+      response = conn |> auth(me) |> post(join_path(nora)) |> json_response(404)
+      assert [%{"code" => "ROOM_NOT_FOUND"}] = response["errors"]
+
+      table(nora)
+      stranger = user_fixture()
+      {:ok, _} = Friends.add(stranger.id, nora.id)
+
+      for user <- [stranger, nora] do
+        assert conn |> auth(user) |> post(join_path(nora)) |> json_response(404) ==
+                 %{
+                   "error" => "USER_NOT_FOUND",
+                   "error_code" => "user_not_found",
+                   "error_params" => %{}
+                 }
+      end
+
+      {:ok, _} = Blocks.block(nora.id, me.id)
+
+      assert %{"error" => "USER_NOT_FOUND"} =
+               conn |> auth(me) |> post(join_path(nora)) |> json_response(404)
+    end
+  end
+
+  defp befriend(a, b) do
+    {:ok, _} = Friends.add(a.id, b.id)
+    {:ok, _} = Friends.add(b.id, a.id)
+  end
+
+  defp table(host, config \\ %{}) do
+    {:ok, room} = RoomManager.create_room(host.id, config)
+    on_exit(fn -> RoomManager.close_room(room.code) end)
+    room
+  end
+
+  defp games(user, count) do
+    {:ok, profile} = PidroServer.Profiles.get_or_create_profile(user.id)
+    profile |> Ecto.Changeset.change(games_played: count) |> PidroServer.Repo.update!()
+  end
+
+  defp join_path(friend), do: "/api/v1/friends/#{friend.id}/join"
+
+  defp join_as(conn, user, friend) do
+    response = conn |> auth(user) |> get(~p"/api/v1/friends") |> json_response(200)
+    assert_schema(response, "FriendsResponse")
+    Enum.find(response["data"]["friends"], &(&1["user_id"] == friend.id))["join_as"]
+  end
+
+  defp seated(conn, user, friend) do
+    response = conn |> auth(user) |> post(join_path(friend)) |> json_response(200)
+    assert_schema(response, "RoomResponse")
+    response["data"]["assigned_position"]
+  end
+
   defp auth(conn, user),
     do: put_req_header(conn, "authorization", "Bearer #{Token.generate(user)}")
 
@@ -310,6 +498,8 @@ defmodule PidroServerWeb.API.FriendControllerTest do
       "avatar_url" => nil,
       "presence" => "offline"
     }
+
+  defp listed(user), do: Map.put(player(user), "join_as", nil)
 
   defp assert_schema(response, name),
     do: OpenApiSpex.TestAssertions.assert_schema(response, name, PidroServerWeb.ApiSpec.spec())

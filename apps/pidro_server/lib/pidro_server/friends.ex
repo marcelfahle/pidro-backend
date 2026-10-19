@@ -6,8 +6,10 @@ defmodule PidroServer.Friends do
   alias PidroServer.Blocks
   alias PidroServer.ClassicSocial
   alias PidroServer.Friends.Friendship
-  alias PidroServer.Games.Room.Seat
+  alias PidroServer.Games.Room.{Positions, Seat}
   alias PidroServer.Games.RoomManager
+  alias PidroServer.Games.RoomManager.Room
+  alias PidroServer.Profiles
   alias PidroServer.Repo
   alias PidroServer.Stats.GameStats
   alias PidroServerWeb.Presence
@@ -110,7 +112,10 @@ defmodule PidroServer.Friends do
     %{
       friends:
         Enum.sort_by(
-          Enum.map(pick.(friend_ids), &Map.put(&1, :played_together_at, played_at[&1.user_id])),
+          friend_ids
+          |> pick.()
+          |> Enum.map(&Map.put(&1, :played_together_at, played_at[&1.user_id]))
+          |> with_join_as(user_id),
           &{&1.presence == "offline", User.name_key(&1.display_name), &1.user_id}
         ),
       added_you: added_you,
@@ -119,6 +124,25 @@ defmodule PidroServer.Friends do
       waiting_for_you: length(added_you) + length(RoomManager.seat_invitations(user_id))
     }
     |> with_classic(user_id)
+  end
+
+  @doc """
+  Sits `user` at their mutual friend's table, in the seat `RoomManager.friend_seat/4`
+  picks, through the ordinary join so every admission rule still applies.
+  """
+  @spec join(User.t(), String.t()) ::
+          {:ok, Room.t(), Positions.position()} | {:error, term()}
+  def join(%User{} = user, friend_id) do
+    with {:ok, friend_id} <- mutual(user.id, friend_id),
+         %Room{} = room <- table(RoomManager.list_rooms(:available), friend_id),
+         {position, _as} <-
+           RoomManager.friend_seat(room, user.id, friend_id, games_played(user.id)) do
+      RoomManager.join_room(room.code, user, position)
+    else
+      nil -> {:error, :no_seat_for_you}
+      :no_table -> {:error, :room_not_found}
+      error -> error
+    end
   end
 
   @doc "Finds up to ten registered players by the existing folded-name prefix."
@@ -199,6 +223,52 @@ defmodule PidroServer.Friends do
 
       _ ->
         list
+    end
+  end
+
+  # The friends list tells the app beforehand what join/2 will do.
+  defp with_join_as(friends, user_id) do
+    rooms = RoomManager.list_rooms(:available)
+    tables = Map.new(friends, &{&1.user_id, table(rooms, &1.user_id)})
+    games = if Enum.any?(Map.values(tables), &match?(%Room{}, &1)), do: games_played(user_id)
+
+    Enum.map(friends, fn friend ->
+      Map.put(friend, :join_as, join_as(tables[friend.user_id], user_id, friend.user_id, games))
+    end)
+  end
+
+  # A locked table, a kick or a block with the host refuses the join itself.
+  defp join_as(:no_table, _user_id, _friend_id, _games), do: nil
+
+  defp join_as(%Room{} = room, user_id, friend_id, games) do
+    with false <- room.locked or user_id in room.kicked_ids,
+         false <- Blocks.blocked?(room.host_id, user_id),
+         {_position, as} <- RoomManager.friend_seat(room, user_id, friend_id, games) do
+      Atom.to_string(as)
+    else
+      _ -> nil
+    end
+  end
+
+  defp table(rooms, friend_id),
+    do: Enum.find(rooms, :no_table, &Seat.position_of(&1.seats, friend_id))
+
+  defp games_played(user_id), do: Profiles.record(user_id).games
+
+  defp mutual(user_id, friend_id) do
+    with {:ok, id} <- Ecto.UUID.cast(friend_id),
+         2 <-
+           Repo.aggregate(
+             from(f in Friendship,
+               where:
+                 (f.user_id == ^user_id and f.friend_id == ^id) or
+                   (f.user_id == ^id and f.friend_id == ^user_id)
+             ),
+             :count
+           ) do
+      {:ok, id}
+    else
+      _ -> {:error, :user_not_found}
     end
   end
 
@@ -299,7 +369,9 @@ defmodule PidroServer.Friends do
     for player <- entries([user_id]) do
       {event, payload} =
         if accepted?,
-          do: {"friend_accepted", %{player: player, source: "accept"}},
+          do:
+            {"friend_accepted",
+             %{player: hd(with_join_as([player], recipient_id)), source: "accept"}},
           else:
             {"friend_request",
              %{

@@ -75,7 +75,7 @@ at the top level, and repeat that code in `field_errors` for field `avatar`.
 ## Covered paths and intentional gaps
 
 Covered: auth/guest/upgrade/age/recovery, Classic verification/claim/help,
-room create/join/watch/host controls, invites, friends/search/blocks, profiles/avatar,
+room create/join/watch/host controls, invites, friends/search/join/blocks, profiles/avatar,
 HTTP authentication/rate limits, lobby joins, game joins/actions/seats and
 ready/rematch replies. The manifest inventories the different legacy envelopes.
 

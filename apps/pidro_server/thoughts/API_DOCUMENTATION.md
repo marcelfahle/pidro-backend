@@ -1065,7 +1065,7 @@ link can come back as a fresh guest — the host's answer to that is
 
 ### Friends and Player Discovery (PID-223)
 
-All seven routes require bearer authentication and a registered account. Guests receive
+All eight routes require bearer authentication and a registered account. Guests receive
 `403 {"error":"ACCOUNT_REQUIRED"}`. These new routes use the attached friends contract's
 single `error` code shape for domain errors; authentication and rate limiting retain the
 existing `errors` array. Existing endpoints are unchanged.
@@ -1079,11 +1079,12 @@ existing `errors` array. Existing endpoints are unchanged.
 | DELETE | `/api/v1/friends/:user_id/ignore` | Undo the ignore, then return full list |
 | GET | `/api/v1/users/search?q=nor` | Up to ten matching registered players |
 | GET | `/api/v1/friends/recent` | Up to ten recent human tablemates |
+| POST | `/api/v1/friends/:user_id/join` | Sit down at the friend's table (below) |
 
 The first five return:
 
 ```json
-{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online","played_together_at":null}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0,"waiting_for_you":0}}
+{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"online","played_together_at":null,"join_as":null}],"added_you":[],"requested":[{"user_id":"<uuid>","display_name":"Vera","avatar_url":null,"presence":"offline","requested_at":"2026-10-17T09:00:00.000000Z"}],"requests_waiting":0,"waiting_for_you":0}}
 ```
 
 Friends have both directed edges; `added_you` has an incoming edge with none back;
@@ -1143,6 +1144,34 @@ Every recent entry has `played_together_at`, the newest shared `completed_at` in
 those twenty completed games. Search entries do not have this field.
 Search and recent exclude blocked pairs in either direction, in SQL before the result
 cap. Adding a friend across a block returns `404 {"error":"USER_NOT_FOUND"}`.
+
+#### Join a friend's table (PID-253)
+
+`POST /api/v1/friends/:user_id/join` sits the caller at a mutual friend's table with no
+seat picker. The server picks the seat: the friend's partner seat (across the table:
+north/south, east/west) when it is open to the caller, else the first open seat in
+north, east, south, west order they may take. A seat held for someone else, a password
+seat (this route takes no password), or one whose `min_games` the caller's combined
+record misses is not open to them; a seat held for the caller is. A substitute seat at
+a playing table asks for neither password nor games, as in the room join. The pick is then joined exactly as `POST /api/v1/rooms/:code/join` with
+that `position`, so every rule and error of that route applies unchanged, including
+the blocked-host `422 SEAT_TAKEN`. Success is the same `200` room response.
+
+| Case | Answer |
+|------|--------|
+| Not a mutual friend, or a block either way | `404 {"error":"USER_NOT_FOUND"}` |
+| Friend not seated at a waiting, ready or playing table | `404 ROOM_NOT_FOUND` |
+| No open seat the caller may take | `409 NO_SEAT_FOR_YOU` |
+
+Each entry in `friends` of the full friends list now carries `join_as`: `"partner"`
+or `"opponent"` for what this route would make the caller, or `null` when the friend
+is not at a table or there is no seat for the caller (including a locked table, a kick
+or a blocked host). `added_you` and `requested` entries are not friends and have no
+`join_as`. Old clients ignore it.
+
+```json
+{"data":{"friends":[{"user_id":"<uuid>","display_name":"Nora","avatar_url":null,"presence":"at_table","join_as":"partner"}],"added_you":[]}}
+```
 
 After add/remove/block, each affected user's joined lobby sockets receive
 `friends_changed` with `{}`; unrelated users receive nothing. Refetch `/api/v1/friends`.
@@ -1976,7 +2005,7 @@ the frontend end-to-end harness; `config/test.exs` sets 1,000,000.
 | `password_reset_confirm` | `POST /api/v1/auth/password-reset/confirm` | 5 per 900 s | client IP |
 | `room_create` | `POST /api/v1/rooms` | 10 per 60 s | authenticated user |
 | `room_lookup` | `GET /api/v1/rooms/:code` | 120 per 60 s | client IP |
-| `room_join` | `POST /api/v1/rooms/:code/join` | 30 per 60 s | authenticated user |
+| `room_join` | `POST /api/v1/rooms/:code/join` and `POST /api/v1/friends/:user_id/join` | 30 per 60 s | authenticated user (one shared budget) |
 | `seat_password` | `POST /api/v1/rooms/:code/join` with a `password` | 10 per 600 s | authenticated user |
 | `seat_password_room` | `POST /api/v1/rooms/:code/join` with a `password` | 30 per 600 s | SHA-256 of the room code |
 | `invite_mint` | `POST /api/v1/rooms/:code/invites` and `POST /api/v1/invites/:code/regenerate` | 10 per 60 s | authenticated user |
