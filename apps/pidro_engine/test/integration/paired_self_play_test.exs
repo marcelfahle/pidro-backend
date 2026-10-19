@@ -5,33 +5,25 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
 
   alias Pidro.Bot.SelfPlay
   alias Mix.Tasks.Pidro.Selfplay, as: SelfplayTask
+  alias Pidro.Bot.Knowledge
+  alias Pidro.Core.Types
+  alias Pidro.Core.Types.Trick
+  alias Pidro.Game.Play
 
   test "Five records agree with engine winners observed as tricks finish" do
     test_pid = self()
     regular = SelfPlay.rulebook_policy()
 
+    # A trick can end before every seat has played, as those left go out on
+    # their turn, so each play reports the trick so far and the longest wins.
     policy = fn view, legal ->
       action = regular.(view, legal)
 
-      if view.phase == :playing and Pidro.Bot.Knowledge.seats_to_act(view) == [] do
+      if view.phase == :playing do
         {:play_card, card} = action
-
-        trick =
-          view.current_trick ||
-            %Pidro.Core.Types.Trick{number: view.trick_number, leader: view.position}
-
-        trick = %{trick | plays: trick.plays ++ [{view.position, card}]}
-        {:ok, winner, _} = Pidro.Game.Play.determine_trick_winner(trick, view.trump_suit)
-
-        fives =
-          for {owner, card} <- trick.plays,
-              Pidro.Bot.Knowledge.five?(card, view.trump_suit),
-              do: %{
-                owner: Pidro.Core.Types.position_to_team(owner),
-                winner: Pidro.Core.Types.position_to_team(winner)
-              }
-
-        send(test_pid, {:fives, fives})
+        plays = if(view.current_trick, do: view.current_trick.plays, else: [])
+        plays = plays ++ [{view.position, card}]
+        send(test_pid, {:plays, {view.hand_number, hd(plays)}, view.trump_suit, plays})
       end
 
       action
@@ -39,17 +31,9 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
 
     result = SelfPlay.play_game(%{north_south: policy, east_west: policy}, seed: 74)
     assert result.outcome == :complete
-    observed = collect_fives([])
+    observed = observed_fives()
     assert observed != []
     assert Enum.sort(result.fives) == Enum.sort(observed)
-  end
-
-  defp collect_fives(acc) do
-    receive do
-      {:fives, fives} -> collect_fives(fives ++ acc)
-    after
-      0 -> acc
-    end
   end
 
   test "each pair uses the same deal with teams swapped, matching direct games" do
@@ -144,4 +128,25 @@ defmodule Pidro.Integration.PairedSelfPlayTest do
       end
     end)
   end
+
+  defp observed_fives do
+    for {trump, [{leader, _} | _] = plays} <- Map.values(collect_tricks(%{})),
+        trick = %Trick{number: 0, leader: leader, plays: plays},
+        {:ok, winner, _} = Play.determine_trick_winner(trick, trump),
+        {owner, card} <- plays,
+        Knowledge.five?(card, trump),
+        do: %{owner: Types.position_to_team(owner), winner: Types.position_to_team(winner)}
+  end
+
+  defp collect_tricks(acc) do
+    receive do
+      {:plays, key, trump, plays} ->
+        collect_tricks(Map.update(acc, key, {trump, plays}, &longer(&1, {trump, plays})))
+    after
+      0 -> acc
+    end
+  end
+
+  defp longer({_, kept} = old, {_, plays} = new),
+    do: if(length(plays) > length(kept), do: new, else: old)
 end

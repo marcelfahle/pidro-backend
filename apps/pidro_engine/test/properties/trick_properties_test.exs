@@ -200,6 +200,44 @@ defmodule Pidro.Properties.TrickPropertiesTest do
     end
   end
 
+  # Replays a whole game's events, tracking whose turn it is: the bid winner
+  # leads, the turn passes clockwise over players already out, and a trick's
+  # winner leads the next. Every card and every player going cold must fall
+  # on that player's turn.
+  property "a player only ever goes cold on their own turn" do
+    check all(seed <- integer(1..100_000), max_runs: 25) do
+      final = seed |> Pidro.Test.GameTrace.states() |> List.last()
+
+      Enum.reduce(final.events, {nil, MapSet.new()}, fn
+        {:bidding_complete, bidder, _amount}, _acc ->
+          {bidder, MapSet.new()}
+
+        {:card_played, position, _card}, {turn, out} ->
+          assert position == turn
+          {next_in(position, out), out}
+
+        {:player_went_cold, position, _cards}, {turn, out} ->
+          assert position == turn, "#{position} went cold on #{turn}'s turn"
+          out = MapSet.put(out, position)
+          {next_in(position, out), out}
+
+        {:trick_won, winner, _points}, {_turn, out} ->
+          {winner, out}
+
+        _event, acc ->
+          acc
+      end)
+    end
+  end
+
+  defp next_in(position, out) do
+    position
+    |> Stream.iterate(&Types.next_position/1)
+    |> Stream.drop(1)
+    |> Stream.take(4)
+    |> Enum.find(&(&1 not in out))
+  end
+
   # =============================================================================
   # Helper Functions for Building Test States
   # =============================================================================
