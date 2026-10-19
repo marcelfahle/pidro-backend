@@ -735,6 +735,34 @@ defmodule PidroServerWeb.API.RoomControllerTest do
       assert revision > before.seat_lifecycle_revision
     end
 
+    test "a reopened table's substitute bot stops with its seat", %{conn: conn} do
+      host = AccountsFixtures.user_fixture()
+      departed = AccountsFixtures.user_fixture()
+      {:ok, room} = RoomManager.create_room(host.id)
+      {:ok, _, :east} = RoomManager.join_room(room.code, departed.id, :east)
+      {:ok, pid} = PidroServer.Games.Bots.SubstituteBot.start(room.code, :east)
+      ref = Process.monitor(pid)
+
+      # As after a finished game reopens: the departed player's seat keeps its
+      # substitute, and the player has since gone to another table.
+      :sys.replace_state(RoomManager, fn state ->
+        state
+        |> update_in([Access.key(:rooms), room.code, Access.key(:seats), :east], fn seat ->
+          %{seat | occupant_type: :bot, status: :bot_substitute, bot_pid: pid}
+        end)
+        |> put_in([Access.key(:player_rooms), departed.id], "ELSE")
+      end)
+
+      opened =
+        as_user(conn, host)
+        |> put(~p"/api/v1/rooms/#{room.code}/seats/east", %{"seat" => "open"})
+        |> data(200)
+
+      assert opened["room"]["positions"]["east"] == nil
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+      assert :sys.get_state(RoomManager).player_rooms[departed.id] == "ELSE"
+    end
+
     test "a held seat becomes a bot or another friend, and the invitee hears it went", %{
       conn: conn
     } do

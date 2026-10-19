@@ -1323,8 +1323,15 @@ defmodule PidroServer.Games.RoomManager do
           |> maybe_bump_seat_lifecycle_revision(bot != nil)
           |> touch_last_activity()
 
-        {bot_id, bot_pid} = bot || {nil, nil}
-        state = %{put_room(state, updated) | player_rooms: Map.delete(state.player_rooms, bot_id)}
+        {bot_id, bot_seat} = bot || {nil, nil}
+
+        player_rooms =
+          if state.player_rooms[bot_id] == code,
+            do: Map.delete(state.player_rooms, bot_id),
+            else: state.player_rooms
+
+        bot_pid = release_bot(bot_seat)
+        state = %{put_room(state, updated) | player_rooms: player_rooms}
 
         broadcast_seat_invitation_changes(room, updated)
         broadcast_room(code, updated)
@@ -3456,14 +3463,26 @@ defmodule PidroServer.Games.RoomManager do
       %Seat{occupant_type: :human} ->
         {:error, :seat_not_vacant}
 
-      %Seat{occupant_type: :bot, bot_pid: pid} when entry != :bot ->
+      %Seat{occupant_type: :bot} = seat when entry != :bot ->
         bot_id = room.positions[position]
-        {:ok, room |> Positions.remove(bot_id) |> vacate_seat(position), {bot_id, pid}}
+        {:ok, room |> Positions.remove(bot_id) |> vacate_seat(position), {bot_id, seat}}
 
       _ ->
         {:ok, room, nil}
     end
   end
+
+  # A substitute is this manager's own child and stops here. A seated bot
+  # belongs to the bot manager; its pid goes back for the caller to stop.
+  defp release_bot(%Seat{status: :bot_substitute, bot_pid: pid}) do
+    if is_pid(pid),
+      do: DynamicSupervisor.terminate_child(PidroServer.Games.Bots.BotSupervisor, pid)
+
+    nil
+  end
+
+  defp release_bot(%Seat{bot_pid: pid}), do: pid
+  defp release_bot(nil), do: nil
 
   defp ensure_seat_entry(room, host_id, position, {:held, user_id}) do
     with :ok <- ensure_unblocked_holds(host_id, [user_id]),
