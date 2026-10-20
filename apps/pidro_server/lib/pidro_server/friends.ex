@@ -409,12 +409,20 @@ defmodule PidroServer.Friends do
   end
 
   # Connected players holding a human seat, with whether anyone else human sits
-  # there. A connected spectator holds no seat and stays online.
+  # there. Only a started game can be with bots; a table that has not started is
+  # one with open seats, whoever sits there. A connected spectator holds no seat
+  # and stays online.
   defp seated_company({room, connected}) do
     for {_, %{occupant_type: :human, user_id: id}} <- room.seats, Map.has_key?(connected, id) do
-      {id, {if(Seat.alone_with_bots?(room.seats, id), do: "bots", else: "people"), room}}
+      {id, {company(room, id), room}}
     end
   end
+
+  defp company(%{status: status} = room, id) when status in [:playing, :finished] do
+    if Seat.alone_with_bots?(room.seats, id), do: "bots", else: "people"
+  end
+
+  defp company(_waiting, _id), do: "people"
 
   defp edge(user_id, friend_id),
     do: from(f in Friendship, where: f.user_id == ^user_id and f.friend_id == ^friend_id)

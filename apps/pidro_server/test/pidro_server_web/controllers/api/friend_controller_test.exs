@@ -105,7 +105,8 @@ defmodule PidroServerWeb.API.FriendControllerTest do
     response = conn |> auth(a) |> get(~p"/api/v1/friends") |> json_response(200)
     assert_schema(response, "FriendsResponse")
     assert [entry] = response["data"]["friends"]
-    assert entry["table_company"] == "bots"
+    # A table that has not started reads "At a table · 2 seats open", never "with bots".
+    assert entry["table_company"] == "people"
     assert entry["table_open_seats"] == 2
     assert Map.has_key?(entry, "table_hand") and is_nil(entry["table_hand"])
     assert Map.has_key?(entry, "played_together_at") and is_nil(entry["played_together_at"])
