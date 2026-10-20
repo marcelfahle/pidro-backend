@@ -1,0 +1,116 @@
+name: Deploy
+
+# A green Backend CI run on main deploys its commit to production, once the
+# app's Game and Account journeys pass against that commit. See docs/deploy.md.
+on:
+  workflow_run:
+    workflows: [Backend CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # A newer green commit cancels the journeys of an older one, which then never deploys.
+  game-journeys:
+    name: Game journeys
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    concurrency:
+      group: deploy-game-journeys
+      cancel-in-progress: true
+    uses: marcelfahle/pidro-frontend/.github/workflows/game-e2e.yml@main
+    with:
+      backend-sha: ${{ github.event.workflow_run.head_sha }}
+
+  account-journeys:
+    name: Account journeys
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    concurrency:
+      group: deploy-account-journeys
+      cancel-in-progress: true
+    uses: marcelfahle/pidro-frontend/.github/workflows/account-e2e.yml@main
+    with:
+      backend-sha: ${{ github.event.workflow_run.head_sha }}
+
+  deploy:
+    name: Deploy production
+    needs: [game-journeys, account-journeys]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    # One deploy at a time. A newer commit replaces one that is waiting here,
+    # never one that is running.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      SSH_AUTH_SOCK: /tmp/ssh-agent.sock
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+      KAMAL_REGISTRY_PASSWORD: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+      SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      CLASSIC_API_URL: ${{ secrets.CLASSIC_API_URL }}
+      CLASSIC_CLAIM_SECRET: ${{ secrets.CLASSIC_CLAIM_SECRET }}
+      FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+
+    steps:
+      - name: Check deploy secrets
+        id: secrets
+        run: |
+          missing=()
+          for name in DEPLOY_SSH_KEY DEPLOY_SSH_KNOWN_HOSTS KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE \
+            POSTGRES_PASSWORD CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET; do
+            test -n "${!name}" || missing+=("$name")
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            message="Deploy skipped: missing GitHub Actions secrets ${missing[*]}. See docs/deploy.md."
+            echo "::warning::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      - uses: ruby/setup-ruby@v1
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          ruby-version: "4.0.5"
+          bundler-cache: true
+
+      - name: Load the deploy key and secrets
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          # setup-ruby's gem cache lives in the checkout; the pre-build hook must not see it.
+          printf '/vendor/bundle/\n/.bundle/\n' >> .git/info/exclude
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh-agent -a "$SSH_AUTH_SOCK" > /dev/null
+          echo "$DEPLOY_SSH_KEY" | ssh-add -
+          # Kamal expands each $NAME from this job's environment; no value touches disk.
+          for name in KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE POSTGRES_PASSWORD \
+            CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET; do
+            echo "$name=\$$name"
+          done > .kamal/secrets-common
+
+      - name: Deploy (backup, migrate, /up, post-deploy smoke)
+        if: steps.secrets.outputs.ready == 'true'
+        run: bundle exec kamal deploy
+
+      - name: Verify production runs this commit
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          version="$(bundle exec kamal app version --quiet | tr -d '[:space:]')"
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 https://app.pidro.online/up)"
+          echo "Running version: $version (expected $SHA); /up: $status"
+          test "$version" = "$SHA"
+          test "$status" = "200"
+          echo "Deployed $SHA to https://app.pidro.online." >> "$GITHUB_STEP_SUMMARY"
