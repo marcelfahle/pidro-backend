@@ -30,8 +30,8 @@ The deploy job reads these GitHub Actions repository secrets
 
 | Secret | Value |
 | --- | --- |
-| `DEPLOY_SSH_KEY` | Private half of an SSH deploy key whose public half is in `root@95.217.3.224:~/.ssh/authorized_keys` |
-| `DEPLOY_SSH_KNOWN_HOSTS` | Output of `ssh-keyscan 95.217.3.224` |
+| `SSH_PRIVATE_KEY` | Private half of an SSH deploy key whose public half is in `root@95.217.3.224:~/.ssh/authorized_keys` |
+| `SSH_KNOWN_HOSTS` | Output of `ssh-keyscan 95.217.3.224` |
 | `KAMAL_REGISTRY_PASSWORD` | From `.kamal/secrets-common` |
 | `SECRET_KEY_BASE` | From `.kamal/secrets-common` |
 | `POSTGRES_PASSWORD` | From `.kamal/secrets-common` |
@@ -44,8 +44,8 @@ To add them from a checkout that can deploy:
 ```bash
 ssh-keygen -t ed25519 -N '' -C pidro-backend-deploy -f /tmp/pidro-deploy
 ssh-copy-id -i /tmp/pidro-deploy.pub root@95.217.3.224
-gh secret set DEPLOY_SSH_KEY < /tmp/pidro-deploy
-ssh-keyscan 95.217.3.224 2>/dev/null | gh secret set DEPLOY_SSH_KNOWN_HOSTS
+gh secret set SSH_PRIVATE_KEY < /tmp/pidro-deploy
+ssh-keyscan 95.217.3.224 2>/dev/null | gh secret set SSH_KNOWN_HOSTS
 gh secret set -f .kamal/secrets-common
 rm /tmp/pidro-deploy /tmp/pidro-deploy.pub
 ```

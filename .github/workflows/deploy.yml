@@ -46,8 +46,8 @@ jobs:
     env:
       SHA: ${{ github.event.workflow_run.head_sha }}
       SSH_AUTH_SOCK: /tmp/ssh-agent.sock
-      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
       KAMAL_REGISTRY_PASSWORD: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
       SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -60,7 +60,7 @@ jobs:
         id: secrets
         run: |
           missing=()
-          for name in DEPLOY_SSH_KEY DEPLOY_SSH_KNOWN_HOSTS KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE \
+          for name in SSH_PRIVATE_KEY SSH_KNOWN_HOSTS KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE \
             POSTGRES_PASSWORD CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET; do
             test -n "${!name}" || missing+=("$name")
           done
@@ -92,9 +92,9 @@ jobs:
           # setup-ruby's gem cache lives in the checkout; the pre-build hook must not see it.
           printf '/vendor/bundle/\n/.bundle/\n' >> .git/info/exclude
           mkdir -p ~/.ssh
-          echo "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh-agent -a "$SSH_AUTH_SOCK" > /dev/null
-          echo "$DEPLOY_SSH_KEY" | ssh-add -
+          echo "$SSH_PRIVATE_KEY" | ssh-add -
           # Kamal expands each $NAME from this job's environment; no value touches disk.
           for name in KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE POSTGRES_PASSWORD \
             CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET; do
