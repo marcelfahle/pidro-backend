@@ -74,7 +74,8 @@ defmodule PidroServerWeb.Endpoint do
   plug CORSPlug,
     origin: &PidroServerWeb.Endpoint.cors_origins/0,
     headers: ["Authorization", "Content-Type", "Accept"],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    expose: ["retry-after"]
 
   plug PidroServerWeb.Router
 

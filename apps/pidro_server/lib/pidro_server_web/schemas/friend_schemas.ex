@@ -17,7 +17,8 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
         table_company: %Schema{
           type: :string,
           enum: ["bots", "people"],
-          description: "Only when at_table: seated with bots alone, or with other people"
+          description:
+            "Only when at_table: bots alone in a started game, otherwise people (any table that has not started)"
         },
         table_open_seats: %Schema{
           type: :integer,
@@ -65,7 +66,8 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
         table_company: %Schema{
           type: :string,
           enum: ["bots", "people"],
-          description: "Only when at_table: seated with bots alone, or with other people"
+          description:
+            "Only when at_table: bots alone in a started game, otherwise people (any table that has not started)"
         },
         table_open_seats: %Schema{
           type: :integer,
@@ -100,7 +102,8 @@ defmodule PidroServerWeb.Schemas.FriendSchemas do
         table_company: %Schema{
           type: :string,
           enum: ["bots", "people"],
-          description: "Only when at_table: seated with bots alone, or with other people"
+          description:
+            "Only when at_table: bots alone in a started game, otherwise people (any table that has not started)"
         },
         table_open_seats: %Schema{
           type: :integer,

@@ -100,6 +100,8 @@ defmodule PidroServerWeb.Plugs.RateLimitTest do
 
       assert denied.status == 429
       assert [_origin] = get_resp_header(denied, "access-control-allow-origin")
+      # The web client may read the wait from the header, not only the body.
+      assert get_resp_header(denied, "access-control-expose-headers") == ["retry-after"]
     end
 
     test "the 429 body matches the too_many_requests_error schema", %{conn: conn} do

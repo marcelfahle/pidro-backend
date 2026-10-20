@@ -262,9 +262,12 @@ defmodule PidroServerWeb.API.RoomController do
 
       A seat with `password: true` needs the table's seat password in the body's
       `password`. Missing or wrong: 403 `SEAT_REQUIRES_PASSWORD`. Every join that
-      sends a password counts against policies `seat_password` (per user) and
-      `seat_password_room` (per room); over either, 429. A seat held for the
-      caller and a reclaim after a disconnect need no password.
+      sends a password counts against policy `seat_password` (per user); over
+      it, 429. Only a wrong password counts against `seat_password_room` (per
+      room); over it, a wrong password answers 429 and the right one still
+      seats you. Every 429 carries the wait in `Retry-After` and in
+      `error_params.retry_after`. A seat held for the caller and a reclaim
+      after a disconnect need no password.
 
       Requires authentication via Bearer token.
       """,
@@ -1269,24 +1272,35 @@ defmodule PidroServerWeb.API.RoomController do
 
     password = params["password"]
 
-    with %Plug.Conn{halted: false} = conn <- throttle_password(conn, password),
+    with %Plug.Conn{halted: false} = conn <- throttle_password(conn, password, :seat_password),
          {:ok, room, assigned_position} <-
-           RoomManager.join_room(code, user, position, password) do
+           RoomManager.join_room(code, user, position, password)
+           |> count_wrong_guess(conn, password) do
       conn
       |> put_view(RoomJSON)
       |> render(:show, %{room: room, assigned_position: assigned_position})
     end
   end
 
-  # Every join that sends a seat password counts, per player and per table, so
-  # a wrong guess cannot be followed by enough others to find the right one.
-  defp throttle_password(conn, nil), do: conn
+  # Every join that sends a seat password counts against the player. Only a
+  # wrong one counts against the table, so strangers guessing there cannot lock
+  # out the friends the host gave the right password to.
+  defp throttle_password(conn, nil, _policy), do: conn
 
-  defp throttle_password(conn, _password) do
+  defp throttle_password(conn, _password, policy) do
     conn
-    |> put_private(:rate_limit, [:seat_password, :seat_password_room])
+    |> put_private(:rate_limit, [policy])
     |> PidroServerWeb.Plugs.RateLimit.call([])
   end
+
+  defp count_wrong_guess({:error, :seat_requires_password} = error, conn, password) do
+    case throttle_password(conn, password, :seat_password_room) do
+      %Plug.Conn{halted: true} = denied -> denied
+      _counted -> error
+    end
+  end
+
+  defp count_wrong_guess(result, _conn, _password), do: result
 
   @doc false
   @spec parse_position(String.t() | nil) :: atom() | nil

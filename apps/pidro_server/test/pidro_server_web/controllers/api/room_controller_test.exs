@@ -663,28 +663,43 @@ defmodule PidroServerWeb.API.RoomControllerTest do
                "east"
     end
 
-    test "password guesses are limited per player and per table", %{conn: conn} do
+    test "password guesses are limited per player; wrong ones per table, never the right one",
+         %{conn: conn} do
       with_limit(:seat_password, 2, 60_000)
       with_limit(:seat_password_room, 2, 60_000)
       host = AccountsFixtures.user_fixture()
-      [first, second] = for _ <- 1..2, do: AccountsFixtures.user_fixture()
+      [first, stranger, friend] = for _ <- 1..3, do: AccountsFixtures.user_fixture()
       {:ok, room} = RoomManager.create_room(host.id, %{password_seats: [:south]})
       password = room.config.seat_password
+      wrong = if password == "0000", do: "1111", else: "0000"
       join = &post(as_user(conn, &1), ~p"/api/v1/rooms/#{room.code}/join", &2)
+
+      # Every 429 tells the app the same wait in its body as in its header.
+      rate_limited = fn denied ->
+        [seconds] = get_resp_header(denied, "retry-after")
+
+        assert %{"error_code" => "rate_limited", "error_params" => %{"retry_after" => wait}} =
+                 json_response(denied, 429)
+
+        assert wait == String.to_integer(seconds)
+      end
 
       # A join without a password is no guess and never counts.
       for _ <- 1..3, do: assert(json_response(join.(first, %{position: "south"}), 403))
 
       for _ <- 1..2,
-          do: assert(json_response(join.(first, %{position: "south", password: "0000"}), 403))
+          do: assert(json_response(join.(first, %{position: "south", password: wrong}), 403))
 
-      assert %{"errors" => [%{"code" => "RATE_LIMITED"}]} =
-               json_response(join.(first, %{position: "south", password: password}), 429)
+      # Over the player's limit, even the right password waits.
+      rate_limited.(join.(first, %{position: "south", password: password}))
 
-      # The denied attempt stopped at the player's bucket; the table's holds the two
-      # wrong guesses, so a second player's first guess is one too many.
-      assert json_response(join.(second, %{position: "south", password: password}), 429)
-      assert {:ok, %{positions: %{south: nil}}} = RoomManager.get_room(room.code)
+      # The table holds the two wrong guesses: a stranger's next wrong one waits,
+      # but a friend with the right password still sits down.
+      rate_limited.(join.(stranger, %{position: "south", password: wrong}))
+      assert data(join.(friend, %{position: "south", password: password}), 200)
+
+      assert {:ok, %{positions: %{south: south}}} = RoomManager.get_room(room.code)
+      assert south == friend.id
     end
 
     test "a join call that fails logs no typed password" do

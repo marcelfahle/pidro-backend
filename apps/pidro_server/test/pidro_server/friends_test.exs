@@ -382,13 +382,14 @@ defmodule PidroServer.FriendsTest do
            }
   end
 
-  test "a seated player is at_table with bots alone or with people; spectators stay online" do
+  test "only a started game is with bots; a table that has not started is with people" do
     caller = user_fixture()
 
-    [solo, pair_a, pair_b, mixed_a, mixed_b, spectator, lobby, offline] =
-      users =
-      for name <- ~w(Solo PairA PairB MixedA MixedB Spectator Lobby Offline),
-          do: user_fixture(%{display_name: name})
+    names =
+      ~w(Solo MixedA MixedB Host PairA PairB Alone Spectator Lobby Offline)
+
+    [solo, mixed_a, mixed_b, host, pair_a, pair_b, alone, spectator, lobby, _offline] =
+      users = for name <- names, do: user_fixture(%{display_name: name})
 
     for user <- users do
       {:ok, _} = Friends.add(caller.id, user.id)
@@ -396,15 +397,20 @@ defmodule PidroServer.FriendsTest do
     end
 
     solo_room = table([solo], [:east, :south, :west])
-    pair_room = table([pair_a, pair_b], [])
     mixed_room = table([mixed_a, mixed_b], [:south, :west])
+    for room <- [solo_room, mixed_room], do: PidroServer.RoomFixtures.ready_room(room.code)
+    bot_room = table([host], [:south])
+    pair_room = table([pair_a, pair_b], [])
+    alone_room = table([alone], [])
 
     for {room, user} <- [
           {solo_room, solo},
-          {pair_room, pair_a},
-          {pair_room, pair_b},
           {mixed_room, mixed_a},
           {mixed_room, mixed_b},
+          {bot_room, host},
+          {pair_room, pair_a},
+          {pair_room, pair_b},
+          {alone_room, alone},
           {solo_room, spectator}
         ] do
       {:ok, _} = Presence.track(self(), "game:" <> room.code, user.id, %{})
@@ -415,18 +421,20 @@ defmodule PidroServer.FriendsTest do
     presence =
       Map.new(
         Friends.list(caller.id).friends,
-        &{&1.display_name, {&1.presence, &1[:table_company]}}
+        &{&1.display_name, {&1.presence, &1[:table_company], &1[:table_open_seats]}}
       )
 
     assert presence == %{
-             "Solo" => {"at_table", "bots"},
-             "PairA" => {"at_table", "people"},
-             "PairB" => {"at_table", "people"},
-             "MixedA" => {"at_table", "people"},
-             "MixedB" => {"at_table", "people"},
-             "Spectator" => {"online", nil},
-             "Lobby" => {"online", nil},
-             "Offline" => {"offline", nil}
+             "Solo" => {"at_table", "bots", 0},
+             "MixedA" => {"at_table", "people", 0},
+             "MixedB" => {"at_table", "people", 0},
+             "Host" => {"at_table", "people", 2},
+             "PairA" => {"at_table", "people", 2},
+             "PairB" => {"at_table", "people", 2},
+             "Alone" => {"at_table", "people", 3},
+             "Spectator" => {"online", nil, nil},
+             "Lobby" => {"online", nil, nil},
+             "Offline" => {"offline", nil, nil}
            }
   end
 
