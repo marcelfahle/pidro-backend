@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Rolls production back to a retained app container: the one before the
+# running version, or the version named (a full or abbreviated commit sha).
+# Run it from a checkout like `just deploy`:
+#
+#   mise exec -- scripts/rollback [--dry-run] [<sha>]
+#
+# See docs/deploy.md for when to roll back and when to fix forward instead.
+
+usage() {
+  echo "Usage: scripts/rollback [--dry-run] [<sha>]" >&2
+  exit 64
+}
+
+dry_run=false
+target=""
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) dry_run=true ;;
+    -*) usage ;;
+    *) [[ -z "$target" && "$arg" =~ ^[0-9a-f]{7,40}$ ]] || usage; target="$arg" ;;
+  esac
+done
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+up_url="https://app.pidro.online/up"
+
+# Kamal reports a failure (no SSH access, say) on stdout; show it instead of swallowing it.
+kamal_output() {
+  local output
+  output="$(bundle exec kamal "$@" --quiet)" || { echo "$output" >&2; return 1; }
+  echo "$output"
+}
+
+running_version() {
+  kamal_output app version | tr -d '[:space:]'
+}
+
+up_status() {
+  curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$up_url" || true
+}
+
+current="$(running_version)"
+containers="$(kamal_output app containers)"
+# Newest first. Kamal names each container pidro-backend-web-<sha>; one it
+# renamed out of the way (<sha>_replaced_<hex>) cannot be rolled back to.
+versions="$(grep -Eo 'pidro-backend-web-[0-9a-f]{40}$' <<<"$containers" | sed 's/^pidro-backend-web-//' || true)"
+
+echo "Retained app containers, newest first:"
+echo "$containers"
+echo
+echo "Running: $current"
+
+if [ -z "$target" ]; then
+  version="$(grep -vxF "$current" <<<"$versions" | head -1 || true)"
+else
+  version="$(grep "^$target" <<<"$versions" || true)"
+fi
+
+if [ -z "$version" ] || [ "$(wc -l <<<"$version")" -ne 1 ]; then
+  echo "No single retained version matches '${target:-previous}'; pick one from the list above." >&2
+  exit 1
+fi
+
+if [ "$version" = "$current" ]; then
+  echo "$version is already running." >&2
+  exit 1
+fi
+
+echo "Roll back to: $version"
+echo "/up now: $(up_status)"
+
+if $dry_run; then
+  echo "Dry run: would run 'bundle exec kamal rollback $version', then check the running version and /up."
+  exit 0
+fi
+
+# Like a deploy, this backs up the database first and smoke-tests afterwards.
+# Migrations are not reversed.
+bundle exec kamal rollback "$version"
+
+after="$(running_version)"
+status="$(up_status)"
+echo "Running: $after; /up: $status"
+test "$after" = "$version"
+test "$status" = "200"
+echo "Rolled back to $version."

@@ -107,4 +107,4 @@ jobs:
             end
           '
       - run: bundle exec bundle-audit check --update
-      - run: bash -n .kamal/hooks/* ops/backup-production ops/credo-diff ops/install-backup-timer ops/server/pidro-backup ops/smoke-production
+      - run: bash -n .kamal/hooks/* ops/backup-production ops/credo-diff ops/install-backup-timer ops/server/pidro-backup ops/smoke-production scripts/rollback

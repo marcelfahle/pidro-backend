@@ -33,8 +33,8 @@ smoke:
 quality:
     mix precommit
 
-rollback version:
-    bundle exec kamal rollback {{version}}
+rollback *args:
+    scripts/rollback {{args}}
 
 logs:
     bundle exec kamal app logs -f
