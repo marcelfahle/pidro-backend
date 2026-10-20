@@ -40,8 +40,9 @@ config :pidro_server, PidroServer.Games.Lifecycle,
   bot_min_delay_ms: 300,
   trick_transition_delay_ms: 1_500,
   sweep_trick_delay_ms: 500,
-  hand_transition_delay_ms: 11_000,
-  second_deal_transition_delay_ms: 9_500
+  hand_transition_delay_ms: 6_000,
+  second_deal_transition_delay_ms: 9_500,
+  deal_transition_delay_ms: 5_000
 
 # Rate-limit policies for PidroServerWeb.Plugs.RateLimit: `limit` requests per
 # `scale_ms` window, keyed by the client address (:ip), the authenticated user

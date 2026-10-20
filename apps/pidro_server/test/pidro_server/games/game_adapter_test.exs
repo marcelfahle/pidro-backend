@@ -4,12 +4,13 @@ defmodule PidroServer.Games.GameAdapterTest do
   alias PidroServer.Games.{GameAdapter, Lifecycle}
 
   describe "transition_delay_ms/2" do
-    test "returns hand transition delay when hand number increases" do
+    test "holds the next hand for the hand's result and then its deal" do
       old_state = %{phase: :playing, hand_number: 1, tricks: [%{}], current_trick: nil}
-      new_state = %{phase: :dealer_selection, hand_number: 2, tricks: [%{}], current_trick: nil}
+      new_state = %{phase: :bidding, hand_number: 2, tricks: [], current_trick: nil}
 
       assert GameAdapter.transition_delay_ms(old_state, new_state) ==
-               Lifecycle.config(:hand_transition_delay_ms)
+               Lifecycle.config(:hand_transition_delay_ms) +
+                 Lifecycle.config(:deal_transition_delay_ms)
     end
 
     test "returns trick transition delay when a trick completes" do

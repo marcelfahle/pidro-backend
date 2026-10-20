@@ -1301,7 +1301,12 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert west_out.state.players.west.eliminated?
 
       assert Enum.map(sweep, &elem(&1, 1).transition_delay_ms) ==
-               [60, 60, Lifecycle.config(:hand_transition_delay_ms)]
+               [
+                 60,
+                 60,
+                 Lifecycle.config(:hand_transition_delay_ms) +
+                   Lifecycle.config(:deal_transition_delay_ms)
+               ]
 
       arrivals = Enum.map(updates, &elem(&1, 0))
       gaps = Enum.zip_with(arrivals, tl(arrivals), &(&2 - &1))

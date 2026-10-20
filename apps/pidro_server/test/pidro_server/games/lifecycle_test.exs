@@ -23,7 +23,8 @@ defmodule PidroServer.Games.LifecycleTest do
     :trick_transition_delay_ms,
     :sweep_trick_delay_ms,
     :hand_transition_delay_ms,
-    :second_deal_transition_delay_ms
+    :second_deal_transition_delay_ms,
+    :deal_transition_delay_ms
   ]
 
   @expected_defaults %{
@@ -45,8 +46,9 @@ defmodule PidroServer.Games.LifecycleTest do
     dealer_selection_delay_ms: 3_000,
     trick_transition_delay_ms: 1_500,
     sweep_trick_delay_ms: 500,
-    hand_transition_delay_ms: 11_000,
-    second_deal_transition_delay_ms: 9_500
+    hand_transition_delay_ms: 6_000,
+    second_deal_transition_delay_ms: 9_500,
+    deal_transition_delay_ms: 5_000
   }
 
   describe "config/1" do

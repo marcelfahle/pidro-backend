@@ -467,6 +467,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
               <p class="mt-1 text-zinc-500">
                 Trick pause: {@pacing_form["trick_transition_delay_ms"]}ms
                 · Hand pause: {@pacing_form["hand_transition_delay_ms"]}ms
+                · Deal pause: {@pacing_form["deal_transition_delay_ms"]}ms
               </p>
             </div>
           </div>

@@ -39,6 +39,14 @@ defmodule PidroServer.Games.PacingSettings do
       step: 50
     },
     %{
+      key: :deal_transition_delay_ms,
+      label: "Deal Pause",
+      description: "Hold bots while clients deal each hand's nine cards.",
+      min: 0,
+      max: 20_000,
+      step: 250
+    },
+    %{
       key: :second_deal_transition_delay_ms,
       label: "Second Deal Pause",
       description: "Hold play while clients show the discards and the refill.",

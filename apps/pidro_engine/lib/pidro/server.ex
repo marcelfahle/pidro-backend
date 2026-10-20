@@ -334,6 +334,7 @@ defmodule Pidro.Server do
       end
 
     dealer_selection_delay_ms = Keyword.get(opts, :dealer_selection_delay_ms, 3_000)
+    deal_transition_delay_ms = Keyword.get(opts, :deal_transition_delay_ms, 0)
     dealer_rob_presentation_ms = Keyword.get(opts, :dealer_rob_presentation_ms, 5_000)
     pubsub = Keyword.get(opts, :pubsub)
 
@@ -344,6 +345,7 @@ defmodule Pidro.Server do
         seed: seed,
         telemetry_enabled?: telemetry_enabled?,
         dealer_selection_delay_ms: dealer_selection_delay_ms,
+        deal_transition_delay_ms: deal_transition_delay_ms,
         pubsub: pubsub,
         game_instance_id: Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false),
         state_revision: 0,
@@ -497,7 +499,8 @@ defmodule Pidro.Server do
           |> Map.update!(:state_revision, &(&1 + 1))
           |> clear_dealer_selection_presentation()
 
-        broadcast_state_change(new_state)
+        # The first hand is dealt: hold the bots while clients deal it out.
+        broadcast_state_change(new_state, state.deal_transition_delay_ms)
         {:noreply, new_state}
 
       {:error, _reason} ->
@@ -590,13 +593,15 @@ defmodule Pidro.Server do
     end
   end
 
-  defp broadcast_state_change(%{pubsub: nil}), do: :ok
+  defp broadcast_state_change(state, transition_delay_ms \\ 0)
+  defp broadcast_state_change(%{pubsub: nil}, _transition_delay_ms), do: :ok
 
-  defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id} = state) do
+  defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id} = state, transition_delay_ms) do
     apply(Phoenix.PubSub, :broadcast, [
       pubsub,
       "game:#{game_id}",
-      {:state_update, game_id, Map.put(snapshot(state), :transition_delay_ms, 0)}
+      {:state_update, game_id,
+       Map.put(snapshot(state), :transition_delay_ms, transition_delay_ms)}
     ])
   end
 

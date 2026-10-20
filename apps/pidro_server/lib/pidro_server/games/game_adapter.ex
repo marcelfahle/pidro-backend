@@ -393,8 +393,9 @@ defmodule PidroServer.Games.GameAdapter do
       Map.get(new_state, :phase) == :complete ->
         0
 
+      # The hand's result, then the next hand's deal.
       hand_completed?(old_state, new_state) ->
-        Lifecycle.config(:hand_transition_delay_ms)
+        Lifecycle.config(:hand_transition_delay_ms) + Lifecycle.config(:deal_transition_delay_ms)
 
       second_deal_completed?(old_state, new_state) ->
         Lifecycle.config(:second_deal_transition_delay_ms)

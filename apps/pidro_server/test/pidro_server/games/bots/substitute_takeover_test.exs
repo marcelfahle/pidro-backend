@@ -250,6 +250,111 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
     refute log =~ "not legal"
   end
 
+  describe "the deal hold" do
+    @hold_ms 300
+
+    # As in production, the cut is shown for longer than a bot's move takes,
+    # so no move the bots scheduled during the cut is still pending at the deal.
+    setup do
+      original = Application.get_env(:pidro_server, Lifecycle, [])
+
+      Application.put_env(
+        :pidro_server,
+        Lifecycle,
+        Keyword.merge(original,
+          dealer_selection_delay_ms: 100,
+          deal_transition_delay_ms: @hold_ms,
+          hand_transition_delay_ms: 1
+        )
+      )
+
+      :ok
+    end
+
+    test "bots in every other seat bid only once each hand's deal has been shown" do
+      host = Ecto.UUID.generate()
+      {:ok, room} = RoomManager.create_room(host, %{name: "Deal hold"})
+
+      for position <- [:east, :south, :west],
+          do: {:ok, _} = BotManager.start_bot(room.code, position, :basic, 1)
+
+      :ok = GameAdapter.subscribe(room.code)
+      PidroServer.RoomFixtures.ready_room(room.code)
+      {:ok, room} = RoomManager.get_room(room.code)
+      GameAdapter.apply_action(room.code, :north, :select_dealer)
+
+      hands = watch_hands(room.code, Map.new(room.positions), %{})
+
+      for {hand, dealt_delay} <- [{1, @hold_ms}, {2, 1 + @hold_ms}] do
+        %{dealt_at: dealt_at, bids: bids, delays: [delay | later]} = Map.fetch!(hands, hand)
+        bot_bids = for {position, at} <- bids, position != :north, do: at - dealt_at
+
+        assert length(bot_bids) >= 3
+        assert Enum.all?(bot_bids, &(&1 >= @hold_ms)), inspect(bot_bids)
+
+        # Only the broadcast that deals the hand carries the hold.
+        assert delay == dealt_delay
+        assert Enum.all?(later, &(&1 < @hold_ms))
+      end
+
+      BotManager.stop_all_bots(room.code)
+    end
+  end
+
+  # Follows the game topic until the third hand is dealt, recording per hand
+  # when it was dealt, each bid (server clock) and the broadcast delays.
+  defp watch_hands(code, positions, hands) do
+    receive do
+      {:state_update, ^code, %{state: game, server_time_ms: at} = payload} ->
+        hands = record(hands, game, at, payload.transition_delay_ms)
+
+        if Map.has_key?(hands, 3) or game.phase == :complete,
+          do: hands,
+          else: watch_hands(code, positions, hands)
+
+      _other ->
+        watch_hands(code, positions, hands)
+    after
+      5 ->
+        drive_human(code, positions, hands)
+        watch_hands(code, positions, hands)
+    end
+  end
+
+  defp record(hands, %{phase: :bidding, hand_number: hand} = game, at, delay)
+       when not is_map_key(hands, hand) do
+    record(Map.put(hands, hand, %{dealt_at: at, bids: [], delays: []}), game, at, delay)
+  end
+
+  defp record(hands, %{hand_number: hand} = game, at, delay) when is_map_key(hands, hand) do
+    Map.update!(hands, hand, fn entry ->
+      new_bids = for bid <- Enum.drop(game.bids, length(entry.bids)), do: {bid.position, at}
+      %{entry | bids: entry.bids ++ new_bids, delays: entry.delays ++ [delay]}
+    end)
+  end
+
+  defp record(hands, _game, _at, _delay), do: hands
+
+  defp drive_human(code, positions, hands) do
+    {:ok, game} = GameAdapter.get_state(code)
+
+    if human_turn?(game, hands) do
+      {:ok, legal} = GameAdapter.get_legal_actions(code, :north)
+      {action, _reason} = Rulebook.decide(SeatView.for_seat(game, :north), legal)
+      action = BotBrain.resolve_action(action, game, :north)
+      RoomManager.apply_player_action(code, positions[:north], :north, action)
+    end
+  end
+
+  # Like the app, the human bids only once the deal has been shown.
+  defp human_turn?(%{current_turn: :north, phase: :bidding, hand_number: hand}, hands),
+    do: System.system_time(:millisecond) - hands[hand].dealt_at >= @hold_ms
+
+  defp human_turn?(%{current_turn: :north, phase: phase}, _hands),
+    do: phase in [:declaring, :second_deal, :playing]
+
+  defp human_turn?(_game, _hands), do: false
+
   test "four rulebook bots play a full game to a winner in a real room" do
     host = Ecto.UUID.generate()
     {:ok, room} = RoomManager.create_room(host, %{name: "All bots"})

@@ -80,7 +80,8 @@ defmodule PidroServer.Games.GameSupervisor do
       game_id: room_code,
       variant: rule_set,
       pubsub: PidroServer.PubSub,
-      dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms)
+      dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms),
+      deal_transition_delay_ms: Lifecycle.config(:deal_transition_delay_ms)
     ]
 
     # Start Pidro.Server under this supervisor
