@@ -17,6 +17,34 @@ defmodule Pidro.Bot.BiddingTest do
 
   defp decide(state), do: Bidding.decide_bid(Scenario.view(state), Scenario.legal(state))
 
+  describe "Finnish bidding competition" do
+    test "length makes a protected Five worth contesting an opponent's 6" do
+      cards = hand(suit(:hearts, [14, 8, 7, 5]))
+      assert Bidding.estimate(cards, :hearts, false) == 6.5
+
+      state = Scenario.bidding(me: :east, bids: [north: 6], hand: cards)
+      assert {{:bid, 7}, _} = decide(state)
+
+      weak = hand(suit(:hearts, [14, 13, 9, 4]))
+      assert Bidding.estimate(weak, :hearts, false) == 4.5
+      assert {:pass, _} = decide(Scenario.bidding(me: :east, bids: [north: 6], hand: weak))
+    end
+
+    test "raises partner with a better hand, never with the competition allowance" do
+      strong = hand(suit(:hearts, [14, 13, 5]))
+      assert Bidding.estimate(strong, :hearts, false) == 7.25
+      state = Scenario.bidding(me: :south, bids: [north: 6, east: :pass], hand: strong)
+      assert {{:bid, 7}, _} = decide(state)
+
+      close = hand(suit(:hearts, [14, 8, 7, 5]))
+      state = Scenario.bidding(me: :south, bids: [north: 6, east: :pass], hand: close)
+      assert {:pass, _} = decide(state)
+
+      state = Scenario.bidding(me: :south, bids: [north: 7, east: :pass], hand: strong)
+      assert {:pass, _} = decide(state)
+    end
+  end
+
   describe "decide_bid/2" do
     test "AE1: J, 10, 7, 6, 5 first to bid bids below 9" do
       {action, _reason} =
