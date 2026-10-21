@@ -105,6 +105,7 @@ defmodule PidroServer.Games.RoomManager do
             max_spectators: integer(),
             created_at: DateTime.t(),
             config: Config.t(),
+            pace: :quick | :own,
             seat_hold_started_at: %{optional(Positions.position()) => DateTime.t()},
             phase_timers: %{Positions.position() => reference()},
             seats: map(),
@@ -131,6 +132,7 @@ defmodule PidroServer.Games.RoomManager do
       :created_at,
       :last_activity,
       config: %Config{},
+      pace: :quick,
       seat_hold_started_at: %{},
       locked: false,
       kicked_ids: [],
@@ -1305,6 +1307,17 @@ defmodule PidroServer.Games.RoomManager do
     GenServer.call(__MODULE__, {:apply_substitute_action, room_code, position, action})
   end
 
+  @doc "Sets pace for the sole human seated with three bots."
+  @spec set_pace(String.t(), String.t(), :quick | :own) ::
+          {:ok, :quick | :own} | {:error, atom()}
+  def set_pace(room_code, user_id, pace) when pace in [:quick, :own],
+    do: GenServer.call(__MODULE__, {:set_pace, room_code, user_id, pace})
+
+  @doc "Releases an own-pace hand for its human; otherwise a no-op."
+  @spec continue_hand(String.t(), String.t()) :: :ok | {:error, atom()}
+  def continue_hand(room_code, user_id),
+    do: GenServer.call(__MODULE__, {:continue_hand, room_code, user_id})
+
   if Mix.env() == :test do
     def set_last_activity_for_test(room_code, datetime) do
       GenServer.call(__MODULE__, {:set_last_activity_for_test, room_code, datetime})
@@ -1324,6 +1337,32 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
+  def handle_call({:set_pace, code, user_id, pace}, _from, state) do
+    with {:ok, room} <- fetch_room(state, code),
+         true <- solo_pace_allowed?(room, user_id),
+         :ok <- set_game_pace(room, pace) do
+      room = %{room | pace: pace}
+      {room, state} = reconcile_turn_timer_for_current_state(room, code, state)
+      {:reply, {:ok, pace}, put_room(state, room)}
+    else
+      false -> {:reply, {:error, :not_solo}, state}
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  def handle_call({:continue_hand, code, user_id}, _from, state) do
+    reply =
+      with {:ok, room} <- fetch_room(state, code),
+           true <- room.pace == :own and solo_pace_allowed?(room, user_id),
+           {:ok, :ok} <- GameAdapter.continue_hand(code) do
+        :ok
+      else
+        _ -> :ok
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:seat_invitations, user_id}, _from, %State{} = state) do
     invitations =
       for {_code, room} <- state.rooms,
@@ -2734,7 +2773,7 @@ defmodule PidroServer.Games.RoomManager do
   # so a game that did not answer is asked again a few times.
   @impl true
   def handle_info({:sweep_play, room_code, event_seq, retries}, %State{} = state) do
-    with %Room{status: :playing} <- Map.get(state.rooms, room_code),
+    with %Room{status: :playing, pace: :quick} <- Map.get(state.rooms, room_code),
          {:ok, game_state} <- GameAdapter.get_state(room_code),
          ^event_seq <- length(game_state.events),
          {position, card} <- Play.settled_play(game_state),
@@ -3252,6 +3291,7 @@ defmodule PidroServer.Games.RoomManager do
             spectator_ids: List.delete(room.spectator_ids, player_id)
         }
         |> reset_timeout_counter(position)
+        |> reset_multiplayer_pace()
         |> bump_seat_lifecycle_revision()
         |> touch_last_activity()
         |> restore_owner(position)
@@ -4302,6 +4342,7 @@ defmodule PidroServer.Games.RoomManager do
 
     final_room =
       %{room | seats: Map.put(room.seats, position, filled_seat)}
+      |> reset_multiplayer_pace()
       |> reset_readiness()
       |> maybe_set_ready()
       |> bump_seat_lifecycle_revision()
@@ -4844,7 +4885,7 @@ defmodule PidroServer.Games.RoomManager do
     Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
     started =
-      case GameSupervisor.start_game(room.code, room.config.rule_set) do
+      case GameSupervisor.start_game(room.code, room.config.rule_set, room.pace) do
         {:error, {:already_started, pid}} -> {:ok, pid}
         result -> result
       end
@@ -5018,6 +5059,9 @@ defmodule PidroServer.Games.RoomManager do
   # Multiplayer games use the disconnect cascade. A solo game holds its only
   # human seat without a deadline so switching apps cannot surrender it. A
   # `:finished` room only records the activity.
+  defp mark_disconnected(%Room{status: :playing, pace: :own} = room, room_code, user_id),
+    do: hold_seat(room, room_code, user_id)
+
   defp mark_disconnected(
          %Room{status: :playing, config: %Config{solo: true}} = room,
          room_code,
@@ -5354,7 +5398,12 @@ defmodule PidroServer.Games.RoomManager do
     end
   end
 
-  defp maybe_schedule_sweep(%Room{status: :playing}, room_code, game_state, transition_delay_ms) do
+  defp maybe_schedule_sweep(
+         %Room{status: :playing, pace: :quick},
+         room_code,
+         game_state,
+         transition_delay_ms
+       ) do
     if Play.settled_play(game_state) do
       delay_ms = max(transition_delay_ms, sweep_delay_ms())
       schedule_sweep_play(room_code, length(game_state.events), 3, delay_ms)
@@ -5370,7 +5419,7 @@ defmodule PidroServer.Games.RoomManager do
   defp sweep_delay_ms, do: Lifecycle.config(:sweep_trick_delay_ms)
 
   defp current_action_window(%Room{} = room, game_state) do
-    if room.status != :playing or single_player_room?(room) or
+    if room.status != :playing or room.pace == :own or single_player_room?(room) or
          Play.settled_play(game_state) != nil do
       :none
     else
@@ -5692,6 +5741,36 @@ defmodule PidroServer.Games.RoomManager do
   defp current_server_time do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
   end
+
+  defp solo_pace_allowed?(room, user_id) do
+    Enum.count(room.seats, fn {_, seat} ->
+      seat.occupant_type == :human and seat.user_id == user_id
+    end) == 1 and
+      Enum.count(room.seats, fn {_, seat} -> seat.occupant_type == :bot end) == 3 and
+      Seat.alone_with_bots?(room.seats, user_id)
+  end
+
+  defp set_game_pace(%Room{status: status, code: code}, pace)
+       when status in [:playing, :finished] do
+    case GameAdapter.set_pace(code, pace) do
+      {:ok, :ok} -> :ok
+      error -> error
+    end
+  end
+
+  defp set_game_pace(_room, _pace), do: :ok
+
+  defp reset_multiplayer_pace(%Room{pace: :own} = room) do
+    if Enum.count(room.seats, fn {_, seat} -> seat.occupant_type == :human end) > 1 do
+      # A stopped game must not take down the room manager during admission.
+      _ = set_game_pace(room, :quick)
+      %{room | pace: :quick}
+    else
+      room
+    end
+  end
+
+  defp reset_multiplayer_pace(room), do: room
 
   defp bump_seat_lifecycle_revision(%Room{} = room) do
     %{room | seat_lifecycle_revision: room.seat_lifecycle_revision + 1}

@@ -33,10 +33,12 @@ defmodule PidroServer.Games.Lifecycle do
           | :turn_timer_play_ms
           | :consecutive_timeout_threshold
           | :bot_delay_ms
+          | :own_bot_delay_ms
           | :bot_delay_variance_ms
           | :bot_min_delay_ms
           | :dealer_selection_delay_ms
           | :trick_transition_delay_ms
+          | :own_trick_transition_delay_ms
           | :sweep_trick_delay_ms
           | :hand_transition_delay_ms
           | :second_deal_transition_delay_ms
@@ -56,10 +58,12 @@ defmodule PidroServer.Games.Lifecycle do
     turn_timer_play_ms: 30_000,
     consecutive_timeout_threshold: 3,
     bot_delay_ms: 1_500,
+    own_bot_delay_ms: 2_500,
     bot_delay_variance_ms: 800,
     bot_min_delay_ms: 300,
     dealer_selection_delay_ms: 3_000,
     trick_transition_delay_ms: 1_500,
+    own_trick_transition_delay_ms: 2_500,
     sweep_trick_delay_ms: 500,
     # The hand's result stays ~6 s with no button; the next hand's deal then
     # adds deal_transition_delay_ms.

@@ -328,6 +328,23 @@ defmodule PidroServerWeb.GameChannel do
   @impl true
   def handle_in(event, params, socket)
 
+  def handle_in("set_pace", %{"pace" => pace}, socket) when pace in ["quick", "own"] do
+    pace = if pace == "own", do: :own, else: :quick
+
+    case RoomManager.set_pace(socket.assigns.room_code, socket.assigns.user_id, pace) do
+      {:ok, pace} -> {:reply, {:ok, %{pace: Atom.to_string(pace)}}, socket}
+      {:error, reason} -> {:reply, {:error, %{reason: Atom.to_string(reason)}}, socket}
+    end
+  end
+
+  def handle_in("set_pace", _params, socket),
+    do: {:reply, {:error, %{reason: "invalid_pace"}}, socket}
+
+  def handle_in("continue_hand", _params, socket) do
+    :ok = RoomManager.continue_hand(socket.assigns.room_code, socket.assigns.user_id)
+    {:reply, :ok, socket}
+  end
+
   def handle_in("bid", %{"amount" => "pass"}, socket) do
     if socket.assigns[:role] == :spectator do
       {:reply,

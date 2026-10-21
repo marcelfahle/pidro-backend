@@ -245,7 +245,8 @@ defmodule PidroServer.Games.Bots.BotPlayer do
 
   defp maybe_schedule_move(game_state, state, transition_delay_ms \\ 0) do
     if should_make_move?(game_state, state) do
-      BotBrain.schedule_move_once(state, transition_delay_ms, schedule_opts(state))
+      opts = Keyword.put(schedule_opts(state), :pace, Map.get(game_state.config, :pace, :quick))
+      BotBrain.schedule_move_once(state, transition_delay_ms, opts)
     else
       state
     end

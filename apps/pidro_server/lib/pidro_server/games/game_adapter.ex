@@ -154,6 +154,14 @@ defmodule PidroServer.Games.GameAdapter do
     call_game(room_code, &Pidro.Server.get_snapshot/1)
   end
 
+  @doc "Updates an authorized room's pace and broadcasts its current state."
+  @spec set_pace(String.t(), :quick | :own) :: {:ok, :ok} | {:error, term()}
+  def set_pace(room_code, pace), do: call_game(room_code, &Pidro.Server.set_pace(&1, pace))
+
+  @doc "Continues a held hand after room authorization."
+  @spec continue_hand(String.t()) :: {:ok, :ok} | {:error, term()}
+  def continue_hand(room_code), do: call_game(room_code, &Pidro.Server.continue_hand/1)
+
   @doc """
   Gets legal actions for a player position.
 
@@ -399,6 +407,9 @@ defmodule PidroServer.Games.GameAdapter do
 
       second_deal_completed?(old_state, new_state) ->
         Lifecycle.config(:second_deal_transition_delay_ms)
+
+      trick_completed?(old_state, new_state) and match?(%{config: %{pace: :own}}, new_state) ->
+        Lifecycle.config(:own_trick_transition_delay_ms)
 
       trick_completed?(old_state, new_state) and Play.settled_play(old_state) != nil ->
         Lifecycle.config(:sweep_trick_delay_ms)

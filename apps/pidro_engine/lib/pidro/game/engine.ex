@@ -276,6 +276,17 @@ defmodule Pidro.Game.Engine do
 
   def advance_from_dealer_selection(_state), do: {:error, :not_in_dealer_selection}
 
+  @doc """
+  Deals the next hand after a held hand result. Other phases are unchanged.
+
+  The caller decides when to continue; scoring and the next deal remain engine work.
+
+      {:ok, next_hand} = Engine.continue_hand(held_state)
+  """
+  @spec continue_hand(Types.GameState.t()) :: {:ok, Types.GameState.t()} | {:error, atom()}
+  def continue_hand(%Types.GameState{phase: :hand_complete} = state), do: start_next_hand(state)
+  def continue_hand(%Types.GameState{} = state), do: {:ok, state}
+
   # =============================================================================
   # Action Dispatching
   # =============================================================================
@@ -471,7 +482,7 @@ defmodule Pidro.Game.Engine do
   end
 
   defp get_legal_actions_for_phase(%Types.GameState{phase: :hand_complete}, _position) do
-    # Hand complete is automatic, no player actions
+    # No ordinary player actions while the hand result is held.
     []
   end
 
@@ -672,7 +683,29 @@ defmodule Pidro.Game.Engine do
     end
   end
 
-  defp handle_automatic_phase(%Types.GameState{phase: :hand_complete} = state) do
+  defp handle_automatic_phase(
+         %Types.GameState{phase: :hand_complete, config: %{pace: :own}} = state
+       ),
+       do: {:ok, state}
+
+  defp handle_automatic_phase(%Types.GameState{phase: :hand_complete} = state),
+    do: start_next_hand(state)
+
+  # Non-automatic phases: check if we can transition to next phase
+  defp handle_automatic_phase(%Types.GameState{} = state) do
+    if can_auto_transition?(state) do
+      next_phase = StateMachine.next_phase(state.phase, state)
+
+      # Transition to the next phase and recursively handle automatic work
+      # such as dealing after dealer selection.
+      new_state = %{state | phase: next_phase}
+      maybe_auto_transition(new_state)
+    else
+      {:ok, state}
+    end
+  end
+
+  defp start_next_hand(state) do
     # Rotate dealer and prepare for next hand
     case Dealing.rotate_dealer(state) do
       {:ok, new_state} ->
@@ -721,20 +754,6 @@ defmodule Pidro.Game.Engine do
 
       error ->
         error
-    end
-  end
-
-  # Non-automatic phases: check if we can transition to next phase
-  defp handle_automatic_phase(%Types.GameState{} = state) do
-    if can_auto_transition?(state) do
-      next_phase = StateMachine.next_phase(state.phase, state)
-
-      # Transition to the next phase and recursively handle automatic work
-      # such as dealing after dealer selection.
-      new_state = %{state | phase: next_phase}
-      maybe_auto_transition(new_state)
-    else
-      {:ok, state}
     end
   end
 

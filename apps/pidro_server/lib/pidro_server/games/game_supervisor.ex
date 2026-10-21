@@ -70,7 +70,9 @@ defmodule PidroServer.Games.GameSupervisor do
   """
   @spec start_game(room_code :: String.t()) :: DynamicSupervisor.on_start_child()
   @spec start_game(String.t(), :finnish | :louisiana) :: DynamicSupervisor.on_start_child()
-  def start_game(room_code, rule_set \\ :finnish) do
+  @spec start_game(String.t(), :finnish | :louisiana, :quick | :own) ::
+          DynamicSupervisor.on_start_child()
+  def start_game(room_code, rule_set \\ :finnish, pace \\ :quick) do
     Logger.info("Starting game for room #{room_code}")
 
     alias PidroServer.Games.Lifecycle
@@ -79,6 +81,7 @@ defmodule PidroServer.Games.GameSupervisor do
       name: GameRegistry.via(room_code),
       game_id: room_code,
       variant: rule_set,
+      config: %{pace: pace},
       pubsub: PidroServer.PubSub,
       dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms),
       deal_transition_delay_ms: Lifecycle.config(:deal_transition_delay_ms)

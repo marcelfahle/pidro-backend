@@ -173,7 +173,9 @@ defmodule PidroServer.Games.Bots.SubstituteBot do
 
   defp maybe_schedule_move(game_state, state, transition_delay_ms \\ 0) do
     if BotBrain.should_make_move?(game_state, state.position) do
-      BotBrain.schedule_move_once(state, transition_delay_ms)
+      BotBrain.schedule_move_once(state, transition_delay_ms,
+        pace: Map.get(game_state.config, :pace, :quick)
+      )
     else
       state
     end

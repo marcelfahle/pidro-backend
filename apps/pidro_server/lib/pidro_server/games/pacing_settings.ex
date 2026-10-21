@@ -15,6 +15,14 @@ defmodule PidroServer.Games.PacingSettings do
       step: 50
     },
     %{
+      key: :own_bot_delay_ms,
+      label: "Own Pace Bot Delay",
+      description: "Base bot delay at an own-pace table, with the same random variance.",
+      min: 0,
+      max: 10_000,
+      step: 50
+    },
+    %{
       key: :bot_delay_variance_ms,
       label: "Bot Delay Variance",
       description: "Random +/- variance applied to the base bot delay.",
@@ -34,6 +42,14 @@ defmodule PidroServer.Games.PacingSettings do
       key: :trick_transition_delay_ms,
       label: "Trick Transition Delay",
       description: "Pause after a trick completes before the next one begins.",
+      min: 0,
+      max: 10_000,
+      step: 50
+    },
+    %{
+      key: :own_trick_transition_delay_ms,
+      label: "Own Pace Trick Delay",
+      description: "Pause after each completed trick at an own-pace table.",
       min: 0,
       max: 10_000,
       step: 50

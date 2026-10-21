@@ -37,8 +37,12 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
   """
   @spec serialize(map(), atom() | nil) :: map()
   def serialize(state, position \\ nil) when is_map(state) do
+    pace = Map.get(Map.get(state, :config, %{}), :pace, :quick)
+
     %{
       phase: state.phase,
+      pace: Atom.to_string(pace),
+      awaiting_continue: pace == :own and state.phase == :hand_complete,
       hand_number: Map.get(state, :hand_number),
       variant: Map.get(state, :variant),
       config: Map.get(state, :config, %{}),

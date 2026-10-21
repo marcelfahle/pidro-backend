@@ -18,11 +18,11 @@ defmodule PidroServer.Games.Bots.BotBrain do
   @doc """
   Returns true if the game state indicates it's this bot's turn.
 
-  Checks that the phase is active (not :complete or nil) and that either
+  Checks that the phase is active (not :complete, :hand_complete or nil) and that either
   `current_turn` matches the bot's position or the phase is :dealer_selection.
 
-  A settled hand is the RoomManager's to sweep, so the bot holding the last
-  trumps waits for it.
+  At quick pace a settled hand is the RoomManager's to sweep. At own pace
+  the bot plays its last trumps at its normal delay.
 
   Note: Does NOT check paused state — callers that support pausing should
   check that separately before calling this function.
@@ -31,10 +31,10 @@ defmodule PidroServer.Games.Bots.BotBrain do
   def should_make_move?(game_state, position) do
     phase = Map.get(game_state, :phase)
 
-    phase not in [:complete, nil] and
+    phase not in [:complete, :hand_complete, nil] and
       (Map.get(game_state, :current_turn) == position or
          phase == :dealer_selection) and
-      is_nil(Play.settled_play(game_state))
+      (match?(%{config: %{pace: :own}}, game_state) or is_nil(Play.settled_play(game_state)))
   end
 
   @doc """
@@ -61,7 +61,8 @@ defmodule PidroServer.Games.Bots.BotBrain do
   """
   @spec schedule_move(non_neg_integer(), keyword()) :: reference()
   def schedule_move(transition_delay_ms \\ 0, opts \\ []) do
-    base_ms = Keyword.get(opts, :base_delay_ms, Lifecycle.config(:bot_delay_ms))
+    delay_key = if Keyword.get(opts, :pace) == :own, do: :own_bot_delay_ms, else: :bot_delay_ms
+    base_ms = Keyword.get(opts, :base_delay_ms, Lifecycle.config(delay_key))
     variance_ms = Keyword.get(opts, :variance_ms, Lifecycle.config(:bot_delay_variance_ms))
     min_ms = Keyword.get(opts, :min_delay_ms, Lifecycle.config(:bot_min_delay_ms))
     delay_ms = compute_delay(base_ms, variance_ms, min_ms) + transition_delay_ms

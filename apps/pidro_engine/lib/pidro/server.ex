@@ -223,6 +223,24 @@ defmodule Pidro.Server do
   end
 
   @doc """
+  Sets the room's pace after the caller has authorized its seated human.
+  Switching to quick releases a held hand.
+
+      :ok = Pidro.Server.set_pace(pid, :own)
+  """
+  @spec set_pace(GenServer.server(), :quick | :own) :: :ok
+  def set_pace(server, pace) when pace in [:quick, :own],
+    do: GenServer.call(server, {:set_pace, pace})
+
+  @doc """
+  Releases a held hand, or does nothing if no hand is waiting.
+
+      :ok = Pidro.Server.continue_hand(pid)
+  """
+  @spec continue_hand(GenServer.server()) :: :ok
+  def continue_hand(server), do: GenServer.call(server, :continue_hand)
+
+  @doc """
   Checks if the game is over.
 
   ## Parameters
@@ -387,6 +405,23 @@ defmodule Pidro.Server do
     {:reply, snapshot(state), state}
   end
 
+  def handle_call({:set_pace, pace}, _from, state) do
+    game = %{state.game_state | config: Map.put(state.game_state.config, :pace, pace)}
+    new_state = %{state | game_state: game, state_revision: state.state_revision + 1}
+
+    if pace == :quick and game.phase == :hand_complete do
+      continue_held_hand(new_state)
+    else
+      broadcast_state_change(new_state)
+      {:reply, :ok, new_state}
+    end
+  end
+
+  def handle_call(:continue_hand, _from, %{game_state: %{phase: :hand_complete}} = state),
+    do: continue_held_hand(state)
+
+  def handle_call(:continue_hand, _from, state), do: {:reply, :ok, state}
+
   @impl true
   def handle_call(:game_over?, _from, state) do
     result = Engine.game_over?(state.game_state)
@@ -525,6 +560,13 @@ defmodule Pidro.Server do
   def handle_info({:clear_dealer_rob_presentation, _stale_token}, state), do: {:noreply, state}
 
   # Private Helpers
+
+  defp continue_held_hand(state) do
+    {:ok, game} = Engine.continue_hand(state.game_state)
+    new_state = %{state | game_state: game, state_revision: state.state_revision + 1}
+    broadcast_state_change(new_state, state.deal_transition_delay_ms)
+    {:reply, :ok, new_state}
+  end
 
   defp maybe_schedule_dealer_selection_advance(
          %{

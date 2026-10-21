@@ -1185,10 +1185,23 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
                     :bidding,
                     :trump_selection,
                     :playing,
+                    :hand_complete,
                     :completed
                   ],
                   description: "Current phase of the game",
                   example: :bidding
+                },
+                pace: %Schema{
+                  type: :string,
+                  enum: ["quick", "own"],
+                  description: "Room pace; defaults to quick",
+                  example: "quick"
+                },
+                awaiting_continue: %Schema{
+                  type: :boolean,
+                  description:
+                    "An own-pace hand has scored and waits for continue_hand before dealing",
+                  example: false
                 },
                 hand_number: %Schema{
                   type: :integer,
