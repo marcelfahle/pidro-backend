@@ -5,6 +5,53 @@ defmodule Pidro.ServerTest do
   alias Pidro.Core.GameState
   alias Pidro.Core.Types.GameState, as: GameStateType
 
+  describe "own pace" do
+    for variant <- [:finnish, :louisiana] do
+      test "#{variant} scores but does not deal until continued" do
+        base = GameState.new(seed: 1, variant: unquote(variant), config: %{pace: :own})
+
+        players =
+          Map.new(base.players, fn {position, player} ->
+            hand = if position == :west, do: [{4, :hearts}], else: []
+            {position, %{player | hand: hand}}
+          end)
+
+        initial = %{
+          base
+          | phase: :playing,
+            current_turn: :west,
+            current_dealer: :west,
+            trump_suit: :hearts,
+            highest_bid: {:north, 7},
+            bidding_team: :north_south,
+            players: players,
+            trick_number: 1,
+            current_trick: %Pidro.Core.Types.Trick{
+              number: 1,
+              leader: :north,
+              plays: [north: {14, :hearts}, east: {3, :hearts}, south: {2, :hearts}]
+            }
+        }
+
+        pid = start_supervised!({Server, initial_state: initial})
+        assert {:ok, held} = Server.apply_action(pid, :west, {:play_card, {4, :hearts}})
+        assert held.phase == :hand_complete
+        assert held.hand_number == 1
+        assert held.last_hand != nil
+        assert held.chance == initial.chance
+        assert Server.legal_actions(pid, :north) == []
+
+        assert :ok = Server.continue_hand(pid)
+        dealt = Server.get_state(pid)
+        assert dealt.phase == :bidding
+        assert dealt.hand_number == 2
+        assert Enum.all?(dealt.players, fn {_, player} -> length(player.hand) == 9 end)
+        assert :ok = Server.continue_hand(pid)
+        assert Server.get_state(pid) == dealt
+      end
+    end
+  end
+
   describe "start_link/1" do
     test "Louisiana and explicit config survive server startup and reset" do
       pid =
