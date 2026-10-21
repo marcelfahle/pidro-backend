@@ -20,15 +20,16 @@ defmodule Pidro.Core.SeatView do
   - Its own hand.
   - Bids, trump, tricks played, the current trick, and the scores.
   - How many cards each non-dealer drew in the second deal (`cards_requested`).
-  - Cards revealed by a player who went cold, and cards killed this hand.
+  - Its own folded cards, other seats' folded counts, and cards killed this hand.
   - How many cards every seat holds.
   - The dealer's rob pool, but only for the dealer during a manual rob.
 
   ## What stays hidden
 
-  Other seats' hands, the deck, the discards, the dealer's pool size, and the
-  raw event log. The event log carries every dealt, second-dealt and discarded
-  card and is never reset between hands, so no part of it is exposed.
+  Other seats' hands and folded faces, the deck, the discards, the dealer's
+  pool size, and the raw event log. The event log carries every dealt,
+  second-dealt and discarded card and is never reset between hands, so no
+  part of it is exposed.
   """
 
   use TypedStruct
@@ -45,6 +46,7 @@ defmodule Pidro.Core.SeatView do
     field(:hand_count, non_neg_integer(), enforce: true)
     field(:eliminated?, boolean(), default: false)
     field(:revealed_cards, [Pidro.Core.Types.card()], default: [])
+    field(:folded_count, non_neg_integer(), default: 0)
     field(:tricks_won, non_neg_integer(), default: 0)
   end
 
@@ -100,7 +102,8 @@ defmodule Pidro.Core.SeatView do
     %__MODULE__{
       position: position,
       hand: state.players[position].hand,
-      players: Map.new(state.players, fn {pos, player} -> {pos, public_player(player)} end),
+      players:
+        Map.new(state.players, fn {pos, player} -> {pos, public_player(player, position)} end),
       phase: state.phase,
       hand_number: state.hand_number,
       variant: state.variant,
@@ -215,13 +218,14 @@ defmodule Pidro.Core.SeatView do
     |> Enum.reverse()
   end
 
-  defp public_player(player) do
+  defp public_player(player, viewer) do
     %PublicPlayer{
       position: player.position,
       team: player.team,
       hand_count: length(player.hand),
       eliminated?: player.eliminated?,
-      revealed_cards: player.revealed_cards,
+      revealed_cards: if(player.position == viewer, do: player.revealed_cards, else: []),
+      folded_count: if(player.eliminated?, do: length(player.revealed_cards), else: 0),
       tricks_won: player.tricks_won
     }
   end

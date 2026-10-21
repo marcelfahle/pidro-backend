@@ -48,15 +48,18 @@ defmodule Pidro.Properties.SeatViewPropertiesTest do
     end
   end
 
-  # Cards the seat must not see: other hands, the deck and the discards. The
-  # dealer legitimately sees the deck while robbing manually.
+  # Cards the seat must not see: other hands and folds, the deck and the discards.
+  # The dealer legitimately sees the deck while robbing manually.
   defp hidden_cards(%GameState{} = state, position) do
-    other_hands =
-      for {pos, player} <- state.players, pos != position, card <- player.hand, do: card
+    other_cards =
+      for {pos, player} <- state.players,
+          pos != position,
+          card <- player.hand ++ player.revealed_cards,
+          do: card
 
     deck = if dealer_sees_deck?(state, position), do: [], else: state.deck
 
-    MapSet.new(other_hands ++ deck ++ state.discarded_cards)
+    MapSet.new(other_cards ++ deck ++ state.discarded_cards)
   end
 
   # Dealer-selection cuts are drawn independently of the deck, so they can
@@ -93,13 +96,17 @@ defmodule Pidro.Properties.SeatViewPropertiesTest do
 
     pool =
       Enum.shuffle(
-        Enum.flat_map(others, &state.players[&1].hand) ++ deck ++ state.discarded_cards
+        Enum.flat_map(others, fn pos ->
+          state.players[pos].hand ++ state.players[pos].revealed_cards
+        end) ++ deck ++ state.discarded_cards
       )
 
     {players, pool} =
       Enum.reduce(others, {state.players, pool}, fn pos, {players, rest} ->
         {hand, rest} = Enum.split(rest, length(players[pos].hand))
-        {put_in(players[pos].hand, hand), rest}
+        {folded, rest} = Enum.split(rest, length(players[pos].revealed_cards))
+        player = %{players[pos] | hand: hand, revealed_cards: folded}
+        {Map.put(players, pos, player), rest}
       end)
 
     {new_deck, discards} =

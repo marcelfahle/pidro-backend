@@ -1135,9 +1135,15 @@ defmodule PidroServerWeb.Schemas.RoomSchemas do
         revealed_cards: %Schema{
           type: :array,
           description:
-            "Cards a player laid face up on going cold (out of trumps); empty otherwise. Public to every viewer.",
+            "The viewer's own folded cards after going cold; empty for every other seat and spectators.",
           items: Card,
           example: []
+        },
+        folded_count: %Schema{
+          type: :integer,
+          description: "Number of cards folded face down on going cold; zero when not eliminated",
+          minimum: 0,
+          example: 0
         }
       },
       required: [:position, :team, :hand, :tricks_won, :eliminated],

@@ -97,6 +97,8 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
 
   defp serialize_player(player, visible?, second_deal) do
     hand = Map.get(player, :hand, [])
+    folded = Map.get(player, :revealed_cards, [])
+    eliminated? = Map.get(player, :eliminated?, false)
 
     %{
       position: Map.get(player, :position),
@@ -104,9 +106,9 @@ defmodule PidroServerWeb.Serializers.GameStateSerializer do
       hand: if(visible?, do: serialize_cards(hand), else: nil),
       card_count: length(hand),
       tricks_won: Map.get(player, :tricks_won, 0),
-      eliminated: Map.get(player, :eliminated?, false),
-      # A cold player lays these face up for everyone, as at a real table.
-      revealed_cards: serialize_cards(Map.get(player, :revealed_cards, [])),
+      eliminated: eliminated?,
+      revealed_cards: if(visible?, do: serialize_cards(folded), else: []),
+      folded_count: if(eliminated?, do: length(folded), else: 0),
       kept_count: second_deal && second_deal.kept,
       drawn_count: second_deal && second_deal.drawn
     }
