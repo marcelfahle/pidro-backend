@@ -4,21 +4,16 @@ defmodule Pidro.Bot.Thresholds do
 
   A suit's bid estimate sums sure points, the held Fives weighted by how
   protected they are, half-credit for the Jack and Ten, a bonus for holding
-  the top trumps, and a bonus for the dealer. The bot bids the estimate
-  rounded down.
+  the top trumps, and a bonus for the dealer. Finnish adds trump length and
+  an allowance to contest cheap opposing bids. Louisiana keeps the original
+  estimate and partner margin.
 
-  Finnish Pidro only; see `Pidro.Bot.Rulebook` for the supported-variant
-  contract.
-
-  No quantified Pidro bidding thresholds exist in writing. The starting values
-  were adapted from Cinch and Setback conventions, then calibrated in
-  self-play (`mix pidro.selfplay`) with four rulebook seats. Two changed: a
-  protected Five counts 3, not 5, and one top trump earns the control bonus
-  from three trumps, not four. With the starting values, rulebook teams made
-  67% of their bids against each other; with these they make 77%, and the
-  calibrated bidder beats the starting one in 54% of games. No other single
-  change improved on that. Community answers are expected to tune them
-  further.
+  The original calibration valued a protected Five at 3 and gave one top
+  trump control credit from three trumps. PID-271 tuned length, competition
+  and partner raises on paired self-play (seed 271), then checked fresh seeds
+  272 and 273: 51.9% and 52.4% wins against the original bidder. Four updated
+  seats made 75.8% of contracts versus 76.5% before. The half-point competition
+  allowance kept nearly all the gain of larger margins with fewer sets.
   """
 
   @values %{
@@ -33,7 +28,10 @@ defmodule Pidro.Bot.Thresholds do
     control_one_honour: 2,
     control_one_honour_min_trumps: 3,
     dealer_bonus: 1,
-    overbid_partner_margin: 2
+    trump_length: 0.25,
+    trump_length_cap: 0.75,
+    cheap_contract_margin: 0.5,
+    overbid_partner_margin: 1
   }
 
   @typedoc "The name of a bidding constant."
@@ -49,6 +47,9 @@ defmodule Pidro.Bot.Thresholds do
           | :control_one_honour
           | :control_one_honour_min_trumps
           | :dealer_bonus
+          | :trump_length
+          | :trump_length_cap
+          | :cheap_contract_margin
           | :overbid_partner_margin
 
   @doc """
@@ -63,13 +64,17 @@ defmodule Pidro.Bot.Thresholds do
   - `:control_one_honour` - bonus for one of them with enough length
   - `:control_one_honour_min_trumps` - the length that bonus needs
   - `:dealer_bonus` - added when the bidder is the dealer, who robs the pack
+  - `:trump_length` / `:trump_length_cap` - Finnish bonus per trump beyond two,
+    capped to avoid double-counting the protection and control bonuses
+  - `:cheap_contract_margin` - Finnish allowance below the next bid when
+    contesting an opponent's 6 or 7; never applied over a partner
   - `:overbid_partner_margin` - how far above partner's bid the estimate must
-    reach before the bot overbids partner
+    reach before the Finnish bot overbids partner (Louisiana keeps two)
 
   ## Examples
 
       iex> Pidro.Bot.Thresholds.get(:overbid_partner_margin)
-      2
+      1
   """
   @spec get(name()) :: number()
   def get(name), do: Map.fetch!(@values, name)

@@ -68,6 +68,38 @@ defmodule Pidro.Integration.SelfPlayTest do
     assert Map.drop(first, [:timing, :seed]) != Map.drop(other, [:timing, :seed])
   end
 
+  test "auction metrics distinguish partner raises kept from those outbid by opponents" do
+    for contest? <- [false, true] do
+      play = SelfPlay.rulebook_policy()
+
+      policy = fn
+        %{phase: :bidding, bids: bids}, _legal ->
+          case length(bids) do
+            0 -> {:bid, 6}
+            1 -> :pass
+            2 -> {:bid, 7}
+            3 -> if contest?, do: {:bid, 8}, else: :pass
+          end
+
+        view, legal ->
+          play.(view, legal)
+      end
+
+      summary = SelfPlay.run(games: 20, seed: 271, a: {:a, policy}, b: {:b, policy})
+      assert summary.complete == 20
+      total = fn key -> summary.teams.a[key] + summary.teams.b[key] end
+      assert summary.forced_sixes == 0
+      assert total.(:cheap_opportunities) == summary.hands * 2
+      assert total.(:cheap_contests) == if(contest?, do: summary.hands, else: 0)
+      assert total.(:partner_opportunities) == summary.hands
+      assert total.(:partner_raises) == summary.hands
+      assert total.(:partner_raise_contracts) == if(contest?, do: 0, else: summary.hands)
+      assert total.(:partner_raises_made) == if(contest?, do: 0, else: total.(:made))
+      assert summary.teams.a.average_bid == if(contest?, do: 8.0, else: 7.0)
+      assert summary.teams.b.average_bid == if(contest?, do: 8.0, else: 7.0)
+    end
+  end
+
   test "a policy that plays illegal moves fails every game at once instead of looping" do
     illegal = fn _view, _legal -> {:bid, 99} end
     summary = SelfPlay.run(games: 6, seed: 1, a: {:bad, illegal})

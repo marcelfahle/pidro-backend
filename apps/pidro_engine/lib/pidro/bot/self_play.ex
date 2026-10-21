@@ -38,7 +38,9 @@ defmodule Pidro.Bot.SelfPlay do
           team: Types.team(),
           bid: Types.bid_amount(),
           forced?: boolean(),
-          made?: boolean()
+          made?: boolean(),
+          partner_raise?: boolean(),
+          bidding: [map()]
         }
 
   @type game_result :: %{
@@ -135,6 +137,12 @@ defmodule Pidro.Bot.SelfPlay do
   captured, and lost means an own Five captured by the opponents. Only
   completed tricks count, including completed tricks in failed games.
 
+  Auction metrics use scored hands only. Opportunities count turns facing
+  an opponent's standing 6 or 7, or a partner's standing bid. Raises count
+  bids on those turns, even if later outbid. A partner raise's made rate
+  counts only raises that won the contract, not those later outbid. The
+  forced-dealer-6 share uses all scored hands as its denominator.
+
   Paired runs also include each pair's seed and winners, sweep/split counts
   and incomplete pairs. Pairing fixes cuts and deck order per hand; different
   trump choices and game lengths can still yield different hands. It does
@@ -209,6 +217,8 @@ defmodule Pidro.Bot.SelfPlay do
           wins            #{t.wins}/#{summary.complete} (#{pct(t.win_rate)})
           contracts       #{t.contracts} (#{t.forced} forced), average bid #{Float.round(t.average_bid, 2)}
           made / set      #{t.made} / #{t.set} (#{pct(t.made_rate)}; #{pct(t.made_rate_unforced)} unforced)
+          cheap contests  #{t.cheap_contests}/#{t.cheap_opportunities} (#{pct(t.cheap_contest_rate)})
+          partner raises  #{t.partner_raises}/#{t.partner_opportunities} (#{pct(t.partner_raise_rate)}); won #{t.partner_raise_contracts}, made #{t.partner_raises_made} (#{pct(t.partner_raise_made_rate)})
           Fives           #{t.fives_captured} captured, #{t.fives_taken} taken from opponents, #{t.fives_lost} lost
           decision time   p50 #{time.p50} µs, p95 #{time.p95} µs, max #{time.max} µs
         """
@@ -216,6 +226,7 @@ defmodule Pidro.Bot.SelfPlay do
 
     """
     Self-play: #{summary.games} games, seed #{summary.seed}
+    Scored hands: #{summary.hands}; forced dealer 6: #{summary.forced_sixes} (#{pct(ratio(summary.forced_sixes, summary.hands))})
     #{format_pairs(summary)}#{Enum.join(teams)}
     complete #{summary.complete}, illegal #{summary.illegal}, crashed #{summary.crashed}, stalled #{summary.stalled}, capped #{summary.capped}
     """
@@ -289,20 +300,41 @@ defmodule Pidro.Bot.SelfPlay do
   # from `:bidding_complete`, whether the dealer was forced from the bids
   # before it, and the outcome from the bidding team's `:hand_scored` delta.
   defp hand_records(events) do
-    {records, _hand} =
-      Enum.reduce(events, {[], %{bids: [], contract: nil}}, fn
-        {:cards_dealt, _}, {records, _hand} ->
-          {records, %{bids: [], contract: nil}}
+    empty = %{bids: [], contract: nil, standing: nil, bidding: [], partner_raise?: false}
 
-        {:player_passed, _pos}, {records, hand} ->
+    {records, _hand} =
+      Enum.reduce(events, {[], empty}, fn
+        {:cards_dealt, _}, {records, _hand} ->
+          {records, empty}
+
+        {:player_passed, pos}, {records, hand} ->
+          hand = bidding_opportunity(hand, pos, false)
           {records, %{hand | bids: [:pass | hand.bids]}}
 
-        {:bid_made, _pos, amount}, {records, hand} ->
-          {records, %{hand | bids: [amount | hand.bids]}}
+        {:bid_made, pos, amount}, {records, hand} ->
+          partner = Types.partner_position(pos)
+          partner_raise? = match?({^partner, _}, hand.standing)
+          hand = bidding_opportunity(hand, pos, true)
+
+          {records,
+           %{
+             hand
+             | bids: [amount | hand.bids],
+               standing: {pos, amount},
+               partner_raise?: partner_raise?
+           }}
 
         {:bidding_complete, pos, amount}, {records, hand} ->
           forced? = hand.bids == [amount, :pass, :pass, :pass]
-          contract = %{team: Types.position_to_team(pos), bid: amount, forced?: forced?}
+
+          contract = %{
+            team: Types.position_to_team(pos),
+            bid: amount,
+            forced?: forced?,
+            partner_raise?: hand.partner_raise?,
+            bidding: hand.bidding
+          }
+
           {records, %{hand | contract: contract}}
 
         {:hand_scored, team, delta}, {records, %{contract: %{team: team} = contract} = hand} ->
@@ -313,6 +345,20 @@ defmodule Pidro.Bot.SelfPlay do
       end)
 
     Enum.reverse(records)
+  end
+
+  defp bidding_opportunity(%{standing: nil} = hand, _pos, _raised?), do: hand
+
+  defp bidding_opportunity(%{standing: {bidder, amount}} = hand, pos, raised?) do
+    kind =
+      cond do
+        bidder == Types.partner_position(pos) -> :partner
+        amount in [6, 7] -> :cheap
+        true -> :other
+      end
+
+    decision = %{team: Types.position_to_team(pos), kind: kind, raised?: raised?}
+    %{hand | bidding: [decision | hand.bidding]}
   end
 
   # Read public events rather than hidden hands. A Five is lost only when a
@@ -371,6 +417,7 @@ defmodule Pidro.Bot.SelfPlay do
 
   defp summarise(results, labels, games, seed) do
     complete = for {teams, %{outcome: :complete} = r} <- results, do: {teams, r}
+    all_hands = for {_, r} <- results, hand <- r.hands, do: hand
 
     fives =
       for {teams, r} <- results, five <- r.fives, do: {teams[five.owner], teams[five.winner]}
@@ -382,9 +429,32 @@ defmodule Pidro.Bot.SelfPlay do
 
         wins = Enum.count(complete, fn {teams, r} -> teams[r.winner] == label end)
         unforced = Enum.reject(hands, & &1.forced?)
+        raises = Enum.filter(hands, & &1.partner_raise?)
+        raised_made = Enum.count(raises, & &1.made?)
+
+        decisions =
+          for {teams, r} <- results,
+              hand <- r.hands,
+              decision <- hand.bidding,
+              teams[decision.team] == label,
+              do: decision
+
+        cheap = Enum.filter(decisions, &(&1.kind == :cheap))
+        partners = Enum.filter(decisions, &(&1.kind == :partner))
+        contested = Enum.count(cheap, & &1.raised?)
+        raised = Enum.count(partners, & &1.raised?)
 
         {label,
          %{
+           cheap_opportunities: length(cheap),
+           cheap_contests: contested,
+           cheap_contest_rate: ratio(contested, length(cheap)),
+           partner_opportunities: length(partners),
+           partner_raises: raised,
+           partner_raise_rate: ratio(raised, length(partners)),
+           partner_raise_contracts: length(raises),
+           partner_raises_made: raised_made,
+           partner_raise_made_rate: ratio(raised_made, length(raises)),
            fives_captured: Enum.count(fives, fn {_, winner} -> winner == label end),
            fives_taken:
              Enum.count(fives, fn {owner, winner} -> winner == label and owner != label end),
@@ -416,6 +486,8 @@ defmodule Pidro.Bot.SelfPlay do
       games: games,
       seed: seed,
       labels: labels,
+      hands: length(all_hands),
+      forced_sixes: Enum.count(all_hands, &(&1.forced? and &1.bid == 6)),
       complete: length(complete),
       teams: team_stats,
       illegal: Enum.count(results, &match?({_, %{outcome: {:illegal_action, _, _}}}, &1)),

@@ -10,11 +10,10 @@ defmodule Pidro.Bot.Bidding do
   minimum. Declaring trump recomputes the best suit from the current hand, so
   a substitute that inherits an undeclared bid names its own best suit.
 
-  Finnish Pidro only; see `Pidro.Bot.Rulebook` for the supported-variant
-  contract.
-
-  Bidding is conservative on purpose: overbidding is the most-reported
-  complaint about computer partners, and a set costs the partner the hand.
+  Finnish bids include a small trump-length bonus and an allowance to take
+  a cheap contract away from an opponent. The competition allowance never
+  raises a partner. Louisiana retains the original estimates and two-point
+  partner margin. The same view and legal actions always give the same bid.
   """
 
   alias Pidro.Bot.Thresholds
@@ -30,37 +29,40 @@ defmodule Pidro.Bot.Bidding do
   - `hand` - the cards held, trump or not
   - `suit` - the candidate trump suit
   - `dealer?` - whether the bidder is the dealer, who robs the pack
+  - `variant` - defaults to Finnish; Louisiana keeps the original estimate
 
   ## Examples
 
       iex> hand = [{11, :hearts}, {10, :hearts}, {7, :hearts}, {6, :hearts}, {5, :hearts}]
       iex> Pidro.Bot.Bidding.estimate(hand, :hearts, false)
-      4.0
+      4.75
   """
-  @spec estimate([Types.card()], Types.suit(), boolean()) :: float()
-  def estimate(hand, suit, dealer?) do
+  @spec estimate([Types.card()], Types.suit(), boolean(), atom()) :: float()
+  def estimate(hand, suit, dealer?, variant \\ :finnish) do
     trumps = Enum.filter(hand, &Card.is_trump?(&1, suit))
     honours = {{14, suit} in trumps, {13, suit} in trumps}
 
     (sure_points(trumps, suit) + half_credit(trumps, suit) + fives(trumps, honours) +
-       control(trumps, honours) + if(dealer?, do: t(:dealer_bonus), else: 0)) * 1.0
+       control(trumps, honours) + length_bonus(trumps, variant) +
+       if(dealer?, do: t(:dealer_bonus), else: 0)) * 1.0
   end
 
   @doc """
   Returns the best suit for `hand` and its estimate.
 
   Equal estimates resolve in the fixed suit order hearts, diamonds, clubs,
-  spades, the same order the timer auto-play uses.
+  spades, the same order the timer auto-play uses. The optional variant
+  defaults to Finnish, as in `estimate/4`.
 
   ## Examples
 
       iex> Pidro.Bot.Bidding.best_suit([{14, :spades}, {13, :spades}, {5, :spades}], false)
-      {:spades, 7.0}
+      {:spades, 7.25}
   """
-  @spec best_suit([Types.card()], boolean()) :: {Types.suit(), float()}
-  def best_suit(hand, dealer?) do
+  @spec best_suit([Types.card()], boolean(), atom()) :: {Types.suit(), float()}
+  def best_suit(hand, dealer?, variant \\ :finnish) do
     Types.all_suits()
-    |> Enum.map(&{&1, estimate(hand, &1, dealer?)})
+    |> Enum.map(&{&1, estimate(hand, &1, dealer?, variant)})
     |> Enum.reduce(fn {_suit, est} = candidate, {_best, best_est} = best ->
       if est > best_est, do: candidate, else: best
     end)
@@ -76,7 +78,7 @@ defmodule Pidro.Bot.Bidding do
   @spec decide_bid(SeatView.t(), [Types.action()]) :: decision()
   def decide_bid(%SeatView{} = view, legal) do
     dealer? = view.current_dealer == view.position
-    {suit, est} = best_suit(own_hand(view), dealer?)
+    {suit, est} = best_suit(own_hand(view), dealer?, view.variant)
     bids = for {:bid, amount} <- legal, do: amount
     worth = "#{suit_name(suit)} are worth about #{trunc(est)} points"
 
@@ -89,13 +91,17 @@ defmodule Pidro.Bot.Bidding do
         {{:bid, min}, "Everyone passed, so as dealer I must bid and take the minimum #{min}."}
 
       partner_bid = partner_standing_bid(view) ->
-        margin = t(:overbid_partner_margin)
+        margin = if view.variant == :finnish, do: t(:overbid_partner_margin), else: 2
 
         if est >= partner_bid + margin do
           bid(est, bids, "#{worth}, well above partner's #{partner_bid}")
         else
           {:pass, "Partner's #{partner_bid} stands, and my #{worth}, not enough to go over it."}
         end
+
+      contest?(view, est, Enum.min(bids)) ->
+        min = Enum.min(bids)
+        {{:bid, min}, "#{worth}; taking the cheap contract from the opponents is worth #{min}."}
 
       trunc(est) < Enum.min(bids) ->
         {:pass,
@@ -117,7 +123,7 @@ defmodule Pidro.Bot.Bidding do
   @spec decide_trump(SeatView.t(), [Types.action()]) :: decision()
   def decide_trump(%SeatView{} = view, legal) do
     dealer? = view.current_dealer == view.position
-    {suit, est} = best_suit(own_hand(view), dealer?)
+    {suit, est} = best_suit(own_hand(view), dealer?, view.variant)
 
     if {:declare_trump, suit} in legal do
       {{:declare_trump, suit},
@@ -138,6 +144,19 @@ defmodule Pidro.Bot.Bidding do
       nil -> nil
     end
   end
+
+  defp contest?(%SeatView{variant: :finnish, highest_bid: {_, amount}}, est, minimum)
+       when amount in [6, 7] do
+    est < minimum and est + t(:cheap_contract_margin) >= minimum
+  end
+
+  defp contest?(_view, _est, _minimum), do: false
+
+  defp length_bonus(trumps, :finnish) do
+    min(max(length(trumps) - 2, 0) * t(:trump_length), t(:trump_length_cap))
+  end
+
+  defp length_bonus(_trumps, _variant), do: 0
 
   defp sure_points(trumps, suit) do
     if({14, suit} in trumps, do: t(:ace), else: 0) + if({2, suit} in trumps, do: t(:two), else: 0)

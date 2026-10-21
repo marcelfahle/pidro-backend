@@ -43,6 +43,32 @@ defmodule Pidro.Bot.BiddingTest do
       state = Scenario.bidding(me: :south, bids: [north: 7, east: :pass], hand: strong)
       assert {:pass, _} = decide(state)
     end
+
+    test "contests a 7 at the half-point boundary, but never subsidises an 8" do
+      cards = hand(suit(:hearts, [14, 13, 8, 5]))
+      assert Bidding.estimate(cards, :hearts, false) == 7.5
+      state = Scenario.bidding(me: :east, bids: [north: 7], hand: cards)
+      assert {{:bid, 8}, _} = decide(state)
+
+      cards = hand(suit(:hearts, [14, 13, 5, 2]))
+      assert Bidding.estimate(cards, :hearts, false) == 8.5
+      state = Scenario.bidding(me: :east, bids: [north: 8], hand: cards)
+      assert {:pass, _} = decide(state)
+    end
+
+    test "Louisiana keeps its estimates and passes on the new contest and partner raise" do
+      close = hand(suit(:hearts, [14, 8, 7, 5]))
+      strong = hand(suit(:hearts, [14, 13, 5]))
+      assert Bidding.estimate(close, :hearts, false, :louisiana) == 6.0
+      assert Bidding.estimate(strong, :hearts, false, :louisiana) == 7.0
+
+      opponent = Scenario.bidding(me: :east, bids: [north: 6], hand: close)
+      partner = Scenario.bidding(me: :south, bids: [north: 6, east: :pass], hand: strong)
+
+      for state <- [opponent, partner] do
+        assert {:pass, _} = decide(%{state | variant: :louisiana})
+      end
+    end
   end
 
   describe "decide_bid/2" do
