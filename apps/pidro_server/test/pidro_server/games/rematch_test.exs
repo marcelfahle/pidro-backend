@@ -585,12 +585,15 @@ defmodule PidroServer.Games.RematchTest do
 
       bots = for {pos, %{occupant_type: :bot, bot_pid: pid}} <- playing.seats, do: {pos, pid}
       assert length(bots) == 3
+      personas = Map.new(bots, fn {pos, _pid} -> {pos, playing.seats[pos].bot_persona} end)
+      assert Enum.sort(Map.values(personas)) == ~w(antti jocke marcel)
 
       finished = finish_game(room.code)
 
       for {position, pid} <- bots do
         assert Process.alive?(pid)
         assert finished.seats[position].bot_pid == pid
+        assert finished.seats[position].bot_persona == personas[position]
       end
 
       {:ok, vote} = RoomManager.readiness(room.code)
@@ -601,7 +604,11 @@ defmodule PidroServer.Games.RematchTest do
 
       {:ok, rematch} = RoomManager.get_room(room.code)
       assert rematch.config.bot_difficulty == :smart
-      for {position, pid} <- bots, do: assert(rematch.seats[position].bot_pid == pid)
+
+      for {position, pid} <- bots do
+        assert rematch.seats[position].bot_pid == pid
+        assert rematch.seats[position].bot_persona == personas[position]
+      end
 
       {:ok, state} = GameAdapter.get_state(room.code)
       assert state.phase == :dealer_selection

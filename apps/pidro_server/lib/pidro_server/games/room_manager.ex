@@ -46,7 +46,7 @@ defmodule PidroServer.Games.RoomManager do
   use GenServer
   require Logger
 
-  alias Pidro.Core.SeatView
+  alias Pidro.Core.{Chance, SeatView}
   alias Pidro.Game.{Engine, Play}
   alias PidroServer.Accounts.User
   alias PidroServer.Games.Bots.{BotBrain, BotManager, SubstituteBot, TimeoutStrategy}
@@ -109,6 +109,7 @@ defmodule PidroServer.Games.RoomManager do
             seat_hold_started_at: %{optional(Positions.position()) => DateTime.t()},
             phase_timers: %{Positions.position() => reference()},
             seats: map(),
+            bot_personas: [Seat.bot_persona()],
             last_activity: DateTime.t(),
             turn_timer: TurnTimer.t() | nil,
             consecutive_timeouts: %{optional(Positions.position()) => non_neg_integer()},
@@ -142,6 +143,7 @@ defmodule PidroServer.Games.RoomManager do
       max_spectators: 10,
       phase_timers: %{},
       seats: %{},
+      bot_personas: Seat.bot_personas(),
       turn_timer: nil,
       consecutive_timeouts: %{},
       last_hand_number: nil,
@@ -224,6 +226,8 @@ defmodule PidroServer.Games.RoomManager do
   - `config_or_attrs` - A `Room.Config`, or the attributes `Room.Config.new/1`
     accepts (`name`, `bot_difficulty`, `solo`) as a map or keyword list.
     Defaults to no name, `:basic` difficulty, not solo.
+  - `opts` - Internal options: `:seed` fixes the room's bot crew order.
+    Otherwise a fresh seed is drawn. Rematches keep the existing crew and seats.
 
   The config is validated here, in the caller's process, before the GenServer
   is reached: a rejected request never runs the stale-room eviction that room
@@ -242,7 +246,7 @@ defmodule PidroServer.Games.RoomManager do
       room.code #=> "A1B2"
       room.status #=> :waiting
   """
-  @spec create_room(String.t(), Config.t() | map() | keyword()) ::
+  @spec create_room(String.t(), Config.t() | map() | keyword(), keyword()) ::
           {:ok, Room.t()}
           | {:error,
              :already_in_room
@@ -250,11 +254,16 @@ defmodule PidroServer.Games.RoomManager do
              | :user_not_found
              | :profile_unavailable
              | Config.errors()}
-  def create_room(host_id, config_or_attrs \\ %{}) do
+  def create_room(host_id, config_or_attrs \\ %{}, opts \\ []) do
     with {:ok, %Config{} = config} <- Config.new(config_or_attrs),
          :ok <- validate_hold_users(config.seat_holds, [host_id]),
          :ok <- ensure_unblocked_holds(host_id, Map.values(config.seat_holds)) do
-      GenServer.call(__MODULE__, {:create_room, host_id, config})
+      seed =
+        Keyword.get_lazy(opts, :seed, fn ->
+          :crypto.strong_rand_bytes(16) |> :binary.decode_unsigned()
+        end)
+
+      GenServer.call(__MODULE__, {:create_room, host_id, config, seed})
     end
   end
 
@@ -1452,7 +1461,7 @@ defmodule PidroServer.Games.RoomManager do
   end
 
   @impl true
-  def handle_call({:create_room, host_id, %Config{} = config}, _from, %State{} = state) do
+  def handle_call({:create_room, host_id, %Config{} = config, seed}, _from, %State{} = state) do
     # If the player is stuck in a room from a previous disconnected session
     # (e.g. browser refresh followed by navigating away), clean it up first.
     # `state` is rebound here, so every error reply below carries the
@@ -1471,6 +1480,7 @@ defmodule PidroServer.Games.RoomManager do
              room_code_generator()
            ) do
       now = DateTime.utc_now()
+      {bot_personas, _chance} = Chance.shuffle(Seat.bot_personas(), Chance.from_seed(seed))
 
       room = %Room{
         id: Ecto.UUID.generate(),
@@ -1478,6 +1488,7 @@ defmodule PidroServer.Games.RoomManager do
         host_id: host_id,
         positions: Positions.empty(),
         seats: init_seats(),
+        bot_personas: bot_personas,
         status: :waiting,
         max_players: @max_players,
         created_at: now,
@@ -3067,7 +3078,7 @@ defmodule PidroServer.Games.RoomManager do
         Seat.new_bot(
           assigned_position,
           bot_pid,
-          room.seats |> Map.delete(assigned_position) |> Seat.next_bot_persona()
+          room.seats |> Map.delete(assigned_position) |> Seat.next_bot_persona(room.bot_personas)
         )
 
       updated =
@@ -3580,7 +3591,7 @@ defmodule PidroServer.Games.RoomManager do
     case room.seats[position] do
       %Seat{occupant_type: :vacant} ->
         with {:ok, assigned, ^position} <- Positions.assign(room, bot_id, position) do
-          persona = room.seats |> Map.delete(position) |> Seat.next_bot_persona()
+          persona = room.seats |> Map.delete(position) |> Seat.next_bot_persona(room.bot_personas)
           seats = Map.put(room.seats, position, Seat.new_bot(position, nil, persona))
           {:ok, %{assigned | seats: seats}, bot_id}
         end

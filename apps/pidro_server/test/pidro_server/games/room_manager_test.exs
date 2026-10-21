@@ -113,6 +113,46 @@ defmodule PidroServer.Games.RoomManagerTest do
   end
 
   describe "bot personas" do
+    test "seeded rooms vary the partner and reproduce the crew through both seating paths" do
+      crews =
+        for seed <- 1..60 do
+          for path <- [:join, :seat_picker] do
+            host = "host_#{seed}_#{path}"
+            {:ok, room} = RoomManager.create_room(host, %{}, seed: seed)
+
+            for position <- [:east, :south, :west] do
+              case path do
+                :join ->
+                  assert {:ok, _, ^position} =
+                           RoomManager.join_bot(
+                             room.code,
+                             "bot_#{room.code}_#{position}",
+                             self(),
+                             position
+                           )
+
+                :seat_picker ->
+                  assert {:ok, _} = RoomManager.set_seat(room.code, host, position, :bot)
+              end
+            end
+
+            {:ok, seated} = RoomManager.get_room(room.code)
+            crew = Enum.map([:east, :south, :west], &seated.seats[&1].bot_persona)
+            assert Enum.sort(crew) == ~w(antti jocke marcel)
+            crew
+          end
+          |> then(fn [joined, picked] ->
+            assert joined == picked
+            joined
+          end)
+        end
+
+      assert crews |> Enum.map(&Enum.at(&1, 1)) |> Enum.uniq() |> Enum.sort() ==
+               ~w(antti jocke marcel)
+
+      assert length(Enum.uniq(crews)) == 6
+    end
+
     test "a bot keeps its persona when another bot leaves and a new one joins" do
       {:ok, room} = RoomManager.create_room("host", %{name: "Crew"})
 
@@ -121,8 +161,10 @@ defmodule PidroServer.Games.RoomManagerTest do
                  RoomManager.join_bot(room.code, "bot_#{room.code}_#{position}", self(), position)
       end
 
-      assert {:ok, %{seats: %{east: %{bot_persona: "marcel"}, south: %{bot_persona: "antti"}}}} =
-               RoomManager.get_room(room.code)
+      assert {:ok, before} = RoomManager.get_room(room.code)
+      east_persona = before.seats.east.bot_persona
+      south_persona = before.seats.south.bot_persona
+      refute east_persona == south_persona
 
       assert :ok = RoomManager.leave_room("bot_#{room.code}_east")
 
@@ -132,8 +174,8 @@ defmodule PidroServer.Games.RoomManagerTest do
       assert {:ok, %{seats: seats}} = RoomManager.get_room(room.code)
       assert seats.east.occupant_type == :vacant
       assert seats.east.bot_persona == nil
-      assert seats.south.bot_persona == "antti"
-      assert seats.west.bot_persona == "marcel"
+      assert seats.south.bot_persona == south_persona
+      assert seats.west.bot_persona == east_persona
     end
   end
 

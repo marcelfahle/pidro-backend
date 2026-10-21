@@ -101,14 +101,18 @@ defmodule PidroServer.Games.Room.Seat do
     }
   end
 
+  @doc "The bot crew, before the room shuffles its order."
+  @spec bot_personas() :: [bot_persona()]
+  def bot_personas, do: @bot_personas
+
   @doc """
-  The persona for a bot taking a seat: the first of marcel, antti, jocke no
-  other seat holds. A fourth bot reuses marcel.
+  The first persona in the room's crew order no other seat holds.
+  A fourth bot reuses the first name.
   """
-  @spec next_bot_persona(map()) :: bot_persona()
-  def next_bot_persona(seats) when is_map(seats) do
+  @spec next_bot_persona(map(), [bot_persona()]) :: bot_persona()
+  def next_bot_persona(seats, order \\ @bot_personas) when is_map(seats) do
     taken = for {_position, %__MODULE__{bot_persona: persona}} <- seats, do: persona
-    Enum.find(@bot_personas, hd(@bot_personas), &(&1 not in taken))
+    Enum.find(order, hd(order), &(&1 not in taken))
   end
 
   @doc "The name a bot persona shows at the table."

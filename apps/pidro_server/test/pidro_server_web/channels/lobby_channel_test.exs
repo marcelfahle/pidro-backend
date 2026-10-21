@@ -918,7 +918,7 @@ defmodule PidroServerWeb.LobbyChannelTest do
 
     test "a bot seat carries its persona; a human seat carries none", %{socket: socket} do
       host = PidroServer.AccountsFixtures.user_fixture()
-      {:ok, room} = RoomManager.create_room(host.id, %{name: "Crew table"})
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Crew table"}, seed: 1)
 
       assert {:ok, _, :east} =
                RoomManager.join_bot(room.code, "bot_#{room.code}_east", self(), :east)

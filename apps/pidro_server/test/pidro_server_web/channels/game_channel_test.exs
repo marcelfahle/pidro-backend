@@ -191,7 +191,7 @@ defmodule PidroServerWeb.GameChannelTest do
   describe "seat lifecycle snapshot" do
     test "a bot seat carries its persona in the join reply's readiness and seat lifecycle" do
       host = PidroServer.AccountsFixtures.user_fixture()
-      {:ok, room} = RoomManager.create_room(host.id, %{name: "Crew"})
+      {:ok, room} = RoomManager.create_room(host.id, %{name: "Crew"}, seed: 1)
 
       for position <- [:east, :south] do
         bot_id = "bot_#{room.code}_#{position}"
@@ -201,7 +201,7 @@ defmodule PidroServerWeb.GameChannelTest do
       {:ok, socket} = create_socket(host)
       {:ok, reply, _} = subscribe_and_join(socket, GameChannel, "game:#{room.code}")
 
-      for {position, persona, name} <- [{:east, "marcel", "Marcel"}, {:south, "antti", "Antti"}] do
+      for {position, persona, name} <- [{:east, "marcel", "Marcel"}, {:south, "jocke", "Jocke"}] do
         assert %{is_bot: true, bot_persona: ^persona, display_name: ^name, username: ^name} =
                  reply.readiness.seats[position]
 
