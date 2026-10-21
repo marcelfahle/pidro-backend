@@ -100,7 +100,6 @@ defmodule Pidro.Core.SeatViewTest do
           cumulative_scores: %{north_south: 21, east_west: -7}
       }
 
-      state = put_in(state.players.west.revealed_cards, [{9, :spades}])
       view = SeatView.for_seat(state, :south)
 
       for field <- [
@@ -123,12 +122,33 @@ defmodule Pidro.Core.SeatViewTest do
         assert Map.fetch!(view, field) == Map.fetch!(state, field), "#{field} changed"
       end
 
-      assert view.players.west.revealed_cards == [{9, :spades}]
-
       for {pos, player} <- state.players do
         assert view.players[pos].eliminated? == player.eliminated?
         assert view.players[pos].tricks_won == player.tricks_won
         assert view.players[pos].team == player.team
+      end
+    end
+
+    test "bots see folded counts, never another seat's folded faces" do
+      state =
+        Pidro.Test.Scenario.playing(
+          me: :north,
+          hands: %{north: [14, 2], east: [{10, :clubs}, {9, :spades}]}
+        )
+
+      assert SeatView.for_seat(state, :south).players.east.folded_count == 0
+      {:ok, cold} = Engine.apply_action(state, :north, {:play_card, {14, :hearts}})
+      assert cold.players.east.eliminated?
+      assert cold.current_turn == :south
+
+      for viewer <- [:north, :east, :south, :west] do
+        view = SeatView.for_seat(cold, viewer)
+        assert view.players.east.folded_count == 2
+
+        assert view.players.east.revealed_cards ==
+                 if(viewer == :east, do: [{10, :clubs}, {9, :spades}], else: [])
+
+        refute Map.has_key?(view, :events)
       end
     end
 

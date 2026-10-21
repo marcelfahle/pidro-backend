@@ -111,24 +111,53 @@ defmodule PidroServerWeb.Serializers.GameStateSerializerTest do
       assert wire["last_hand"]["trump"] == live_wire["trump_suit"]
     end
 
-    test "a cold player's revealed cards reach every viewer" do
-      state = dealt_state()
+    test "folded faces stay with their owner, including after scoring and in history" do
+      state =
+        Pidro.Test.Scenario.playing(
+          me: :north,
+          hands: %{north: [14, 2], east: [{10, :clubs}, {9, :spades}]}
+        )
 
-      cold = %{
-        state.players.east
-        | eliminated?: true,
-          revealed_cards: [{9, :clubs}, {4, :spades}]
-      }
+      assert GameStateSerializer.serialize_public(state).players.east.folded_count == 0
+      {:ok, cold} = Engine.apply_action(state, :north, {:play_card, {14, :hearts}})
+      assert cold.players.east.eliminated?
+      assert cold.current_turn == :south
+      assert {:player_went_cold, :east, [{10, :clubs}, {9, :spades}]} in cold.events
 
-      state = %{state | players: %{state.players | east: cold}}
+      for viewer <- [nil, :north, :east, :south, :west] do
+        payload = GameStateSerializer.serialize(cold, viewer)
+        assert payload.players.east.eliminated
+        assert payload.players.east.folded_count == 2
 
-      for viewer <- [nil, :north, :east] do
-        east = GameStateSerializer.serialize(state, viewer).players.east
-        assert east.eliminated
-        assert east.revealed_cards == [%{rank: 9, suit: :clubs}, %{rank: 4, suit: :spades}]
+        assert payload.players.east.revealed_cards ==
+                 if(viewer == :east,
+                   do: [%{rank: 10, suit: :clubs}, %{rank: 9, suit: :spades}],
+                   else: []
+                 )
+
+        # The raw hand log remains authoritative, never part of a client payload.
+        refute Map.has_key?(payload, :events)
+
+        if viewer != :east do
+          for card <- [%{rank: 10, suit: :clubs}, %{rank: 9, suit: :spades}] do
+            refute Jason.encode!(payload) =~ Jason.encode!(card)
+          end
+        end
       end
 
-      assert GameStateSerializer.serialize(state).players.north.revealed_cards == []
+      finished = Pidro.Test.DeterministicGame.play_until(cold, &(&1.hand_number == 2))
+      assert finished.last_hand != nil
+      assert length(finished.hand_history) == 1
+
+      for viewer <- [nil, :north, :east, :south, :west] do
+        payload = GameStateSerializer.serialize(finished, viewer)
+        assert payload.players.east.folded_count == 0
+
+        for card <- [%{rank: 10, suit: :clubs}, %{rank: 9, suit: :spades}] do
+          refute Jason.encode!(payload.last_hand) =~ Jason.encode!(card)
+          refute Jason.encode!(payload.hand_history) =~ Jason.encode!(card)
+        end
+      end
     end
 
     test "every viewer sees what each player dealt to kept and drew in the second deal" do
