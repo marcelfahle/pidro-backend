@@ -94,6 +94,35 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
     refute fallback =~ "/images/bots/"
   end
 
+  test "bot manager outage preserves observation and recovers on the scheduled refresh", %{
+    conn: conn
+  } do
+    alias PidroServer.Games.Bots.BotManager
+    host = AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id, %{name: "Status outage"})
+    {:ok, _} = BotManager.start_bot(room.code, :east, :random, 1_000)
+    :ok = BotManager.pause_bot(room.code, :east)
+    {:ok, view, _} = live(conn, ~p"/admin/games/#{room.code}")
+    assert has_element?(view, "#watch-status", "Bots paused")
+    manager = Process.whereis(BotManager)
+    Process.unregister(BotManager)
+
+    try do
+      send(view.pid, :refresh_bot_status)
+      assert has_element?(view, "#watch-status", "Bots paused")
+      {:ok, mounted_during_outage, _} = live(conn, ~p"/admin/games/#{room.code}")
+      assert has_element?(mounted_during_outage, "#watch-seat-north", host.username)
+      assert Process.alive?(view.pid)
+    after
+      Process.register(manager, BotManager)
+    end
+
+    :ok = BotManager.resume_bot(room.code, :east)
+    Process.sleep(2_100)
+    refute has_element?(view, "#watch-status", "Bots paused")
+    assert has_element?(view, "#watch-seat-north", host.username)
+  end
+
   describe "bot reasoning" do
     setup do
       original = Application.get_env(:pidro_server, PidroServer.Games.Lifecycle, [])

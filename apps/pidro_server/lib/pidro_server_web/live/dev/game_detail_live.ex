@@ -22,6 +22,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   alias PidroServer.Games.{GameAdapter, RoomManager}
   alias PidroServerWeb.CardComponents
 
+  @human_bot_config %{type: :human, difficulty: :random, delay_ms: 1000, paused: false}
+
   @impl true
   def mount(%{"code" => room_code}, _session, socket) do
     case RoomManager.get_room(room_code) do
@@ -185,9 +187,12 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_info(:refresh_bot_status, socket) do
     # BotManager does not publish pause/resume events. One outstanding timer,
     # no database queries, and no mutation of the operator's configuration draft.
-    paused = socket.assigns.room_code |> initialize_bot_configs() |> all_bots_paused?()
     Process.send_after(self(), :refresh_bot_status, 2_000)
-    {:noreply, assign(socket, :bots_paused, paused)}
+
+    case initialize_bot_configs(socket.assigns.room_code, :unavailable) do
+      :unavailable -> {:noreply, socket}
+      configs -> {:noreply, assign(socket, :bots_paused, all_bots_paused?(configs))}
+    end
   end
 
   @impl true
@@ -2553,7 +2558,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
   # DEV-1106: Bot configuration helper functions
 
-  defp initialize_bot_configs(room_code) do
+  defp initialize_bot_configs(room_code, fallback \\ nil) do
     # Fetch current bots from BotManager
     current_bots = BotManager.list_bots(room_code)
 
@@ -2564,7 +2569,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         case Map.get(current_bots, position) do
           nil ->
             # No bot exists - default to human
-            %{type: :human, difficulty: :random, delay_ms: 1000, paused: false}
+            @human_bot_config
 
           bot_info ->
             # Bot exists - populate config
@@ -2579,6 +2584,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       {position, config}
     end)
     |> Map.new()
+  catch
+    :exit, _ ->
+      fallback || Map.new([:north, :south, :east, :west], &{&1, @human_bot_config})
   end
 
   defp all_bots_paused?(bot_configs) do
