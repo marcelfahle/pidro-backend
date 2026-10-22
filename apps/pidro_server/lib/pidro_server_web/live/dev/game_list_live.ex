@@ -182,7 +182,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
     ~H"""
     <.admin_shell
       active="games"
-      title="Development Games"
+      title="Live games"
       subtitle="Live tables · observation only until you choose an action"
       flash={@flash}
     >

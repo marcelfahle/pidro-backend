@@ -59,9 +59,7 @@ defmodule PidroServerWeb.Dev.GameSettingsLive do
           Game Pacing
         </h2>
         <p class="mt-2 text-sm text-stone-500">
-          Runtime controls for bot delays and trick/hand pauses. These values are saved with
-          <code>Application.put_env</code>
-          so they take effect immediately without a restart.
+          Bot delays and trick/hand pauses apply immediately. A server restart restores the configured defaults.
         </p>
         <div class="mt-4 rounded-sm border border-stone-200 bg-stone-50 p-4 text-sm">
           <p class="font-bold">
