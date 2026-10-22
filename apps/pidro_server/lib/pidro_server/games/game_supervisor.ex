@@ -90,6 +90,7 @@ defmodule PidroServer.Games.GameSupervisor do
       checkpoint: fn snapshot, cause ->
         PidroServer.GameArchive.capture(room_code, participants, snapshot, cause)
       end,
+      state_observer: {PidroServer.Games.AdminGameSummary, :record},
       dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms),
       deal_transition_delay_ms: Lifecycle.config(:deal_transition_delay_ms)
     ]

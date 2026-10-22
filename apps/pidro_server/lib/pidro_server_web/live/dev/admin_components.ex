@@ -71,6 +71,12 @@ defmodule PidroServerWeb.Dev.AdminComponents do
           <.link navigate={~p"/admin/games"} class={nav_item_class(@active == "games")}>
             <.icon name="hero-rectangle-stack" class="size-4" /> Games
           </.link>
+          <.link
+            navigate={~p"/admin/game-settings"}
+            class={nav_item_class(@active == "game-settings")}
+          >
+            <.icon name="hero-adjustments-horizontal" class="size-4" /> Game Settings
+          </.link>
           <.link navigate={~p"/admin/users"} class={nav_item_class(@active == "players")}>
             <.icon name="hero-user-group" class="size-4" /> Players
           </.link>

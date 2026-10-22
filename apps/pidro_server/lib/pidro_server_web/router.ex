@@ -281,6 +281,7 @@ defmodule PidroServerWeb.Router do
       on_mount: [{PidroServerWeb.AdminAuth, :ensure_authenticated_and_password_changed}] do
       live "/games", GameListLive
       live "/games/:code", GameDetailLive
+      live "/game-settings", GameSettingsLive
       live "/users", UserListLive
       live "/users/:id", UserDetailLive
       live "/emails", EmailMigrationLive

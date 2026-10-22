@@ -1,392 +1,181 @@
 defmodule PidroServerWeb.Dev.GameListLive do
-  @moduledoc """
-  Development interface for managing and monitoring game rooms.
-
-  This LiveView provides a real-time view of all game rooms with:
-  - Live statistics (total rooms, waiting, active, finished)
-  - Detailed room information in a table format
-  - Links to watch active games in spectator mode
-  - Game creation form with bot configuration (DEV-101)
-  - Game name display (DEV-201)
-  - Phase filtering (DEV-202)
-  - Sort by creation date (DEV-203)
-  - Game count badge (DEV-204)
-  - Placeholder for deleting games (to be implemented in DEV-301)
-
-  The view subscribes to "lobby:updates" PubSub topic for real-time updates.
-  """
-
+  @moduledoc "Admin-only, latest-state operational overview. Never subscribes to private game snapshots."
   use PidroServerWeb, :live_view
   import PidroServerWeb.Dev.AdminComponents
 
+  alias PidroServer.Accounts.{Auth, User}
+  alias PidroServer.Games.{AdminGameSummary, GameSupervisor, Lifecycle, RoomManager}
   alias PidroServer.Games.Bots.BotManager
-  alias PidroServer.Games.{GameAdapter, GameSupervisor, PacingSettings, RoomManager}
-  alias PidroServer.Games.Room.Positions
-  alias PidroServer.Accounts.Auth
+  alias PidroServer.Games.Room.{Positions, Seat}
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      # Subscribe to lobby updates
       Phoenix.PubSub.subscribe(PidroServer.PubSub, "lobby:updates")
+      Process.send_after(self(), :sample, 750)
     end
-
-    rooms = RoomManager.list_rooms(:all)
-    users = Auth.list_recent_users(20)
 
     {:ok,
      socket
-     |> assign(:phase_filter, :all)
+     |> assign(:phase_filter, "all")
      |> assign(:sort_order, :desc)
-     |> assign(:game_name, "")
-     |> assign(:bot_count, 0)
-     |> assign(:bot_difficulty, "random")
-     # Default to dev host string
-     |> assign(:host_user_id, "dev_host")
+     |> assign(:all_rooms, %{})
+     |> assign(:summaries, %{})
+     |> assign(:profiles, %{})
+     |> assign(:changed, MapSet.new())
+     |> assign(:now, DateTime.utc_now())
      |> assign(:show_create_form, false)
-     |> assign(:show_confirm_modal, false)
-     |> assign(:confirm_action, nil)
-     |> assign(:confirm_message, "")
-     |> assign(:room_to_delete, nil)
-     |> assign(:page_title, "Development Games")
-     |> assign(:users, users)
-     |> assign_pacing_settings()
-     |> assign_rooms_and_stats(rooms)}
+     |> assign(:delete_code, nil)
+     |> assign(:page_title, "Live games")
+     |> replace_rooms(RoomManager.list_rooms(:all))}
   end
 
   @impl true
-  def handle_info({:lobby_update, _available_rooms}, socket) do
-    # RoomManager broadcasts the full list of available rooms
-    # We need all rooms (not just available), so refetch
-    refresh_rooms(socket)
-  end
-
-  @impl true
-  def handle_info({:room_created, _room}, socket), do: refresh_rooms(socket)
-
-  @impl true
-  def handle_info({:room_updated, _room}, socket), do: refresh_rooms(socket)
-
-  @impl true
-  def handle_info({:room_closed, _code}, socket), do: refresh_rooms(socket)
-
-  @impl true
-  def handle_info({:online_count_updated, _payload}, socket), do: {:noreply, socket}
-
-  defp refresh_rooms(socket) do
-    rooms = RoomManager.list_rooms(:all)
-    {:noreply, assign_rooms_and_stats(socket, rooms)}
-  end
-
-  @impl true
-  def handle_event("filter_phase", %{"phase" => phase}, socket) do
-    phase_atom = String.to_existing_atom(phase)
-    rooms = RoomManager.list_rooms(:all)
-
-    {:noreply,
-     socket
-     |> assign(:phase_filter, phase_atom)
-     |> assign_rooms_and_stats(rooms)}
-  end
-
-  @impl true
-  def handle_event("toggle_sort", _params, socket) do
-    new_sort_order = if socket.assigns.sort_order == :desc, do: :asc, else: :desc
-    rooms = RoomManager.list_rooms(:all)
-
-    {:noreply,
-     socket
-     |> assign(:sort_order, new_sort_order)
-     |> assign_rooms_and_stats(rooms)}
-  end
-
-  @impl true
-  def handle_event("toggle_create_form", _params, socket) do
-    {:noreply, assign(socket, :show_create_form, !socket.assigns.show_create_form)}
-  end
-
-  @impl true
-  def handle_event("update_form", params, socket) do
-    socket =
-      socket
-      |> assign(:game_name, Map.get(params, "game_name", socket.assigns.game_name))
-      |> assign(:bot_count, parse_bot_count(Map.get(params, "bot_count")))
-      |> assign(:bot_difficulty, Map.get(params, "bot_difficulty", socket.assigns.bot_difficulty))
-      |> assign(:host_user_id, Map.get(params, "host_user_id", socket.assigns.host_user_id))
-
+  def handle_info(:sample, socket) do
+    # Schedule AFTER processing: only one sampling message can be outstanding,
+    # regardless of the number of actions or how slowly the browser consumes diffs.
+    socket = sample(socket)
+    Process.send_after(self(), :sample, 750)
     {:noreply, socket}
   end
 
-  @impl true
-  def handle_event("update_pacing_form", %{"pacing" => params}, socket) do
-    {:noreply, assign_pacing_settings(socket, PacingSettings.normalize_form(params))}
-  end
+  def handle_info({:room_updated, room}, socket) do
+    previous = socket.assigns.all_rooms[room.code]
 
-  @impl true
-  def handle_event("save_pacing", %{"pacing" => params}, socket) do
-    case PacingSettings.validate(params) do
-      {:ok, values} ->
-        PacingSettings.save(values)
+    fields = [
+      :id,
+      :status,
+      :positions,
+      :seats,
+      :config,
+      :pace,
+      :host_id,
+      :spectator_ids,
+      :game_number
+    ]
 
-        {:noreply,
-         socket
-         |> assign_pacing_settings(PacingSettings.current_form())
-         |> put_flash(:info, "Game pacing updated")}
-
-      {:error, form, errors} ->
-        {:noreply,
-         socket
-         |> assign_pacing_settings(form, errors)
-         |> put_flash(:error, "Fix the pacing values and try again")}
-    end
-  end
-
-  @impl true
-  def handle_event("reset_pacing", _params, socket) do
-    PacingSettings.reset()
-
-    {:noreply,
-     socket
-     |> assign_pacing_settings(PacingSettings.current_form())
-     |> put_flash(:info, "Game pacing reset to defaults")}
-  end
-
-  @impl true
-  def handle_event("create_game", params, socket) do
-    game_name = Map.get(params, "game_name", "")
-    bot_count = parse_bot_count(Map.get(params, "bot_count"))
-    bot_difficulty = Map.get(params, "bot_difficulty", "random")
-    host_user_id_param = Map.get(params, "host_user_id", "dev_host")
-
-    # Determine actual host ID
-    host_id =
-      case host_user_id_param do
-        # Use game name as ID for dev/testing
-        "dev_host" -> game_name
-        # Use real user ID
-        user_id -> user_id
-      end
-
-    # Validate game name
-    if String.trim(game_name) == "" do
-      {:noreply, put_flash(socket, :error, "Game name cannot be empty")}
+    # RoomManager also publishes hand/score changes on the lobby topic. Those
+    # already live in the latest-only Registry projection; don't render per hand.
+    if previous && Map.take(previous, fields) == Map.take(room, fields) do
+      {:noreply, socket}
     else
-      # Create the room. The attributes go through the room config constructor,
-      # which rejects an unknown difficulty.
-      attrs = %{name: game_name, bot_difficulty: bot_difficulty}
-
-      case RoomManager.create_room(host_id, attrs) do
-        {:ok, room} ->
-          # Start bots if requested
-          # If we used a real user ID, that user occupies Seat 1 (North)
-          # The BotManager starts bots sequentially: North -> East -> South -> West
-          # If Seat 1 is occupied, BotManager should skip it or fail.
-          # Current BotManager likely overwrites or fails.
-          # We should rely on BotManager to fill *empty* seats.
-          bot_result = start_bots_if_needed(room.code, bot_count, bot_difficulty)
-
-          # Reset form and show success
-          socket =
-            socket
-            |> assign(:game_name, "")
-            |> assign(:bot_count, 0)
-            |> assign(:bot_difficulty, "random")
-            |> assign(:host_user_id, "dev_host")
-            |> assign(:show_create_form, false)
-
-          socket =
-            case bot_result do
-              {:error, :bot_manager_not_running} ->
-                put_flash(
-                  socket,
-                  :warning,
-                  "Game '#{game_name}' created (#{room.code}), but bots could not be started. Restart the server to enable bots."
-                )
-
-              {:error, _reason} ->
-                put_flash(
-                  socket,
-                  :warning,
-                  "Game '#{game_name}' created (#{room.code}), but failed to start bots. Check logs for details."
-                )
-
-              _ ->
-                put_flash(
-                  socket,
-                  :info,
-                  "Game '#{game_name}' created successfully! Room code: #{room.code}"
-                )
-            end
-
-          {:noreply, socket}
-
-        {:error, :already_in_room} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             "Failed to create game: A room with this name already exists"
-           )}
-
-        {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "Failed to create game: #{inspect(reason)}")}
-      end
+      handle_info({:room_created, room}, socket)
     end
   end
 
-  @impl true
-  def handle_event("cancel_create", _params, socket) do
+  def handle_info({:room_created, room}, socket) do
     {:noreply,
-     socket
-     |> assign(:game_name, "")
-     |> assign(:bot_count, 0)
-     |> assign(:bot_difficulty, "random")
-     |> assign(:host_user_id, "dev_host")
-     |> assign(:show_create_form, false)}
+     replace_rooms(socket, Map.put(socket.assigns.all_rooms, room.code, room) |> Map.values())}
   end
 
-  @impl true
-  def handle_event("preset_empty_room", _params, socket) do
-    name = "Dev #{random_suffix()}"
+  def handle_info({:room_closed, code}, socket) do
+    {:noreply, replace_rooms(socket, Map.delete(socket.assigns.all_rooms, code) |> Map.values())}
+  end
 
-    case RoomManager.create_room(name, preset_attrs(name)) do
+  def handle_info({:lobby_update, _}, socket) do
+    {:noreply, replace_rooms(socket, RoomManager.list_rooms(:all))}
+  end
+
+  def handle_info({:online_count_updated, _}, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("filter_phase", %{"phase" => phase}, socket) do
+    {:noreply, socket |> assign(:phase_filter, phase) |> present()}
+  end
+
+  def handle_event("toggle_sort", _, socket) do
+    order = if socket.assigns.sort_order == :desc, do: :asc, else: :desc
+    {:noreply, socket |> assign(:sort_order, order) |> present()}
+  end
+
+  def handle_event("toggle_create_form", _, socket) do
+    {:noreply, assign(socket, :show_create_form, !socket.assigns.show_create_form)}
+  end
+
+  def handle_event("cancel_create", _, socket),
+    do: {:noreply, assign(socket, :show_create_form, false)}
+
+  def handle_event("create_game", params, socket) do
+    name = String.trim(Map.get(params, "game_name", ""))
+    host = Map.get(params, "host_user_id", "dev_host")
+    host = if host == "dev_host", do: name, else: host
+    difficulty = Map.get(params, "bot_difficulty", "random")
+    count = parse_bot_count(Map.get(params, "bot_count", "0"))
+
+    cond do
+      name == "" ->
+        {:noreply, put_flash(socket, :error, "Game name cannot be empty")}
+
+      count not in 0..4 ->
+        {:noreply, put_flash(socket, :error, "Choose between 0 and 4 bots")}
+
+      true ->
+        case RoomManager.create_room(host, %{name: name, bot_difficulty: difficulty}) do
+          {:ok, room} ->
+            result = start_bots(room.code, count, room.config.bot_difficulty)
+
+            {:noreply,
+             socket |> assign(:show_create_form, false) |> creation_flash(room.code, result)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "Could not create room: #{inspect(reason)}")}
+        end
+    end
+  end
+
+  def handle_event(preset, _, socket)
+      when preset in ~w(preset_empty_room preset_1h_3b preset_2h_2b preset_4_bots) do
+    name = "Dev " <> Base.encode16(:crypto.strong_rand_bytes(3), case: :lower)
+
+    case RoomManager.create_room(name, %{name: name, bot_difficulty: :random, solo: false}) do
       {:ok, room} ->
+        result =
+          case preset do
+            "preset_empty_room" ->
+              :ok
+
+            "preset_1h_3b" ->
+              start_bots(room.code, 3, :random)
+
+            "preset_2h_2b" ->
+              start_bots_at_positions(room.code, [:east, :west])
+
+            "preset_4_bots" ->
+              RoomManager.dev_set_position(room.code, :north, nil)
+              start_bots(room.code, 4, :random)
+          end
+
         {:noreply,
          socket
-         |> put_flash(:info, "Empty room '#{name}' created (#{room.code})")
+         |> creation_flash(room.code, result)
          |> push_navigate(to: ~p"/admin/games/#{room.code}")}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, "Could not create room: #{inspect(reason)}")}
     end
   end
 
-  @impl true
-  def handle_event("preset_1h_3b", _params, socket) do
-    name = "Dev #{random_suffix()}"
+  def handle_event("request_delete", %{"code" => code}, socket),
+    do: {:noreply, assign(socket, :delete_code, code)}
 
-    case RoomManager.create_room(name, preset_attrs(name)) do
-      {:ok, room} ->
-        case start_bots_if_needed(room.code, 3, "random") do
-          {:error, reason} ->
-            BotManager.stop_all_bots(room.code)
+  def handle_event("request_bulk_delete", _, socket),
+    do: {:noreply, assign(socket, :delete_code, :finished)}
 
-            {:noreply,
-             socket
-             |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
-             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
+  def handle_event("cancel_confirm", _, socket), do: {:noreply, assign(socket, :delete_code, nil)}
 
-          _ ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "Room '#{name}' created with 1 host + 3 bots (#{room.code})")
-             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
-        end
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
-    end
+  def handle_event("confirm_delete", _, %{assigns: %{delete_code: :finished}} = socket) do
+    for room <- RoomManager.list_rooms(:all), room.status == :finished, do: delete_room(room.code)
+    {:noreply, socket |> assign(:delete_code, nil) |> put_flash(:info, "Finished games deleted")}
   end
 
-  @impl true
-  def handle_event("preset_2h_2b", _params, socket) do
-    name = "Dev #{random_suffix()}"
-
-    case RoomManager.create_room(name, preset_attrs(name)) do
-      {:ok, room} ->
-        # Host is at north. Place bots at east and west, leave south empty for a second human.
-        case start_bots_at_positions(room.code, [:east, :west], :random) do
-          {:ok, _pids} ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "Room '#{name}' created — 2H + 2B, south open (#{room.code})")
-             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
-
-          {:error, reason} ->
-            BotManager.stop_all_bots(room.code)
-
-            {:noreply,
-             socket
-             |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
-             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
-        end
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
-    end
+  def handle_event("confirm_delete", _, %{assigns: %{delete_code: code}} = socket)
+      when is_binary(code) do
+    result = delete_room(code)
+    message = if result == :ok, do: "Game #{code} deleted", else: "Game #{code} no longer exists"
+    {:noreply, socket |> assign(:delete_code, nil) |> put_flash(:info, message)}
   end
 
-  @impl true
-  def handle_event("preset_4_bots", _params, socket) do
-    name = "Dev #{random_suffix()}"
-
-    case RoomManager.create_room(name, preset_attrs(name)) do
-      {:ok, room} ->
-        # Host was auto-assigned to north. Clear it so all 4 seats are available for bots.
-        RoomManager.dev_set_position(room.code, :north, nil)
-
-        case start_bots_if_needed(room.code, 4, "random") do
-          {:error, reason} ->
-            BotManager.stop_all_bots(room.code)
-
-            {:noreply,
-             socket
-             |> put_flash(:warning, "Room '#{name}' created but bots failed: #{inspect(reason)}")
-             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
-
-          _ ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "Room '#{name}' created with 4 bots (#{room.code})")
-             |> push_navigate(to: ~p"/admin/games/#{room.code}")}
-        end
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to create room: #{inspect(reason)}")}
-    end
-  end
-
-  @impl true
-  def handle_event("request_delete", %{"code" => code}, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_confirm_modal, true)
-     |> assign(:confirm_action, :delete_single)
-     |> assign(:confirm_message, "Delete game #{code}?")
-     |> assign(:room_to_delete, code)}
-  end
-
-  @impl true
-  def handle_event("request_bulk_delete", _params, socket) do
-    finished_count = socket.assigns.stats.finished
-
-    if finished_count > 0 do
-      {:noreply,
-       socket
-       |> assign(:show_confirm_modal, true)
-       |> assign(:confirm_action, :delete_bulk)
-       |> assign(
-         :confirm_message,
-         "Delete #{finished_count} finished game#{if finished_count > 1, do: "s", else: ""}?"
-       )}
-    else
-      {:noreply, put_flash(socket, :info, "No finished games to delete")}
-    end
-  end
-
-  @impl true
-  def handle_event("confirm_delete", _params, socket) do
-    case socket.assigns.confirm_action do
-      :delete_single -> handle_single_delete(socket)
-      :delete_bulk -> handle_bulk_delete(socket)
-      _ -> {:noreply, close_modal(socket)}
-    end
-  end
-
-  @impl true
-  def handle_event("cancel_confirm", _params, socket) do
-    {:noreply, close_modal(socket)}
-  end
+  def handle_event("confirm_delete", _, socket), do: {:noreply, socket}
 
   @impl true
   def render(assigns) do
@@ -394,837 +183,388 @@ defmodule PidroServerWeb.Dev.GameListLive do
     <.admin_shell
       active="games"
       title="Development Games"
-      subtitle="Create rooms, tune pacing, inspect live state, and clean up finished tables from one operational console."
+      subtitle="Live tables · observation only until you choose an action"
       flash={@flash}
     >
       <:actions>
-        <span class="rounded-sm border border-stone-300 bg-white px-3 py-2 font-mono text-xs font-bold uppercase tracking-[0.14em] text-stone-600">
-          Live room manager
-        </span>
+        <.link navigate={~p"/admin/game-settings"} class="text-sm underline">
+          Game settings · bot base {Lifecycle.config(:bot_delay_ms)}ms
+        </.link>
       </:actions>
 
-      <!-- Quick-Create Presets -->
-      <div class="rounded-md border border-stone-300 bg-white shadow-sm">
-        <div class="px-4 py-4">
-          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
-            Quick Create
-          </h3>
-          <div class="mt-1 max-w-xl text-sm text-stone-500">
-            <p>One-click room presets for common dev scenarios.</p>
-          </div>
-          <div class="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              phx-click="preset_empty_room"
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-zinc-600 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-zinc-500"
-            >
-              Empty Room
-            </button>
-            <button
-              type="button"
-              phx-click="preset_1h_3b"
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-            >
-              1H + 3B
-            </button>
-            <button
-              type="button"
-              phx-click="preset_2h_2b"
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              2H + 2B
-            </button>
-            <button
-              type="button"
-              phx-click="preset_4_bots"
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-            >
-              4 Bots
-            </button>
-          </div>
-        </div>
+      <div class="flex flex-wrap gap-3 text-sm" id="room-counts">
+        <span><strong>{@stats.waiting}</strong> waiting</span>
+        <span><strong>{@stats.playing}</strong> playing</span>
+        <span><strong>{@stats.finished}</strong> finished</span>
+        <span><strong>{@stats.issues}</strong> with connection / process issues</span>
+      </div>
+      <p class="text-xs text-stone-500">
+        Elapsed time is informational. Own-pace tables may wait for human Continue; no inactivity alarm.
+      </p>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <form id="phase-filter-form" phx-change="filter_phase">
+          <label for="phase-filter" class="text-sm">Phase</label>
+          <select id="phase-filter" name="phase" class="rounded border-stone-300 text-sm">
+            <option :for={{value, label} <- filters()} value={value} selected={@phase_filter == value}>
+              {label}
+            </option>
+          </select>
+        </form>
+        <button phx-click="toggle_sort" class="rounded border border-stone-300 px-3 py-2 text-sm">
+          {if @sort_order == :desc, do: "Newest First", else: "Oldest First"}
+        </button>
+        <span class="text-xs text-stone-500">Showing {length(@rooms)} of {map_size(@all_rooms)} games · sampled every 750ms</span>
       </div>
 
-      <div class="rounded-md border border-stone-300 bg-white shadow-sm">
-        <div class="px-4 py-4">
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
-                Game Pacing
-              </h3>
-              <div class="mt-1 max-w-3xl text-sm text-stone-500">
-                <p>
-                  Runtime controls for bot delays and trick/hand pauses. These values are saved with
-                  <code class="rounded bg-zinc-100 px-1 py-0.5 text-xs">Application.put_env</code>
-                  so they take effect immediately without a restart.
-                </p>
-              </div>
-            </div>
-            <div class="rounded-sm border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
-              <p class="font-bold text-stone-900">
-                Bots will act between {@pacing_preview.bot_delay_min_ms}ms and {@pacing_preview.bot_delay_max_ms}ms
-              </p>
-              <p class="mt-1 text-zinc-500">
-                Trick pause: {@pacing_form["trick_transition_delay_ms"]}ms
-                · Hand pause: {@pacing_form["hand_transition_delay_ms"]}ms
-                · Deal pause: {@pacing_form["deal_transition_delay_ms"]}ms
-              </p>
-            </div>
-          </div>
-
-          <form
-            id="pacing-form"
-            phx-submit="save_pacing"
-            phx-change="update_pacing_form"
-            class="mt-6 space-y-6"
-          >
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <%= for field <- @pacing_fields do %>
-                <div class="rounded-md border border-stone-200 bg-stone-50/60 p-4">
-                  <label
-                    for={pacing_input_id(field)}
-                    class="block text-sm font-medium text-zinc-900"
-                  >
-                    {field.label}
-                  </label>
-                  <p class="mt-1 text-xs leading-5 text-zinc-500">
-                    {field.description}
-                  </p>
-                  <input
-                    type="number"
-                    min={field.min}
-                    max={field.max}
-                    step={field.step}
-                    id={pacing_input_id(field)}
-                    name={"pacing[#{field_key(field)}]"}
-                    value={@pacing_form[field_key(field)]}
-                    class="mt-3 block w-full rounded-md border-zinc-300 bg-white shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  />
-                  <div class="mt-2 flex items-center justify-between text-xs text-zinc-500">
-                    <span>Range: {field.min}ms to {field.max}ms</span>
-                    <span>Step: {field.step}ms</span>
-                  </div>
-                  <%= if error = @pacing_errors[field_key(field)] do %>
-                    <p class="mt-2 text-xs font-medium text-red-600">{error}</p>
-                  <% end %>
-                </div>
-              <% end %>
-            </div>
-
-            <div class="flex flex-wrap gap-3">
-              <button
-                type="submit"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Save Pacing
-              </button>
-              <button
-                type="button"
-                phx-click="reset_pacing"
-                class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Reset to Defaults
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <!-- Create New Game Section -->
-      <div class="rounded-md border border-stone-300 bg-white shadow-sm">
-        <div class="px-4 py-4">
-          <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
-            Create New Game
-          </h3>
-          <div class="mt-1 max-w-xl text-sm text-stone-500">
-            <p>Create a new game room for testing and development.</p>
-          </div>
-          <div class="mt-5">
-            <%= if !@show_create_form do %>
-              <button
-                type="button"
-                phx-click="toggle_create_form"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                New Game
-              </button>
-            <% else %>
-              <form phx-submit="create_game" phx-change="update_form" class="space-y-4">
-                <!-- Game Name Input -->
-                <div>
-                  <label for="game_name" class="block text-sm font-medium text-zinc-700">
-                    Game Name
-                  </label>
-                  <input
-                    type="text"
-                    name="game_name"
-                    id="game_name"
-                    value={@game_name}
-                    placeholder="My Test Game"
-                    class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  />
-                </div>
-
-                <!-- Host Selection -->
-                <div>
-                  <label for="host_user_id" class="block text-sm font-medium text-zinc-700">
-                    Host / Player 1
-                  </label>
-                  <select
-                    name="host_user_id"
-                    id="host_user_id"
-                    class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  >
-                    <option value="dev_host" selected={@host_user_id == "dev_host"}>
-                      Use Game Name (Dev Mode)
-                    </option>
-                    <%= for user <- @users do %>
-                      <option value={user.id} selected={@host_user_id == user.id}>
-                        User: {user.username} ({String.slice(user.id, 0..7)}...)
-                      </option>
-                    <% end %>
-                  </select>
-                  <p class="mt-1 text-xs text-zinc-500">
-                    Select a real user to allow that user to play as the host.
-                  </p>
-                </div>
-
-                <!-- Bot Count Radio Buttons -->
-                <div>
-                  <label class="block text-sm font-medium text-zinc-700">Bot Count</label>
-                  <div class="mt-2 flex flex-wrap gap-4">
-                    <%= for count <- 0..4 do %>
-                      <label class="inline-flex items-center">
-                        <input
-                          type="radio"
-                          name="bot_count"
-                          value={count}
-                          checked={@bot_count == count}
-                          class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-zinc-300"
-                        />
-                        <span class="ml-2 text-sm text-zinc-700">{count}</span>
-                      </label>
-                    <% end %>
-                  </div>
-                  <p class="mt-1 text-xs text-zinc-500">
-                    <%= case @bot_count do %>
-                      <% 0 -> %>
-                        No bots. Waiting for 4 human players.
-                      <% 1 -> %>
-                        1 bot. Waiting for 3 human players.
-                      <% 2 -> %>
-                        2 bots. Waiting for 2 human players.
-                      <% 3 -> %>
-                        3 bots. Waiting for 1 human player (Host).
-                      <% 4 -> %>
-                        4 bots. Full automated game (Spectator only).
-                    <% end %>
-                  </p>
-                </div>
-                <!-- Bot Difficulty Dropdown -->
-                <div>
-                  <label for="bot_difficulty" class="block text-sm font-medium text-zinc-700">
-                    Bot Difficulty
-                  </label>
-                  <select
-                    name="bot_difficulty"
-                    id="bot_difficulty"
-                    class="mt-1 block w-full rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  >
-                    <option value="random" selected={@bot_difficulty == "random"}>Random</option>
-                    <option value="basic" selected={@bot_difficulty == "basic"}>Basic</option>
-                    <option value="smart" selected={@bot_difficulty == "smart"}>Smart</option>
-                  </select>
-                </div>
-                <!-- Action Buttons -->
-                <div class="flex space-x-3">
-                  <button
-                    type="submit"
-                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  >
-                    Create
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="cancel_create"
-                    class="inline-flex items-center px-4 py-2 border border-zinc-300 text-sm font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            <% end %>
-          </div>
-        </div>
-      </div>
-
-      <!-- Statistics Cards -->
-      <dl class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <.stat_card
-          label="Total rooms"
-          value={@stats.total}
-          hint="Known by RoomManager"
-          icon="hero-square-3-stack-3d"
-          tone="orange"
-        />
-        <.stat_card label="Waiting" value={@stats.waiting} hint="Open lobbies" icon="hero-clock" />
-        <.stat_card
-          label="Active games"
-          value={@stats.playing}
-          hint="Game processes running"
-          icon="hero-play"
-          tone="green"
-        />
-        <.stat_card
-          label="Finished"
-          value={@stats.finished}
-          hint="Ready for cleanup"
-          icon="hero-flag"
-          tone="blue"
-        />
-      </dl>
-
-      <!-- Filter and Sort Controls -->
-      <div class="rounded-md border border-stone-300 bg-white px-4 py-3 shadow-sm">
-        <div class="flex flex-wrap items-center gap-4">
-          <!-- Phase Filter -->
-          <div class="flex items-center gap-2">
-            <label for="phase-filter" class="text-sm font-medium text-zinc-700">
-              Filter by Phase:
-            </label>
-            <select
-              id="phase-filter"
-              phx-change="filter_phase"
-              name="phase"
-              class="block rounded-md border-zinc-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            >
-              <option value="all" selected={@phase_filter == :all}>All</option>
-              <option value="waiting" selected={@phase_filter == :waiting}>Waiting</option>
-              <option value="playing" selected={@phase_filter == :playing}>Playing</option>
-              <option value="finished" selected={@phase_filter == :finished}>Finished</option>
-            </select>
-          </div>
-
-          <!-- Sort Toggle -->
-          <button
-            type="button"
-            phx-click="toggle_sort"
-            class="inline-flex items-center px-3 py-2 border border-zinc-300 shadow-sm text-sm leading-4 font-medium rounded-md text-zinc-700 bg-white hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            <%= if @sort_order == :desc do %>
-              Newest First
-            <% else %>
-              Oldest First
-            <% end %>
-          </button>
-
-          <!-- Game Count Badge -->
-          <div class="ml-auto">
-            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
-              Showing {@stats.filtered} of {@stats.total} games
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Rooms Table -->
-      <div class="overflow-hidden rounded-md border border-stone-300 bg-white shadow-sm">
-        <div class="px-4 py-3 flex justify-between items-center">
-          <div>
-            <h3 class="font-mono text-xs font-black uppercase tracking-[0.16em] text-stone-700">
-              Active Rooms
-            </h3>
-            <p class="mt-1 max-w-2xl text-xs text-stone-500">
-              Live updates from all game rooms
-            </p>
-          </div>
-          <%= if @stats.finished > 0 do %>
-            <button
-              type="button"
-              phx-click="request_bulk_delete"
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-            >
-              Delete All Finished ({@stats.finished})
-            </button>
-          <% end %>
-        </div>
-        <div class="border-t border-zinc-200">
-          <%= if Enum.empty?(@rooms) do %>
-            <div class="px-4 py-8 text-center text-zinc-500">
-              No active rooms at the moment
-            </div>
-          <% else %>
-            <table class="min-w-full divide-y divide-zinc-200">
-              <thead class="bg-zinc-50">
-                <tr>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Room Code
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Name
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Status
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Players
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Phase
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Score
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Host
-                  </th>
-                  <th
-                    scope="col"
-                    class="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider"
-                  >
-                    Created
-                  </th>
-                  <th scope="col" class="relative px-6 py-3">
-                    <span class="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody class="bg-white divide-y divide-zinc-200">
-                <%= for room <- @rooms do %>
-                  <tr>
-                    <td class="px-6 py-4 whitespace-nowrap">
-                      <.link
-                        navigate={~p"/admin/games/#{room.code}"}
-                        class="text-sm font-medium text-indigo-600 hover:text-indigo-900"
-                      >
-                        {room.code}
-                      </.link>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap">
-                      <div class="text-sm text-zinc-900">
-                        {room.config.name || "Game #{room.code}"}
-                      </div>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap">
-                      <span class={"px-2 inline-flex text-xs leading-5 font-semibold rounded-full #{status_color(room.status)}"}>
-                        {room.status}
-                      </span>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                      {Positions.count(room)} / 4
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                      <%= if game_state = @game_states[room.code] do %>
-                        <span class="font-medium">{format_game_phase(game_state)}</span>
-                      <% else %>
-                        <span class="text-zinc-400">-</span>
-                      <% end %>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                      <%= if game_state = @game_states[room.code] do %>
-                        <span class="font-mono">{format_scores(game_state)}</span>
-                      <% else %>
-                        <span class="text-zinc-400">-</span>
-                      <% end %>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                      <%= if room.host_id do %>
-                        {String.slice(room.host_id, 0..7)}...
-                      <% else %>
-                        No owner
-                      <% end %>
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
-                      {format_time(room.created_at)}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div class="flex justify-end space-x-3">
-                        <%= if room.status == :playing do %>
-                          <.link
-                            navigate={~p"/admin/games/#{room.code}"}
-                            class="text-indigo-600 hover:text-indigo-900"
-                          >
-                            Watch
-                          </.link>
-                        <% end %>
-                        <button
-                          type="button"
-                          phx-click="request_delete"
-                          phx-value-code={room.code}
-                          class="text-red-600 hover:text-red-900"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                <% end %>
-              </tbody>
-            </table>
-          <% end %>
-        </div>
-      </div>
-
-      <!-- Auto-refresh indicator -->
-      <div class="mt-4 text-center text-sm text-zinc-500">
-        <span class="inline-flex items-center">
-          <span class="h-2 w-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
-          Live updates enabled
-        </span>
-      </div>
-
-      <!-- Confirmation Modal -->
-      <%= if @show_confirm_modal do %>
-        <div
-          class="fixed z-50 inset-0 overflow-y-auto"
-          aria-labelledby="modal-title"
-          role="dialog"
-          aria-modal="true"
+      <div id="game-rows" class="space-y-3">
+        <p :if={@rooms == []} class="rounded border border-dashed p-8 text-center text-stone-500">
+          No active rooms at the moment
+        </p>
+        <article
+          :for={room <- @rooms}
+          id={"room-#{room.code}"}
+          class={[
+            "rounded-lg border border-stone-200 bg-white p-4",
+            MapSet.member?(@changed, room.code) && "admin-row-changed"
+          ]}
         >
-          <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div
-              class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
-              aria-hidden="true"
-              phx-click="cancel_confirm"
-            >
+          <% summary = @summaries[room.code] %>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="min-w-0">
+              <.link
+                navigate={~p"/admin/games/#{room.code}"}
+                class="font-semibold text-stone-950 break-words"
+              >{room.config.name || "Game #{room.code}"}</.link>
+              <button
+                id={"copy-#{room.code}"}
+                phx-hook="Clipboard"
+                data-clipboard-text={room.code}
+                title="Copy room ID"
+                class="ml-2 font-mono text-xs text-stone-500"
+              >{room.code}</button>
             </div>
-
-            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">
-              &#8203;
-            </span>
-
-            <div class="relative inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
-              <div class="sm:flex sm:items-start">
-                <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
-                  <svg
-                    class="h-6 w-6 text-red-600"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                    />
-                  </svg>
-                </div>
-                <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                  <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                    Confirm Delete
-                  </h3>
-                  <div class="mt-2">
-                    <p class="text-sm text-gray-500">
-                      {@confirm_message}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse">
-                <button
-                  type="button"
-                  phx-click="confirm_delete"
-                  class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm"
-                >
-                  Confirm
-                </button>
-                <button
-                  type="button"
-                  phx-click="cancel_confirm"
-                  class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
+            <div class="flex items-center gap-3 text-sm">
+              <span class="rounded bg-stone-100 px-2 py-1">{room.status}</span>
+              <.link
+                navigate={~p"/admin/games/#{room.code}"}
+                class="font-medium text-indigo-700 underline"
+              >Watch</.link>
+              <button
+                phx-click="request_delete"
+                phx-value-code={room.code}
+                class="text-xs text-stone-500"
+              >Delete</button>
             </div>
           </div>
+          <div class="mt-3 grid gap-4 md:grid-cols-[2fr_1fr_1fr]">
+            <div class="grid grid-cols-2 gap-3">
+              <div :for={{team, positions} <- [{"N/S", [:north, :south]}, {"E/W", [:east, :west]}]}>
+                <p class="text-xs font-semibold text-stone-500">{team}</p>
+                <div :for={position <- positions} class="mt-1 flex min-w-0 items-center gap-1 text-sm">
+                  <% seat = room.seats[position] %>
+                  <% profile = @profiles[seat.user_id] %>
+                  <img
+                    :if={profile && profile.avatar_url}
+                    src={profile.avatar_url}
+                    alt=""
+                    class="size-5 rounded-full"
+                  />
+                  <span class="min-w-0 break-words" title={seat.user_id}>{seat_name(seat, profile)}</span>
+                  <button
+                    :if={seat.user_id}
+                    id={"player-id-#{room.code}-#{position}"}
+                    phx-hook="Clipboard"
+                    data-clipboard-text={seat.user_id}
+                    title={"Copy player ID: #{seat.user_id}"}
+                    class="font-mono text-[10px] text-stone-400"
+                  >ID</button>
+                  <span class="text-xs text-stone-500">{position
+                  |> to_string()
+                  |> String.first()
+                  |> String.upcase()}</span>
+                  <span class="text-xs text-stone-500">{connection(seat)}</span>
+                </div>
+              </div>
+            </div>
+            <div class="text-sm">
+              <p class="font-semibold">{phase_label(summary, room)}</p>
+              <p class="mt-1 font-mono">
+                N/S {score(summary, :north_south)} · E/W {score(summary, :east_west)}
+              </p>
+              <p :if={summary && summary.current_turn} class="mt-1 text-xs text-stone-600">
+                Turn: {seat_name(
+                  room.seats[summary.current_turn],
+                  @profiles[room.seats[summary.current_turn].user_id]
+                )} ({summary.current_turn})
+              </p>
+              <p class="mt-1 text-xs text-stone-500">
+                Pace: {if summary, do: summary.pace, else: room.pace}
+              </p>
+            </div>
+            <div class="text-xs text-stone-500">
+              <%= if summary do %>
+                <p>{humanize(summary.last_event)}</p>
+                <time
+                  datetime={DateTime.to_iso8601(summary.updated_at)}
+                  title={DateTime.to_iso8601(summary.updated_at)}
+                >{elapsed(summary.updated_at, @now)} ago</time>
+              <% else %>
+                <p>
+                  {if room.status == :playing,
+                    do: "Game process unavailable",
+                    else: "Waiting for players"}
+                </p>
+              <% end %>
+              <p class="mt-1">{Positions.count(room)} / 4 seated</p>
+              <p :if={is_nil(room.host_id)} class="mt-1">No owner</p>
+              <p :if={issue?(room, summary)} class="mt-1 text-amber-700">
+                Connection / process issue
+              </p>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <details class="rounded-lg border border-stone-200 bg-white p-4">
+        <summary class="cursor-pointer text-sm font-medium">
+          Developer controls · create a game
+        </summary>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button
+            :for={
+              {event, label} <- [
+                {"preset_empty_room", "Empty Room"},
+                {"preset_1h_3b", "1H + 3B"},
+                {"preset_2h_2b", "2H + 2B"},
+                {"preset_4_bots", "4 Bots"}
+              ]
+            }
+            phx-click={event}
+            class="rounded border px-3 py-2 text-sm"
+          >{label}</button>
+          <button phx-click="toggle_create_form" class="rounded border px-3 py-2 text-sm">New Game</button>
+          <button
+            :if={@stats.finished > 0}
+            phx-click="request_bulk_delete"
+            class="rounded border px-3 py-2 text-sm text-red-700"
+          >Delete All Finished ({@stats.finished})</button>
         </div>
-      <% end %>
+        <form
+          :if={@show_create_form}
+          id="create-game-form"
+          phx-submit="create_game"
+          class="mt-4 grid gap-3 sm:grid-cols-2"
+        >
+          <label class="text-sm">Game name<input
+            name="game_name"
+            required
+            class="block w-full rounded border-stone-300"
+          /></label>
+          <label class="text-sm">Host ID (or dev_host)<input
+            name="host_user_id"
+            value="dev_host"
+            class="block w-full rounded border-stone-300"
+          /></label>
+          <label class="text-sm">Bots<input
+            name="bot_count"
+            type="number"
+            min="0"
+            max="4"
+            value="0"
+            class="block w-full rounded border-stone-300"
+          /></label>
+          <label class="text-sm">Difficulty<select
+            name="bot_difficulty"
+            class="block w-full rounded border-stone-300"
+          ><option>random</option><option>basic</option><option>smart</option></select></label>
+          <button class="rounded bg-stone-900 px-3 py-2 text-white">Create</button>
+          <button type="button" phx-click="cancel_create">Cancel</button>
+        </form>
+      </details>
+
+      <div
+        :if={@delete_code}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Confirm Delete"
+        class="fixed inset-0 z-50 grid place-items-center bg-stone-950/40 p-4"
+      >
+        <div class="rounded-lg bg-white p-6">
+          <p>
+            {if @delete_code == :finished,
+              do: "Delete all finished games?",
+              else: "Delete game #{@delete_code}?"}
+          </p>
+          <div class="mt-4 flex gap-4">
+            <button phx-click="confirm_delete" class="text-red-700">Confirm</button><button phx-click="cancel_confirm">Cancel</button>
+          </div>
+        </div>
+      </div>
     </.admin_shell>
     """
   end
 
-  # Private functions
+  defp replace_rooms(socket, rooms) do
+    ids = rooms |> Enum.flat_map(&Positions.player_ids/1) |> Enum.uniq()
+    # Only membership changes query the DB, in one batch, never per seat/action.
+    old_ids = socket.assigns.profiles |> Map.keys() |> Enum.sort()
 
-  defp assign_pacing_settings(socket, form \\ nil, errors \\ %{}) do
-    form = form || PacingSettings.current_form()
-
-    socket
-    |> assign(:pacing_fields, PacingSettings.field_specs())
-    |> assign(:pacing_form, form)
-    |> assign(:pacing_errors, errors)
-    |> assign(:pacing_preview, PacingSettings.preview(form))
-  end
-
-  defp assign_rooms_and_stats(socket, rooms) do
-    filtered_rooms = filter_rooms_by_phase(rooms, socket.assigns.phase_filter)
-    sorted_rooms = sort_rooms(filtered_rooms, socket.assigns.sort_order)
-    stats = calculate_stats(rooms, length(sorted_rooms))
-    game_states = fetch_game_states(sorted_rooms)
+    profiles =
+      if Enum.sort(ids) == old_ids, do: socket.assigns.profiles, else: public_profiles(ids)
 
     socket
-    |> assign(:rooms, sorted_rooms)
-    |> assign(:stats, stats)
-    |> assign(:game_states, game_states)
+    |> assign(:all_rooms, Map.new(rooms, &{&1.code, &1}))
+    |> assign(:profiles, profiles)
+    |> sample()
   end
 
-  defp filter_rooms_by_phase(rooms, :all), do: rooms
+  defp public_profiles(ids) do
+    users = Auth.get_users_map(ids)
 
-  defp filter_rooms_by_phase(rooms, phase) do
-    Enum.filter(rooms, &(&1.status == phase))
-  end
-
-  defp sort_rooms(rooms, :desc) do
-    Enum.sort_by(rooms, & &1.created_at, {:desc, DateTime})
-  end
-
-  defp sort_rooms(rooms, :asc) do
-    Enum.sort_by(rooms, & &1.created_at, {:asc, DateTime})
-  end
-
-  defp calculate_stats(rooms, filtered_count) do
-    %{
-      total: length(rooms),
-      waiting: Enum.count(rooms, &(&1.status == :waiting)),
-      playing: Enum.count(rooms, &(&1.status == :playing)),
-      finished: Enum.count(rooms, &(&1.status == :finished)),
-      filtered: filtered_count
-    }
-  end
-
-  defp parse_bot_count(nil), do: 0
-  defp parse_bot_count(""), do: 0
-
-  defp parse_bot_count(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {count, _} -> count
-      :error -> 0
-    end
-  end
-
-  defp parse_bot_count(value) when is_integer(value), do: value
-
-  defp pacing_input_id(field) do
-    "pacing_#{field_key(field)}"
-  end
-
-  defp field_key(field) do
-    Atom.to_string(field.key)
-  end
-
-  defp status_color(status) do
-    case status do
-      :waiting -> "bg-yellow-100 text-yellow-800"
-      :ready -> "bg-blue-100 text-blue-800"
-      :playing -> "bg-green-100 text-green-800"
-      :finished -> "bg-gray-100 text-gray-800"
-      :closed -> "bg-red-100 text-red-800"
-      _ -> "bg-gray-100 text-gray-800"
-    end
-  end
-
-  defp format_time(datetime) do
-    case datetime do
-      %DateTime{} ->
-        Calendar.strftime(datetime, "%H:%M:%S")
-
-      _ ->
-        "N/A"
-    end
-  end
-
-  defp fetch_game_states(rooms) do
-    rooms
-    |> Enum.filter(&(&1.status in [:playing, :finished]))
-    |> Enum.reduce(%{}, fn room, acc ->
-      case GameAdapter.get_state(room.code) do
-        {:ok, state} -> Map.put(acc, room.code, state)
-        _ -> acc
-      end
+    Map.new(ids, fn id ->
+      user = users[id]
+      {id, if(user, do: %{name: User.public_name(user), avatar_url: user.avatar_url})}
     end)
   end
 
-  defp format_game_phase(game_state) do
-    case game_state.phase do
-      :dealer_selection -> "Dealer Sel."
-      :dealing -> "Dealing"
-      :bidding -> "Bidding"
-      :declaring -> "Declaring"
-      :discarding -> "Discarding"
-      :second_deal -> "2nd Deal"
-      :playing -> "Trick #{game_state.trick_number}"
-      :scoring -> "Scoring"
-      :complete -> "Complete"
-      other -> to_string(other)
-    end
+  defp sample(socket) do
+    summaries =
+      Map.new(socket.assigns.all_rooms, fn {code, _} -> {code, AdminGameSummary.get(code)} end)
+
+    changed =
+      for {code, summary} <- summaries,
+          summary != socket.assigns.summaries[code],
+          into: MapSet.new(),
+          do: code
+
+    socket
+    |> assign(:summaries, summaries)
+    |> assign(:changed, changed)
+    |> assign(:now, DateTime.utc_now())
+    |> present()
   end
 
-  defp format_scores(game_state) do
-    ns = game_state.cumulative_scores[:north_south] || 0
-    ew = game_state.cumulative_scores[:east_west] || 0
-    "#{ns} - #{ew}"
-  end
+  defp present(socket) do
+    rooms = Map.values(socket.assigns.all_rooms)
+    summaries = socket.assigns.summaries
+    filter = socket.assigns.phase_filter
 
-  defp random_suffix do
-    :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
-  end
+    visible =
+      Enum.filter(rooms, fn room ->
+        summary = summaries[room.code]
 
-  # Dev presets are named, start their bots at `random`, and are never solo:
-  # they stay visible in the lobby like any other table.
-  defp preset_attrs(name), do: %{name: name, bot_difficulty: :random, solo: false}
-
-  defp start_bots_if_needed(room_code, bot_count, bot_difficulty) when bot_count > 0 do
-    alias PidroServer.Games.Room.Positions
-    strategy = String.to_existing_atom(bot_difficulty)
-
-    # Check if North (Seat 1) is already occupied (by host)
-    {:ok, room} = RoomManager.get_room(room_code)
-    _seats_occupied = Positions.count(room)
-
-    # If seats are occupied (e.g., host is Player 1), we need to be careful
-    # BotManager.start_bots currently tries to fill from 0 to N
-    # We need to make sure it doesn't overwrite the host or fail.
-    # The implementation of BotManager.start_bots is in pidro_engine or server?
-    # Assuming BotManager handles filling available slots or we need to start bots manually.
-
-    # Strategy: If start_bots just launches N bots, it might conflict.
-    # Better to try launching them one by one in empty slots if possible.
-    # But for now, let's assume start_bots is smart enough or we try it.
-
-    try do
-      BotManager.start_bots(room_code, bot_count, strategy)
-    catch
-      :exit, {:noproc, _} ->
-        require Logger
-
-        Logger.error(
-          "BotManager is not running. Cannot start bots for room #{room_code}. " <>
-            "Make sure the application is running in dev mode and has been recompiled."
-        )
-
-        {:error, :bot_manager_not_running}
-
-      :exit, reason ->
-        require Logger
-        Logger.error("Failed to start bots: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  defp start_bots_if_needed(_room_code, _bot_count, _bot_difficulty), do: :ok
-
-  defp start_bots_at_positions(room_code, positions, strategy) do
-    positions
-    |> Enum.reduce_while({:ok, []}, fn position, {:ok, pids} ->
-      try do
-        case BotManager.start_bot(room_code, position, strategy) do
-          {:ok, pid} -> {:cont, {:ok, [pid | pids]}}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      catch
-        :exit, {:noproc, _} -> {:halt, {:error, :bot_manager_not_running}}
-        :exit, reason -> {:halt, {:error, reason}}
-      end
-    end)
-    |> case do
-      {:ok, pids} -> {:ok, Enum.reverse(pids)}
-      error -> error
-    end
-  end
-
-  defp handle_single_delete(socket) do
-    room_code = socket.assigns.room_to_delete
-
-    # Cascading cleanup: stop bots and game process before closing room
-    BotManager.stop_all_bots(room_code)
-    GameSupervisor.stop_game(room_code)
-
-    case RoomManager.close_room(room_code) do
-      :ok ->
-        {:noreply,
-         socket
-         |> close_modal()
-         |> put_flash(:info, "Game #{room_code} deleted successfully")}
-
-      {:error, :room_not_found} ->
-        {:noreply,
-         socket
-         |> close_modal()
-         |> put_flash(:error, "Game #{room_code} not found")}
-    end
-  end
-
-  defp handle_bulk_delete(socket) do
-    all_rooms = RoomManager.list_rooms(:all)
-    finished_rooms = Enum.filter(all_rooms, &(&1.status == :finished))
-
-    results =
-      Enum.map(finished_rooms, fn room ->
-        # Cascading cleanup: stop bots and game process before closing room
-        BotManager.stop_all_bots(room.code)
-        GameSupervisor.stop_game(room.code)
-        RoomManager.close_room(room.code)
+        filter == "all" or filter == to_string(room.status) or
+          (filter == "waiting" and room.status == :ready) or
+          (not is_nil(summary) and filter == to_string(summary.phase)) or
+          (filter == "issues" and issue?(room, summary))
       end)
 
-    success_count = Enum.count(results, &(&1 == :ok))
-    error_count = Enum.count(results, &(&1 != :ok))
+    stats = %{
+      waiting: Enum.count(rooms, &(&1.status in [:waiting, :ready])),
+      playing: Enum.count(rooms, &(&1.status == :playing)),
+      finished: Enum.count(rooms, &(&1.status == :finished)),
+      issues: Enum.count(rooms, &issue?(&1, summaries[&1.code]))
+    }
 
-    socket = close_modal(socket)
-
-    socket =
-      if success_count > 0 do
-        put_flash(
-          socket,
-          :info,
-          "Successfully deleted #{success_count} finished game#{if success_count > 1, do: "s", else: ""}"
-        )
-      else
-        socket
-      end
-
-    socket =
-      if error_count > 0 do
-        put_flash(
-          socket,
-          :error,
-          "Failed to delete #{error_count} game#{if error_count > 1, do: "s", else: ""}"
-        )
-      else
-        socket
-      end
-
-    {:noreply, socket}
+    socket
+    |> assign(
+      :rooms,
+      Enum.sort_by(visible, & &1.created_at, {socket.assigns.sort_order, DateTime})
+    )
+    |> assign(:stats, stats)
   end
 
-  defp close_modal(socket) do
-    socket
-    |> assign(:show_confirm_modal, false)
-    |> assign(:confirm_action, nil)
-    |> assign(:confirm_message, "")
-    |> assign(:room_to_delete, nil)
+  defp issue?(room, summary) do
+    (room.status == :playing and is_nil(summary)) or
+      Enum.any?(room.seats, fn {_, seat} ->
+        seat.status in [:reconnecting, :grace] or
+          (seat.status == :bot_substitute and not is_nil(seat.reserved_for))
+      end)
+  end
+
+  defp seat_name(%{bot_persona: persona}, _) when is_binary(persona),
+    do: Seat.bot_display_name(persona)
+
+  defp seat_name(%{occupant_type: :bot}, _), do: "Bot"
+  defp seat_name(_, %{name: name}), do: name
+  defp seat_name(%{occupant_type: :vacant}, _), do: "Open seat"
+  defp seat_name(_, _), do: "Unknown player"
+
+  defp connection(%{occupant_type: :vacant}), do: ""
+  defp connection(%{occupant_type: :bot, status: :connected}), do: "bot"
+  defp connection(%{status: status}), do: humanize(status)
+
+  defp score(nil, _), do: "–"
+  defp score(summary, team), do: summary.cumulative_scores[team] || 0
+  defp phase_label(nil, room), do: humanize(room.status)
+  defp phase_label(%{phase: :hand_complete}, _), do: "Waiting for Continue"
+  defp phase_label(%{phase: :playing, trick_number: trick}, _), do: "Playing · trick #{trick}"
+  defp phase_label(summary, _), do: humanize(summary.phase)
+  defp humanize(nil), do: ""
+
+  defp humanize(value),
+    do: value |> to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  defp elapsed(time, now) do
+    seconds = max(DateTime.diff(now, time), 0)
+
+    cond do
+      seconds < 60 -> "#{seconds}s"
+      seconds < 3600 -> "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+      true -> "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"
+    end
+  end
+
+  defp filters,
+    do: [
+      {"all", "All"},
+      {"waiting", "Waiting"},
+      {"playing", "Playing"},
+      {"bidding", "Bidding"},
+      {"declaring", "Declaring trump"},
+      {"dealer_selection", "Dealer selection"},
+      {"hand_complete", "Waiting for Continue"},
+      {"finished", "Finished"},
+      {"issues", "Connection / process issues"}
+    ]
+
+  defp start_bots(_, 0, _), do: :ok
+
+  defp start_bots(code, count, strategy) do
+    BotManager.start_bots(code, count, strategy)
+  catch
+    :exit, _ -> {:error, :bot_manager_unavailable}
+  end
+
+  defp start_bots_at_positions(code, positions) do
+    Enum.reduce_while(positions, :ok, fn position, :ok ->
+      case BotManager.start_bot(code, position, :random) do
+        {:ok, _} -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  catch
+    :exit, _ -> {:error, :bot_manager_unavailable}
+  end
+
+  defp creation_flash(socket, code, {:error, _}) do
+    BotManager.stop_all_bots(code)
+    put_flash(socket, :warning, "Room #{code} created, but bots could not be started")
+  end
+
+  defp creation_flash(socket, code, _), do: put_flash(socket, :info, "Created #{code}")
+
+  defp parse_bot_count(value) do
+    case Integer.parse(value) do
+      {count, ""} -> count
+      _ -> -1
+    end
+  end
+
+  defp delete_room(code) do
+    BotManager.stop_all_bots(code)
+    GameSupervisor.stop_game(code)
+    RoomManager.close_room(code)
   end
 end
