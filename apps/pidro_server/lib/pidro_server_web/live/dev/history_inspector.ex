@@ -11,12 +11,12 @@ defmodule PidroServerWeb.Dev.HistoryInspector do
 
   @page_size 25
   @fields ~w(user_id room_code game_instance_id status report_id build from to before_at before_id revision after_revision player)
-  @compile {:no_warn_undefined, [GameArchive, GameReports]}
 
   def fields, do: @fields
 
   def load(action, params) do
     with {:ok, opts} <- filters(params),
+         :ok <- validate_cursor(action, opts),
          {:ok, opts} <- resolve_player(opts) do
       {:ok, read(action, params, opts)}
     end
@@ -24,6 +24,14 @@ defmodule PidroServerWeb.Dev.HistoryInspector do
     _error in [Postgrex.Error, DBConnection.ConnectionError] ->
       {:error, "Evidence storage is unavailable. This does not mean no history exists."}
   end
+
+  defp validate_cursor(action, opts) when action in [:reports, :summaries] do
+    if opts[:before_id] && Ecto.UUID.cast(opts[:before_id]) == :error,
+      do: {:error, "Invalid page cursor. Start a new search."},
+      else: :ok
+  end
+
+  defp validate_cursor(_, _), do: :ok
 
   defp filters(params) do
     result =

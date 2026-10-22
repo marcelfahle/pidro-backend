@@ -20,7 +20,7 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
       players:
         Map.new(@positions, fn position ->
           player = get_in(state, ["players", Atom.to_string(position)]) || %{}
-          {position, %{hand: cards(player["hand"] || []), cold: player["cold"] == true}}
+          {position, %{hand: cards(player["hand"] || []), cold: player["eliminated?"] == true}}
         end),
       phase: enum(state["phase"], @phases),
       current_turn: enum(state["current_turn"], @positions),
@@ -44,6 +44,7 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
       seat = participants[Atom.to_string(position)] || %{}
       user = names[seat["user_id"]] || %{}
       bot? = seat["occupant_type"] == "bot"
+      profile = if bot?, do: PidroServer.BotCatalogue.profile(seat["bot_persona"])
       name = user[:display_name] || user[:username] || if(bot?, do: "Bot", else: "Unknown player")
 
       {position,
@@ -52,6 +53,7 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
          player_id: seat["user_id"],
          username: name,
          display_name: name,
+         bot_profile: if(profile, do: PidroServer.BotCatalogue.public(profile)),
          avatar_url: nil
        }}
     end)
@@ -61,6 +63,7 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
   defp seat_status(%{"substitute" => true}), do: :bot_substitute
   defp seat_status(%{"occupant_type" => "bot"}), do: :permanent_bot
   defp seat_status(%{"status" => "disconnected"}), do: :reconnecting
+  defp seat_status(seat) when map_size(seat) == 0, do: :vacant
   defp seat_status(_), do: :normal
 
   defp cards(values),

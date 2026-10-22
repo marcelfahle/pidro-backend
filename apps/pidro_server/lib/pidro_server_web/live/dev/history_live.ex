@@ -8,7 +8,6 @@ defmodule PidroServerWeb.Dev.HistoryLive do
   alias PidroServerWeb.Dev.ArchivePresentation, as: Presentation
   alias PidroServerWeb.Dev.HistoryInspector
 
-  @compile {:no_warn_undefined, {CardComponents, :watch_table, 1}}
   @impl true
   def mount(_params, session, socket) do
     {:ok, assign(socket, token: session["admin_token"], data: %{}, error: nil)}
@@ -524,7 +523,8 @@ defmodule PidroServerWeb.Dev.HistoryLive do
   defp event_actor(position, data),
     do:
       position <>
-        " · " <> participant_name(data.archive.participants[position] || %{}, data.names)
+        " (initial seat: " <>
+        participant_name(data.archive.participants[position] || %{}, data.names) <> ")"
 
   defp list_notice(:archives),
     do:
