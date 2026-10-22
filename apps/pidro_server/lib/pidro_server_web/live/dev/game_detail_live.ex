@@ -83,6 +83,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
          |> assign(:bot_reasons, [])
          |> assign(:show_event_export, false)
          |> assign(:replay_mode, false)
+         |> assign(:replay_source, nil)
          |> assign(:replay_index, event_count - 1)
          |> assign(:replay_total_events, event_count)
          |> assign(:replay_playing, false)
@@ -146,6 +147,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
+  def handle_info({:bot_reasoning, _, _}, %{assigns: %{replay_mode: true}} = socket),
+    do: {:noreply, socket}
+
   def handle_info(
         {:bot_reasoning, room_code, reasoning},
         %{assigns: %{room_code: room_code}} = socket
@@ -248,7 +252,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_info(:replay_tick, socket) do
     if socket.assigns.replay_playing && socket.assigns.replay_mode do
-      case ReplayController.step_forward(socket.assigns.room_code, socket.assigns.replay_index) do
+      case ReplayController.step_forward(
+             socket.assigns.replay_source,
+             socket.assigns.replay_index
+           ) do
         {:ok, state, new_index} ->
           # Schedule next tick
           Process.send_after(self(), :replay_tick, socket.assigns.replay_speed)
@@ -308,6 +315,9 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     {:noreply, socket}
   end
 
+  defp game_events(%{assigns: %{replay_mode: true, replay_source: %{events: events}}}),
+    do: events
+
   defp game_events(%{assigns: %{game_state: %{events: events}}}), do: events
   defp game_events(_socket), do: []
 
@@ -332,8 +342,22 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   defp extract_state_update(_payload), do: :error
 
   defp load_seats(room_code) do
-    case RoomManager.get_seat_lifecycle(room_code) do
-      {:ok, snapshot} -> snapshot.seats
+    with {:ok, snapshot} <- RoomManager.get_seat_lifecycle(room_code),
+         {:ok, room} <- RoomManager.get_room(room_code) do
+      Map.new(snapshot.seats, fn {position, seat} ->
+        # Lifecycle owns human/reservation identity. Seat.serialize owns optional
+        # catalogue metadata, including arbitrary future bot IDs and portraits.
+        profile =
+          if seat.status == :permanent_bot and
+               room.seats[position].bot_persona == seat.bot_persona do
+            room.seats[position]
+            |> PidroServer.Games.Room.Seat.serialize()
+            |> Map.get(:bot_profile)
+          end
+
+        {position, Map.put(seat, :bot_profile, profile)}
+      end)
+    else
       _ -> %{}
     end
   end
@@ -770,7 +794,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_event("refresh_events", _params, socket) do
     # Re-process events from game state
-    events = process_events(socket.assigns.game_state.events, socket.assigns)
+    events = process_events(game_events(socket), socket.assigns)
 
     {:noreply, assign(socket, :events, events)}
   end
@@ -780,7 +804,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     type_atom = if type == "all", do: nil, else: String.to_existing_atom(type)
 
     new_assigns = assign(socket.assigns, :event_filter_type, type_atom)
-    events = process_events(socket.assigns.game_state.events, new_assigns)
+    events = process_events(game_events(socket), new_assigns)
 
     {:noreply,
      socket
@@ -793,7 +817,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     player_atom = if player == "all", do: nil, else: String.to_existing_atom(player)
 
     new_assigns = assign(socket.assigns, :event_filter_player, player_atom)
-    events = process_events(socket.assigns.game_state.events, new_assigns)
+    events = process_events(game_events(socket), new_assigns)
 
     {:noreply,
      socket
@@ -813,7 +837,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     new_value = !socket.assigns.show_bot_reasoning
 
     new_assigns = assign(socket.assigns, :show_bot_reasoning, new_value)
-    events = process_events(socket.assigns.game_state.events, new_assigns)
+    events = process_events(game_events(socket), new_assigns)
 
     {:noreply,
      socket
@@ -944,25 +968,32 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
 
     socket =
       if new_mode do
-        # Entering replay mode - preserve current state
+        # Every replay operation reads this immutable source, even across rematches.
+        source = socket.assigns.game_state || %{events: []}
+
         socket
         |> assign(:replay_mode, true)
-        |> assign(:replay_index, socket.assigns.replay_total_events - 1)
+        |> assign(:replay_source, source)
+        |> assign(:replay_total_events, length(source.events))
+        |> assign(:replay_index, length(source.events) - 1)
         |> put_flash(:info, "Replay mode activated")
       else
         # Exiting replay mode - restore live state
         game_state = get_game_state(socket.assigns.room_code)
+        events = if game_state, do: game_state.events, else: []
+        socket = reconcile_reasons(socket, events)
 
         legal_actions =
           get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
 
         socket
         |> assign(:replay_mode, false)
+        |> assign(:replay_source, nil)
         |> assign(:replay_playing, false)
         |> assign(:game_state, game_state)
-        |> assign(:replay_total_events, length(game_state.events))
-        |> assign(:replay_index, length(game_state.events) - 1)
-        |> assign(:events, process_events(game_state.events, socket.assigns))
+        |> assign(:replay_total_events, length(events))
+        |> assign(:replay_index, length(events) - 1)
+        |> assign(:events, process_events(events, socket.assigns))
         |> assign(:legal_actions, legal_actions)
         |> put_flash(:info, "Replay mode deactivated")
       end
@@ -973,7 +1004,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_event("replay_step_backward", _params, socket) do
     if socket.assigns.replay_mode do
-      case ReplayController.step_backward(socket.assigns.room_code, socket.assigns.replay_index) do
+      case ReplayController.step_backward(
+             socket.assigns.replay_source,
+             socket.assigns.replay_index
+           ) do
         {:ok, state, new_index} ->
           {:noreply,
            socket
@@ -995,7 +1029,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   @impl true
   def handle_event("replay_step_forward", _params, socket) do
     if socket.assigns.replay_mode do
-      case ReplayController.step_forward(socket.assigns.room_code, socket.assigns.replay_index) do
+      case ReplayController.step_forward(
+             socket.assigns.replay_source,
+             socket.assigns.replay_index
+           ) do
         {:ok, state, new_index} ->
           {:noreply,
            socket
@@ -1019,7 +1056,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     if socket.assigns.replay_mode do
       index = String.to_integer(index_str)
 
-      case ReplayController.get_state_at_event(socket.assigns.room_code, index) do
+      case ReplayController.get_state_at_event(socket.assigns.replay_source, index) do
         {:ok, state} ->
           {:noreply,
            socket
@@ -1043,7 +1080,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
     if socket.assigns.replay_mode do
       phase_atom = String.to_existing_atom(phase)
 
-      case ReplayController.jump_to_phase(socket.assigns.room_code, phase_atom) do
+      case ReplayController.jump_to_phase(socket.assigns.replay_source, phase_atom) do
         {:ok, state, index} ->
           {:noreply,
            socket
@@ -1543,7 +1580,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
               <div class="flex justify-between text-sm text-zinc-700 mb-2">
                 <span>Event {@replay_index + 1} of {@replay_total_events}</span>
                 <%= if @replay_index >= 0 && @replay_index < @replay_total_events do %>
-                  <%= case ReplayController.get_event_info(@room_code, @replay_index) do %>
+                  <%= case ReplayController.get_event_info(@replay_source, @replay_index) do %>
                     <% {:ok, event_info} -> %>
                       <span class="text-zinc-600 italic">{event_info.description}</span>
                     <% _ -> %>

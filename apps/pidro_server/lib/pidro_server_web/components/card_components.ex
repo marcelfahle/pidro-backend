@@ -1214,8 +1214,8 @@ defmodule PidroServerWeb.CardComponents do
 
   defp player_is_cold?(state, position) do
     with %{players: players} <- state,
-         %{cold: cold} <- Map.get(players, position) do
-      cold
+         player when is_map(player) <- Map.get(players, position) do
+      Map.get(player, :eliminated?, Map.get(player, :cold, false))
     else
       _ -> false
     end

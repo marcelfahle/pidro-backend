@@ -254,6 +254,48 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
       assert has_element?(view, "input[type=range][max='#{count - 1}']")
     end
 
+    test "all replay controls retain their captured source across a same-room restart", %{
+      conn: conn,
+      room: room
+    } do
+      bot_move(room.code)
+      {:ok, original} = GameAdapter.get_state(room.code)
+      count = length(original.events)
+      {:ok, view, _} = live(conn, ~p"/admin/games/#{room.code}")
+      render_click(view, "toggle_replay_mode")
+      final_table = view |> element("#watch-table") |> render()
+      render_change(view, "replay_jump_to", %{index: "1"})
+      dealt_table = view |> element("#watch-table") |> render()
+
+      bot_move(room.code)
+      :ok = PidroServer.Games.GameSupervisor.stop_game(room.code)
+      {:ok, _} = PidroServer.Games.GameSupervisor.start_game(room.code)
+      {:ok, replacement} = GameAdapter.get_state(room.code)
+      assert replacement.events == []
+
+      render_click(view, "replay_step_backward")
+      assert render(view) =~ "Event 1 of #{count}"
+      render_click(view, "replay_step_forward")
+      assert view |> element("#watch-table") |> render() == dealt_table
+      assert render(view) =~ "Cards dealt to all players"
+      render_change(view, "replay_jump_to_phase", %{phase: "bidding"})
+      assert view |> element("#watch-table") |> render() == dealt_table
+      render_change(view, "replay_jump_to", %{index: to_string(count - 1)})
+      assert view |> element("#watch-table") |> render() == final_table
+
+      assert render_change(view, "replay_jump_to", %{index: to_string(count)}) =~
+               "Invalid event index"
+
+      render_click(view, "replay_toggle_play")
+      assert render(view) =~ "Event #{count} of #{count}"
+      assert view |> element("#watch-table") |> render() == final_table
+      assert render_click(view, "execute_action", %{action: "\"select_dealer\""}) =~ "exit replay"
+      assert {:ok, ^replacement} = GameAdapter.get_state(room.code)
+      render_click(view, "toggle_replay_mode")
+      assert has_element?(view, "#watch-table .watch-phase", "dealer selection")
+      refute has_element?(view, "[phx-click=replay_step_backward]")
+    end
+
     # The first bid or pass line for the seat in the event log.
     defp first_action(html, position) do
       name = position_name(position)
