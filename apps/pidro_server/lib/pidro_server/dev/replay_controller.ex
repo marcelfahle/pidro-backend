@@ -24,7 +24,6 @@ defmodule PidroServer.Dev.ReplayController do
       {:ok, state} = ReplayController.step_backward(room_code, current_index)
   """
 
-  require Logger
   alias Pidro.Game.Replay
   alias PidroServer.Games.GameAdapter
 
@@ -84,14 +83,7 @@ defmodule PidroServer.Dev.ReplayController do
             # Replay up to event_index
             events_to_replay = Enum.take(current_state.events, event_index + 1)
 
-            case Replay.replay(events_to_replay) do
-              {:ok, replayed_state} ->
-                {:ok, replayed_state}
-
-              {:error, reason} ->
-                Logger.error("Failed to replay events: #{inspect(reason)}")
-                {:error, reason}
-            end
+            Replay.replay(events_to_replay)
         end
 
       {:error, reason} ->
