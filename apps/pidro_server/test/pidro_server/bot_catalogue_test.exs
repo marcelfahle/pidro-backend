@@ -71,6 +71,15 @@ defmodule PidroServer.BotCatalogueTest do
     assert unknown.avatar_url == nil
   end
 
+  test "developer host IDs that cannot be dumped as UUIDs preserve the live seat" do
+    host = "warehouse worker"
+    assert byte_size(host) == 16
+    {:ok, room} = RoomManager.create_room(host, %{})
+    assert {:ok, snapshot} = RoomManager.get_seat_lifecycle(room.code)
+    assert snapshot.seats.north.player_id == host
+    assert snapshot.seats.north.username == nil
+  end
+
   test "all disabled falls back deterministically to legacy crew without empty games" do
     Repo.update_all(Profile, set: [enabled: false])
     BotCatalogue.refresh()

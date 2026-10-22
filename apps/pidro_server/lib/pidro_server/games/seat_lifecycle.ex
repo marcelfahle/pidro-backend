@@ -8,7 +8,7 @@ defmodule PidroServer.Games.SeatLifecycle do
       snapshot.seats
       |> Map.values()
       |> Enum.flat_map(fn seat -> [seat.player_id, seat.decision && seat.decision.player_id] end)
-      |> Enum.reject(&is_nil/1)
+      |> Enum.filter(&match?({:ok, _}, Ecto.UUID.dump(&1)))
       |> Enum.uniq()
 
     users = Auth.get_users_map(user_ids)
