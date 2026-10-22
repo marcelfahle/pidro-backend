@@ -27,6 +27,7 @@ defmodule PidroServer.ArchiveCase do
     database = "pidro_archive_" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
 
     Sandbox.mode(Repo, :auto)
+    original_counts = row_counts()
     Repo.query!(~s(CREATE DATABASE "#{database}"))
 
     on_exit(fn ->
@@ -35,8 +36,15 @@ defmodule PidroServer.ArchiveCase do
       Application.put_env(:pidro_server, :game_archive_enabled, previous)
       restart_repo(original)
       Sandbox.mode(Repo, :auto)
-      Repo.query!(~s|DROP DATABASE "#{database}" WITH (FORCE)|)
-      Sandbox.mode(Repo, :manual)
+
+      try do
+        Repo.query!(~s|DROP DATABASE "#{database}" WITH (FORCE)|)
+
+        assert row_counts() == original_counts,
+               "archive fixtures leaked into the original database"
+      after
+        Sandbox.mode(Repo, :manual)
+      end
     end)
 
     restart_repo(
@@ -46,6 +54,13 @@ defmodule PidroServer.ArchiveCase do
     Ecto.Migrator.run(Repo, :up, all: true, log: false)
     Application.put_env(:pidro_server, :game_archive_enabled, true)
     :ok
+  end
+
+  defp row_counts do
+    for table <-
+          ~w(users player_profiles player_achievements game_xp game_stats game_archives game_archive_events),
+        into: %{},
+        do: {table, Repo.aggregate(table, :count)}
   end
 
   defp restart_repo(config) do

@@ -246,20 +246,30 @@ defmodule PidroServer.GameArchiveTest do
   test "production bots keep acting while archive writes fail" do
     host = AccountsFixtures.user_fixture()
     {:ok, room} = RoomManager.create_room(host.id, %{solo: true})
-    for pos <- [:east, :south, :west], do: BotManager.start_bot(room.code, pos, :basic, 1)
+
+    bots =
+      for pos <- [:east, :south, :west] do
+        {:ok, bot} = BotManager.start_bot(room.code, pos, :basic, 1)
+        PidroServer.Games.Bots.BotPlayer.pause(bot)
+        # Consume the pause before readiness starts the game and its broadcasts.
+        :sys.get_state(bot)
+        bot
+      end
+
     RoomFixtures.ready_room(room.code)
     {:ok, pid} = GameSupervisor.get_game(room.code)
     id = Pidro.Server.get_snapshot(pid).game_instance_id
     outage()
     Phoenix.PubSub.subscribe(PidroServer.PubSub, "game:#{room.code}")
     assert {:ok, _} = GameAdapter.apply_action(room.code, :north, :select_dealer)
-    # If north opens bidding, pass once; otherwise bots already own the turn.
+    # No bot can select a dealer or bid until the real DB fault is installed.
     wait(fn -> Pidro.Server.get_state(pid).phase != :dealer_selection end)
     state = Pidro.Server.get_state(pid)
 
     if state.phase == :bidding and state.current_turn == :north,
       do: GameAdapter.apply_action(room.code, :north, :pass)
 
+    for bot <- bots, do: PidroServer.Games.Bots.BotPlayer.resume(bot)
     wait(fn -> Enum.any?(Pidro.Server.get_state(pid).events, &bot_bid?/1) end)
     assert Process.alive?(pid)
     assert_receive {:state_update, _, _}, 1_000
