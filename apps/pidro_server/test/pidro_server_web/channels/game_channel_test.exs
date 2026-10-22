@@ -205,12 +205,21 @@ defmodule PidroServerWeb.GameChannelTest do
         assert %{is_bot: true, bot_persona: ^persona, display_name: ^name, username: ^name} =
                  reply.readiness.seats[position]
 
-        assert %{bot_persona: ^persona, display_name: ^name, username: ^name, avatar_url: nil} =
+        avatar_url = PidroServerWeb.Endpoint.url() <> "/images/bots/#{persona}.svg"
+
+        assert %{
+                 bot_persona: ^persona,
+                 display_name: ^name,
+                 username: ^name,
+                 avatar_url: ^avatar_url,
+                 bot_profile: %{id: ^persona, name: ^name, avatar_url: ^avatar_url}
+               } =
                  reply.seat_lifecycle.seats[position]
       end
 
       assert %{is_bot: false, bot_persona: nil} = reply.readiness.seats.north
       assert reply.seat_lifecycle.seats.north.bot_persona == nil
+      assert reply.seat_lifecycle.seats.north.bot_profile == nil
     end
 
     test "Keep Bot broadcasts resolution to all observers and cold joins", context do
@@ -303,6 +312,7 @@ defmodule PidroServerWeb.GameChannelTest do
 
       assert reply.seat_lifecycle.seats.south.status == :bot_substitute
       assert reply.seat_lifecycle.seats.south.username == context.user3.username
+      assert reply.seat_lifecycle.seats.south.bot_profile == nil
 
       {:ok, _, _} =
         subscribe_and_join(
@@ -456,6 +466,7 @@ defmodule PidroServerWeb.GameChannelTest do
                player_id: nil,
                username: nil,
                bot_persona: nil,
+               bot_profile: nil,
                display_name: nil,
                avatar_url: nil,
                level: nil,

@@ -61,9 +61,22 @@ defmodule PidroServerWeb.Dev.BotCatalogueLiveTest do
     assert Enum.sort(Map.keys(public)) == ~w(avatar_url description id name)
   end
 
+  test "a delayed form from the previous selection cannot overwrite another bot", %{conn: conn} do
+    %{conn: conn} = register_and_log_in_admin(%{conn: conn})
+    {:ok, view, _} = live(conn, ~p"/admin/bots")
+    view |> element("#bot-marcel button") |> render_click()
+    view |> element("#bot-antti button") |> render_click()
+    html = render_submit(view, "save", %{"bot" => %{"id" => "marcel", "name" => "Wrong profile"}})
+    assert html =~ "Selection changed"
+    assert BotCatalogue.get!("antti").name == "Antti"
+    assert BotCatalogue.get!("marcel").name == "Marcel"
+  end
+
   test "rejects strategy/module injection and untrusted portrait URLs", %{conn: conn} do
     %{conn: conn} = register_and_log_in_admin(%{conn: conn})
     {:ok, view, _} = live(conn, ~p"/admin/bots")
+
+    view |> element("#bot-marcel button") |> render_click()
 
     html =
       render_submit(view, "save", %{

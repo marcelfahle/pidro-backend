@@ -1,7 +1,7 @@
 # Bot catalogue contract
 
-Status: draft integration handoff, 2026-10-22. Feature branch
-`admin-ops/bot-catalogue`; not a claim of review readiness or deployment.
+Status: backend review-ready, 2026-10-22; originally published as a draft
+integration handoff. Feature branch `admin-ops/bot-catalogue`, not deployed.
 GameDetailLive and card_components belong to the separate Watch branch.
 
 ## Public HTTP API
@@ -65,11 +65,29 @@ existing `username`, `display_name`, `avatar_url` with authoritative profile
 values. Existing `player.id` and room `positions` identifiers are unchanged.
 No strategy field is added to public seats or lobby summaries.
 
+Watch's separate lifecycle path, `RoomManager.get_seat_lifecycle/1` through
+`Games.SeatLifecycle.with_names/1`, also supplies `bot_profile` plus authoritative
+`username`, `display_name`, and `avatar_url` for `status: :permanent_bot` seats.
+It reads the same cached catalogue, with no per-seat database queries. Unknown
+personas have null profile/avatar and `Bot` for both names. Human, vacant and
+human-reserved substitute lifecycle seats have null `bot_profile`; their existing
+account identity, decision and reservation semantics are unchanged.
+
 All additions are optional from a client's perspective: older servers omit
 them, older builds ignore them. Existing native builds keep their built-in
-legacy drawings; no native dependency/build is required to add a profile on
-the server. Following clients should prefer `bot_profile`, then an entry in
-`GET /api/v1/bots` matching `bot_persona`, then the fallback below.
+legacy drawings. At the frontend source commit below, UUID persona values
+pass through the room normalizers/runtime lifecycle validator without being
+rejected, but `PlayerAvatar` chooses `BotPersonaFace` for any nonempty persona:
+its three-entry face map renders only the SVG background for an unknown ID.
+It does not use `avatar_url` for bots. This is source-verified non-crashing
+degradation, not a device-tested generic-face fallback.
+
+The following client orb must add the metadata-backed avatar path and widen
+its TypeScript-only persona union. After that compatible JS/client release,
+future catalogue additions require neither native dependencies nor a native
+build. Following clients should prefer `bot_profile`, then an entry in
+`GET /api/v1/bots` matching `bot_persona`, then the fallback below. The backend
+does not spoof a legacy ID for a new persona to conceal old-client limitations.
 
 ## Portrait assets and fallback
 
@@ -127,7 +145,9 @@ gates, including event-time session revalidation. It also refuses the local
 development auth bypass: editing requires a real admin account.
 
 The LiveView supports list/add/edit and disabling (no hard delete). The stable
-ID is read-only; form input cannot set it. Fields:
+ID is read-only; form input cannot set it. The editor is keyed by the selected
+ID, and the hidden form ID rejects delayed submissions for another selection.
+Fields:
 
 - `bot[name]`: required, max 60 characters.
 - `bot[description]`: public text, max 500 characters, empty allowed.
@@ -154,9 +174,9 @@ an absent catalogue table and serves legacy fallback; after migration restart
 the application or open `/admin/bots` to refresh its node-local snapshot.
 Admin writes refresh that snapshot in its serialized owner and distribute
 PubSub invalidations; other owners read fresh catalogue data, not stale snapshots.
-game action/seat serialization paths do not query the database per seat.
+Game action/seat serialization paths do not query the database per seat.
 
 The coordinator should integrate backend assets/context before Watch/client
 consumers. Frontend work is separate; this backend branch does not change
-React/Expo types or views. Verification and remaining limitations will be
-recorded in `docs/admin-observability/bot-catalogue.md` before review-ready.
+React/Expo types or views. Verification and remaining limitations are
+recorded in `docs/admin-observability/bot-catalogue.md`.
