@@ -221,9 +221,11 @@ without stopping games. Rollback drops only these archives and their evidence.
 Production/development capture defaults enabled. `config/test.exs` sets
 `:pidro_server, :game_archive_enabled, false` only for ordinary shared-transaction
 tests: killing a writer there destroys their shared Sandbox connection. Real
-archive tests use `PidroServer.ArchiveCase, async: false`, which opts in, uses
-independent PostgreSQL connections (`Sandbox :auto`, no enclosing transaction),
-and cleans up test-created archive/stats/user rows and fault-injection DDL.
+archive tests use `PidroServer.ArchiveCase, async: false`, which opts in and runs
+all migrations in a unique disposable database using a normal connection pool,
+not Sandbox. Teardown restores the original Repo configuration and drops only
+that generated database, including fault-injection DDL. The local/CI test role
+needs CREATE DATABASE permission (the existing test role is postgres).
 Downstream tests exercising live archives must use this case, not DataCase.
 Read-only inspector tests with explicitly inserted fixtures can keep DataCase.
 The production 50ms worker budget and 40ms SQL timeout are not relaxed in tests.
