@@ -76,6 +76,10 @@ a.watch-name:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
   .watch-phase { font-size: 13px; }
   .watch-card { width: 32px; }
   .watch-hand { padding-right: 25px; min-height: 46px; }
+  .watch-seat-west .watch-hand, .watch-seat-east .watch-hand {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: 46px; gap: 3px 0; padding-right: 0;
+  }
   .watch-trick { width: 82px; height: 120px; }
   .watch-scoreboard, .watch-table-footer { padding: 10px; font-size: 10px; }
   .watch-scoreboard strong { font-size: 20px; margin-left: 4px; }

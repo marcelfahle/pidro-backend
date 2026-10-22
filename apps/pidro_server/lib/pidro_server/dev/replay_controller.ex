@@ -28,14 +28,17 @@ defmodule PidroServer.Dev.ReplayController do
   alias Pidro.Game.Replay
   alias PidroServer.Games.GameAdapter
 
+  @typedoc "A captured immutable game snapshot, or a room code for legacy callers."
+  @type source :: map() | String.t()
+
   @doc """
   Gets the total number of events for a game.
 
   Returns the count of events in the engine's event history.
   """
-  @spec get_event_count(String.t()) :: {:ok, non_neg_integer()} | {:error, :not_found}
+  @spec get_event_count(source()) :: {:ok, non_neg_integer()} | {:error, :not_found}
   def get_event_count(room_code) do
-    case GameAdapter.get_state(room_code) do
+    case source_state(room_code) do
       {:ok, state} ->
         count = Replay.history_length(state)
         {:ok, count}
@@ -59,10 +62,10 @@ defmodule PidroServer.Dev.ReplayController do
 
       {:ok, state} = ReplayController.get_state_at_event("ABC123", 5)
   """
-  @spec get_state_at_event(String.t(), non_neg_integer()) ::
+  @spec get_state_at_event(source(), non_neg_integer()) ::
           {:ok, map()} | {:error, :not_found | :invalid_index}
   def get_state_at_event(room_code, event_index) do
-    case GameAdapter.get_state(room_code) do
+    case source_state(room_code) do
       {:ok, current_state} ->
         total_events = Replay.history_length(current_state)
 
@@ -70,11 +73,11 @@ defmodule PidroServer.Dev.ReplayController do
           event_index < 0 ->
             {:error, :invalid_index}
 
-          event_index > total_events ->
+          event_index >= total_events ->
             {:error, :invalid_index}
 
-          event_index == total_events ->
-            # Return current state
+          event_index == total_events - 1 ->
+            # Preserve the exact captured state at its final event.
             {:ok, current_state}
 
           true ->
@@ -110,7 +113,7 @@ defmodule PidroServer.Dev.ReplayController do
   - `{:error, :at_end}` - Already at the last event
   - `{:error, reason}` - Other errors
   """
-  @spec step_forward(String.t(), non_neg_integer()) ::
+  @spec step_forward(source(), non_neg_integer()) ::
           {:ok, map(), non_neg_integer()} | {:error, atom()}
   def step_forward(room_code, current_index) do
     case get_event_count(room_code) do
@@ -148,7 +151,7 @@ defmodule PidroServer.Dev.ReplayController do
   - `{:error, :at_start}` - Already at the first event
   - `{:error, reason}` - Other errors
   """
-  @spec step_backward(String.t(), non_neg_integer()) ::
+  @spec step_backward(source(), non_neg_integer()) ::
           {:ok, map(), non_neg_integer()} | {:error, atom()}
   def step_backward(room_code, current_index) do
     if current_index <= 0 do
@@ -176,10 +179,10 @@ defmodule PidroServer.Dev.ReplayController do
   - `:player` - Player position (if applicable)
   - `:description` - Human-readable description
   """
-  @spec get_event_info(String.t(), non_neg_integer()) ::
+  @spec get_event_info(source(), non_neg_integer()) ::
           {:ok, map()} | {:error, :not_found | :invalid_index}
   def get_event_info(room_code, event_index) do
-    case GameAdapter.get_state(room_code) do
+    case source_state(room_code) do
       {:ok, current_state} ->
         total_events = Replay.history_length(current_state)
 
@@ -216,10 +219,10 @@ defmodule PidroServer.Dev.ReplayController do
   - `{:ok, state, event_index}` - State at the start of that phase
   - `{:error, :phase_not_found}` - Phase hasn't occurred yet
   """
-  @spec jump_to_phase(String.t(), atom()) ::
+  @spec jump_to_phase(source(), atom()) ::
           {:ok, map(), non_neg_integer()} | {:error, atom()}
   def jump_to_phase(room_code, target_phase) do
-    case GameAdapter.get_state(room_code) do
+    case source_state(room_code) do
       {:ok, current_state} ->
         # Find the first event where phase matches target
         case find_phase_start(current_state.events, target_phase) do
@@ -242,6 +245,10 @@ defmodule PidroServer.Dev.ReplayController do
   end
 
   # Private Functions
+
+  defp source_state(%{events: events} = state) when is_list(events), do: {:ok, state}
+  defp source_state(room_code) when is_binary(room_code), do: GameAdapter.get_state(room_code)
+  defp source_state(_), do: {:error, :not_found}
 
   defp event_type({type, _player, _first, _second}), do: type
   defp event_type({type, _player, _data}), do: type
