@@ -1274,7 +1274,11 @@ defmodule PidroServerWeb.API.RoomControllerTest do
 
       for seat <- bot_seats do
         assert seat["is_bot"] == true
-        assert seat["avatar_url"] == nil
+
+        assert seat["avatar_url"] ==
+                 PidroServerWeb.Endpoint.url() <> "/images/bots/#{seat["bot_persona"]}.svg"
+
+        assert seat["bot_profile"]["id"] == seat["bot_persona"]
         assert seat["display_name"] == String.capitalize(seat["bot_persona"])
         assert seat["username"] == seat["display_name"]
       end

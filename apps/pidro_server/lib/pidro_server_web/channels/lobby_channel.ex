@@ -351,9 +351,10 @@ defmodule PidroServerWeb.LobbyChannel do
     end
   end
 
-  defp get_player_summary(player_id, _user_map, %Seat{bot_persona: persona})
+  defp get_player_summary(player_id, _user_map, %Seat{bot_persona: persona} = seat)
        when is_binary(persona) do
     name = Seat.bot_display_name(persona)
+    profile = Seat.serialize(seat).bot_profile
 
     %{
       id: player_id,
@@ -361,7 +362,8 @@ defmodule PidroServerWeb.LobbyChannel do
       display_name: name,
       is_bot: true,
       bot_persona: persona,
-      avatar_url: nil,
+      bot_profile: profile,
+      avatar_url: profile && profile.avatar_url,
       level: nil,
       pin: nil
     }

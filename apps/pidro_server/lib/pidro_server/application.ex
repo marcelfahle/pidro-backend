@@ -15,6 +15,7 @@ defmodule PidroServer.Application do
       PidroServer.Accounts.GuestReaper,
       {DNSCluster, query: Application.get_env(:pidro_server, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: PidroServer.PubSub},
+      PidroServer.BotCatalogue,
       # Presence tracking for connected users
       PidroServerWeb.Presence,
       # Aggregate online user count across all channels

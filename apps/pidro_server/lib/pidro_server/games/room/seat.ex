@@ -39,7 +39,8 @@ defmodule PidroServer.Games.Room.Seat do
           decision_id: String.t() | nil,
           decision_player_id: String.t() | nil,
           vacated_by: String.t() | nil,
-          bot_persona: bot_persona() | nil
+          bot_persona: bot_persona() | nil,
+          bot_strategy: module() | nil
         }
 
   @typedoc "The crew a real bot seat is named after; substitute bots have none."
@@ -60,6 +61,7 @@ defmodule PidroServer.Games.Room.Seat do
     :decision_player_id,
     :vacated_by,
     :bot_persona,
+    :bot_strategy,
     is_owner: false,
     joined_at: nil,
     substitute: false
@@ -97,27 +99,44 @@ defmodule PidroServer.Games.Room.Seat do
       occupant_type: :bot,
       bot_pid: bot_pid,
       status: :connected,
-      bot_persona: bot_persona
+      bot_persona: bot_persona,
+      bot_strategy: persona_strategy(bot_persona)
     }
   end
 
   @doc "The bot crew, before the room shuffles its order."
   @spec bot_personas() :: [bot_persona()]
-  def bot_personas, do: @bot_personas
+  def bot_personas, do: Enum.map(PidroServer.BotCatalogue.available(), & &1.id)
 
   @doc """
   The first persona in the room's crew order no other seat holds.
-  A fourth bot reuses the first name.
+  Only enabled profiles enter new seats; when exhausted, reuse the first.
   """
   @spec next_bot_persona(map(), [bot_persona()]) :: bot_persona()
   def next_bot_persona(seats, order \\ @bot_personas) when is_map(seats) do
+    available = bot_personas()
+    order = Enum.filter(order, &(&1 in available)) ++ (available -- order)
     taken = for {_position, %__MODULE__{bot_persona: persona}} <- seats, do: persona
     Enum.find(order, hd(order), &(&1 not in taken))
   end
 
   @doc "The name a bot persona shows at the table."
   @spec bot_display_name(bot_persona()) :: String.t()
-  def bot_display_name(persona) when persona in @bot_personas, do: String.capitalize(persona)
+  def bot_display_name(persona) do
+    case PidroServer.BotCatalogue.profile(persona) do
+      nil -> "Bot"
+      profile -> profile.name
+    end
+  end
+
+  defp persona_strategy(nil), do: nil
+
+  defp persona_strategy(persona) do
+    case Enum.find(PidroServer.BotCatalogue.available(), &(&1.id == persona)) do
+      nil -> PidroServer.BotCatalogue.strategy("rulebook")
+      profile -> PidroServer.BotCatalogue.strategy(profile.strategy)
+    end
+  end
 
   @doc "Creates a new vacant seat."
   @spec new_vacant(position()) :: t()
@@ -453,13 +472,23 @@ defmodule PidroServer.Games.Room.Seat do
       grace_expires_at: maybe_to_iso8601(seat.grace_expires_at),
       has_reservation: seat.reserved_for != nil,
       joined_at: maybe_to_iso8601(seat.joined_at),
-      bot_persona: seat.bot_persona
+      bot_persona: seat.bot_persona,
+      bot_profile: public_bot_profile(seat)
     }
 
     if seat.occupant_type == :vacant and is_binary(seat.vacated_by),
       do: Map.put(data, :vacated_by, seat.vacated_by),
       else: data
   end
+
+  defp public_bot_profile(%{occupant_type: :bot, bot_persona: persona}) when is_binary(persona) do
+    case PidroServer.BotCatalogue.profile(persona) do
+      nil -> nil
+      profile -> PidroServer.BotCatalogue.public(profile)
+    end
+  end
+
+  defp public_bot_profile(_seat), do: nil
 
   defp maybe_to_iso8601(nil), do: nil
   defp maybe_to_iso8601(%DateTime{} = dt), do: DateTime.to_iso8601(dt)

@@ -83,6 +83,9 @@ defmodule PidroServerWeb.Dev.AdminComponents do
           <.link navigate={~p"/admin/admins"} class={nav_item_class(@active == "admins")}>
             <.icon name="hero-lock-closed" class="size-4" /> Admins
           </.link>
+          <.link navigate={~p"/admin/bots"} class={nav_item_class(@active == "bots")}>
+            <.icon name="hero-cpu-chip" class="size-4" /> Bots
+          </.link>
         </nav>
         <div class="flex items-center gap-3 border-t border-stone-200 px-3 py-2 text-xs text-stone-500 lg:border-l lg:border-t-0 lg:py-0">
           <span>Individual admin access</span>

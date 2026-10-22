@@ -107,6 +107,11 @@ defmodule PidroServerWeb.Router do
   scope "/api/v1", PidroServerWeb.API do
     pipe_through :api
 
+    get "/bots", BotCatalogueController, :index
+
+    get "/bots/:id/avatar/:version", BotCatalogueController, :avatar,
+      private: %{rate_limit: [:avatar_read]}
+
     # Auth routes without authentication. `private: %{rate_limit: [...]}` names
     # the PidroServerWeb.Plugs.RateLimit policies applied to the route.
     post "/auth/register", AuthController, :register, private: %{rate_limit: [:register]}
@@ -270,6 +275,7 @@ defmodule PidroServerWeb.Router do
       live "/users/:id", UserDetailLive
       live "/emails", EmailMigrationLive
       live "/analytics", AnalyticsLive
+      live "/bots", BotCatalogueLive
     end
   end
 
