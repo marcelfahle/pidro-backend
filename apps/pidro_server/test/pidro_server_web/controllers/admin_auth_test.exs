@@ -35,7 +35,7 @@ defmodule PidroServerWeb.AdminAuthTest do
     admin = AdminsFixtures.admin_fixture()
     conn = log_in_admin(conn, admin) |> get(~p"/admin/games")
 
-    assert html_response(conn, 200) =~ "Development Games"
+    assert html_response(conn, 200) =~ "Live games"
   end
 
   test "a temporary-password login is restricted to the mandatory change screen", %{conn: conn} do
@@ -77,6 +77,6 @@ defmodule PidroServerWeb.AdminAuthTest do
 
     on_exit(fn -> Application.put_env(:pidro_server, :dev_routes, original) end)
 
-    assert get(conn, ~p"/admin/games") |> html_response(200) =~ "Development Games"
+    assert get(conn, ~p"/admin/games") |> html_response(200) =~ "Live games"
   end
 end
