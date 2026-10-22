@@ -27,6 +27,156 @@ defmodule PidroServerWeb.CardComponents do
   use Phoenix.Component
   import PidroServerWeb.CardHelpers
 
+  @doc "Read-only admin table. Accepts a game snapshot and enriched lifecycle seats, never a process."
+  attr :game_state, :map, default: nil
+  attr :seats, :map, default: %{}
+  attr :perspective, :atom, default: :all
+
+  def watch_table(assigns) do
+    assigns = assign(assigns, :state, assigns.game_state || %{})
+
+    ~H"""
+    <section id="watch-table" class="watch-table" aria-label="Private admin Pidro table">
+      <header class="watch-scoreboard">
+        <div class="watch-team-ns">
+          North / South <strong>{get_score(@state, :north_south)}</strong>
+        </div>
+        <div class="watch-team-ew">East / West <strong>{get_score(@state, :east_west)}</strong></div>
+      </header>
+      <div class="watch-felt">
+        <article
+          :for={position <- [:north, :west, :east, :south]}
+          id={"watch-seat-#{position}"}
+          class={[
+            "watch-seat",
+            "watch-seat-#{position}",
+            get_current_turn(@state) == position && "watch-turn"
+          ]}
+          aria-label={"#{position_label(position)} seat#{if get_current_turn(@state) == position, do: ", current turn", else: ""}"}
+        >
+          <.seat_identity seat={@seats[position]} position={position} />
+          <div class="watch-seat-state">
+            <strong :if={get_current_turn(@state) == position}>● TURN</strong>
+            <span :if={get_dealer(@state) == position} class="watch-dealer">D · Dealer</span>
+            <span :if={player_is_cold?(@state, position)}>Cold</span>
+          </div>
+          <div
+            class="watch-hand"
+            style={"--card-count: #{max(length(get_hand(@state, position)), 1)}"}
+          >
+            <.mobile_card
+              :for={card <- sort_hand(get_hand(@state, position), get_trump_suit(@state))}
+              card={if @perspective in [:all, position], do: card, else: nil}
+            />
+          </div>
+          <span class="watch-card-count">{length(get_hand(@state, position))} cards</span>
+        </article>
+        <div class="watch-center">
+          <p class="watch-phase">
+            {Map.get(@state, :phase, :waiting) |> to_string() |> String.replace("_", " ")}
+          </p>
+          <p>Trump <strong>{format_trump(get_trump_suit(@state))}</strong></p>
+          <p :if={get_current_bid(@state)}>
+            Bid <strong>{get_current_bid(@state)}</strong> · {get_current_bidder(@state)}
+          </p>
+          <div class="watch-trick" aria-label="Current trick">
+            <div
+              :for={play <- get_current_trick(@state)}
+              class={"watch-play watch-play-#{play.position}"}
+            >
+              <.mobile_card card={play.card} />
+              <span>{position_abbrev(play.position)}</span>
+            </div>
+          </div>
+          <p :if={Map.get(@state, :winner)} class="watch-winner">
+            Winner: {Map.get(@state, :winner)}
+          </p>
+        </div>
+      </div>
+      <footer class="watch-table-footer">
+        <span>Hand {get_hand_number(@state)} · Trick {get_trick_number(@state)}</span>
+        <span>Private · {if @perspective == :all, do: "all hands", else: "#{@perspective} hand only"}</span>
+      </footer>
+    </section>
+    """
+  end
+
+  attr :card, :any, required: true
+
+  defp mobile_card(assigns) do
+    ~H"""
+    <img
+      class="watch-card"
+      src={mobile_card_url(@card)}
+      alt={if @card, do: format_card(@card), else: "Face-down card"}
+      draggable="false"
+    />
+    """
+  end
+
+  defp mobile_card_url(nil), do: "/images/pidro/cards/cardback.png"
+  defp mobile_card_url({rank, suit}), do: "/images/pidro/cards/#{suit}_#{rank}.png"
+
+  @doc "Identity from SeatLifecycle.with_names/1; optional bot_profile is the catalogue contract."
+  attr :seat, :map, default: nil
+  attr :position, :atom, required: true
+
+  def seat_identity(assigns) do
+    seat = assigns.seat || %{}
+    profile = Map.get(seat, :bot_profile) || %{}
+
+    assigns =
+      assigns
+      |> assign(:name, seat_name(seat))
+      |> assign(:avatar, Map.get(profile, :avatar_url) || Map.get(seat, :avatar_url))
+      |> assign(:href, seat_link(seat))
+      |> assign(:status, Map.get(seat, :status, :vacant))
+
+    ~H"""
+    <div class={[
+      "watch-identity",
+      if(@position in [:north, :south], do: "watch-team-ns", else: "watch-team-ew")
+    ]}>
+      <span class="watch-avatar">
+        <span aria-hidden="true">{if @status == :permanent_bot, do: "⚙", else: String.first(@name)}</span>
+        <img :if={@avatar} src={@avatar} alt="" loading="lazy" onerror="this.hidden=true" />
+      </span>
+      <a :if={@href} href={@href} class="watch-name">{@name}</a>
+      <strong :if={!@href} class="watch-name">{@name}</strong>
+      <span class="watch-seat-label">{position_label(@position)} · {if @position in [:north, :south],
+        do: "N/S",
+        else: "E/W"}</span>
+      <span class="watch-connection">{seat_status(@status)}</span>
+    </div>
+    """
+  end
+
+  @doc "Public name without email or internal seat identifiers."
+  def seat_name(nil), do: "Open seat"
+  def seat_name(%{bot_profile: %{name: name}}) when is_binary(name), do: name
+
+  def seat_name(%{status: :permanent_bot} = seat),
+    do: Map.get(seat, :display_name) || Map.get(seat, :username) || "Bot"
+
+  def seat_name(seat),
+    do:
+      Map.get(seat, :display_name) || Map.get(seat, :username) ||
+        if(Map.get(seat, :status) == :vacant, do: "Open seat", else: "Player")
+
+  defp seat_link(%{status: :permanent_bot}), do: "/admin/bots"
+
+  defp seat_link(%{player_id: id}) when is_binary(id),
+    do: "/admin/users/#{URI.encode_www_form(id)}"
+
+  defp seat_link(_), do: nil
+
+  defp seat_status(:normal), do: "Connected"
+  defp seat_status(:permanent_bot), do: "Bot"
+  defp seat_status(:bot_substitute), do: "Bot covering · reserved"
+  defp seat_status(:reconnecting), do: "Reconnecting"
+  defp seat_status(:vacant), do: "Open"
+  defp seat_status(status), do: to_string(status)
+
   # =============================================================================
   # Card Component
   # =============================================================================

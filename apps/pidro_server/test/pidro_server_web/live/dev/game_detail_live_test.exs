@@ -27,7 +27,7 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
     recent_user = AccountsFixtures.user_fixture(%{username: "debug_recent"})
     {:ok, room} = RoomManager.create_room(host.id, %{name: "Debug Table"})
 
-    {:ok, _view, html} = live(conn, ~p"/admin/games/#{room.code}")
+    {:ok, _view, html} = live(conn, ~p"/admin/games/#{room.code}?tab=controls")
 
     assert html =~ "Take a Seat"
     assert html =~ recent_user.username
@@ -38,9 +38,60 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
     {:ok, room} = RoomManager.create_room(host.id, %{name: "Ownerless Table"})
     set_room_owner(room.code, nil)
 
-    {:ok, _view, html} = live(conn, ~p"/admin/games/#{room.code}")
+    {:ok, _view, html} = live(conn, ~p"/admin/games/#{room.code}?tab=inspect")
 
     assert html =~ "No owner"
+  end
+
+  test "watch resolves seated users outside the recent list and cannot reassign seats", %{
+    conn: conn
+  } do
+    host = AccountsFixtures.user_fixture(%{username: "older_seated_user"})
+
+    host
+    |> Ecto.Changeset.change(inserted_at: ~U[2020-01-01 00:00:00.000000Z])
+    |> PidroServer.Repo.update!()
+
+    {:ok, room} = RoomManager.create_room(host.id, %{name: "Observation"})
+    for _ <- 1..21, do: AccountsFixtures.user_fixture()
+    refute Enum.any?(PidroServer.Accounts.Auth.list_recent_users(20), &(&1.id == host.id))
+
+    {:ok, view, html} = live(conn, ~p"/admin/games/#{room.code}")
+    assert has_element?(view, "#watch-table a[href='/admin/users/#{host.id}']", host.username)
+    refute html =~ "Take a Seat"
+    refute has_element?(view, "[phx-click=execute_action]")
+    refute has_element?(view, "#copy-game-state")
+
+    assert render_submit(view, "assign_seat", %{position: "north", user_id: "empty"}) =~
+             "Enter Controls"
+
+    assert {:ok, unchanged} = RoomManager.get_room(room.code)
+    assert unchanged.positions == room.positions
+  end
+
+  test "snapshot renderer accepts a fourth opaque bot profile and does not invent portrait URLs" do
+    alias PidroServerWeb.CardComponents
+
+    profile = %{
+      id: Ecto.UUID.generate(),
+      name: "Fourth Crew",
+      avatar_url: "/api/v1/bots/fourth/avatar/hash"
+    }
+
+    seat = %{status: :permanent_bot, bot_persona: profile.id, bot_profile: profile}
+    html = render_component(&CardComponents.watch_table/1, seats: %{north: seat})
+    assert html =~ "Fourth Crew"
+    assert html =~ profile.avatar_url
+    assert html =~ "href=\"/admin/bots\""
+    refute html =~ "phx-click"
+
+    fallback =
+      render_component(&CardComponents.watch_table/1,
+        seats: %{north: Map.delete(seat, :bot_profile)}
+      )
+
+    refute fallback =~ profile.id
+    refute fallback =~ "/images/bots/"
   end
 
   describe "bot reasoning" do
@@ -127,9 +178,9 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
       refute_receive {:bot_reasoning, _, _}, 100
     end
 
-    test "shows each reason before the event its move produced, only while the toggle is on",
+    test "shows newest actions and their reasons first, only while the toggle is on",
          %{conn: conn, room: room} do
-      {:ok, view, _html} = live(conn, ~p"/admin/games/#{room.code}")
+      {:ok, view, _html} = live(conn, ~p"/admin/games/#{room.code}?tab=activity")
 
       first = bot_move(room.code)
       second = bot_move(room.code)
@@ -138,9 +189,9 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
       first_reason = :binary.match(html, "#{position_name(first)} (Bot) chose")
       second_reason = :binary.match(html, "#{position_name(second)} (Bot) chose")
       assert first_reason != :nomatch and second_reason != :nomatch
-      assert first_reason < first_action(html, first)
-      assert first_action(html, first) < second_reason
-      assert second_reason < first_action(html, second)
+      assert first_action(html, second) < second_reason
+      assert second_reason < first_action(html, first)
+      assert first_action(html, first) < first_reason
 
       html = view |> element("input[phx-click=toggle_bot_reasoning]") |> render_click()
       refute html =~ "(Bot) chose"
@@ -151,13 +202,15 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
 
     test "undo removes the reason for the undone move and keeps earlier ones",
          %{conn: conn, room: room} do
-      {:ok, view, _html} = live(conn, ~p"/admin/games/#{room.code}")
+      {:ok, view, _html} = live(conn, ~p"/admin/games/#{room.code}?tab=activity")
 
       first = bot_move(room.code)
       second = bot_move(room.code)
       assert render(view) =~ "#{position_name(second)} (Bot) chose"
 
-      html = view |> element("button[phx-click=undo_last_action]") |> render_click()
+      view |> element("a[href$='tab=controls']") |> render_click()
+      view |> element("button[phx-click=undo_last_action]") |> render_click()
+      html = view |> element("a[href$='tab=activity']") |> render_click()
 
       assert html =~ "#{position_name(first)} (Bot) chose"
       refute html =~ "#{position_name(second)} (Bot) chose"
@@ -165,13 +218,40 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
 
     test "a page opened mid-game renders without earlier reasons", %{conn: conn, room: room} do
       bot_move(room.code)
-      {:ok, view, html} = live(conn, ~p"/admin/games/#{room.code}")
+      {:ok, view, html} = live(conn, ~p"/admin/games/#{room.code}?tab=activity")
 
       refute html =~ "(Bot) chose"
       assert Process.alive?(view.pid)
 
       bot_move(room.code)
       assert render(view) =~ "(Bot) chose"
+    end
+
+    test "perspective and replay never mutate the live game, and broadcasts do not overwrite replay",
+         %{conn: conn, room: room} do
+      {:ok, before} = GameAdapter.get_state(room.code)
+      {:ok, view, _} = live(conn, ~p"/admin/games/#{room.code}")
+      view |> element("button[phx-value-position=south]") |> render_click()
+      assert has_element?(view, "#watch-seat-north img[alt='Face-down card']")
+      refute has_element?(view, "#watch-seat-south img[alt='Face-down card']")
+      assert {:ok, ^before} = GameAdapter.get_state(room.code)
+      assert render_click(view, "undo_last_action") =~ "Enter Controls"
+      assert {:ok, ^before} = GameAdapter.get_state(room.code)
+      view |> element("[phx-click=toggle_replay_mode]") |> render_click()
+      frozen = view |> element("#watch-table") |> render()
+      bot_move(room.code)
+      assert view |> element("#watch-table") |> render() == frozen
+      view |> element("a[href$='tab=controls']") |> render_click()
+      {:ok, live_state} = GameAdapter.get_state(room.code)
+      assert render_click(view, "undo_last_action") =~ "exit replay"
+      assert {:ok, ^live_state} = GameAdapter.get_state(room.code)
+      view |> element("[phx-click=toggle_replay_mode]") |> render_click()
+      view |> element("a[href$='tab=board']") |> render_click()
+      refute view |> element("#watch-table") |> render() == frozen
+      view |> element("[phx-click=toggle_replay_mode]") |> render_click()
+      count = length(live_state.events)
+      assert render(view) =~ "Event #{count} of #{count}"
+      assert has_element?(view, "input[type=range][max='#{count - 1}']")
     end
 
     # The first bid or pass line for the seat in the event log.

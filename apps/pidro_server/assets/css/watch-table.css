@@ -1,0 +1,83 @@
+/* Mobile palette: packages/mobile/src/game/canvas/tokens.ts and design/tokens.ts.
+   Geometry is pragmatic HTML, not a second canvas/game engine. */
+.watch-table {
+  color: #f5faff;
+  background: radial-gradient(ellipse at center, #1e5a8a 0%, #0d5087 42%, #07264c 82%, #052445 100%);
+  border: 1px solid #52789b;
+  border-radius: 24px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+}
+.watch-scoreboard, .watch-table-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  background: #051a34aa;
+  font-size: 13px;
+}
+.watch-scoreboard strong { font-size: 26px; margin-left: 12px; }
+.watch-team-ns { color: #92e6b2; }
+.watch-team-ew { color: #ffb4b9; }
+.watch-felt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 1fr) minmax(0, 1fr);
+  grid-template-areas: ". north ." "west center east" ". south .";
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+}
+.watch-seat { min-width: 0; padding: 8px; text-align: center; border: 2px solid transparent; border-radius: 20px; }
+.watch-seat-north { grid-area: north; }
+.watch-seat-south { grid-area: south; }
+.watch-seat-west { grid-area: west; }
+.watch-seat-east { grid-area: east; }
+.watch-seat-north, .watch-seat-south {
+  display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center;
+  width: 400px; justify-self: center; column-gap: 12px;
+}
+.watch-seat-north .watch-identity, .watch-seat-south .watch-identity { grid-row: 1 / 4; }
+.watch-turn { border-color: #c9f7ff; background: #092b4e88; box-shadow: 0 0 20px #c9f7ff22; }
+.watch-identity { display: flex; align-items: center; flex-direction: column; gap: 3px; min-width: 0; }
+.watch-avatar {
+  position: relative; display: grid; place-items: center; flex: none;
+  width: 56px; height: 56px; border: 2px solid currentColor; border-radius: 50%;
+  background: #113250; overflow: hidden; font-size: 25px;
+}
+.watch-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.watch-avatar img[hidden] { display: none; }
+.watch-name { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; line-height: 1.2; }
+a.watch-name:hover { text-decoration: underline; }
+a.watch-name:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.watch-seat-label, .watch-connection, .watch-card-count { font-size: 11px; color: #d2e3f1; }
+.watch-seat-state { min-height: 22px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; font-size: 11px; color: #c9f7ff; }
+.watch-dealer { color: #FFD447; }
+.watch-card { width: 47px; max-width: none; height: auto; aspect-ratio: 78 / 110; object-fit: contain; flex: none; filter: drop-shadow(0 2px 2px #0005); }
+.watch-hand { display: grid; grid-template-columns: repeat(var(--card-count), minmax(0, 1fr)); width: 100%; padding-right: 35px; margin: 4px auto; max-width: 245px; min-height: 67px; }
+.watch-center { grid-area: center; text-align: center; font-size: 13px; color: #d9efff; }
+.watch-phase { font-size: 16px; text-transform: capitalize; color: #FFD447; font-weight: 700; }
+.watch-trick { position: relative; width: 150px; height: 170px; margin: 10px auto; border: 1px solid #8beaff22; border-radius: 50%; }
+.watch-play { position: absolute; font-size: 10px; }
+.watch-play-north { left: 50%; top: 0; transform: translateX(-50%); }
+.watch-play-south { left: 50%; bottom: 0; transform: translateX(-50%); }
+.watch-play-west { left: 0; top: 50%; transform: translateY(-50%); }
+.watch-play-east { right: 0; top: 50%; transform: translateY(-50%); }
+.watch-winner { color: #FFD447; font-weight: 700; }
+.watch-roster { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; background: #07264c; border-radius: 16px; padding: 24px; }
+@media (max-width: 640px) {
+  .watch-felt { padding: 12px 4px; gap: 4px; grid-template-columns: minmax(0, 1fr) 84px minmax(0, 1fr); }
+  .watch-seat { padding: 5px 2px; border-radius: 12px; }
+  .watch-seat-north, .watch-seat-south { display: block; width: 200px; justify-self: center; }
+  .watch-avatar { width: 44px; height: 44px; }
+  .watch-name { font-size: 12px; }
+  .watch-center { font-size: 11px; }
+  .watch-phase { font-size: 13px; }
+  .watch-card { width: 32px; }
+  .watch-hand { padding-right: 25px; min-height: 46px; }
+  .watch-trick { width: 82px; height: 120px; }
+  .watch-scoreboard, .watch-table-footer { padding: 10px; font-size: 10px; }
+  .watch-scoreboard strong { font-size: 20px; margin-left: 4px; }
+  .watch-roster { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
