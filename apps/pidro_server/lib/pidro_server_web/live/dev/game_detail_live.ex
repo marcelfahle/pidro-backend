@@ -177,6 +177,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   end
 
   @impl true
+  def handle_info(:refresh_bot_status, %{assigns: %{replay_mode: true}} = socket) do
+    Process.send_after(self(), :refresh_bot_status, 2_000)
+    {:noreply, socket}
+  end
+
   def handle_info(:refresh_bot_status, socket) do
     # BotManager does not publish pause/resume events. One outstanding timer,
     # no database queries, and no mutation of the operator's configuration draft.
@@ -195,6 +200,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   def handle_info({:turn_auto_played, _payload}, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_info({tag, _}, %{assigns: %{replay_mode: true}} = socket)
+      when tag in [:room_update, :room_updated, :seat_lifecycle],
+      do: {:noreply, socket}
+
   def handle_info({:room_update, room}, socket) do
     Logger.info(
       "LiveView received :room_update - status=#{room.status}, player_count=#{PidroServer.Games.Room.Positions.count(room)}"
@@ -342,22 +351,8 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
   defp extract_state_update(_payload), do: :error
 
   defp load_seats(room_code) do
-    with {:ok, snapshot} <- RoomManager.get_seat_lifecycle(room_code),
-         {:ok, room} <- RoomManager.get_room(room_code) do
-      Map.new(snapshot.seats, fn {position, seat} ->
-        # Lifecycle owns human/reservation identity. Seat.serialize owns optional
-        # catalogue metadata, including arbitrary future bot IDs and portraits.
-        profile =
-          if seat.status == :permanent_bot and
-               room.seats[position].bot_persona == seat.bot_persona do
-            room.seats[position]
-            |> PidroServer.Games.Room.Seat.serialize()
-            |> Map.get(:bot_profile)
-          end
-
-        {position, Map.put(seat, :bot_profile, profile)}
-      end)
-    else
+    case RoomManager.get_seat_lifecycle(room_code) do
+      {:ok, snapshot} -> snapshot.seats
       _ -> %{}
     end
   end
@@ -981,7 +976,11 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         # Exiting replay mode - restore live state
         game_state = get_game_state(socket.assigns.room_code)
         events = if game_state, do: game_state.events, else: []
-        socket = reconcile_reasons(socket, events)
+        {:ok, room} = RoomManager.get_room(socket.assigns.room_code)
+        bot_configs = initialize_bot_configs(socket.assigns.room_code)
+
+        # Live reasoning received during replay was deliberately discarded.
+        socket = assign(socket, :bot_reasons, [])
 
         legal_actions =
           get_legal_actions(socket.assigns.room_code, socket.assigns.selected_position)
@@ -990,6 +989,10 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
         |> assign(:replay_mode, false)
         |> assign(:replay_source, nil)
         |> assign(:replay_playing, false)
+        |> assign(:room, room)
+        |> assign(:bot_configs, bot_configs)
+        |> assign(:bots_paused, all_bots_paused?(bot_configs))
+        |> refresh_seats()
         |> assign(:game_state, game_state)
         |> assign(:replay_total_events, length(events))
         |> assign(:replay_index, length(events) - 1)
@@ -1301,7 +1304,7 @@ defmodule PidroServerWeb.Dev.GameDetailLive do
       perspective={@selected_position}
     />
     <p :if={@replay_mode} class="text-sm text-amber-800">
-      Replay freezes the game snapshot, not the live game. Seat identities show the current roster.
+      Replay freezes the captured game, seats and reasoning. The live game continues independently.
     </p>
     """
   end

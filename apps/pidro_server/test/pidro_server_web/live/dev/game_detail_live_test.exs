@@ -268,6 +268,19 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
       dealt_table = view |> element("#watch-table") |> render()
 
       bot_move(room.code)
+
+      PidroServer.Repo.get!(PidroServer.Accounts.User, room.positions.north)
+      |> Ecto.Changeset.change(username: "renamed_after_capture")
+      |> PidroServer.Repo.update!()
+
+      Phoenix.PubSub.broadcast(PidroServer.PubSub, "room:#{room.code}", {:room_updated, room})
+      view |> element("a[href$='tab=activity']") |> render_click()
+      refute render(view) =~ "(Bot) chose"
+      render_click(view, "refresh_events")
+      refute render(view) =~ "renamed_after_capture"
+      view |> element("a[href$='tab=board']") |> render_click()
+      assert view |> element("#watch-table") |> render() == dealt_table
+
       :ok = PidroServer.Games.GameSupervisor.stop_game(room.code)
       {:ok, _} = PidroServer.Games.GameSupervisor.start_game(room.code)
       {:ok, replacement} = GameAdapter.get_state(room.code)
@@ -293,6 +306,7 @@ defmodule PidroServerWeb.Dev.GameDetailLiveTest do
       assert {:ok, ^replacement} = GameAdapter.get_state(room.code)
       render_click(view, "toggle_replay_mode")
       assert has_element?(view, "#watch-table .watch-phase", "dealer selection")
+      assert has_element?(view, "#watch-seat-north", "renamed_after_capture")
       refute has_element?(view, "[phx-click=replay_step_backward]")
     end
 
