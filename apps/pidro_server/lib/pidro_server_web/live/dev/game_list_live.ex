@@ -326,7 +326,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </article>
       </div>
 
-      <details class="rounded-lg border border-stone-200 bg-white p-4">
+      <details open={@show_create_form} class="rounded-lg border border-stone-200 bg-white p-4">
         <summary class="cursor-pointer text-sm font-medium">
           Developer controls · create a game
         </summary>

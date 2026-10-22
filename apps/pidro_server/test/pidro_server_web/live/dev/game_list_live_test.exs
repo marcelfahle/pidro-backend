@@ -248,6 +248,7 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
       try do
         {:ok, view, _} = live(conn, ~p"/admin/games")
         render_click(view, "toggle_create_form")
+        assert has_element?(view, "details[open] #create-game-form")
 
         view
         |> form("#create-game-form", %{
