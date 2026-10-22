@@ -24,6 +24,7 @@ defmodule PidroServer.Application do
       # Bot infrastructure - available in all environments
       PidroServer.Games.Bots.BotSupervisor,
       PidroServer.Games.Bots.BotManager,
+      PidroServer.GameArchive.Maintenance,
       # Provider signing keys are public and safe to cache independently per node.
       PidroServer.Accounts.JwksCache,
       # Node-local rate-limit counters; must be up before the endpoint serves

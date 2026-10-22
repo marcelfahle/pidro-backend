@@ -15,7 +15,7 @@ alias PidroServer.GameArchive
 GameArchive.search(
   from: ~U[2026-10-01 00:00:00Z], # optional, started_at >= from
   to: ~U[2026-11-01 00:00:00Z],   # optional, started_at < to
-  user_id: "authenticated-user-uuid", # optional, initial seated participation
+  user_id: "authenticated-user-uuid", # optional, durable seated participation union
   room_code: "ABCD",              # optional, exact match
   game_instance_id: "opaque-id",  # optional, exact match, NOT a UUID
   status: "closed",              # optional: active/complete/closed/interrupted
@@ -53,7 +53,8 @@ are programmer errors, not normalized client input. Summary aliases remain
 Summary maps have atom keys: `game_instance_id`, `room_code`, `format_version`
 (1), `versions`, `participants`, `status`, `termination_reason`, `last_revision`,
 `started_at`, `saved_at`, `ended_at`, `evidence_status`, `failed_checkpoints`,
-`missing_revision_count`. Timestamps are UTC `DateTime` values; ended_at is nil
+`missing_revision_count`, `user_ids`, `participation_truncated`.
+Timestamps are UTC `DateTime` values; ended_at is nil
 while active. Summary queries do not load snapshots.
 
 `participants` is a string-keyed map by `north/east/south/west` containing the
@@ -61,7 +62,11 @@ while active. Summary queries do not load snapshots.
 `is_owner`, `substitute`, `disconnected_at`, `grace_expires_at`,
 `has_reservation`, `joined_at`, `bot_persona`; vacant seats may have `vacated_by`.
 No bot PID, email, credentials, or room/seat password is stored. This version
-does not claim a complete mid-game seat-occupancy history.
+does not claim a complete mid-game seat-occupancy timeline. Separate `user_ids`
+is the durable union of initial and later seated humans for this instance;
+initial `participants` never changes. The union is capped at 256 distinct users;
+overflow sets sticky `participation_truncated: true`, rather than silently
+claiming exhaustive participation. Spectators and bot identities are excluded.
 
 `versions` contains string keys `server`, `engine` (application versions),
 `server_code`, `engine_code` (SHA256 over sorted module names and BEAM MD5s),
@@ -141,17 +146,21 @@ relabelled closed by later room teardown.
 * `uncertain`: a write failed/timed out with unknown commit outcome, or a process
   disappeared without a saved closure. No known interior gap is required.
 
-Gameplay continues if archive persistence fails. One isolated write task per
-serial game callback waits at most50ms (plus BEAM scheduling/task startup/cleanup),
-then is killed; SQL statements also have a40ms timeout. No accumulating retry
+Gameplay continues if archive persistence fails. One isolated monitored worker per
+serial game callback waits at most 50ms (plus BEAM scheduling/process cleanup),
+then is killed; SQL statements also have a 40ms timeout. Worker creation does not
+call a shared task supervisor. No accumulating retry
 queue or overlapping per-game tasks. Failures generate bounded power-of-two
 warning logs containing only instance/revision and a `[:pidro,:archive,:failure]`
 telemetry counter with no identity labels. `health/1` reports current live write
 health; durable failed_checkpoints is updated on recovery. A healthy writer can
 have permanently partial historical evidence.
 
-The engine retains its initial snapshot, first deal, latest cause and failure
-count, not all failed transitions. Next action/timer/closure retries current
+The engine retains its initial snapshot, first deal, latest cause, bounded human
+participation union and failure count, not all failed transitions. Seat changes
+attempt persistence immediately without inventing an engine revision. The room
+manager waits at most 200ms for this serialized operation; exit/timeout does not
+reject the seat transition. Next action/timer/closure retries current
 evidence. DB last_revision and live last_acknowledged_revision can differ after
 an ambiguous timeout. Duplicate identical revisions are idempotent; conflicting
 duplicates are rejected, never overwritten. Newer writes identify missing ranges.
@@ -161,8 +170,10 @@ archive can be promised**; logs may be the only surviving evidence. No successfu
 write, full coverage, completion or exact crash reason is fabricated.
 
 Reconciliation uses the current **single-serving-node** GameRegistry topology.
-It waits120s after application start (longer than current Kamal60s deployment /
-30s drain), then scans at most100 active IDs per60s tick with an exclusive cursor.
+It waits 120s after application start (longer than current Kamal 60s deployment /
+30s drain), then scans at most 100 active IDs per 60s tick with an exclusive cursor.
+It also excludes archives saved in the last 120s, so an old container's running
+sweeper cannot interrupt new games on the replacement during the bounded overlap.
 It skips busy/unreachable processes rather than treating a timeout as death.
 DB failures retry on a later tick. This is not a distributed ownership/lease
 protocol: add one before serving games on multiple nodes or allowing longer
@@ -177,14 +188,18 @@ GameArchive.participant?(game_instance_id, room_code, user_id) # => boolean
 ```
 
 The branch supplies this config. Lookup requires an exact match on **all three**
-against durable server-written **initial** participants, not current room
+against the durable server-written **seated participation union**, not current room
 occupancy, stats or client claims. Returns false for missing/expired evidence,
 spectators, a different room/instance/user, or non-string arguments. A DB error
 raises so GameReports can return unavailable; it never authorizes on failure.
-Mid-game replacement participants are not claimed by this initial-roster v1;
-GameReports' existing current-game verifier can authorize them while live, but
-archive fallback conservatively denies them after closure. No module from the
-diagnostics branch is required to compile this archive branch.
+Mid-game replacement participants remain eligible after leaving/closure. The
+room manager supplies actual human seats, never a client-supplied identity list.
+A failed write retains the bounded union in the live game for the next capture;
+if the process dies before that membership is durable, lookup conservatively
+denies the missing user. Truncated users beyond the cap are likewise denied.
+General evidence health and participation_truncated disclose these limitations;
+the lookup never guesses membership. No module from the diagnostics branch is
+required to compile this archive branch.
 
 ## Retention and migration
 
@@ -196,7 +211,7 @@ cleanup each tick. Configure `PidroServer.GameArchive.Maintenance` with
 `enabled: true`, `interval_ms: 60_000` (minimum1000), `retention_days: 30`,
 `batch_size: 100`. Tests disable the timer and drive reconciliation explicitly.
 
-Migration `20261022120000_create_game_archives` adds only two new tables,
+Migration `20261022120100_create_game_archives` adds only two new tables,
 indexes and an archive-status constraint. No existing data backfill or stats
 alteration. Migrate before enabling the new code; otherwise capture degrades
 without stopping games. Rollback drops only these archives and their evidence.

@@ -4895,8 +4895,10 @@ defmodule PidroServer.Games.RoomManager do
     player_ids = Positions.player_ids(room)
     Logger.info("Starting game for room #{room.code} with players: #{inspect(player_ids)}")
 
+    participants = PidroServer.GameArchive.participants(room.seats)
+
     started =
-      case GameSupervisor.start_game(room.code, room.config.rule_set, room.pace) do
+      case GameSupervisor.start_game(room.code, room.config.rule_set, room.pace, participants) do
         {:error, {:already_started, pid}} -> {:ok, pid}
         result -> result
       end
@@ -5793,6 +5795,9 @@ defmodule PidroServer.Games.RoomManager do
   defp maybe_bump_seat_lifecycle_revision(%Room{} = room, false), do: room
 
   defp broadcast_seat_lifecycle(%Room{} = room) do
+    if room.status == :playing,
+      do: PidroServer.GameArchive.track_participants(room.code, room.seats)
+
     Phoenix.PubSub.broadcast(
       PidroServer.PubSub,
       "game:#{room.code}",

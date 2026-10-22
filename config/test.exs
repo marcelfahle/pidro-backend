@@ -58,6 +58,9 @@ config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4002
 # PidroServer.Accounts.GuestReaper.run_once/0 from their own process.
 config :pidro_server, PidroServer.Accounts.GuestReaper, enabled: false
 
+# Archive maintenance is driven explicitly by database integration tests.
+config :pidro_server, PidroServer.GameArchive.Maintenance, enabled: false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 
