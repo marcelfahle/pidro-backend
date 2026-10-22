@@ -1302,10 +1302,10 @@ defmodule PidroServer.Games.RoomManager do
   @doc "Applies a human action only while the user still controls the seat."
   @spec apply_player_action(String.t(), String.t(), Positions.position(), term()) ::
           {:ok, map()} | {:error, term()}
-  def apply_player_action(room_code, user_id, position, action) do
+  def apply_player_action(room_code, user_id, position, action, diagnostics \\ %{}) do
     GenServer.call(
       __MODULE__,
-      {:apply_player_action, String.upcase(room_code), user_id, position, action}
+      {:apply_player_action, String.upcase(room_code), user_id, position, action, diagnostics}
     )
   end
 
@@ -1838,14 +1838,28 @@ defmodule PidroServer.Games.RoomManager do
       do: confirm_roster(state, room_code, room_id, user_id, pid, epoch, :rematch)
 
   @impl true
-  def handle_call({:apply_player_action, room_code, user_id, position, action}, _from, state) do
+  def handle_call({:apply_player_action, room_code, user_id, position, action}, from, state),
+    do:
+      handle_call({:apply_player_action, room_code, user_id, position, action, %{}}, from, state)
+
+  def handle_call(
+        {:apply_player_action, room_code, user_id, position, action, diagnostics},
+        _from,
+        state
+      ) do
     # Serialize authority checks and actions with leave/reclaim. A check in the
     # channel alone would race a takeover between authorization and engine apply.
     result =
       with {:ok, room} <- fetch_room(state, room_code),
            %Seat{occupant_type: :human, status: :connected, user_id: ^user_id} <-
              Map.get(room.seats, position) do
-        GameAdapter.apply_action(room_code, position, action, @player_action_call_timeout_ms)
+        GameAdapter.apply_action(
+          room_code,
+          position,
+          action,
+          @player_action_call_timeout_ms,
+          diagnostics
+        )
       else
         {:error, reason} -> {:error, reason}
         _ -> {:error, :seat_not_controlled}

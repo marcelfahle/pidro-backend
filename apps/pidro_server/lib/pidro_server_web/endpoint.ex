@@ -59,6 +59,8 @@ defmodule PidroServerWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  plug PidroServerWeb.Plugs.GameReportBodyLimit
+
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

@@ -58,6 +58,9 @@ config :pidro_server, PidroServer.Invites, link_base_url: "http://localhost:4002
 # PidroServer.Accounts.GuestReaper.run_once/0 from their own process.
 config :pidro_server, PidroServer.Accounts.GuestReaper, enabled: false
 
+# Scheduled report retention must not query outside a test's SQL sandbox.
+config :pidro_server, PidroServer.GameReports.Cleanup, enabled: false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

@@ -33,6 +33,7 @@ defmodule PidroServer.Games.GameAdapter do
 
   require Logger
   alias Pidro.Game.{Play, Replay}
+  alias PidroServer.Diagnostics
   alias PidroServer.Games.{GameRegistry, GameSupervisor, Lifecycle}
 
   @doc """
@@ -71,12 +72,23 @@ defmodule PidroServer.Games.GameAdapter do
   """
   @spec apply_action(String.t(), atom(), term()) :: {:ok, term()} | {:error, term()}
   @spec apply_action(String.t(), atom(), term(), timeout()) :: {:ok, term()} | {:error, term()}
-  def apply_action(room_code, position, action, timeout \\ 5_000) do
+  def apply_action(room_code, position, action, timeout \\ 5_000, diagnostics \\ %{}) do
+    started = System.monotonic_time(:millisecond)
+
     with {:ok, pid} <- GameRegistry.lookup(room_code) do
       try do
         case Pidro.Server.apply_action_with_snapshot(pid, position, action, timeout) do
           {:ok, old_state, snapshot} ->
-            broadcast_state_update(room_code, old_state, snapshot)
+            fields =
+              diagnostics
+              |> Map.merge(Map.take(snapshot, [:game_instance_id, :state_revision]))
+              |> Map.merge(%{
+                room_code: room_code,
+                duration_ms: System.monotonic_time(:millisecond) - started
+              })
+
+            Diagnostics.emit(:action_applied, fields)
+            broadcast_state_update(room_code, old_state, snapshot, fields)
             {:ok, snapshot.state}
 
           {:error, _reason} = error ->
@@ -84,13 +96,15 @@ defmodule PidroServer.Games.GameAdapter do
         end
       rescue
         e ->
-          Logger.error(
-            "Error applying action to game #{room_code}: #{Exception.message(e)}\n#{Exception.format_stacktrace()}"
+          Diagnostics.emit(
+            :game_process_failed,
+            Map.merge(diagnostics, %{room_code: room_code, reason: :exception}),
+            :error
           )
 
           {:error, Exception.message(e)}
       catch
-        :exit, reason -> game_exit(room_code, reason, :game_unavailable)
+        :exit, reason -> game_exit(room_code, reason, :game_unavailable, diagnostics)
       end
     end
   end
@@ -341,20 +355,30 @@ defmodule PidroServer.Games.GameAdapter do
   end
 
   # Logs only the exit's kind: the full reason can carry the call's arguments.
-  defp game_exit(room_code, reason, error) do
+  defp game_exit(room_code, reason, error, diagnostics \\ %{}) do
     kind =
       case reason do
         {kind, {GenServer, :call, _}} when is_atom(kind) -> kind
         _ -> :crashed
       end
 
-    Logger.warning("Game for room #{room_code} did not answer: #{kind}")
+    Diagnostics.emit(
+      :game_process_failed,
+      Map.merge(diagnostics, %{room_code: room_code, reason: kind}),
+      :warning
+    )
+
     {:error, error}
   end
 
   @doc false
   @spec broadcast_state_update(String.t(), map(), map()) :: :ok | {:error, term()}
-  defp broadcast_state_update(room_code, old_state, %{state: new_state} = snapshot) do
+  defp broadcast_state_update(
+         room_code,
+         old_state,
+         %{state: new_state} = snapshot,
+         diagnostics \\ %{}
+       ) do
     try do
       payload =
         Map.put(snapshot, :transition_delay_ms, transition_delay_ms(old_state, new_state))
@@ -365,6 +389,17 @@ defmodule PidroServer.Games.GameAdapter do
         {:state_update, room_code, payload}
       )
 
+      Diagnostics.emit(
+        :state_broadcast,
+        Map.merge(
+          diagnostics,
+          Map.merge(
+            Map.take(snapshot, [:game_instance_id, :state_revision]),
+            %{room_code: room_code}
+          )
+        )
+      )
+
       # The engine finishes at :complete; older callers may still use :game_over.
       if Map.get(new_state, :phase) in [:complete, :game_over] do
         broadcast_game_over(room_code, new_state)
@@ -373,8 +408,10 @@ defmodule PidroServer.Games.GameAdapter do
       :ok
     rescue
       e ->
-        Logger.error(
-          "Error broadcasting state update for room #{room_code}: #{Exception.message(e)}"
+        Diagnostics.emit(
+          :state_broadcast_failed,
+          Map.merge(diagnostics, %{room_code: room_code}),
+          :error
         )
 
         {:error, Exception.message(e)}

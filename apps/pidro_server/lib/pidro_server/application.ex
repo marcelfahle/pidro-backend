@@ -10,6 +10,7 @@ defmodule PidroServer.Application do
     children = [
       PidroServerWeb.Telemetry,
       PidroServer.Repo,
+      PidroServer.GameReports.Cleanup,
       # Idle-guest sweep; needs the Repo and the RoomManager (started below by
       # Games.Supervisor) only when a run fires, never at start
       PidroServer.Accounts.GuestReaper,

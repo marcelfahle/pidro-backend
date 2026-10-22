@@ -25,7 +25,7 @@ Instrumented messages: `bid`, `pass`, `declare_trump`, `play_card`, `select_hand
 not echoed. Client push callbacks already know which local attempt they belong to.
 
 Optional game-channel **join** fields: `app_version`, `app_build`, `platform`.
-Each is a nonempty ASCII token `[A-Za-z0-9_.:-]`, truncated to 64 bytes, otherwise
+Each is a 1–256-byte ASCII token `[A-Za-z0-9_.:-]`, truncated to 64 bytes, otherwise
 omitted. Prefer semver, numeric build, and `ios`/`android`/`web` respectively.
 These are untrusted labels, not authoritative identity. Authentication supplies
 `user_id`; room membership is unchanged. Never send credentials in these fields.
@@ -142,19 +142,44 @@ the archive orb and is not required to compile/start this branch.
 Postgres stores only validated data, server-generated report UUID, authenticated
 user UUID and server UTC insertion timestamp. `PidroServer.GameReports.admin_get(id)`
 and `admin_list(limit \\ 50)` (maximum 100) are read-only **trusted internal context
-APIs**. The admin inspector must call them only after existing admin auth. There
-is no public GET route, player-channel read, or new admin UI.
+APIs**. `admin_search(opts \\ [])` returns the same report structs as a list,
+ordered `inserted_at DESC, id DESC`. Options are an Elixir keyword list; all
+supplied filters are ANDed:
+
+* `report_id`, `user_id`: UUID strings, exact equality.
+* `game_instance_id`, `room_code`, `build`: exact strings, 1–64 bytes. `build` is
+  the **client** build stored on the report, not the server SHA.
+* `from`: UTC `DateTime`, inclusive insertion timestamp.
+* `to`: UTC `DateTime`, exclusive insertion timestamp.
+* `before: {inserted_at, id}`: UTC `DateTime` and report UUID of the last returned
+  row. Selects strictly older timestamps or a smaller UUID on equal timestamps.
+* `limit`: integer 1–100, default 50. Omit absent filters rather than passing nil.
+
+Invalid options raise `ArgumentError`; admin callers must validate UI inputs.
+`admin_list(n)` delegates to `admin_search(limit: n)`. No totals/offset scans.
+Struct fields are `id`, `user_id`, `room_code`, `game_instance_id`, `app_version`,
+`build`, `platform`, `events`, `inserted_at` (UTC microsecond DateTime). The table
+is `game_reports`; additive migration version is **20261022120200**. The admin
+inspector must call these functions only after existing admin auth. There is no
+public GET route, player-channel read, or new admin UI.
 
 Retention default: 30 days. `GameReports.cleanup(limit \\ 1000)` deletes at most
-1000 eligible rows per call. Operations must invoke this periodically; this is
-not a database TTL. User deletion cascades their reports. Archive retention is
-owned elsewhere and may be shorter than report eligibility.
+1000 eligible rows per call. Supervised `GameReports.Cleanup` runs one such batch
+every minute, scheduling the next only after completion (including failure).
+It is enabled by default, disabled in `config/test.exs`. No tasks or catch-up
+queue are created. This is a retention sweep, not an exact database TTL; a large
+backlog can take multiple batches. User deletion cascades their reports. Archive
+retention is owned elsewhere and may be shorter than report eligibility.
 
 ## Structured server events
 
 Each default-handler line is a JSON object with `level` and `timestamp` (Unix
-microseconds). Diagnostic records have `event` and `server_build` (`SERVER_BUILD`,
-otherwise `unknown`). Global production logging stays `info`. Never index user
+microseconds). Diagnostic records have `event` and `server_build`: runtime
+`KAMAL_VERSION` first, then explicit `SERVER_BUILD` for non-Kamal environments,
+otherwise `unknown` for local development. Kamal injects the selected image tag;
+the production workflow builds a clean SHA checkout and checks the deployed
+version equals that SHA. Rollback therefore reports the rollback image SHA, not
+the invoking checkout. Global production logging stays `info`. Never index user
 IDs as metric labels. Available correlation fields, omitted when unavailable:
 `room_code`, `game_instance_id`, `user_id`, `action_id`, `app_version`, `app_build`,
 `platform`, `report_id`, `action`, `outcome`, `error_code`, `reason`, `join_type`,
@@ -174,6 +199,7 @@ IDs as metric labels. Available correlation fields, omitted when unavailable:
 | `game_process_failed` | Engine timeout/crash/exception; warning/error, bounded reason |
 | `state_broadcast_failed` | Broadcast exception; error; does not rewrite an accepted engine result |
 | `report_created` | Durable insert completed; server `report_id`, identity, room and instance only; **never report contents** |
+| `report_cleanup_failed` | Bounded retention batch failed; warning without database exception/row contents; next scheduled batch retries |
 
 `observed_revision` is the socket cursor at receipt, **not** the resulting revision.
 Use `action_applied.state_revision` for the latter. Readiness/rematch acceptance

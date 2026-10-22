@@ -68,10 +68,12 @@ defmodule PidroServerWeb.GameChannel do
       channel.on("game_state", ({state}) => updateUI(state))
   """
 
-  use PidroServerWeb, :channel
+  # Phoenix's default join/action logs render arbitrary client parameters.
+  use Phoenix.Channel, log_join: false, log_handle_in: false
   require Logger
 
   alias Pidro.Game.Engine
+  alias PidroServer.Diagnostics
   alias PidroServer.Games.{GameAdapter, PresenceAggregator, RoomManager}
   alias PidroServer.Games.Room.Seat
   alias PidroServerWeb.API.RoomJSON
@@ -105,7 +107,8 @@ defmodule PidroServerWeb.GameChannel do
   - Returns initial game state and role-specific information
   """
   @impl true
-  def join("game:" <> room_code, _params, socket) do
+  def join("game:" <> room_code, params, socket) do
+    socket = assign(socket, :client_build, client_build(params))
     user_id = socket.assigns.user_id
 
     # Subscribe before any room read so lifecycle mutations racing with join
@@ -289,6 +292,7 @@ defmodule PidroServerWeb.GameChannel do
             reply_data
         end
 
+      Diagnostics.emit(:channel_joined, diagnostic_fields(socket, %{join_type: join_type}))
       {:ok, reply_data, socket}
     else
       {:error, :room_not_found} ->
@@ -327,6 +331,94 @@ defmodule PidroServerWeb.GameChannel do
   """
   @impl true
   def handle_in(event, params, socket)
+
+  # The recursive dispatch leaves legacy payload parsing and replies untouched.
+  # Only this bounded, server-created context crosses the RoomManager boundary.
+  def handle_in(event, params, %{assigns: assigns} = socket)
+      when event in ~w(bid pass declare_trump play_card select_hand select_dealer ready rematch set_pace continue_hand open_seat keep_bot close_seat) and
+             not is_map_key(assigns, :diagnostic_context) do
+    started = System.monotonic_time(:millisecond)
+    action_id = if is_map(params), do: Diagnostics.action_id(params["action_id"])
+    context = diagnostic_fields(socket, %{action: event, action_id: action_id})
+    Diagnostics.emit(:action_received, context)
+
+    try do
+      {:reply, reply, updated} =
+        handle_in(event, params, assign(socket, :diagnostic_context, context))
+
+      code =
+        case reply do
+          {:error, %{error_code: code}} -> code
+          _ -> nil
+        end
+
+      outcome =
+        cond do
+          code == "game_unavailable" -> :unknown
+          match?({:error, _}, reply) -> :rejected
+          true -> :accepted
+        end
+
+      Diagnostics.emit(
+        :action_outcome,
+        Map.merge(context, %{
+          outcome: outcome,
+          error_code: code,
+          duration_ms: System.monotonic_time(:millisecond) - started
+        }),
+        if(code == "game_unavailable", do: :warning, else: :info)
+      )
+
+      {:reply, reply, %{updated | assigns: Map.delete(updated.assigns, :diagnostic_context)}}
+    catch
+      kind, reason ->
+        Diagnostics.emit(
+          :action_failed,
+          Map.merge(context, %{
+            reason: failure_kind(kind, reason),
+            duration_ms: System.monotonic_time(:millisecond) - started
+          }),
+          :error
+        )
+
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    end
+  end
+
+  # Client claims only; never advances the authoritative socket cursor. At most
+  # one record per five seconds/channel, and duplicate revisions are coalesced.
+  def handle_in(
+        "state_received",
+        %{"game_instance_id" => instance, "state_revision" => revision},
+        socket
+      )
+      when is_binary(instance) and is_integer(revision) and revision >= 0 do
+    now = System.monotonic_time(:millisecond)
+    previous = socket.assigns[:diagnostic_ack]
+
+    valid =
+      instance == socket.assigns[:game_instance_id] and
+        is_integer(socket.assigns[:state_revision]) and revision <= socket.assigns.state_revision
+
+    eligible =
+      case previous do
+        {^instance, old_revision, at} -> revision > old_revision and now - at >= 5_000
+        {_, _, at} -> now - at >= 5_000
+        nil -> true
+      end
+
+    socket =
+      if valid and eligible do
+        Diagnostics.emit(:state_received, diagnostic_fields(socket, %{state_revision: revision}))
+        assign(socket, :diagnostic_ack, {instance, revision, now})
+      else
+        socket
+      end
+
+    {:reply, :ok, socket}
+  end
+
+  def handle_in("state_received", _params, socket), do: {:reply, :ok, socket}
 
   def handle_in("set_pace", %{"pace" => pace}, socket) when pace in ["quick", "own"] do
     pace = if pace == "own", do: :own, else: :quick
@@ -1009,6 +1101,8 @@ defmodule PidroServerWeb.GameChannel do
     user_id = socket.assigns[:user_id]
     role = socket.assigns[:role]
 
+    Diagnostics.emit(:channel_closed, diagnostic_fields(socket, %{reason: format_reason(reason)}))
+
     # Only handle disconnect if we have necessary assigns
     if room_code && user_id && role do
       case role do
@@ -1063,15 +1157,19 @@ defmodule PidroServerWeb.GameChannel do
     room_code = socket.assigns.room_code
     position = socket.assigns.position
 
-    case RoomManager.apply_player_action(room_code, socket.assigns.user_id, position, action) do
+    case RoomManager.apply_player_action(
+           room_code,
+           socket.assigns.user_id,
+           position,
+           action,
+           socket.assigns[:diagnostic_context] || %{}
+         ) do
       {:ok, _new_state} ->
         _ = RoomManager.reset_consecutive_timeouts(room_code, socket.assigns.user_id)
         # State update is broadcast via PubSub subscription
         {:reply, :ok, socket}
 
       {:error, reason} ->
-        Logger.debug("Action failed: #{inspect(reason)}")
-
         {:reply,
          {:error, ErrorContract.add(%{reason: format_error(reason)}, reason, :action_failed)},
          socket}
@@ -1282,8 +1380,35 @@ defmodule PidroServerWeb.GameChannel do
 
   defp push_game_state(socket, snapshot) do
     push(socket, "game_state", client_snapshot_payload(snapshot, socket.assigns[:position]))
+
+    Diagnostics.emit(
+      :state_pushed,
+      diagnostic_fields(socket, Map.take(snapshot, [:game_instance_id, :state_revision]))
+    )
+
     assign_snapshot_cursor(socket, snapshot)
   end
+
+  defp client_build(params) when is_map(params) do
+    %{
+      app_version: Diagnostics.token(params["app_version"]),
+      app_build: Diagnostics.token(params["app_build"]),
+      platform: Diagnostics.token(params["platform"])
+    }
+  end
+
+  defp client_build(_), do: %{}
+
+  defp diagnostic_fields(socket, extra) do
+    socket.assigns
+    |> Map.take([:room_code, :user_id, :game_instance_id])
+    |> Map.put(:observed_revision, socket.assigns[:state_revision])
+    |> Map.merge(socket.assigns[:client_build] || %{})
+    |> Map.merge(extra)
+  end
+
+  defp failure_kind(:exit, {:timeout, _}), do: :timeout
+  defp failure_kind(_, _), do: :process_failure
 
   # A rematch replaces the game process, so its snapshots carry an instance this
   # socket has not accepted yet. The registry says which game is live for the
