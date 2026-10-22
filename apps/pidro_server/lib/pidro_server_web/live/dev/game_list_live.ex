@@ -377,7 +377,9 @@ defmodule PidroServerWeb.Dev.GameListLive do
           <label class="text-sm">Difficulty<select
             name="bot_difficulty"
             class="block w-full rounded border-stone-300"
-          ><option>random</option><option>basic</option><option>smart</option></select></label>
+          ><option value="random">random</option><option value="basic">basic</option><option value="smart">
+            smart
+          </option></select></label>
           <button class="rounded bg-stone-900 px-3 py-2 text-white">Create</button>
           <button type="button" phx-click="cancel_create">Cancel</button>
         </form>
@@ -420,7 +422,9 @@ defmodule PidroServerWeb.Dev.GameListLive do
   end
 
   defp public_profiles(ids) do
-    users = Auth.get_users_map(ids)
+    # Developer hosts may be arbitrary strings, including 16-byte strings that
+    # UUID.cast accepts as raw UUIDs but UUID.dump cannot send to the database.
+    users = ids |> Enum.filter(&match?({:ok, _}, Ecto.UUID.dump(&1))) |> Auth.get_users_map()
 
     Map.new(ids, fn id ->
       user = users[id]
@@ -549,7 +553,14 @@ defmodule PidroServerWeb.Dev.GameListLive do
   end
 
   defp creation_flash(socket, code, {:error, _}) do
-    BotManager.stop_all_bots(code)
+    # A failed start can mean the manager itself is down. Cleanup is best-effort;
+    # keep the successfully created room and let the admin retry later.
+    try do
+      BotManager.stop_all_bots(code)
+    catch
+      :exit, _ -> :ok
+    end
+
     put_flash(socket, :warning, "Room #{code} created, but bots could not be started")
   end
 

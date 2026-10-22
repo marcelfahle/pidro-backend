@@ -89,6 +89,9 @@ defmodule Pidro.Server do
   - `:name` - Optional registration name (supports {:via, module, term} tuples)
   - `:telemetry` - Whether to emit telemetry events (default: true)
   - `:initial_state` - Optional initial game state (default: new game)
+  - `:state_observer` - Optional `{module, function}` called synchronously with
+    the game ID and state after changes. Keep observers local and bounded;
+    no observer is installed by default.
   - `:seed` - Optional seed for the game's chance stream. Omit it and the
     server generates fresh entropy, which is what a live game wants. Supply it
     and the game is reproducible, including across `reset/1`.

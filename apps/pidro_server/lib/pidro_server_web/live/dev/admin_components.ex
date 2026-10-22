@@ -16,6 +16,13 @@ defmodule PidroServerWeb.Dev.AdminComponents do
       <div class="mx-auto max-w-[96rem] px-4 py-4 sm:px-6 lg:px-8">
         <Layouts.flash_group flash={@flash} />
         <.admin_nav active={@active} />
+        <p
+          :if={warning = Phoenix.Flash.get(@flash, :warning)}
+          role="alert"
+          class="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {warning}
+        </p>
         <header class="mb-4 flex flex-col gap-3 border-b border-stone-200 pb-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div class="flex flex-wrap items-center gap-2 text-xs text-stone-500">
