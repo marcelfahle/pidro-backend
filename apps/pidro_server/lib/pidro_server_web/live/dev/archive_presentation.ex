@@ -11,6 +11,7 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
     :discarding,
     :second_deal,
     :playing,
+    :scoring,
     :hand_complete,
     :complete
   ]
@@ -60,9 +61,12 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
   end
 
   defp seat_status(%{"occupant_type" => "vacant"}), do: :vacant
-  defp seat_status(%{"substitute" => true}), do: :bot_substitute
+  defp seat_status(%{"status" => "bot_substitute"}), do: :bot_substitute
+
+  defp seat_status(%{"status" => status}) when status in ["reconnecting", "grace"],
+    do: :reconnecting
+
   defp seat_status(%{"occupant_type" => "bot"}), do: :permanent_bot
-  defp seat_status(%{"status" => "disconnected"}), do: :reconnecting
   defp seat_status(seat) when map_size(seat) == 0, do: :vacant
   defp seat_status(_), do: :normal
 

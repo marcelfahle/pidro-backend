@@ -1,6 +1,9 @@
 defmodule PidroServerWeb.Dev.HistoryLiveTest do
-  use PidroServerWeb.ConnCase, async: false
+  use PidroServer.ArchiveCase, async: false
   import Phoenix.LiveViewTest
+  import Phoenix.ConnTest
+  import Plug.Conn
+  import PidroServerWeb.ConnCase
   import Ecto.Query
 
   alias PidroServer.{AccountsFixtures, GameArchive, GameReports, Repo, RoomFixtures}
@@ -8,6 +11,17 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
   alias PidroServer.Games.{GameAdapter, GameSupervisor, Lifecycle, RoomManager}
   alias PidroServer.Games.Bots.BotManager
   alias PidroServer.Stats.GameStats
+
+  @endpoint PidroServerWeb.Endpoint
+  setup do
+    admin_ids = Repo.all(from a in PidroServer.Admins.Admin, select: a.id)
+
+    on_exit(fn ->
+      Repo.delete_all(from a in PidroServer.Admins.Admin, where: a.id not in ^admin_ids)
+    end)
+
+    {:ok, conn: build_conn()}
+  end
 
   setup :register_and_log_in_admin
 
@@ -104,7 +118,9 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
     for n <- 1..26,
         do: checkpoint("instance-#{String.pad_leading(to_string(n), 2, "0")}", user.id)
 
-    Repo.update_all(Archive, set: [started_at: ~U[2026-10-22 12:00:00.000000Z]])
+    Repo.update_all(from(a in Archive, where: ^user.id in a.user_ids),
+      set: [started_at: ~U[2026-10-22 12:00:00.000000Z]]
+    )
 
     {:ok, view, html} =
       live(
@@ -123,7 +139,7 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
     assert older =~ "instance-01"
     refute older =~ "instance-02"
 
-    {:ok, _, html} = live(conn, "/admin/history?to=2026-10-22T12:00:00Z")
+    {:ok, _, html} = live(conn, "/admin/history?user_id=#{user.id}&to=2026-10-22T12:00:00Z")
     assert html =~ "No matching evidence"
     {:ok, _, html} = live(conn, "/admin/history?game_instance_id=instance-04")
     assert html =~ "instance-04"
@@ -186,6 +202,16 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
       {:ok, _, html} = live(conn, "/admin/history/#{id}")
       assert html =~ label
     end
+
+    Repo.query!("ALTER TABLE game_archives RENAME TO temporarily_unavailable_archives")
+
+    try do
+      {:ok, view, html} = live(conn, "/admin/history")
+      assert has_element?(view, "[role=alert]", "Evidence storage is unavailable")
+      refute html =~ "No matching evidence"
+    after
+      Repo.query!("ALTER TABLE temporarily_unavailable_archives RENAME TO game_archives")
+    end
   end
 
   test "report filters use exact instance, user, build and report ID; client text is escaped", %{
@@ -222,6 +248,43 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
     {:ok, _, html} = live(conn, "/admin/reports/#{first.id}")
     assert html =~ "&lt;script&gt;"
     refute html =~ "<script>alert(1)</script>"
+  end
+
+  test "saved seat states, cold players and scoring are faithfully projected", %{conn: conn} do
+    user = AccountsFixtures.user_fixture()
+
+    seats = %{
+      north: %{user_id: user.id, occupant_type: :human, status: :reconnecting},
+      east: %{occupant_type: :human, status: :grace},
+      south: %{occupant_type: :human, status: :connected, substitute: true},
+      west: %{occupant_type: :bot, status: :bot_substitute, substitute: false}
+    }
+
+    state = Pidro.Core.GameState.new(seed: 7) |> Map.put(:phase, :scoring)
+    state = put_in(state.players.north.eliminated?, true)
+
+    snapshot = %{
+      game_instance_id: "saved-seats",
+      state_revision: 0,
+      state: state,
+      presentation: %{},
+      server_time_ms: System.system_time(:millisecond)
+    }
+
+    GameArchive.checkpoint!("SAME", seats, snapshot, %{
+      kind: :start,
+      engine_events: [],
+      events_replaced: false
+    })
+
+    {:ok, view, _} = live(conn, "/admin/history/saved-seats")
+    assert has_element?(view, ".watch-phase", "scoring")
+    assert has_element?(view, "#watch-seat-north", "Reconnecting")
+    assert has_element?(view, "#watch-seat-north", "Cold")
+    assert has_element?(view, "#watch-seat-east", "Reconnecting")
+    assert has_element?(view, "#watch-seat-south", "Connected")
+    refute has_element?(view, "#watch-seat-south", "Bot covering")
+    assert has_element?(view, "#watch-seat-west", "Bot covering")
   end
 
   test "legacy summaries never link a reused room without an instance", %{conn: conn} do

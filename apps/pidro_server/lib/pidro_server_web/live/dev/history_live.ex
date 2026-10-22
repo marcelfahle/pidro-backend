@@ -255,12 +255,15 @@ defmodule PidroServerWeb.Dev.HistoryLive do
       </section>
       <section class="space-y-3">
         <h2 class="text-lg font-semibold">
-          Saved table · {if @params["revision"],
-            do: "revision #{@params["revision"]}",
-            else: "latest checkpoint"}
+          Saved table · {if @data.snapshot,
+            do: "revision #{@data.snapshot["state_revision"]}",
+            else: "snapshot unavailable"}
         </h2>
         <p class="text-sm">
           Checkpoint inspection, not deterministic replay. No commands can be sent to this game.
+        </p>
+        <p class="text-sm text-stone-500">
+          Seat identities and connection labels below reflect the initial roster, not the selected checkpoint. Names and bot portraits use current account/catalogue labels.
         </p>
         <form
           method="get"
@@ -272,7 +275,7 @@ defmodule PidroServerWeb.Dev.HistoryLive do
             type="number"
             min="0"
             name="revision"
-            value={@params["revision"]}
+            value={if @data.snapshot, do: @data.snapshot["state_revision"], else: @params["revision"]}
             class="w-28 rounded border-stone-300"
             required
           /></label>
