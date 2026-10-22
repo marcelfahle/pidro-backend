@@ -67,8 +67,8 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
     do: :reconnecting
 
   defp seat_status(%{"occupant_type" => "bot"}), do: :permanent_bot
-  defp seat_status(seat) when map_size(seat) == 0, do: :vacant
-  defp seat_status(_), do: :normal
+  defp seat_status(%{"status" => "connected"}), do: :normal
+  defp seat_status(_), do: :unknown
 
   defp cards(values),
     do: Enum.flat_map(values, fn value -> if card(value), do: [card(value)], else: [] end)

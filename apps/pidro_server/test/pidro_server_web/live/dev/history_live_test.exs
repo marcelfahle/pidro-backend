@@ -285,6 +285,17 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
     assert has_element?(view, "#watch-seat-south", "Connected")
     refute has_element?(view, "#watch-seat-south", "Bot covering")
     assert has_element?(view, "#watch-seat-west", "Bot covering")
+
+    Repo.get!(Archive, "saved-seats")
+    |> Ecto.Changeset.change(participants: %{}, participation_truncated: true)
+    |> Repo.update!()
+
+    html = render_patch(view, "/admin/history/saved-seats")
+    assert html =~ "No initial seat evidence was captured"
+    assert html =~ "Player search may omit later participants"
+    assert has_element?(view, "#watch-seat-north", "unknown")
+    refute has_element?(view, "#watch-seat-north", "Connected")
+    refute has_element?(view, "#watch-seat-north", "Open")
   end
 
   test "legacy summaries never link a reused room without an instance", %{conn: conn} do

@@ -238,6 +238,12 @@ defmodule PidroServerWeb.Dev.HistoryLive do
         <p class="text-xs text-stone-500">
           Names are current account labels; seat facts are from game start, not a complete replacement or connection history.
         </p>
+        <p :if={@data.archive.participants == %{}} class="mt-2 text-sm">
+          No initial seat evidence was captured.
+        </p>
+        <p :if={@data.archive.participation_truncated} class="mt-2 text-sm text-amber-800">
+          The participation index reached its limit. Player search may omit later participants.
+        </p>
         <ul class="mt-2 grid gap-2 sm:grid-cols-2">
           <li
             :for={{position, seat} <- Enum.sort(@data.archive.participants)}
@@ -329,7 +335,7 @@ defmodule PidroServerWeb.Dev.HistoryLive do
               Observed {utc(event.occurred_at)} · Saved {utc(event.saved_at)}
             </p>
             <p :if={event.payload["missing_revisions"]} class="text-sm text-amber-800">
-              Missing revisions: {Presentation.describe(event.payload["missing_revisions"])}
+              Missing revision range (inclusive): {Enum.join(event.payload["missing_revisions"], "–")}
             </p>
             <p :if={event.payload["action"]} class="mt-1 break-words text-sm">
               {event_actor(event.payload["position"], @data)}: {Presentation.describe(
