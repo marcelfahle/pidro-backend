@@ -208,7 +208,13 @@ config :tailwind,
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :outcome]
+  metadata: [:request_id, :outcome, :diagnostic]
+
+# Drop under overload rather than synchronously blocking game callers. The
+# collector runs outside the VM; no provider requests happen in game processes.
+config :logger, :default_handler,
+  formatter: {PidroServer.DiagnosticsFormatter, %{}},
+  config: [sync_mode_qlen: 200, drop_mode_qlen: 200, flush_qlen: 1000]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

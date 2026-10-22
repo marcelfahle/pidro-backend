@@ -61,6 +61,9 @@ config :pidro_server, PidroServer.Accounts.GuestReaper, enabled: false
 # Archive maintenance is driven explicitly by database integration tests.
 config :pidro_server, PidroServer.GameArchive.Maintenance, enabled: false
 
+# Scheduled report retention must not query outside a test's SQL sandbox.
+config :pidro_server, PidroServer.GameReports.Cleanup, enabled: false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

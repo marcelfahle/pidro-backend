@@ -866,6 +866,161 @@ defmodule PidroServerWeb.GameChannelTest do
     end
   end
 
+  describe "correlated diagnostics" do
+    setup do
+      level = Logger.level()
+      Logger.configure(level: :info)
+      on_exit(fn -> Logger.configure(level: level) end)
+      :ok
+    end
+
+    @tag :stable_turn_timer
+    test "real actions preserve replies and correlate exact revisions, rejections and bounded acknowledgements",
+         ctx do
+      log =
+        ExUnit.CaptureLog.capture_log([formatter: {PidroServer.DiagnosticsFormatter, %{}}], fn ->
+          {:ok, joined, socket} =
+            subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}", %{
+              "app_build" => "123",
+              "platform" => "ios"
+            })
+
+          ref =
+            push(socket, "select_dealer", %{"action_id" => "tap-1", "token" => "PRIVATE_TOKEN"})
+
+          assert_reply ref, :ok, %{}, 1000
+          assert_push "game_state", %{game_instance_id: instance, state_revision: revision}, 1000
+          assert instance == joined.game_instance_id
+          assert revision > joined.state_revision
+
+          for payload <- [
+                %{"game_instance_id" => "retired", "state_revision" => revision},
+                %{"game_instance_id" => instance, "state_revision" => revision + 100},
+                %{"game_instance_id" => instance, "state_revision" => revision},
+                %{"game_instance_id" => instance, "state_revision" => revision}
+              ] do
+            ref = push(socket, "state_received", payload)
+            assert_reply ref, :ok, %{}
+          end
+
+          ref =
+            push(socket, "play_card", %{
+              "action_id" => "tap-2",
+              "card" => %{"rank" => "PRIVATE_CARD", "suit" => "spades"}
+            })
+
+          assert_reply ref, :error, %{error_code: "invalid_card"}, 1000
+
+          ref =
+            push(socket, "ready", %{
+              "action_id" => "tap-3",
+              "room_id" => "old",
+              "ready_epoch" => -1
+            })
+
+          assert_reply ref, :error, %{error_code: "stale_readiness"}, 1000
+        end)
+
+      records = diagnostic_records(log)
+
+      applied =
+        Enum.find(records, &(&1["event"] == "action_applied" and &1["action_id"] == "tap-1"))
+
+      assert applied["user_id"] == ctx.user1.id
+      assert applied["room_code"] == ctx.room_code
+      assert applied["app_build"] == "123"
+      assert is_binary(applied["server_build"])
+      assert is_integer(applied["duration_ms"])
+
+      for event <- ["action_received", "action_outcome", "state_broadcast"] do
+        assert Enum.any?(records, &(&1["event"] == event and &1["action_id"] == "tap-1"))
+      end
+
+      assert Enum.any?(
+               records,
+               &(&1["event"] == "state_broadcast" and
+                   &1["state_revision"] == applied["state_revision"])
+             )
+
+      assert Enum.count(records, &(&1["event"] == "state_received")) == 1
+
+      for {id, code} <- [{"tap-2", "invalid_card"}, {"tap-3", "stale_readiness"}] do
+        assert Enum.any?(
+                 records,
+                 &(&1["action_id"] == id and &1["outcome"] == "rejected" and
+                     &1["error_code"] == code)
+               )
+      end
+
+      refute log =~ "PRIVATE_TOKEN"
+      refute log =~ "PRIVATE_CARD"
+      refute Jason.encode!(records) =~ "spades"
+      refute Jason.encode!(records) =~ "rank"
+    end
+
+    @tag :stable_turn_timer
+    test "a stalled real engine records correlated timeout without retrying or changing its reply",
+         ctx do
+      {:ok, _, socket} =
+        subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}", %{})
+
+      {:ok, pid} = PidroServer.Games.GameRegistry.lookup(ctx.room_code)
+      :ok = :sys.suspend(pid)
+
+      try do
+        log =
+          ExUnit.CaptureLog.capture_log(
+            [formatter: {PidroServer.DiagnosticsFormatter, %{}}],
+            fn ->
+              ref = push(socket, "select_dealer", %{"action_id" => "timed-out"})
+              assert_reply ref, :error, %{error_code: "game_unavailable"}, 2000
+            end
+          )
+
+        records = diagnostic_records(log)
+
+        assert Enum.any?(
+                 records,
+                 &(&1["event"] == "game_process_failed" and &1["reason"] == "timeout" and
+                     &1["action_id"] == "timed-out")
+               )
+
+        assert Enum.any?(
+                 records,
+                 &(&1["event"] == "action_outcome" and &1["error_code"] == "game_unavailable" and
+                     &1["action_id"] == "timed-out")
+               )
+      after
+        :sys.resume(pid)
+      end
+    end
+
+    @tag :stable_turn_timer
+    test "a missing default logging sink cannot change a legacy action result", ctx do
+      {:ok, config} = :logger.get_handler_config(:default)
+      :ok = :logger.remove_handler(:default)
+
+      try do
+        {:ok, joined, socket} =
+          subscribe_and_join(ctx.sockets[ctx.user1.id], GameChannel, "game:#{ctx.room_code}", %{})
+
+        ref = push(socket, "select_dealer", %{})
+        assert_reply ref, :ok, %{}, 1000
+        assert_push "game_state", %{state_revision: revision}, 1000
+        assert revision > joined.state_revision
+      after
+        :logger.add_handler(:default, config.module, Map.drop(config, [:id, :module]))
+      end
+    end
+
+    defp diagnostic_records(log) do
+      log
+      |> String.split("\n", trim: true)
+      |> Enum.map(&Jason.decode!/1)
+      |> Enum.filter(&Map.has_key?(&1, "event"))
+    end
+  end
+
   describe "bid action" do
     test "player can make a bid", %{
       user1: user,

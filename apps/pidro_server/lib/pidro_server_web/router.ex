@@ -67,6 +67,11 @@ defmodule PidroServerWeb.Router do
     plug PidroServerWeb.Plugs.RateLimit
   end
 
+  pipeline :game_reports do
+    plug :accepts, ["json"]
+    plug PidroServerWeb.Plugs.Authenticate
+  end
+
   pipeline :public_asset do
     plug PidroServerWeb.Plugs.RateLimit
   end
@@ -163,6 +168,11 @@ defmodule PidroServerWeb.Router do
   end
 
   # API v1 authenticated routes
+  scope "/api/v1", PidroServerWeb.API do
+    pipe_through :game_reports
+    post "/game-reports", GameReportController, :create, log: false
+  end
+
   scope "/api/v1", PidroServerWeb.API do
     pipe_through :api_authenticated
 
