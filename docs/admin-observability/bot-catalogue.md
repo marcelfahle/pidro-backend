@@ -22,9 +22,10 @@ Catalogue plus actual game-channel tests — **77 passed**. The first full rerun
 found two old channel expectations (nil bot avatar and no vacant `bot_profile`);
 updated these to assert the additive contract, including null profiles for
 humans and human-reserved substitutes. Production code needed no further change.
-A fresh full precommit is running for this incremental fix; the original full
-results below describe the preceding implementation. No Watch rendering files,
-routes, migration, or game rules changed in this delta.
+A fresh `mise exec -- mix precommit` for this incremental fix **passed (exit 0)**:
+engine 911 passed, server 1965 passed, one skipped each; Hex audit, format, compile,
+Credo (no added issues) and Dialyzer passed with the same 56 filtered warnings.
+No Watch rendering files, routes, migration, or game rules changed in this delta.
 
 ## Verified behavior
 
