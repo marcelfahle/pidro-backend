@@ -1,0 +1,110 @@
+# Only the Pidro 2 web containers are collected, including replacement releases.
+data_dir = "/var/lib/vector"
+
+[sources.pidro]
+type = "docker_logs"
+include_containers = ["pidro-backend-web-"]
+include_labels = ["service=pidro-backend", "role=web"]
+
+[transforms.safe_events]
+type = "remap"
+inputs = ["pidro"]
+drop_on_abort = true
+drop_on_error = true
+source = '''
+record = object!(parse_json!(string!(.message)))
+if !exists(record.event) {
+  if !includes(["warning", "error", "critical", "alert", "emergency"], record.level) { abort }
+  # Arbitrary exception messages can contain state or credentials. Keep the
+  # signal and request ID; detailed private evidence remains on the server.
+  record = {"event": "runtime_warning_or_error", "level": record.level, "timestamp": record.timestamp, "request_id": record.request_id}
+}
+event = string!(record.event)
+if !match(event, r'^[A-Za-z0-9_.:-]{1,64}$') { abort }
+metadata = filter(record) -> |key, _value| {
+  includes(["event", "level", "timestamp", "request_id", "room_code", "game_instance_id", "user_id", "action_id", "report_id", "app_version", "app_build", "platform", "server_build", "action", "outcome", "error_code", "reason", "join_type", "state_revision", "observed_revision", "duration_ms"], key)
+}
+metadata.environment = "production"
+metadata.service = "pidro-backend"
+metadata.server_build = replace(string!(.container_name), "pidro-backend-web-", "")
+. = {"message": event, "metadata": metadata}
+'''
+
+[sinks.logflare]
+type = "http"
+inputs = ["safe_events"]
+uri = "https://api.logflare.app/api/logs?source=${LOGFLARE_SOURCE_ID}"
+method = "post"
+payload_prefix = '{"batch":'
+payload_suffix = '}'
+healthcheck.enabled = false
+encoding.codec = "json"
+request.headers.X-API-KEY = "${LOGFLARE_API_KEY}"
+request.headers.Content-Type = "application/json"
+request.concurrency = 1
+request.timeout_secs = 10
+batch.max_events = 50
+batch.timeout_secs = 1
+buffer.type = "disk"
+buffer.max_size = 268435488
+buffer.when_full = "drop_newest"
+
+[[tests]]
+name = "diagnostics retain correlation and discard unknown payloads"
+[[tests.inputs]]
+insert_at = "safe_events"
+type = "log"
+[tests.inputs.log_fields]
+container_name = "pidro-backend-web-test-build"
+message = '{"event":"action_outcome","level":"info","game_instance_id":"test-instance","state_revision":12,"action_id":"test-action","hand":["secret"],"token":"secret"}'
+[[tests.outputs]]
+extract_from = "safe_events"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.message, "action_outcome")
+assert_eq!(.metadata.game_instance_id, "test-instance")
+assert_eq!(.metadata.state_revision, 12)
+assert_eq!(.metadata.action_id, "test-action")
+assert_eq!(.metadata.server_build, "test-build")
+assert!(!exists(.metadata.hand))
+assert!(!exists(.metadata.token))
+'''
+
+[[tests]]
+name = "runtime errors omit arbitrary messages"
+[[tests.inputs]]
+insert_at = "safe_events"
+type = "log"
+[tests.inputs.log_fields]
+container_name = "pidro-backend-web-test-build"
+message = '{"level":"error","message":"secret card state","request_id":"request-1"}'
+[[tests.outputs]]
+extract_from = "safe_events"
+[[tests.outputs.conditions]]
+type = "vrl"
+source = '''
+assert_eq!(.message, "runtime_warning_or_error")
+assert_eq!(.metadata.request_id, "request-1")
+assert!(!exists(.metadata.message))
+'''
+
+[[tests]]
+name = "ordinary request messages are not shipped"
+no_outputs_from = ["safe_events"]
+[[tests.inputs]]
+insert_at = "safe_events"
+type = "log"
+[tests.inputs.log_fields]
+container_name = "pidro-backend-web-test-build"
+message = '{"level":"info","message":"GET /private/path"}'
+
+[[tests]]
+name = "non JSON output is not shipped"
+no_outputs_from = ["safe_events"]
+[[tests.inputs]]
+insert_at = "safe_events"
+type = "log"
+[tests.inputs.log_fields]
+container_name = "pidro-backend-web-test-build"
+message = "unstructured private output"

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Install/update only the collector; never restart or deploy the game server.
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+server="${PIDRO_SERVER_SSH:-root@95.217.3.224}"
+credentials="${1:?usage: ops/install-logflare /path/to/credentials}"
+image='timberio/vector:0.60.0-debian@sha256:3ccb4bbd36e38734394e158db1411e91a69d076ed25013f8de385046a382d36a'
+remote_tmp="$(ssh "$server" 'umask 077; mktemp -d /tmp/pidro-logflare.XXXXXXXX')"
+trap 'ssh "$server" "rm -rf -- '\''$remote_tmp'\''"' EXIT
+
+scp -q "$repo_root/ops/server/logflare.toml" "$server:$remote_tmp/vector.toml"
+scp -q "$repo_root/ops/server/pidro-logflare.service" "$server:$remote_tmp/pidro-logflare.service"
+scp -q "$credentials" "$server:$remote_tmp/credentials"
+ssh "$server" bash -s -- "$remote_tmp" "$image" <<'REMOTE'
+set -Eeuo pipefail
+stage="$1"
+image="$2"
+docker pull "$image"
+# Validate and execute privacy tests before touching the installed service.
+docker run --rm --env-file "$stage/credentials" \
+  -v "$stage/vector.toml:/etc/vector/vector.toml:ro" "$image" \
+  validate --no-environment --config-toml /etc/vector/vector.toml
+docker run --rm --env-file "$stage/credentials" \
+  -v "$stage/vector.toml:/etc/vector/vector.toml:ro" "$image" \
+  test /etc/vector/vector.toml
+install -d -m 0700 /etc/pidro-logflare /var/lib/pidro-logflare
+install -m 0600 "$stage/credentials" /etc/pidro-logflare/credentials
+install -m 0644 "$stage/vector.toml" /etc/pidro-logflare/vector.toml
+install -m 0644 "$stage/pidro-logflare.service" /etc/systemd/system/pidro-logflare.service
+systemctl daemon-reload
+systemctl enable pidro-logflare.service
+systemctl restart pidro-logflare.service
+systemctl is-active --quiet pidro-logflare.service
+REMOTE
