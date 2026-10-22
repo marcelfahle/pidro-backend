@@ -117,6 +117,134 @@ defmodule PidroServerWeb.API.GameReportControllerTest do
     assert GameReports.admin_list() == []
   end
 
+  test "malformed, non-object, oversized and wrong-media attempts also consume the budget" do
+    for {raw, content_type, status} <- [
+          {"{", "application/json", 400},
+          {"[]", "application/json", 400},
+          {String.duplicate("x", 32_769), "application/json", 413},
+          {"hello", "text/plain", 415}
+        ] do
+      token = Token.generate(user_fixture())
+
+      send_raw = fn ->
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> put_req_header("content-type", content_type)
+        |> post("/api/v1/game-reports", raw)
+      end
+
+      for _ <- 1..10, do: assert(send_raw.() |> json_response(status))
+      assert send_raw.() |> json_response(429)
+    end
+
+    assert GameReports.admin_list() == []
+  end
+
+  test "early report responses preserve allowed-origin CORS and never allow an untrusted origin" do
+    original = Application.get_env(:pidro_server, :cors_origins)
+    Application.put_env(:pidro_server, :cors_origins, ["https://play.example"])
+    on_exit(fn -> Application.put_env(:pidro_server, :cors_origins, original) end)
+
+    for origin <- ["https://play.example", "https://untrusted.example"] do
+      token = Token.generate(user_fixture())
+
+      send_raw = fn raw, type, bearer ->
+        build_conn()
+        |> put_req_header("origin", origin)
+        |> put_req_header("authorization", "Bearer #{bearer}")
+        |> put_req_header("content-type", type)
+        |> post("/api/v1/game-reports", raw)
+      end
+
+      responses = [
+        {send_raw.("{}", "application/json", "invalid"), 401},
+        {send_raw.("{", "application/json", token), 400},
+        {send_raw.(String.duplicate("x", 32_769), "application/json", token), 413},
+        {send_raw.("hello", "text/plain", token), 415}
+      ]
+
+      for _ <- 1..7, do: assert(send_raw.("{}", "application/json", token) |> json_response(422))
+      limited = send_raw.("{}", "application/json", token)
+      assert get_resp_header(limited, "retry-after") == ["60"]
+
+      for {conn, status} <- responses ++ [{limited, 429}] do
+        assert json_response(conn, status)
+
+        if origin == "https://play.example" do
+          assert get_resp_header(conn, "access-control-allow-origin") == [origin]
+
+          assert Enum.join(get_resp_header(conn, "access-control-expose-headers")) =~
+                   "retry-after"
+        else
+          refute origin in get_resp_header(conn, "access-control-allow-origin")
+          refute "*" in get_resp_header(conn, "access-control-allow-origin")
+        end
+      end
+    end
+  end
+
+  test "admin search applies exact filters, UTC boundaries and timestamp/id keysets", %{
+    user: user,
+    body: body
+  } do
+    at = ~U[2026-10-20 12:00:00.000000Z]
+    other = user_fixture()
+
+    rows =
+      for {suffix, seconds, owner, build} <- [
+            {1, -1, user.id, "42"},
+            {2, 0, user.id, "42"},
+            {3, 0, user.id, "43"},
+            {4, 1, other.id, "44"}
+          ] do
+        Repo.insert!(%PidroServer.GameReports.Report{
+          id: "00000000-0000-0000-0000-00000000000#{suffix}",
+          user_id: owner,
+          room_code: body["room_code"],
+          game_instance_id: body["game_instance_id"],
+          app_version: "1.2.3",
+          build: build,
+          platform: "ios",
+          events: body["events"],
+          inserted_at: DateTime.add(at, seconds)
+        })
+      end
+
+    [older, low, high, newer] = rows
+    assert GameReports.admin_search(limit: 2) == [newer, high]
+    assert GameReports.admin_search(before: {high.inserted_at, high.id}, limit: 2) == [low, older]
+    assert GameReports.admin_search(from: at, to: DateTime.add(at, 1)) == [high, low]
+    assert GameReports.admin_search(to: at) == [older]
+    assert GameReports.admin_search(user_id: other.id) == [newer]
+    assert GameReports.admin_search(build: "42") == [low, older]
+
+    assert GameReports.admin_search(
+             report_id: low.id,
+             user_id: user.id,
+             game_instance_id: body["game_instance_id"],
+             room_code: body["room_code"],
+             build: "42"
+           ) == [low]
+
+    for filter <- [
+          [room_code: "OTHER"],
+          [game_instance_id: "other"],
+          [report_id: low.id, user_id: other.id]
+        ] do
+      assert GameReports.admin_search(filter) == []
+    end
+
+    for filter <- [
+          [limit: 0],
+          [limit: 101],
+          [user_id: "invalid"],
+          [from: "yesterday"],
+          [unknown: true]
+        ] do
+      assert_raise ArgumentError, fn -> GameReports.admin_search(filter) end
+    end
+  end
+
   test "rejects out-of-range revisions, tokens and oversized strings", %{user: user, body: body} do
     event = hd(body["events"])
 

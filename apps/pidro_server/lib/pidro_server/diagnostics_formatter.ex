@@ -3,10 +3,10 @@ defmodule PidroServer.DiagnosticsFormatter do
   alias PidroServer.Diagnostics
 
   def format(%{level: level, meta: meta} = event, _config) do
-    base = %{
-      level: level,
-      timestamp: Map.get(meta, :time, System.system_time(:microsecond))
-    }
+    base =
+      %{level: level, timestamp: Map.get(meta, :time, System.system_time(:microsecond))}
+      |> add_metadata(meta, :request_id)
+      |> add_metadata(meta, :outcome)
 
     record =
       case Map.get(meta, :diagnostic) do
@@ -20,5 +20,11 @@ defmodule PidroServer.DiagnosticsFormatter do
     [Jason.encode!(Map.merge(base, record)), "\n"]
   rescue
     _ -> "{\"level\":\"error\",\"event\":\"log_format_failed\"}\n"
+  end
+
+  defp add_metadata(record, metadata, key) do
+    value = Map.get(metadata, key)
+    value = if is_atom(value) and not is_nil(value), do: Atom.to_string(value), else: value
+    if safe = Diagnostics.token(value), do: Map.put(record, key, safe), else: record
   end
 end

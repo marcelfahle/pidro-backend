@@ -21,7 +21,7 @@ defmodule PidroServerWeb.Endpoint do
   # WebSocket for game channels
   socket "/socket", PidroServerWeb.UserSocket,
     auth_token: true,
-    websocket: true,
+    websocket: [log: false],
     longpoll: false
 
   # Restore the client address and scheme from kamal-proxy's X-Forwarded-*
@@ -59,6 +59,13 @@ defmodule PidroServerWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # Before report auth/body admission so browser clients can read 401/413/429.
+  plug CORSPlug,
+    origin: &PidroServerWeb.Endpoint.cors_origins/0,
+    headers: ["Authorization", "Content-Type", "Accept"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    expose: ["retry-after"]
+
   plug PidroServerWeb.Plugs.GameReportBodyLimit
 
   plug Plug.Parsers,
@@ -70,14 +77,6 @@ defmodule PidroServerWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
-
-  # CORS configuration for mobile clients
-  # Configure allowed origins in config/runtime.exs
-  plug CORSPlug,
-    origin: &PidroServerWeb.Endpoint.cors_origins/0,
-    headers: ["Authorization", "Content-Type", "Accept"],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    expose: ["retry-after"]
 
   plug PidroServerWeb.Router
 

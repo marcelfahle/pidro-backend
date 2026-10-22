@@ -2,6 +2,37 @@ defmodule PidroServer.DiagnosticsTest do
   use ExUnit.Case, async: false
   alias PidroServer.{Diagnostics, DiagnosticsFormatter}
 
+  test "ordinary HTTP JSON logs preserve bounded request correlation, not arbitrary metadata" do
+    for {request_id, expected} <- [
+          {"req-123", "req-123"},
+          {String.duplicate("r", 100), String.duplicate("r", 64)},
+          {"bad\nvalue", nil}
+        ] do
+      line =
+        DiagnosticsFormatter.format(
+          %{
+            level: :info,
+            msg: {:string, "Sent 201\ncreated"},
+            meta: %{
+              time: 123,
+              request_id: request_id,
+              outcome: :allowed,
+              authorization: "PRIVATE_TOKEN"
+            }
+          },
+          %{}
+        )
+        |> IO.iodata_to_binary()
+
+      assert length(String.split(line, "\n", trim: true)) == 1
+      record = Jason.decode!(line)
+      assert record["request_id"] == expected
+      assert record["outcome"] == "allowed"
+      assert record["message"] == "Sent 201\ncreated"
+      refute line =~ "PRIVATE_TOKEN"
+    end
+  end
+
   test "formatter retains correlation fields but drops payloads, metadata and multiline secrets" do
     data = %{
       event: "action_outcome",
@@ -50,7 +81,7 @@ defmodule PidroServer.DiagnosticsTest do
     assert Diagnostics.action_id(String.duplicate("a", 257)) == nil
     assert Diagnostics.action_id("eyJheader.eyJpayload.signature") == nil
 
-    for invalid <- [nil, %{}, "line\nbreak", "🐈", <<255>>] do
+    for invalid <- [nil, %{}, "line\nbreak", "🐈", <<255>>, String.duplicate("a", 64) <> "\n"] do
       assert Diagnostics.token(invalid) == nil
     end
 
