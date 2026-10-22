@@ -347,8 +347,10 @@ defmodule PidroServer.Games.Bots.SubstituteTakeoverTest do
   end
 
   # Like the app, the human bids only once the deal has been shown.
-  defp human_turn?(%{current_turn: :north, phase: :bidding, hand_number: hand}, hands),
-    do: System.system_time(:millisecond) - hands[hand].dealt_at >= @hold_ms
+  # A synchronous state read can overtake consumption of the deal broadcast.
+  defp human_turn?(%{current_turn: :north, phase: :bidding, hand_number: hand}, hands)
+       when is_map_key(hands, hand),
+       do: System.system_time(:millisecond) - hands[hand].dealt_at >= @hold_ms
 
   defp human_turn?(%{current_turn: :north, phase: phase}, _hands),
     do: phase in [:declaring, :second_deal, :playing]
