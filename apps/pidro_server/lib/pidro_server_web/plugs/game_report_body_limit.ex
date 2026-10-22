@@ -4,11 +4,17 @@ defmodule PidroServerWeb.Plugs.GameReportBodyLimit do
   alias Plug.Conn.Utils
   def init(opts), do: opts
 
-  def call(%{method: "POST", path_info: ["api", "v1", "game-reports"]} = conn, _) do
-    # Header-only authentication and attempt throttling precede even decoding:
-    # malformed, non-object and oversized submissions consume the same budget.
-    conn = PidroServerWeb.Plugs.Authenticate.call(conn, [])
-    if conn.halted, do: conn, else: throttle(conn)
+  def call(%{method: "POST"} = conn, _) do
+    # Match Phoenix.Router's decoded segments, including /%67ame-reports.
+    case Enum.map(conn.path_info, &URI.decode/1) do
+      ["api", "v1", "game-reports"] ->
+        # Header-only auth and throttling precede body reads/decoding.
+        conn = PidroServerWeb.Plugs.Authenticate.call(conn, [])
+        if conn.halted, do: conn, else: throttle(conn)
+
+      _ ->
+        conn
+    end
   end
 
   def call(conn, _), do: conn

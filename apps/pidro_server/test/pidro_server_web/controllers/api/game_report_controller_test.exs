@@ -140,6 +140,23 @@ defmodule PidroServerWeb.API.GameReportControllerTest do
     assert GameReports.admin_list() == []
   end
 
+  test "encoded route spellings cannot bypass pre-parser bounds or throttling" do
+    for path <- ["/api/v1/%67ame-reports", "/%61pi/v1/game-reports"] do
+      token = Token.generate(user_fixture())
+
+      send_raw = fn raw ->
+        build_conn()
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> put_req_header("content-type", "application/json")
+        |> post(path, raw)
+      end
+
+      assert send_raw.(String.duplicate("x", 32_769)) |> json_response(413)
+      for _ <- 1..9, do: assert(send_raw.("{}") |> json_response(422))
+      assert send_raw.("{}") |> json_response(429)
+    end
+  end
+
   test "early report responses preserve allowed-origin CORS and never allow an untrusted origin" do
     original = Application.get_env(:pidro_server, :cors_origins)
     Application.put_env(:pidro_server, :cors_origins, ["https://play.example"])
@@ -345,6 +362,15 @@ defmodule PidroServerWeb.API.GameReportControllerTest do
     user: user,
     body: body
   } do
+    # This case proves the no-archive fallback. Integrated archives correctly
+    # preserve participation after stop_game and have separate closure coverage.
+    archive_lookup = Application.get_env(:pidro_server, :game_report_archive_lookup)
+    Application.delete_env(:pidro_server, :game_report_archive_lookup)
+
+    on_exit(fn ->
+      Application.put_env(:pidro_server, :game_report_archive_lookup, archive_lookup)
+    end)
+
     {:ok, room} = RoomManager.create_room(user.id, %{})
 
     for _ <- 1..3 do
