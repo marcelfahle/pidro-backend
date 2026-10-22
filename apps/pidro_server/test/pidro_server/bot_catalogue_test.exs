@@ -41,6 +41,34 @@ defmodule PidroServer.BotCatalogueTest do
     assert public.bot_profile.name == "Fourth"
     assert public.bot_profile.avatar_url =~ "/images/bots/antti.svg"
     refute Map.has_key?(public, :bot_strategy)
+
+    {:ok, lifecycle} = RoomManager.get_seat_lifecycle(room.code)
+
+    lifecycle_seat =
+      Enum.find_value(lifecycle.seats, fn {_pos, seat} ->
+        if seat.bot_persona == fourth.id, do: seat
+      end)
+
+    assert lifecycle_seat.bot_profile == public.bot_profile
+
+    assert Enum.sort(Map.keys(lifecycle_seat.bot_profile)) ==
+             [:avatar_url, :description, :id, :name]
+
+    assert lifecycle_seat.username == "Fourth"
+    assert lifecycle_seat.display_name == "Fourth"
+    assert lifecycle_seat.avatar_url == public.bot_profile.avatar_url
+    refute Map.has_key?(lifecycle_seat, :bot_strategy)
+    refute Map.has_key?(lifecycle_seat, :strategy)
+
+    unknown = %{lifecycle_seat | bot_persona: "future-persona", username: "Stale name"}
+
+    %{seats: %{east: unknown}} =
+      PidroServer.Games.SeatLifecycle.with_names(%{seats: %{east: unknown}})
+
+    assert unknown.bot_profile == nil
+    assert unknown.username == "Bot"
+    assert unknown.display_name == "Bot"
+    assert unknown.avatar_url == nil
   end
 
   test "all disabled falls back deterministically to legacy crew without empty games" do

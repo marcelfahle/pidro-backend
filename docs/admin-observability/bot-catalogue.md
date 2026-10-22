@@ -5,6 +5,23 @@ No main push, PR, merge, deployment, OTA, native dependency, or CI changes.
 GameDetailLive/card_components, diagnostics, archives and engine rules untouched.
 The [contract](bot-catalogue-contract.md) is the client/Watch integration source.
 
+## Incremental Watch lifecycle correction
+
+Coordinator integration found that Watch uses the separate lifecycle serializer,
+not `Seat.serialize/1`. Its permanent-bot portraits were nil. The existing
+four-enabled-bot context test now calls actual `RoomManager.get_seat_lifecycle/1`
+and asserts the fourth profile's exact public allowlist, authoritative names and
+portrait, with no strategy exposure. It failed before the fix with missing
+`bot_profile` and nil avatar. `SeatLifecycle.with_names/1` now enriches permanent
+bots from the cache, preserves other seat semantics, and resets unknown personas
+to null profile/avatar and `Bot` names (also asserted).
+
+Targeted command: `mix test apps/pidro_server/test/pidro_server/bot_catalogue_test.exs
+apps/pidro_server/test/pidro_server/games/lifecycle_test.exs` — **10 passed**.
+A fresh full precommit is running for this incremental fix; the original full
+results below describe the preceding implementation. No Watch rendering files,
+routes, migration, or game rules changed in this delta.
+
 ## Verified behavior
 
 - Real authenticated browser: sign in; seeded Antti/Jocke/Marcel faces loaded;

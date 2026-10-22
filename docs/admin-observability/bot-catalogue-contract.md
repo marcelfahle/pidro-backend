@@ -65,6 +65,14 @@ existing `username`, `display_name`, `avatar_url` with authoritative profile
 values. Existing `player.id` and room `positions` identifiers are unchanged.
 No strategy field is added to public seats or lobby summaries.
 
+Watch's separate lifecycle path, `RoomManager.get_seat_lifecycle/1` through
+`Games.SeatLifecycle.with_names/1`, also supplies `bot_profile` plus authoritative
+`username`, `display_name`, and `avatar_url` for `status: :permanent_bot` seats.
+It reads the same cached catalogue, with no per-seat database queries. Unknown
+personas have null profile/avatar and `Bot` for both names. Human, vacant and
+human-reserved substitute lifecycle seats have null `bot_profile`; their existing
+account identity, decision and reservation semantics are unchanged.
+
 All additions are optional from a client's perspective: older servers omit
 them, older builds ignore them. Existing native builds keep their built-in
 legacy drawings. At the frontend source commit below, UUID persona values

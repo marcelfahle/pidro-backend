@@ -1,6 +1,7 @@
 defmodule PidroServer.Games.SeatLifecycle do
-  @moduledoc "Resolves snapshot account names in the caller, outside the shared room manager."
+  @moduledoc "Resolves account and cached bot profiles outside the shared room manager."
   alias PidroServer.Accounts.Auth
+  alias PidroServer.BotCatalogue
 
   def with_names(snapshot) do
     user_ids =
@@ -22,22 +23,36 @@ defmodule PidroServer.Games.SeatLifecycle do
             }
           end
 
+        seat = Map.put(seat, :bot_profile, nil)
+
         resolved_seat =
-          if seat.player_id do
-            seat
-            |> Map.put(:username, username(users, seat.player_id))
-            |> Map.put(:display_name, display_name(users, seat.player_id))
-            |> Map.put(:avatar_url, avatar_url(users, seat.player_id))
-            |> Map.put(:level, user_field(users, seat.player_id, :level))
-            |> Map.put(:pin, user_field(users, seat.player_id, :pin))
-          else
-            # Preserve the lifecycle's own bot name rather than attempting an
-            # account lookup for vacant and permanent-bot seats.
-            seat
-            |> Map.put(:display_name, seat.username)
-            |> Map.put(:avatar_url, nil)
-            |> Map.put(:level, nil)
-            |> Map.put(:pin, nil)
+          cond do
+            seat.status == :permanent_bot ->
+              profile = BotCatalogue.profile(seat.bot_persona)
+              name = if profile, do: profile.name, else: "Bot"
+
+              seat
+              |> Map.put(:bot_profile, if(profile, do: BotCatalogue.public(profile)))
+              |> Map.put(:username, name)
+              |> Map.put(:display_name, name)
+              |> Map.put(:avatar_url, if(profile, do: BotCatalogue.avatar_url(profile)))
+              |> Map.put(:level, nil)
+              |> Map.put(:pin, nil)
+
+            seat.player_id ->
+              seat
+              |> Map.put(:username, username(users, seat.player_id))
+              |> Map.put(:display_name, display_name(users, seat.player_id))
+              |> Map.put(:avatar_url, avatar_url(users, seat.player_id))
+              |> Map.put(:level, user_field(users, seat.player_id, :level))
+              |> Map.put(:pin, user_field(users, seat.player_id, :pin))
+
+            true ->
+              seat
+              |> Map.put(:display_name, seat.username)
+              |> Map.put(:avatar_url, nil)
+              |> Map.put(:level, nil)
+              |> Map.put(:pin, nil)
           end
 
         {position, %{resolved_seat | decision: decision}}
