@@ -41,19 +41,26 @@ host access as privileged infrastructure.
 
 ## Install or update
 
-Create a private mode-0600 file outside version control containing only:
+Create a private mode-0600 file outside version control containing:
 
-```
-LOGFLARE_API_KEY=<existing ingest key>
-LOGFLARE_SOURCE_ID=98f914b0-6af5-4f2f-b245-f9c6be1c1b1a
+```json
+{"api_key":"<existing ingest key>","source_id":"98f914b0-6af5-4f2f-b245-f9c6be1c1b1a"}
 ```
 
 Run `ops/install-logflare /path/to/credentials`. The installer validates the
 configuration and runs its privacy tests before installing/restarting only the
-collector. Credentials live at `/etc/pidro-logflare/credentials`, mode 0600.
+collector. Credentials live at `/etc/pidro-logflare/credentials.json`, mode 0600.
+Vector reads its file secret backend; environment interpolation remains disabled.
 The installer does not change the backend deployment pipeline or billing.
 
 Check `systemctl status pidro-logflare` and `docker logs pidro-logflare` on the
 host. Verify a known diagnostic action ID in the source UI; service health alone
 does not establish successful ingestion. To stop shipping logs without changing
 game behavior, use `systemctl disable --now pidro-logflare`.
+
+`ops/test-logflare` exercises the real pinned collector against a local HTTP
+receiver on a Linux Docker host. It checks the actual source query parameter and
+ingest header, batching, correlation fields and omission of private payloads.
+The configuration also contains four Vector privacy/drop tests, run by the
+installer. This catches unresolved secret placeholders that syntax validation
+alone cannot detect.

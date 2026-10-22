@@ -8,7 +8,7 @@ Wants=network-online.target
 Restart=always
 RestartSec=10
 ExecStartPre=-/usr/bin/docker rm -f pidro-logflare
-ExecStart=/usr/bin/docker run --rm --name pidro-logflare --read-only --cap-drop=ALL --security-opt=no-new-privileges --memory=192m --cpus=0.25 --pids-limit=128 --log-driver=local --log-opt=max-size=5m --log-opt=max-file=2 --env-file=/etc/pidro-logflare/credentials --mount=type=bind,src=/etc/pidro-logflare/vector.toml,dst=/etc/vector/vector.toml,readonly --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly --mount=type=bind,src=/var/lib/pidro-logflare,dst=/var/lib/vector timberio/vector:0.60.0-debian@sha256:3ccb4bbd36e38734394e158db1411e91a69d076ed25013f8de385046a382d36a --config /etc/vector/vector.toml
+ExecStart=/usr/bin/docker run --rm --name pidro-logflare --read-only --cap-drop=ALL --security-opt=no-new-privileges --memory=192m --cpus=0.25 --pids-limit=128 --log-driver=local --log-opt=max-size=5m --log-opt=max-file=2 --mount=type=bind,src=/etc/pidro-logflare/credentials.json,dst=/etc/vector/credentials.json,readonly --mount=type=bind,src=/etc/pidro-logflare/vector.toml,dst=/etc/vector/vector.toml,readonly --mount=type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly --mount=type=bind,src=/var/lib/pidro-logflare,dst=/var/lib/vector timberio/vector:0.60.0-debian@sha256:3ccb4bbd36e38734394e158db1411e91a69d076ed25013f8de385046a382d36a --config /etc/vector/vector.toml
 ExecStop=/usr/bin/docker stop --time=20 pidro-logflare
 TimeoutStopSec=30
 

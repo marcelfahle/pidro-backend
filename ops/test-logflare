@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Exercise the actual collector's HTTP batch and secret loading on Linux/Docker."""
+import http.server
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
+
+IMAGE = "timberio/vector:0.60.0-debian@sha256:3ccb4bbd36e38734394e158db1411e91a69d076ed25013f8de385046a382d36a"
+SOURCE = "00000000-0000-4000-8000-000000000001"
+received = []
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        received.append((self.path, self.headers.get("X-API-KEY"), body))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"message":"Logged!"}')
+
+    def log_message(self, *_args):
+        pass
+
+
+config_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "server/logflare.toml"
+config = config_path.read_text()
+config = config.replace(
+    'type = "docker_logs"\ninclude_containers = ["pidro-backend-web-"]\ninclude_labels = ["service=pidro-backend", "role=web"]',
+    'type = "stdin"',
+)
+config = config.replace(
+    "record = object!", '.container_name = "pidro-backend-web-http-proof"\nrecord = object!', 1
+)
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+config = config.replace("https://api.logflare.app/api/logs?", f"http://127.0.0.1:{server.server_port}/?")
+name = f"pidro-logflare-http-proof-{os.getpid()}"
+
+try:
+    with tempfile.TemporaryDirectory(prefix="pidro-logflare-http-") as directory:
+        stage = Path(directory)
+        (stage / "vector.toml").write_text(config)
+        (stage / "credentials.json").write_text(json.dumps({"api_key": "test-ingest-key", "source_id": SOURCE}))
+        events = "\n".join(
+            json.dumps({"event": "action_outcome", "level": "info", "action_id": f"proof-{i}",
+                        "hand": ["private-card"], "token": "private-token"})
+            for i in range(2)
+        ) + "\n"
+        result = subprocess.run(
+            ["docker", "run", "--rm", "-i", "--name", name, "--network=host", "--tmpfs", "/var/lib/vector",
+             "--mount", f"type=bind,src={stage / 'vector.toml'},dst=/etc/vector/vector.toml,readonly",
+             "--mount", f"type=bind,src={stage / 'credentials.json'},dst=/etc/vector/credentials.json,readonly",
+             IMAGE, "--config", "/etc/vector/vector.toml"],
+            input=events, text=True, capture_output=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert len(received) == 1, "Expected one HTTP batch"
+        path, key, payload = received[0]
+        assert path == f"/?source={SOURCE}", "Source secret did not resolve"
+        assert key == "test-ingest-key", "Ingest key did not resolve"
+        batch = payload["batch"]
+        assert len(batch) == 2
+        assert {event["metadata"]["action_id"] for event in batch} == {"proof-0", "proof-1"}
+        assert all(event["metadata"]["server_build"] == "http-proof" for event in batch)
+        assert "private-card" not in json.dumps(payload) and "private-token" not in json.dumps(payload)
+        print("HTTP proof passed: source/key resolved, two correlated events batched, private data omitted.")
+finally:
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    server.shutdown()

@@ -1,6 +1,10 @@
 # Only the Pidro 2 web containers are collected, including replacement releases.
 data_dir = "/var/lib/vector"
 
+[secret.logflare_credentials]
+type = "file"
+path = "/etc/vector/credentials.json"
+
 [sources.pidro]
 type = "docker_logs"
 include_containers = ["pidro-backend-web-"]
@@ -33,13 +37,13 @@ metadata.server_build = replace(string!(.container_name), "pidro-backend-web-", 
 [sinks.logflare]
 type = "http"
 inputs = ["safe_events"]
-uri = "https://api.logflare.app/api/logs?source=${LOGFLARE_SOURCE_ID}"
+uri = "https://api.logflare.app/api/logs?source=SECRET[logflare_credentials.source_id]"
 method = "post"
 payload_prefix = '{"batch":'
 payload_suffix = '}'
 healthcheck.enabled = false
 encoding.codec = "json"
-request.headers.X-API-KEY = "${LOGFLARE_API_KEY}"
+request.headers.X-API-KEY = "SECRET[logflare_credentials.api_key]"
 request.headers.Content-Type = "application/json"
 request.concurrency = 1
 request.timeout_secs = 10

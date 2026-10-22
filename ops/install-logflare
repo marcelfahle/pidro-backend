@@ -11,21 +11,36 @@ trap 'ssh "$server" "rm -rf -- '\''$remote_tmp'\''"' EXIT
 
 scp -q "$repo_root/ops/server/logflare.toml" "$server:$remote_tmp/vector.toml"
 scp -q "$repo_root/ops/server/pidro-logflare.service" "$server:$remote_tmp/pidro-logflare.service"
-scp -q "$credentials" "$server:$remote_tmp/credentials"
+scp -q "$credentials" "$server:$remote_tmp/credentials.json"
 ssh "$server" bash -s -- "$remote_tmp" "$image" <<'REMOTE'
 set -Eeuo pipefail
 stage="$1"
 image="$2"
+python3 - "$stage/credentials.json" <<'PYTHON'
+import json,re,sys
+with open(sys.argv[1]) as source:
+    credentials = json.load(source)
+if not isinstance(credentials, dict) or not all(
+    isinstance(credentials.get(key), str) and re.fullmatch(pattern, credentials[key])
+    for key, pattern in [
+        ("api_key", r"[A-Za-z0-9_-]{8,256}"),
+        ("source_id", r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}")
+    ]
+):
+    raise SystemExit("Invalid Logflare credentials: expected an ingest key and source UUID")
+PYTHON
 docker pull "$image"
 # Validate and execute privacy tests before touching the installed service.
-docker run --rm --env-file "$stage/credentials" \
-  -v "$stage/vector.toml:/etc/vector/vector.toml:ro" "$image" \
+docker run --rm \
+  --mount "type=bind,src=$stage/credentials.json,dst=/etc/vector/credentials.json,readonly" \
+  --mount "type=bind,src=$stage/vector.toml,dst=/etc/vector/vector.toml,readonly" "$image" \
   validate --no-environment --config-toml /etc/vector/vector.toml
-docker run --rm --env-file "$stage/credentials" \
-  -v "$stage/vector.toml:/etc/vector/vector.toml:ro" "$image" \
+docker run --rm \
+  --mount "type=bind,src=$stage/credentials.json,dst=/etc/vector/credentials.json,readonly" \
+  --mount "type=bind,src=$stage/vector.toml,dst=/etc/vector/vector.toml,readonly" "$image" \
   test /etc/vector/vector.toml
 install -d -m 0700 /etc/pidro-logflare /var/lib/pidro-logflare
-install -m 0600 "$stage/credentials" /etc/pidro-logflare/credentials
+install -m 0600 "$stage/credentials.json" /etc/pidro-logflare/credentials.json
 install -m 0644 "$stage/vector.toml" /etc/pidro-logflare/vector.toml
 install -m 0644 "$stage/pidro-logflare.service" /etc/systemd/system/pidro-logflare.service
 systemctl daemon-reload
