@@ -72,7 +72,9 @@ defmodule PidroServer.Games.GameSupervisor do
   @spec start_game(String.t(), :finnish | :louisiana) :: DynamicSupervisor.on_start_child()
   @spec start_game(String.t(), :finnish | :louisiana, :quick | :own) ::
           DynamicSupervisor.on_start_child()
-  def start_game(room_code, rule_set \\ :finnish, pace \\ :quick) do
+  @spec start_game(String.t(), :finnish | :louisiana, :quick | :own, map()) ::
+          DynamicSupervisor.on_start_child()
+  def start_game(room_code, rule_set \\ :finnish, pace \\ :quick, participants \\ %{}) do
     Logger.info("Starting game for room #{room_code}")
 
     alias PidroServer.Games.Lifecycle
@@ -83,6 +85,11 @@ defmodule PidroServer.Games.GameSupervisor do
       variant: rule_set,
       config: %{pace: pace},
       pubsub: PidroServer.PubSub,
+      archive_user_ids:
+        for({_pos, %{occupant_type: :human, user_id: id}} <- participants, do: id),
+      checkpoint: fn snapshot, cause ->
+        PidroServer.GameArchive.capture(room_code, participants, snapshot, cause)
+      end,
       dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms),
       deal_transition_delay_ms: Lifecycle.config(:deal_transition_delay_ms)
     ]
@@ -140,7 +147,7 @@ defmodule PidroServer.Games.GameSupervisor do
       {:ok, pid} ->
         Logger.info("Stopping game for room #{room_code}")
 
-        case DynamicSupervisor.terminate_child(__MODULE__, pid) do
+        case close_game(pid) do
           :ok ->
             Logger.info("Game stopped successfully for room #{room_code}")
             :ok
@@ -154,6 +161,15 @@ defmodule PidroServer.Games.GameSupervisor do
         Logger.warning("No game found for room #{room_code}")
         {:error, :game_not_found}
     end
+  end
+
+  defp close_game(pid) do
+    GenServer.call(pid, :archive_close)
+  catch
+    :exit, _ ->
+      # A failed closure write must not hold a room open. The last checkpoint
+      # remains active until reconciliation labels the missing process interrupted.
+      DynamicSupervisor.terminate_child(__MODULE__, pid)
   end
 
   @doc """

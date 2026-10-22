@@ -89,6 +89,9 @@ defmodule Pidro.Server do
   - `:name` - Optional registration name (supports {:via, module, term} tuples)
   - `:telemetry` - Whether to emit telemetry events (default: true)
   - `:initial_state` - Optional initial game state (default: new game)
+  - `:checkpoint` - Optional bounded `(snapshot, cause) -> :ok | {:error, term}`
+    persistence boundary. Failures never reject gameplay. The engine retains
+    the initial snapshot and failure counts, not an unbounded retry queue.
   - `:seed` - Optional seed for the game's chance stream. Omit it and the
     server generates fresh entropy, which is what a live game wants. Supply it
     and the game is reproducible, including across `reset/1`.
@@ -362,6 +365,16 @@ defmodule Pidro.Server do
         game_id: game_id,
         seed: seed,
         telemetry_enabled?: telemetry_enabled?,
+        checkpoint: Keyword.get(opts, :checkpoint),
+        checkpoint_event_count: 0,
+        checkpoint_initial: nil,
+        checkpoint_initial_deal: nil,
+        checkpoint_last_cause: nil,
+        checkpoint_failures: 0,
+        checkpoint_last_ack: nil,
+        checkpoint_status: :healthy,
+        checkpoint_users: Keyword.get(opts, :archive_user_ids, []),
+        checkpoint_participation_truncated: false,
         dealer_selection_delay_ms: dealer_selection_delay_ms,
         deal_transition_delay_ms: deal_transition_delay_ms,
         pubsub: pubsub,
@@ -376,6 +389,7 @@ defmodule Pidro.Server do
         dealer_rob_token: nil
       }
       |> maybe_schedule_dealer_selection_advance()
+      |> checkpoint(%{kind: :start})
 
     {:ok, state}
   end
@@ -407,7 +421,10 @@ defmodule Pidro.Server do
 
   def handle_call({:set_pace, pace}, _from, state) do
     game = %{state.game_state | config: Map.put(state.game_state.config, :pace, pace)}
-    new_state = %{state | game_state: game, state_revision: state.state_revision + 1}
+
+    new_state =
+      %{state | game_state: game, state_revision: state.state_revision + 1}
+      |> checkpoint(%{kind: :pace, pace: pace})
 
     if pace == :quick and game.phase == :hand_complete do
       continue_held_hand(new_state)
@@ -421,6 +438,39 @@ defmodule Pidro.Server do
     do: continue_held_hand(state)
 
   def handle_call(:continue_hand, _from, state), do: {:reply, :ok, state}
+
+  def handle_call(:archive_close, _from, state) do
+    checkpoint(state, %{kind: :closed, last_cause: state.checkpoint_last_cause})
+    {:stop, :normal, :ok, state}
+  end
+
+  def handle_call(:archive_health, _from, state) do
+    health = %{
+      status: state.checkpoint_status,
+      failures: state.checkpoint_failures,
+      last_acknowledged_revision: state.checkpoint_last_ack,
+      state_revision: state.state_revision
+    }
+
+    {:reply, health, state}
+  end
+
+  def handle_call({:archive_participants, users}, _from, state) do
+    union = Enum.uniq(state.checkpoint_users ++ users)
+
+    if union == state.checkpoint_users do
+      {:reply, :ok, state}
+    else
+      state = %{
+        state
+        | checkpoint_users: Enum.take(union, 256),
+          checkpoint_participation_truncated:
+            state.checkpoint_participation_truncated or length(union) > 256
+      }
+
+      {:reply, :ok, persist_checkpoint(state, state.checkpoint_last_cause)}
+    end
+  end
 
   @impl true
   def handle_call(:game_over?, _from, state) do
@@ -449,13 +499,13 @@ defmodule Pidro.Server do
         config: state.game_state.config
       )
 
-    new_state = replace_game_state(state, game)
+    new_state = replace_game_state(state, game) |> checkpoint(%{kind: :reset})
     {:reply, :ok, new_state}
   end
 
   @impl true
   def handle_call({:set_state, new_game_state}, _from, state) do
-    new_state = replace_game_state(state, new_game_state)
+    new_state = replace_game_state(state, new_game_state) |> checkpoint(%{kind: :replace_state})
     {:reply, :ok, new_state}
   end
 
@@ -494,6 +544,7 @@ defmodule Pidro.Server do
           |> Map.update!(:state_revision, &(&1 + 1))
           |> maybe_schedule_dealer_rob_presentation(game_state, new_game_state, action)
           |> maybe_schedule_dealer_selection_advance()
+          |> checkpoint(%{kind: :action, position: position, action: action})
 
         reply =
           case reply_kind do
@@ -533,6 +584,7 @@ defmodule Pidro.Server do
           |> Map.put(:game_state, new_game_state)
           |> Map.update!(:state_revision, &(&1 + 1))
           |> clear_dealer_selection_presentation()
+          |> checkpoint(%{kind: :initial_deal})
 
         # The first hand is dealt: hold the bots while clients deal it out.
         broadcast_state_change(new_state, state.deal_transition_delay_ms)
@@ -552,6 +604,7 @@ defmodule Pidro.Server do
       state
       |> clear_dealer_rob_presentation()
       |> Map.update!(:state_revision, &(&1 + 1))
+      |> checkpoint(%{kind: :presentation_cleared})
 
     broadcast_state_change(new_state)
     {:noreply, new_state}
@@ -563,9 +616,63 @@ defmodule Pidro.Server do
 
   defp continue_held_hand(state) do
     {:ok, game} = Engine.continue_hand(state.game_state)
-    new_state = %{state | game_state: game, state_revision: state.state_revision + 1}
+
+    new_state =
+      %{state | game_state: game, state_revision: state.state_revision + 1}
+      |> checkpoint(%{kind: :continue_hand})
+
     broadcast_state_change(new_state, state.deal_transition_delay_ms)
     {:reply, :ok, new_state}
+  end
+
+  defp checkpoint(%{checkpoint: nil} = state, _cause), do: state
+
+  defp checkpoint(state, cause) do
+    events = state.game_state.events
+    replaced? = cause.kind in [:reset, :replace_state]
+    offset = if replaced?, do: 0, else: state.checkpoint_event_count
+
+    cause =
+      Map.merge(cause, %{engine_events: Enum.drop(events, offset), events_replaced: replaced?})
+
+    persist_checkpoint(state, cause)
+  end
+
+  defp persist_checkpoint(%{checkpoint: nil} = state, _cause), do: state
+
+  defp persist_checkpoint(state, cause) do
+    current = snapshot(state)
+    initial = state.checkpoint_initial || current
+    deal = state.checkpoint_initial_deal || if(cause.kind == :initial_deal, do: current)
+
+    metadata =
+      Map.merge(cause, %{
+        initial_snapshot: initial,
+        initial_deal: deal,
+        failures: state.checkpoint_failures,
+        participant_user_ids: state.checkpoint_users,
+        participation_truncated: state.checkpoint_participation_truncated
+      })
+
+    state = %{
+      state
+      | checkpoint_initial: initial,
+        checkpoint_initial_deal: deal,
+        checkpoint_event_count: length(state.game_state.events),
+        checkpoint_last_cause: cause
+    }
+
+    case state.checkpoint.(current, metadata) do
+      :ok ->
+        %{state | checkpoint_last_ack: state.state_revision, checkpoint_status: :healthy}
+
+      {:error, _} ->
+        %{
+          state
+          | checkpoint_failures: state.checkpoint_failures + 1,
+            checkpoint_status: :degraded
+        }
+    end
   end
 
   defp maybe_schedule_dealer_selection_advance(
