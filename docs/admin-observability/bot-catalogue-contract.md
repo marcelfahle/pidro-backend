@@ -152,7 +152,8 @@ No existing user/room/game table is changed; down drops only bot_profiles.
 Migrate before serving catalogue administration. Application startup tolerates
 an absent catalogue table and serves legacy fallback; after migration restart
 the application or open `/admin/bots` to refresh its node-local snapshot.
-Admin writes refresh that snapshot and distribute profile metadata via PubSub;
+Admin writes refresh that snapshot in its serialized owner and distribute
+PubSub invalidations; other owners read fresh catalogue data, not stale snapshots.
 game action/seat serialization paths do not query the database per seat.
 
 The coordinator should integrate backend assets/context before Watch/client

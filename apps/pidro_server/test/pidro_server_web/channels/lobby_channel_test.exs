@@ -933,9 +933,11 @@ defmodule PidroServerWeb.LobbyChannelTest do
                display_name: "Marcel",
                username: "Marcel",
                bot_persona: "marcel",
-               avatar_url: nil
+               avatar_url: avatar_url,
+               bot_profile: %{id: "marcel", name: "Marcel"}
              } = player.(:east)
 
+      assert avatar_url == PidroServerWeb.Endpoint.url() <> "/images/bots/marcel.svg"
       assert %{is_bot: false, bot_persona: nil} = player.(:north)
       assert player.(:north).username == host.username
     end

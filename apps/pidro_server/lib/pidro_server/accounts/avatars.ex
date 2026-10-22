@@ -40,12 +40,7 @@ defmodule PidroServer.Accounts.Avatars do
   end
 
   def put(user_id, %Plug.Upload{path: path}) do
-    with {:ok, stat} <- File.stat(path),
-         true <- stat.size <= @max_upload || {:error, :too_large},
-         {:ok, kind} <- supported_image(path),
-         {:ok, jpeg} <-
-           :global.trans({__MODULE__, self()}, fn -> process(path, kind) end, [node()], 0),
-         true <- byte_size(jpeg) <= @max_result || {:error, :result_too_large} do
+    with {:ok, jpeg} <- normalize_upload(%Plug.Upload{path: path}) do
       version = :crypto.hash(:sha256, jpeg) |> Base.encode16(case: :lower)
       now = DateTime.utc_now()
 
@@ -63,6 +58,20 @@ defmodule PidroServer.Accounts.Avatars do
         error ->
           error
       end
+    end
+  end
+
+  def put(_user_id, _), do: {:error, :missing_file}
+
+  @doc "Validates and normalizes a bounded PNG/JPEG upload without creating a user."
+  def normalize_upload(%Plug.Upload{path: path}) do
+    with {:ok, stat} <- File.stat(path),
+         true <- stat.size <= @max_upload || {:error, :too_large},
+         {:ok, kind} <- supported_image(path),
+         {:ok, jpeg} <-
+           :global.trans({__MODULE__, self()}, fn -> process(path, kind) end, [node()], 0),
+         true <- byte_size(jpeg) <= @max_result || {:error, :result_too_large} do
+      {:ok, jpeg}
     else
       :aborted -> {:error, :busy}
       {:error, reason} -> {:error, reason}
@@ -70,8 +79,6 @@ defmodule PidroServer.Accounts.Avatars do
       _ -> {:error, :invalid_image}
     end
   end
-
-  def put(_user_id, _), do: {:error, :missing_file}
 
   defp process(path, kind) do
     with {:ok, {width, height}} <- dimensions(path, kind),

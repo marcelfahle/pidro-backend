@@ -56,23 +56,28 @@ defmodule PidroServer.Games.Bots.BotPlayer do
     delay_ms_override = Map.get(opts, :delay_ms)
     paused? = Map.get(opts, :paused?, false)
 
-    # Resolve strategy atom to module if needed
-    strategy_module = Strategy.resolve(strategy)
-
     bot_user_id = "bot_#{room_code}_#{position}"
 
-    case PidroServer.Games.RoomManager.join_bot(room_code, bot_user_id, self(), position) do
-      {:ok, _room, ^position} ->
-        Logger.info("Bot #{bot_user_id} joined room #{room_code} at #{position}")
+    strategy_module =
+      case PidroServer.Games.RoomManager.join_bot(room_code, bot_user_id, self(), position) do
+        {:ok, room, ^position} ->
+          Logger.info("Bot #{bot_user_id} joined room #{room_code} at #{position}")
+          room.seats[position].bot_strategy || Strategy.resolve(strategy)
 
-      {:ok, _room, other_position} ->
-        Logger.warning(
-          "Bot #{bot_user_id} requested #{position} but got #{other_position} in room #{room_code}"
-        )
+        {:ok, _room, other_position} ->
+          Logger.warning(
+            "Bot #{bot_user_id} requested #{position} but got #{other_position} in room #{room_code}"
+          )
 
-      {:error, reason} ->
-        Logger.warning("Bot #{bot_user_id} could not join room #{room_code}: #{inspect(reason)}")
-    end
+          Strategy.resolve(strategy)
+
+        {:error, reason} ->
+          Logger.warning(
+            "Bot #{bot_user_id} could not join room #{room_code}: #{inspect(reason)}"
+          )
+
+          Strategy.resolve(strategy)
+      end
 
     :ok = GameAdapter.subscribe(room_code)
 

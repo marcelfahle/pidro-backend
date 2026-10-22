@@ -207,7 +207,7 @@ defmodule PidroServerWeb.API.RoomJSON do
     |> Map.put(:is_bot, bot_seat?(seat))
     |> Map.put(:username, seat_username(seat, user))
     |> Map.put(:display_name, seat_display_name(seat, user))
-    |> Map.put(:avatar_url, if(user, do: user.avatar_url, else: nil))
+    |> Map.put(:avatar_url, if(user, do: user.avatar_url, else: bot_avatar(seat)))
     |> Map.put(:level, if(user, do: user.level, else: nil))
     |> Map.put(:pin, if(user, do: user.pin, else: nil))
     |> with_held_user(users)
@@ -249,6 +249,9 @@ defmodule PidroServerWeb.API.RoomJSON do
     do: Seat.bot_display_name(persona)
 
   defp bot_name(seat), do: if(bot_seat?(seat), do: "Bot", else: nil)
+
+  defp bot_avatar(%{bot_profile: %{avatar_url: url}}), do: url
+  defp bot_avatar(_seat), do: nil
 
   defp bot_seat?(%{occupant_type: :bot}), do: true
   defp bot_seat?(%{user_id: "bot_" <> _}), do: true
