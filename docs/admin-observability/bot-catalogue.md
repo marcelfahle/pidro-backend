@@ -18,6 +18,10 @@ to null profile/avatar and `Bot` names (also asserted).
 
 Targeted command: `mix test apps/pidro_server/test/pidro_server/bot_catalogue_test.exs
 apps/pidro_server/test/pidro_server/games/lifecycle_test.exs` — **10 passed**.
+Catalogue plus actual game-channel tests — **77 passed**. The first full rerun
+found two old channel expectations (nil bot avatar and no vacant `bot_profile`);
+updated these to assert the additive contract, including null profiles for
+humans and human-reserved substitutes. Production code needed no further change.
 A fresh full precommit is running for this incremental fix; the original full
 results below describe the preceding implementation. No Watch rendering files,
 routes, migration, or game rules changed in this delta.
