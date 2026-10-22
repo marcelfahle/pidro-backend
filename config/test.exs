@@ -61,6 +61,11 @@ config :pidro_server, PidroServer.Accounts.GuestReaper, enabled: false
 # Archive maintenance is driven explicitly by database integration tests.
 config :pidro_server, PidroServer.GameArchive.Maintenance, enabled: false
 
+# Ordinary transactional tests share one sandbox connection: cancelling a writer
+# would roll back that unrelated test's transaction. ArchiveCase opts in using
+# independent connections, including for real SQL cancellation/outage coverage.
+config :pidro_server, :game_archive_enabled, false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 
