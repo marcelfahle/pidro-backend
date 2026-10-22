@@ -3,8 +3,9 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias PidroServer.Games.{Lifecycle, RoomManager}
+  alias PidroServer.Games.{AdminGameSummary, GameAdapter, GameSupervisor, Lifecycle, RoomManager}
   alias PidroServer.Games.Room.Config
+  alias PidroServer.RoomFixtures
 
   setup :register_and_log_in_admin
 
@@ -27,7 +28,7 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   end
 
   test "renders pacing controls and saves runtime values", %{conn: conn} do
-    {:ok, view, html} = live(conn, ~p"/admin/games")
+    {:ok, view, html} = live(conn, ~p"/admin/game-settings")
 
     assert html =~ "Game Pacing"
     assert html =~ "Save Pacing"
@@ -53,8 +54,8 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
     assert Lifecycle.config(:hand_transition_delay_ms) == 3500
   end
 
-  test "reset restores lifecycle defaults from the dev panel", %{conn: conn} do
-    {:ok, view, _html} = live(conn, ~p"/admin/games")
+  test "reset restores lifecycle defaults from game settings", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/admin/game-settings")
 
     _ =
       render_submit(view, "save_pacing", %{
@@ -78,14 +79,119 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   test "ignores online count updates from lobby pubsub", %{conn: conn} do
     {:ok, view, html} = live(conn, ~p"/admin/games")
 
-    assert html =~ "Game Pacing"
+    assert html =~ "Game settings"
+    refute has_element?(view, "#pacing-form")
 
     send(
       view.pid,
       {:online_count_updated, %{count: 1, breakdown: %{playing: 1, spectating: 0, lobby: 0}}}
     )
 
-    assert render(view) =~ "Game Pacing"
+    assert render(view) =~ "Game settings"
+  end
+
+  test "actual seated public names resolve outside the recent twenty and follow joins/leaves", %{
+    conn: conn
+  } do
+    host = PidroServer.AccountsFixtures.user_fixture(%{display_name: "Longtime player"})
+
+    host
+    |> Ecto.Changeset.change(inserted_at: ~U[2020-01-01 00:00:00.000000Z])
+    |> PidroServer.Repo.update!()
+
+    for _ <- 1..21, do: PidroServer.AccountsFixtures.user_fixture()
+    refute Enum.any?(PidroServer.Accounts.Auth.list_recent_users(20), &(&1.id == host.id))
+    {:ok, room} = RoomManager.create_room(host.id)
+    {:ok, view, _} = live(conn, ~p"/admin/games")
+    assert has_element?(view, "#room-#{room.code}", "Longtime player")
+
+    friend = PidroServer.AccountsFixtures.user_fixture(%{display_name: "New seated friend"})
+    {:ok, _, _} = RoomManager.join_room(room.code, friend.id)
+    assert has_element?(view, "#room-#{room.code}", "New seated friend")
+    :ok = RoomManager.leave_room(friend.id)
+    refute has_element?(view, "#room-#{room.code}", "New seated friend")
+  end
+
+  test "two real games update independently, including timers, turn, action and rematch", %{
+    conn: conn
+  } do
+    Application.put_env(:pidro_server, Lifecycle, dealer_selection_delay_ms: 0)
+    {one, ids} = playing_room()
+    {two, _} = playing_room()
+    {:ok, view, _} = live(conn, ~p"/admin/games")
+    before_two = AdminGameSummary.get(two.code)
+    assert has_element?(view, "#room-#{one.code}", "Dealer selection")
+
+    {:ok, _} = GameAdapter.apply_action(one.code, :north, :select_dealer)
+    eventually(fn -> assert AdminGameSummary.get(one.code).phase == :bidding end)
+    eventually(fn -> assert has_element?(view, "#room-#{one.code}", "Bidding") end)
+    refute has_element?(view, "#room-#{two.code}", "Bidding")
+    assert AdminGameSummary.get(two.code) == before_two
+
+    {:ok, state} = GameAdapter.get_state(one.code)
+    {:ok, next} = GameAdapter.apply_action(one.code, state.current_turn, {:bid, 8})
+    eventually(fn -> assert has_element?(view, "#room-#{one.code}", "Bid made") end)
+    assert has_element?(view, "#room-#{one.code}", "(#{next.current_turn})")
+    assert has_element?(view, "#room-#{one.code} time[datetime]")
+
+    # No card-bearing payload can reach this view: it only receives lobby
+    # lifecycle messages and samples this exact fixed public projection.
+    summary = AdminGameSummary.get(one.code)
+
+    assert Enum.sort(Map.keys(summary)) ==
+             Enum.sort(
+               ~w(phase current_turn trick_number cumulative_scores hand_number pace last_event updated_at)a
+             )
+
+    refute inspect(summary) =~ "hand:"
+    refute render(view) =~ "revealed_cards"
+
+    # Real game completion lifecycle and same-room rematch, not a mocked row event.
+    send(RoomManager, {:game_over, one.code, :north_south, %{north_south: 62, east_west: 19}})
+    {:ok, finished} = RoomManager.get_room(one.code)
+    assert finished.status == :finished
+    eventually(fn -> assert has_element?(view, "#room-#{one.code}", "finished") end)
+    {:ok, readiness} = RoomManager.readiness(one.code)
+
+    for id <- ids,
+        do:
+          {:ok, _} =
+            RoomManager.confirm_rematch(one.code, one.id, id, self(), readiness.ready_epoch)
+
+    eventually(fn -> assert AdminGameSummary.get(one.code).phase == :dealer_selection end)
+    eventually(fn -> assert has_element?(view, "#room-#{one.code}", "Dealer selection") end)
+    assert AdminGameSummary.get(two.code) == before_two
+    :ok = RoomManager.close_room(one.code)
+    eventually(fn -> refute has_element?(view, "#room-#{one.code}") end)
+    assert has_element?(view, "#room-#{two.code}")
+  end
+
+  test "own-pace hand holds are normal, and filters work on waiting rooms", %{
+    conn: conn
+  } do
+    {room, _} = RoomFixtures.waiting_room_fixture(seated: 4)
+    room = RoomFixtures.ready_room(room.code)
+    {:ok, pid} = GameSupervisor.get_game(room.code)
+    {:ok, state} = GameAdapter.get_state(room.code)
+
+    held = %{
+      state
+      | phase: :hand_complete,
+        config: %{pace: :own},
+        cumulative_scores: %{north_south: 24, east_west: -8}
+    }
+
+    :ok = GenServer.call(pid, {:set_state, held})
+    {:ok, view, _} = live(conn, ~p"/admin/games")
+    assert has_element?(view, "#room-#{room.code}", "Waiting for Continue")
+    assert has_element?(view, "#room-#{room.code}", "N/S 24 · E/W -8")
+    refute has_element?(view, "#room-#{room.code}", "Connection / process issue")
+    {:ok, waiting} = RoomManager.create_room("waiting-host")
+    view |> form("#phase-filter-form", phase: "hand_complete") |> render_change()
+    assert has_element?(view, "#room-#{room.code}")
+    refute has_element?(view, "#room-#{waiting.code}")
+    view |> form("#phase-filter-form", phase: "issues") |> render_change()
+    refute has_element?(view, "#room-#{room.code}")
   end
 
   test "renders an ownerless room", %{conn: conn} do
@@ -150,5 +256,21 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
     :sys.replace_state(RoomManager, fn state ->
       update_in(state.rooms[room_code], &%{&1 | host_id: host_id})
     end)
+  end
+
+  defp playing_room do
+    [host | others] = users = for _ <- 1..4, do: PidroServer.AccountsFixtures.user_fixture()
+    {:ok, room} = RoomManager.create_room(host.id)
+    for user <- others, do: {:ok, _, _} = RoomManager.join_room(room.code, user.id)
+    {RoomFixtures.ready_room(room.code), Enum.map(users, & &1.id)}
+  end
+
+  defp eventually(assertion, remaining \\ 40) do
+    assertion.()
+  rescue
+    error in [ExUnit.AssertionError] ->
+      if remaining == 0, do: reraise(error, __STACKTRACE__)
+      Process.sleep(50)
+      eventually(assertion, remaining - 1)
   end
 end

@@ -83,6 +83,7 @@ defmodule PidroServer.Games.GameSupervisor do
       variant: rule_set,
       config: %{pace: pace},
       pubsub: PidroServer.PubSub,
+      state_observer: {PidroServer.Games.AdminGameSummary, :record},
       dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms),
       deal_transition_delay_ms: Lifecycle.config(:deal_transition_delay_ms)
     ]

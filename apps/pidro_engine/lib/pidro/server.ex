@@ -365,6 +365,7 @@ defmodule Pidro.Server do
         dealer_selection_delay_ms: dealer_selection_delay_ms,
         deal_transition_delay_ms: deal_transition_delay_ms,
         pubsub: pubsub,
+        state_observer: Keyword.get(opts, :state_observer),
         game_instance_id: Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false),
         state_revision: 0,
         dealer_selection_presentation: nil,
@@ -376,6 +377,7 @@ defmodule Pidro.Server do
         dealer_rob_token: nil
       }
       |> maybe_schedule_dealer_selection_advance()
+      |> observe_state()
 
     {:ok, state}
   end
@@ -494,6 +496,7 @@ defmodule Pidro.Server do
           |> Map.update!(:state_revision, &(&1 + 1))
           |> maybe_schedule_dealer_rob_presentation(game_state, new_game_state, action)
           |> maybe_schedule_dealer_selection_advance()
+          |> observe_state()
 
         reply =
           case reply_kind do
@@ -635,10 +638,22 @@ defmodule Pidro.Server do
     end
   end
 
-  defp broadcast_state_change(state, transition_delay_ms \\ 0)
-  defp broadcast_state_change(%{pubsub: nil}, _transition_delay_ms), do: :ok
+  # Optional effect-boundary projection. Standalone engine consumers need no observer.
+  defp observe_state(%{state_observer: nil} = state), do: state
 
-  defp broadcast_state_change(%{pubsub: pubsub, game_id: game_id} = state, transition_delay_ms) do
+  defp observe_state(%{state_observer: {module, function}} = state) do
+    apply(module, function, [state.game_id, state.game_state])
+    state
+  end
+
+  defp broadcast_state_change(state, transition_delay_ms \\ 0) do
+    observe_state(state)
+    publish_state_change(state, transition_delay_ms)
+  end
+
+  defp publish_state_change(%{pubsub: nil}, _transition_delay_ms), do: :ok
+
+  defp publish_state_change(%{pubsub: pubsub, game_id: game_id} = state, transition_delay_ms) do
     apply(Phoenix.PubSub, :broadcast, [
       pubsub,
       "game:#{game_id}",
@@ -684,6 +699,7 @@ defmodule Pidro.Server do
     |> Map.put(:game_state, game_state)
     |> Map.update!(:state_revision, &(&1 + 1))
     |> maybe_schedule_dealer_selection_advance()
+    |> observe_state()
   end
 
   defp clear_dealer_selection_presentation(state) do
