@@ -74,6 +74,9 @@ defmodule PidroServerWeb.Dev.AdminComponents do
           <.link navigate={~p"/admin/users"} class={nav_item_class(@active == "players")}>
             <.icon name="hero-user-group" class="size-4" /> Players
           </.link>
+          <.link navigate={~p"/admin/history"} class={nav_item_class(@active == "history")}>
+            <.icon name="hero-clock" class="size-4" /> History
+          </.link>
           <.link navigate={~p"/admin/emails"} class={nav_item_class(@active == "emails")}>
             <.icon name="hero-envelope" class="size-4" /> Email
           </.link>

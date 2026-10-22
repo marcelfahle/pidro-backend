@@ -120,6 +120,12 @@ defmodule PidroServerWeb.Dev.UserDetailLive do
       flash={@flash}
     >
       <:actions>
+        <.link navigate={~p"/admin/history?#{%{user_id: @user.id}}"} class="text-sm underline">
+          Archived games
+        </.link>
+        <.link navigate={~p"/admin/reports?#{%{user_id: @user.id}}"} class="text-sm underline">
+          Incident reports
+        </.link>
         <.link
           navigate={~p"/admin/users"}
           class="inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-700 shadow-sm hover:border-orange-300 hover:text-stone-950"
