@@ -51,7 +51,7 @@ defmodule PidroServerWeb.Dev.ArchivePresentation do
       {position,
        %{
          status: seat_status(seat),
-         player_id: seat["user_id"],
+         player_id: if(match?({:ok, _}, Ecto.UUID.dump(seat["user_id"])), do: seat["user_id"]),
          username: name,
          display_name: name,
          bot_profile: if(profile, do: PidroServer.BotCatalogue.public(profile)),

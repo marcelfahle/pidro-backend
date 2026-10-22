@@ -250,7 +250,7 @@ defmodule PidroServerWeb.Dev.HistoryInspector do
       participants
       |> Map.values()
       |> Enum.map(& &1["user_id"])
-      |> Enum.filter(&match?({:ok, _}, Ecto.UUID.cast(&1)))
+      |> Enum.filter(&match?({:ok, _}, Ecto.UUID.dump(&1)))
 
     Repo.all(
       from u in User,

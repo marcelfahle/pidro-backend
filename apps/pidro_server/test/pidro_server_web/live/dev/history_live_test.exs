@@ -298,6 +298,13 @@ defmodule PidroServerWeb.Dev.HistoryLiveTest do
     refute has_element?(view, "#watch-seat-north", "Open")
   end
 
+  test "developer host IDs cannot crash archived account resolution", %{conn: conn} do
+    checkpoint("developer-host", "warehouse worker")
+    {:ok, view, html} = live(conn, "/admin/history/developer-host")
+    assert html =~ "Unknown player"
+    refute has_element?(view, "a[href^='/admin/users/warehouse']")
+  end
+
   test "legacy summaries never link a reused room without an instance", %{conn: conn} do
     summary =
       Repo.insert!(%GameStats{

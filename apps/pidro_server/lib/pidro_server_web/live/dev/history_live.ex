@@ -518,7 +518,7 @@ defmodule PidroServerWeb.Dev.HistoryLive do
   defp utc(nil), do: "Not recorded"
   defp utc(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S") <> " UTC"
   defp utc(%NaiveDateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S") <> " UTC"
-  defp valid_uuid?(value), do: match?({:ok, _}, Ecto.UUID.cast(value))
+  defp valid_uuid?(value), do: match?({:ok, _}, Ecto.UUID.dump(value))
 
   defp participant_name(seat, names) do
     user = names[seat["user_id"]] || %{}
