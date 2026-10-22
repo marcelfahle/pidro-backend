@@ -34,6 +34,11 @@ defmodule PidroServerWeb.Dev.BotCatalogueLive do
     {:noreply, socket |> cancel_pending_uploads() |> edit(BotCatalogue.get!(id))}
   end
 
+  def handle_event(event, %{"bot" => %{"id" => id}}, socket)
+      when event in ["validate", "save"] and id != socket.assigns.profile.id do
+    {:noreply, put_flash(socket, :error, "Selection changed. Use the current bot form.")}
+  end
+
   def handle_event("validate", %{"bot" => params}, socket) do
     form =
       BotCatalogue.change(socket.assigns.profile, params)
@@ -116,7 +121,7 @@ defmodule PidroServerWeb.Dev.BotCatalogueLive do
       flash={@flash}
     >
       <div class="grid gap-6 lg:grid-cols-2">
-        <section class="rounded-lg border border-stone-200 bg-white p-5">
+        <section class="min-w-0 rounded-lg border border-stone-200 bg-white p-5">
           <div class="flex items-center justify-between">
             <h2 class="text-lg font-semibold">Catalogue</h2>
             <button phx-click="new" class="rounded-md bg-stone-950 px-4 py-2 text-white">Add bot</button>
@@ -151,7 +156,10 @@ defmodule PidroServerWeb.Dev.BotCatalogueLive do
             If all bots are disabled, games use the original crew. Disabling does not evict a seated bot.
           </p>
         </section>
-        <section class="rounded-lg border border-stone-200 bg-white p-5">
+        <section
+          id={"bot-editor-#{@profile.id}"}
+          class="min-w-0 rounded-lg border border-stone-200 bg-white p-5"
+        >
           <h2 class="text-lg font-semibold">
             {if @profile.__meta__.state == :built, do: "Add bot", else: "Edit #{@profile.name}"}
           </h2>
@@ -169,6 +177,7 @@ defmodule PidroServerWeb.Dev.BotCatalogueLive do
             phx-submit="save"
             class="mt-4 space-y-3"
           >
+            <input type="hidden" name="bot[id]" value={@profile.id} />
             <.input field={@form[:name]} label="Name" maxlength="60" required />
             <.input
               field={@form[:description]}
@@ -196,7 +205,7 @@ defmodule PidroServerWeb.Dev.BotCatalogueLive do
               }
             />
             <label class="block text-sm font-medium">Upload portrait (PNG/JPEG, max 5 MiB)</label>
-            <.live_file_input upload={@uploads.avatar} />
+            <.live_file_input upload={@uploads.avatar} class="block w-full min-w-0 text-sm" />
             <div :for={entry <- @uploads.avatar.entries}>
               <.live_img_preview entry={entry} class="size-20 rounded-full" />
               <p :for={error <- upload_errors(@uploads.avatar, entry)} class="text-sm text-rose-700">
