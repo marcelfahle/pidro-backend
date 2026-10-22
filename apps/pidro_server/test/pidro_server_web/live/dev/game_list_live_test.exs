@@ -27,6 +27,17 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
     :ok
   end
 
+  test "developer controls stay open across live samples", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/admin/games")
+    refute has_element?(view, "#developer-controls[open]")
+    view |> element("#developer-controls summary") |> render_click()
+    assert has_element?(view, "#developer-controls[open]")
+    send(view.pid, :sample)
+    assert has_element?(view, "#developer-controls[open]")
+    view |> element("#developer-controls summary") |> render_click()
+    refute has_element?(view, "#developer-controls[open]")
+  end
+
   test "renders pacing controls and saves runtime values", %{conn: conn} do
     {:ok, view, html} = live(conn, ~p"/admin/game-settings")
 

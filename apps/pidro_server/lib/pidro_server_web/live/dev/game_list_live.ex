@@ -24,6 +24,7 @@ defmodule PidroServerWeb.Dev.GameListLive do
      |> assign(:profiles, %{})
      |> assign(:changed, MapSet.new())
      |> assign(:now, DateTime.utc_now())
+     |> assign(:developer_controls_open, false)
      |> assign(:show_create_form, false)
      |> assign(:delete_code, nil)
      |> assign(:page_title, "Live games")
@@ -86,6 +87,10 @@ defmodule PidroServerWeb.Dev.GameListLive do
   def handle_event("toggle_sort", _, socket) do
     order = if socket.assigns.sort_order == :desc, do: :asc, else: :desc
     {:noreply, socket |> assign(:sort_order, order) |> present()}
+  end
+
+  def handle_event("toggle_developer_controls", _, socket) do
+    {:noreply, assign(socket, :developer_controls_open, !socket.assigns.developer_controls_open)}
   end
 
   def handle_event("toggle_create_form", _, socket) do
@@ -326,8 +331,12 @@ defmodule PidroServerWeb.Dev.GameListLive do
         </article>
       </div>
 
-      <details open={@show_create_form} class="rounded-lg border border-stone-200 bg-white p-4">
-        <summary class="cursor-pointer text-sm font-medium">
+      <details
+        id="developer-controls"
+        open={@show_create_form || @developer_controls_open}
+        class="rounded-lg border border-stone-200 bg-white p-4"
+      >
+        <summary phx-click="toggle_developer_controls" class="cursor-pointer text-sm font-medium">
           Developer controls · create a game
         </summary>
         <div class="mt-4 flex flex-wrap gap-2">
