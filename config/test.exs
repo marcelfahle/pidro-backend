@@ -64,6 +64,11 @@ config :pidro_server, PidroServer.GameArchive.Maintenance, enabled: false
 # Scheduled report retention must not query outside a test's SQL sandbox.
 config :pidro_server, PidroServer.GameReports.Cleanup, enabled: false
 
+# Ordinary transactional tests share one sandbox connection: cancelling a writer
+# would roll back that unrelated test's transaction. ArchiveCase opts in using
+# independent connections, including for real SQL cancellation/outage coverage.
+config :pidro_server, :game_archive_enabled, false
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

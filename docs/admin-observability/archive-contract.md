@@ -215,3 +215,15 @@ Migration `20261022120100_create_game_archives` adds only two new tables,
 indexes and an archive-status constraint. No existing data backfill or stats
 alteration. Migrate before enabling the new code; otherwise capture degrades
 without stopping games. Rollback drops only these archives and their evidence.
+
+## Test integration
+
+Production/development capture defaults enabled. `config/test.exs` sets
+`:pidro_server, :game_archive_enabled, false` only for ordinary shared-transaction
+tests: killing a writer there destroys their shared Sandbox connection. Real
+archive tests use `PidroServer.ArchiveCase, async: false`, which opts in, uses
+independent PostgreSQL connections (`Sandbox :auto`, no enclosing transaction),
+and cleans up test-created archive/stats/user rows and fault-injection DDL.
+Downstream tests exercising live archives must use this case, not DataCase.
+Read-only inspector tests with explicitly inserted fixtures can keep DataCase.
+The production 50ms worker budget and 40ms SQL timeout are not relaxed in tests.

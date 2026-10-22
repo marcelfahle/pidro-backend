@@ -87,9 +87,12 @@ defmodule PidroServer.Games.GameSupervisor do
       pubsub: PidroServer.PubSub,
       archive_user_ids:
         for({_pos, %{occupant_type: :human, user_id: id}} <- participants, do: id),
-      checkpoint: fn snapshot, cause ->
-        PidroServer.GameArchive.capture(room_code, participants, snapshot, cause)
-      end,
+      checkpoint:
+        if Application.get_env(:pidro_server, :game_archive_enabled, true) do
+          fn snapshot, cause ->
+            PidroServer.GameArchive.capture(room_code, participants, snapshot, cause)
+          end
+        end,
       state_observer: {PidroServer.Games.AdminGameSummary, :record},
       dealer_selection_delay_ms: Lifecycle.config(:dealer_selection_delay_ms),
       deal_transition_delay_ms: Lifecycle.config(:deal_transition_delay_ms)
