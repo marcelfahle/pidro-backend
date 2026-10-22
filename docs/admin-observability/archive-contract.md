@@ -1,7 +1,7 @@
 # Game archive v1 — inspector integration contract
 
-Draft handoff on `admin-ops/game-archive`, published before full verification.
-This is not a deployment or review-readiness claim. The context below is
+Stable backend handoff on `admin-ops/game-archive`; verification and limitations
+are recorded in [game-archive.md](game-archive.md). The context below is
 `PidroServer.GameArchive`. No HTTP route, channel event, or admin screen is added.
 **All reads are trusted internal APIs.** The inspector must use the existing
 admin session/password-change authentication. Never send these private hands,
