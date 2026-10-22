@@ -194,6 +194,19 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
     refute has_element?(view, "#room-#{room.code}")
   end
 
+  test "Waiting includes ready tables as well as partially seated rooms", %{conn: conn} do
+    {full, _} = RoomFixtures.waiting_room_fixture(seated: 4)
+    {:ok, waiting} = RoomManager.create_room("another-waiting-host")
+    {:ok, view, _} = live(conn, ~p"/admin/games")
+    ready = %{full | status: :ready}
+    Phoenix.PubSub.broadcast(PidroServer.PubSub, "lobby:updates", {:room_updated, ready})
+
+    assert has_element?(view, "#room-counts", "2 waiting")
+    view |> form("#phase-filter-form", phase: "waiting") |> render_change()
+    assert has_element?(view, "#room-#{ready.code}")
+    assert has_element?(view, "#room-#{waiting.code}")
+  end
+
   test "renders an ownerless room", %{conn: conn} do
     {:ok, room} = RoomManager.create_room("departed-host", %{name: "Ownerless Table"})
     set_room_owner(room.code, nil)
@@ -222,6 +235,66 @@ defmodule PidroServerWeb.Dev.GameListLiveTest do
   end
 
   describe "room creation passes the room config constructor" do
+    test "unavailable bot manager leaves the custom room and connected view usable", %{conn: conn} do
+      manager = Process.whereis(PidroServer.Games.Bots.BotManager)
+
+      on_exit(fn ->
+        unless Process.whereis(PidroServer.Games.Bots.BotManager),
+          do: Process.register(manager, PidroServer.Games.Bots.BotManager)
+      end)
+
+      Process.unregister(PidroServer.Games.Bots.BotManager)
+
+      try do
+        {:ok, view, _} = live(conn, ~p"/admin/games")
+        render_click(view, "toggle_create_form")
+        assert has_element?(view, "details[open] #create-game-form")
+
+        view
+        |> form("#create-game-form", %{
+          game_name: "Bots unavailable",
+          host_user_id: "dev_host",
+          bot_count: "3",
+          bot_difficulty: "random"
+        })
+        |> render_submit()
+
+        assert [room] = RoomManager.list_rooms(:all)
+        assert room.config.name == "Bots unavailable"
+        assert render(view) =~ "Room #{room.code} created, but bots could not be started"
+        view |> form("#phase-filter-form", phase: "waiting") |> render_change()
+        assert has_element?(view, "#room-#{room.code}")
+        assert Process.alive?(view.pid)
+      after
+        Process.register(manager, PidroServer.Games.Bots.BotManager)
+      end
+    end
+
+    for preset <- ~w(preset_1h_3b preset_2h_2b preset_4_bots) do
+      test "#{preset} warns instead of crashing when the bot manager is unavailable", %{
+        conn: conn
+      } do
+        manager = Process.whereis(PidroServer.Games.Bots.BotManager)
+
+        on_exit(fn ->
+          unless Process.whereis(PidroServer.Games.Bots.BotManager),
+            do: Process.register(manager, PidroServer.Games.Bots.BotManager)
+        end)
+
+        Process.unregister(PidroServer.Games.Bots.BotManager)
+
+        try do
+          {:ok, view, _} = live(conn, ~p"/admin/games")
+          render_click(view, unquote(preset))
+          assert [room] = RoomManager.list_rooms(:all)
+          flash = assert_redirect(view, ~p"/admin/games/#{room.code}")
+          assert flash["warning"] == "Room #{room.code} created, but bots could not be started"
+        after
+          Process.register(manager, PidroServer.Games.Bots.BotManager)
+        end
+      end
+    end
+
     for preset <- ~w(preset_empty_room preset_1h_3b preset_2h_2b preset_4_bots) do
       test "AE6: #{preset} creates a room with a valid config and no free-form key", %{
         conn: conn
