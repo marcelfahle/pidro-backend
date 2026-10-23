@@ -171,6 +171,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - Field has invalid format (email, password)
   - Field is required but missing
   - Field value is too short or too long
+  - CLASSIC_EMAIL_MISSING: the Classic account has no email; contact support
   """
   def validation_error do
     %Schema{
@@ -255,6 +256,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - Authentication required (token missing)
   - Invalid token (malformed or expired)
   - Insufficient permissions
+  - CLASSIC_CODE_INVALID: wrong, expired, consumed, exhausted or differently bound Classic code
   """
   def unauthorized_error do
     %Schema{
@@ -336,6 +338,7 @@ defmodule PidroServerWeb.Schemas.ErrorSchemas do
   - Room not found
   - User not found
   - Player not in room
+  - CLASSIC_ACCOUNT_NOT_FOUND: no visible Classic account matches the username or email
   """
   def not_found_error do
     %Schema{

@@ -4,7 +4,7 @@ defmodule PidroServer.Accounts.ClassicClient do
   @callback verify_password(String.t(), String.t()) ::
               {:ok, map()}
               | {:error, :invalid_credentials | :account_inactive | :provider_unavailable}
-  @callback lookup(:email | :fbid, String.t()) ::
+  @callback lookup(:email | :fbid | :login, String.t()) ::
               {:ok, map()} | {:error, :not_found | :ambiguous | :provider_unavailable}
 
   def verify_password(login, password) do
@@ -12,7 +12,7 @@ defmodule PidroServer.Accounts.ClassicClient do
     |> verified_profile()
   end
 
-  def lookup(field, value) when field in [:email, :fbid] do
+  def lookup(field, value) when field in [:email, :fbid, :login] do
     request(:get, "/internal/claims/lookup", params: [{field, value}])
     |> lookup_result()
   end

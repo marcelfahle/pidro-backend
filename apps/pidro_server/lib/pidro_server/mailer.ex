@@ -38,11 +38,15 @@ defmodule PidroServer.Mailer do
   end
 
   defp failed(label, reason) do
-    Logger.error("#{label} email delivery failed: #{inspect(reason)}")
+    Logger.error("#{label} email delivery failed: #{inspect(summary(reason))}")
     {:error, reason}
   end
 
   defp summary(exception) when is_exception(exception), do: exception.__struct__
+
+  defp summary({kind, reason}) when kind in [:error, :exit, :throw],
+    do: {kind, summary(reason)}
+
   defp summary({reason, {_module, _function, _args}}), do: summary(reason)
   defp summary(reason) when is_atom(reason), do: reason
   defp summary(_reason), do: :unknown

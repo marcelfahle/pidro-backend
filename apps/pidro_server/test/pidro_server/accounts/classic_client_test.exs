@@ -95,6 +95,22 @@ defmodule PidroServer.Accounts.ClassicClientTest do
              ClassicClient.lookup(:email, "bengt@example.com")
   end
 
+  test "login lookup uses the login query and treats an undeployed lookup as unavailable" do
+    Req.Test.expect(ClassicClient, fn conn ->
+      conn = Plug.Conn.fetch_query_params(conn)
+      assert conn.query_params == %{"login" => "Bengt"}
+      Req.Test.json(conn, @real_classic_profile)
+    end)
+
+    assert {:ok, %{"id" => 50}} = ClassicClient.lookup(:login, "Bengt")
+
+    Req.Test.expect(ClassicClient, fn conn ->
+      conn |> Plug.Conn.put_status(400) |> Req.Test.json(%{"error" => "bad_request"})
+    end)
+
+    assert {:error, :provider_unavailable} = ClassicClient.lookup(:login, "Bengt")
+  end
+
   test "an inactive Classic account is reported as such" do
     Req.Test.expect(ClassicClient, fn conn ->
       conn |> Plug.Conn.put_status(403) |> Req.Test.json(%{"error" => "account_inactive"})

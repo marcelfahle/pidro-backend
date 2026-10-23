@@ -4,7 +4,7 @@
   "field_errors": "Optional parallel array of {field: string, error_code: string, error_params: object}. Field is the original field name or dotted room-config path. Legacy errors are unchanged. Unknown validators and Room.Config messages without validator metadata use field_invalid; never infer codes from English messages.",
   "sources": {
     "auth": ["POST /api/v1/auth/register", "POST /api/v1/auth/login", "POST /api/v1/auth/apple", "POST /api/v1/auth/facebook", "POST /api/v1/auth/guest", "POST /api/v1/auth/upgrade", "POST /api/v1/auth/age", "GET /api/v1/auth/me", "DELETE /api/v1/auth/me", "POST /api/v1/auth/password-reset", "POST /api/v1/auth/password-reset/confirm"],
-    "classic": ["POST /api/v1/classic/verify", "POST /api/v1/classic/claim", "POST /api/v1/classic/help"],
+    "classic": ["POST /api/v1/classic/verify", "POST /api/v1/classic/claim", "POST /api/v1/classic/help", "POST /api/v1/classic/sign-in-code", "POST /api/v1/classic/sign-in-code/verify"],
     "rooms": ["GET /api/v1/rooms/:code", "GET /api/v1/rooms/:code/state", "POST /api/v1/rooms", "POST /api/v1/rooms/:code/join", "DELETE /api/v1/rooms/:code/leave", "POST /api/v1/rooms/:code/watch", "DELETE /api/v1/rooms/:code/unwatch", "POST /api/v1/rooms/:code/open-seat", "POST /api/v1/rooms/:code/close-seat", "POST /api/v1/rooms/:code/seat", "POST /api/v1/rooms/:code/lock", "POST /api/v1/rooms/:code/kick", "POST /api/v1/rooms/:code/bot", "PUT /api/v1/rooms/:code/seats/:position/hold", "DELETE /api/v1/rooms/:code/seats/:position/hold", "POST /api/v1/rooms/:code/seats/:position/decline"],
     "invites": ["GET /api/v1/invites/:code", "POST /api/v1/rooms/:code/invites", "POST /api/v1/invites/:code/redeem", "DELETE /api/v1/invites/:code", "POST /api/v1/invites/:code/regenerate"],
     "friends": ["GET /api/v1/friends", "GET /api/v1/friends/recent", "PUT /api/v1/friends/:user_id", "DELETE /api/v1/friends/:user_id", "POST /api/v1/friends/:user_id/join", "GET /api/v1/users/search"],
@@ -49,6 +49,9 @@
     {"code":"mail_unavailable","params":{},"sources":["classic"],"meaning":"Your message could not be sent right now."},
     {"code":"provider_unavailable","params":{},"sources":["auth","classic"],"meaning":"The identity provider is temporarily unavailable."},
     {"code":"account_inactive","params":{},"sources":["auth","classic"],"meaning":"This Classic account is inactive; contact support."},
+    {"code":"classic_account_not_found","params":{},"sources":["classic"],"meaning":"No visible Classic account matches the username or email."},
+    {"code":"classic_email_missing","params":{},"sources":["classic"],"meaning":"This Classic account has no email address; contact support."},
+    {"code":"classic_code_invalid","params":{},"sources":["classic"],"meaning":"That code did not work; ask for a new one."},
     {"code":"claim_binding_required","params":{},"sources":["classic"],"meaning":"Sign in or provide an install identifier before verifying ownership."},
     {"code":"already_claimed","params":{},"sources":["classic"],"meaning":"This Classic account is already linked to another account."},
     {"code":"user_already_claimed","params":{},"sources":["classic"],"meaning":"Your account already has a different Classic profile."},

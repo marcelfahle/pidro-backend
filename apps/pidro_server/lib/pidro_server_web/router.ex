@@ -151,6 +151,14 @@ defmodule PidroServerWeb.Router do
     post "/classic/verify", ClassicClaimController, :verify,
       private: %{rate_limit: [:classic_claim]}
 
+    post "/classic/sign-in-code", ClassicSignInCodeController, :create,
+      log: false,
+      private: %{rate_limit: [:classic_sign_in_code, :classic_sign_in_code_identifier]}
+
+    post "/classic/sign-in-code/verify", ClassicSignInCodeController, :verify,
+      log: false,
+      private: %{rate_limit: [:classic_sign_in_code]}
+
     post "/classic/claim", ClassicClaimController, :create,
       private: %{rate_limit: [:classic_claim]}
 

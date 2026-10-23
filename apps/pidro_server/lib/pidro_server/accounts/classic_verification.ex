@@ -58,9 +58,10 @@ defmodule PidroServer.Accounts.ClassicVerification do
   def verify_provider(_identity, _params, _opts),
     do: {:error, :invalid_credentials}
 
-  defp binding(%{id: user_id}, _params), do: {:ok, %{user_id: user_id}}
+  @doc "The user or install binding shared by Classic ownership proofs."
+  def binding(%{id: user_id}, _params), do: {:ok, %{user_id: user_id}}
 
-  defp binding(nil, params) do
+  def binding(nil, params) do
     case fetch(params, :install_id) do
       install_id
       when is_binary(install_id) and install_id != "" and byte_size(install_id) <= 64 ->
@@ -277,7 +278,13 @@ defmodule PidroServer.Accounts.ClassicVerification do
     do:
       fetch(profile, :account_deleted) == true or get_in(profile, ["account", "deleted"]) == true
 
-  defp issue_ticket(binding, method, profile, identity, matched_on, current_user) do
+  @doc """
+  Issues the shared preview and ticket after ownership has been proved.
+
+  Trusted callers only: the caller must verify the proof and its binding before
+  passing Classic's profile here. This function does not authenticate a player.
+  """
+  def issue_ticket(binding, method, profile, identity, matched_on, current_user) do
     provider_id = if identity, do: identity.subject
 
     with {:ok, classic_user_id} <- classic_user_id(profile),

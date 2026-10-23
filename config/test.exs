@@ -115,6 +115,12 @@ config :pidro_server, PidroServerWeb.Plugs.RateLimit,
   password_reset: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
   password_reset_identifier: %{limit: 1_000_000, scale_ms: 3_600_000, key: :identifier},
   password_reset_confirm: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
+  classic_sign_in_code: %{limit: 1_000_000, scale_ms: 900_000, key: :ip},
+  classic_sign_in_code_identifier: %{
+    limit: 1_000_000,
+    scale_ms: 3_600_000,
+    key: {:param, "login"}
+  },
   room_create: %{limit: 1_000_000, scale_ms: 60_000, key: :user},
   room_lookup: %{limit: 1_000_000, scale_ms: 60_000, key: :ip},
   invite_mint: %{limit: 1_000_000, scale_ms: 60_000, key: :user},

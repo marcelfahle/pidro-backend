@@ -107,6 +107,36 @@ defmodule PidroServerWeb.API.FallbackController do
     })
   end
 
+  def call(conn, {:error, :classic_account_not_found}) do
+    error(
+      conn,
+      :not_found,
+      "CLASSIC_ACCOUNT_NOT_FOUND",
+      "Classic account not found",
+      "No Classic account was found with that username or email"
+    )
+  end
+
+  def call(conn, {:error, :classic_email_missing}) do
+    error(
+      conn,
+      :unprocessable_entity,
+      "CLASSIC_EMAIL_MISSING",
+      "Classic email missing",
+      "This Classic account has no email address. Contact support for help."
+    )
+  end
+
+  def call(conn, {:error, :classic_code_invalid}) do
+    error(
+      conn,
+      :unauthorized,
+      "CLASSIC_CODE_INVALID",
+      "Invalid Classic code",
+      "That code didn't work. Ask for a new one."
+    )
+  end
+
   def call(conn, {:error, :provider_unavailable}) do
     conn
     |> put_status(:service_unavailable)

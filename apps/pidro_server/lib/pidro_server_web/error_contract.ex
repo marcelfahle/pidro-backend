@@ -12,6 +12,7 @@ defmodule PidroServerWeb.ErrorContract do
     request_failed action_failed validation_failed field_invalid field_required
     field_taken field_format classic_name_reserved unauthorized forbidden not_found
     invalid_credentials mail_unavailable provider_unavailable account_inactive
+    classic_account_not_found classic_email_missing classic_code_invalid
     claim_binding_required already_claimed user_already_claimed provider_already_linked
     claim_ticket_expired invalid_claim_ticket claim_ticket_binding_mismatch claim_state_changed
     invalid_or_expired_password_reset_token account_required not_a_guest email_taken

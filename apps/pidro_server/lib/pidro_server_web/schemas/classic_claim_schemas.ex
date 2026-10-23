@@ -4,6 +4,54 @@ defmodule PidroServerWeb.Schemas.ClassicClaimSchemas do
   require OpenApiSpex
   alias OpenApiSpex.Schema
 
+  defmodule SignInCodeRequest do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Classic sign-in code request",
+      required: [:login],
+      properties: %{
+        login: %Schema{type: :string, minLength: 1, description: "Classic username or email"},
+        install_id: %Schema{
+          type: :string,
+          minLength: 1,
+          maxLength: 64,
+          description: "Required without a Bearer token; use the same install when verifying"
+        }
+      }
+    })
+  end
+
+  defmodule SignInCodeVerifyRequest do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Classic sign-in code verification request",
+      required: [:login, :code],
+      properties:
+        Map.put(SignInCodeRequest.schema().properties, :code, %Schema{
+          type: :string,
+          pattern: "^[0-9]{6}$"
+        })
+    })
+  end
+
+  defmodule SignInCodeResponse do
+    @moduledoc false
+    OpenApiSpex.schema(%{
+      type: :object,
+      title: "Classic sign-in code response",
+      required: [:data],
+      properties: %{
+        data: %Schema{
+          type: :object,
+          required: [:email_hint],
+          properties: %{email_hint: %Schema{type: :string, example: "be•••••@example.com"}}
+        }
+      }
+    })
+  end
+
   defmodule ClassicPreview do
     @moduledoc false
     OpenApiSpex.schema(%{
