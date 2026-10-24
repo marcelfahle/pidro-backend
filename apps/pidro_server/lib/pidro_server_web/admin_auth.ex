@@ -31,6 +31,7 @@ defmodule PidroServerWeb.AdminAuth do
     save
     save_pacing
     save_template
+    send_test_email
     submit_hand_selection
     toggle_all_bots_pause
     toggle_bot_pause

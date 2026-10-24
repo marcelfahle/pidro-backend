@@ -14,6 +14,96 @@ defmodule PidroServer.EmailMigrationTest do
     :ok
   end
 
+  test "sample data covers every variable group and renders every seeded template" do
+    sample = Emails.sample_variables()
+
+    for group <- Emails.variable_groups(), variable <- group.variables do
+      key = String.trim(variable.key, "{{") |> String.trim("}}")
+      assert is_binary(sample[key]) and sample[key] != ""
+    end
+
+    seed_templates()
+
+    for template <- Emails.list_templates() do
+      assert {:ok, rendered} = Emails.render_template(template, sample)
+      refute rendered.html_body =~ "{{"
+      refute rendered.subject =~ "{{"
+    end
+  end
+
+  test "placeholder warnings distinguish unknown, unused and clean declarations" do
+    {:ok, template} = Emails.create_template(:transactional)
+
+    template = %{
+      template
+      | subject: "Hi {{ username }}",
+        preview_text: "{{code}}",
+        html_body: "<p>{{typo}}</p>",
+        variables: ["{{username}}", "code", "{{unused}}"]
+    }
+
+    assert Emails.placeholder_warnings(template) == %{unknown: ["typo"], unused: ["unused"]}
+
+    assert Emails.placeholder_warnings(%{template | variables: ["username", "code", "typo"]}) ==
+             %{unknown: [], unused: []}
+  end
+
+  test "clearing variable declarations persists an empty list; omitting them preserves it" do
+    {:ok, template} = Emails.create_template(:transactional)
+    {:ok, unchanged} = Emails.update_template(template, %{subject: "Hi"})
+    assert unchanged.variables == template.variables
+
+    for blank <- ["", "  \n "] do
+      {:ok, updated} = Emails.update_template(template, %{variables_text: blank})
+      assert Emails.get_template!(updated.id).variables == []
+      assert Emails.placeholder_warnings(updated) == %{unknown: ["username"], unused: []}
+    end
+  end
+
+  test "test sends validate a single recipient before consuming quota and match production headers" do
+    seed_templates()
+    template = Emails.get_transactional_template(:classic_sign_in_code)
+    admin_id = Ecto.UUID.generate()
+
+    for invalid <- [
+          nil,
+          ["one@example.com"],
+          "",
+          "not-an-email",
+          "a,b@example.com",
+          "a@example.com\nb@example.com"
+        ] do
+      assert {:error, _} = Emails.send_test_email(template, invalid, admin_id)
+      assert_no_email_sent()
+    end
+
+    for _ <- 1..5 do
+      assert {:ok, _} = Emails.send_test_email(template, " aino@example.com ", admin_id)
+
+      assert_email_sent(fn email ->
+        production =
+          Emails.transactional_email(:classic_sign_in_code, "aino@example.com", %{code: "028641"})
+
+        assert email == production
+      end)
+    end
+
+    assert {:error, {:rate_limited, retry_after}} =
+             Emails.send_test_email(template, "other@example.com", admin_id)
+
+    assert retry_after in 1..600_000
+    assert_no_email_sent()
+
+    {:ok, campaign} = Emails.create_template(:campaign)
+    assert {:ok, _} = Emails.send_test_email(campaign, "aino@example.com", Ecto.UUID.generate())
+
+    assert_email_sent(fn email ->
+      assert email.from == {"Pidro", "hello@pidro.online"}
+      refute email.html_body =~ "Sent by Pidro"
+      true
+    end)
+  end
+
   test "transactional layout wraps once without double escaping; text has no chrome" do
     {:ok, template} = Emails.create_template(:transactional)
     {:ok, rendered} = Emails.render_template(template, %{username: "<Aino & O'Neil>"})

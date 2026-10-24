@@ -2286,6 +2286,7 @@ defmodule PidroServerWeb.API.AuthControllerTest do
         |> post(~p"/api/v1/auth/password-reset", %{"identifier" => " anna@x.test "})
 
       assert %{"errors" => [%{"code" => "RATE_LIMITED"}]} = json_response(denied, 429)
+      await_background_mail()
     end
 
     test "a missing or non-binary identifier skips the identifier bucket, never 500s and still counts against the IP bucket",

@@ -12,6 +12,7 @@ defmodule PidroServer.Emails do
   alias PidroServer.Emails.EmailTemplate
   alias PidroServer.Emails.Layout
   alias PidroServer.Mailer
+  alias PidroServer.RateLimit
   alias PidroServer.Repo
 
   @placeholder_regex ~r/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/
@@ -53,6 +54,15 @@ defmodule PidroServer.Emails do
         %{key: "{{support_email}}", label: "Support email"},
         %{key: "{{purchase_platform}}", label: "Purchase platform"},
         %{key: "{{renewal_date}}", label: "Renewal date"}
+      ]
+    },
+    %{
+      name: "Classic help",
+      variables: [
+        %{key: "{{name}}", label: "Name"},
+        %{key: "{{email}}", label: "Email"},
+        %{key: "{{details}}", label: "Details"},
+        %{key: "{{user_line}}", label: "Signed-in player"}
       ]
     }
   ]
@@ -302,16 +312,42 @@ defmodule PidroServer.Emails do
   end
 
   def deliver_template(%EmailTemplate{} = template, recipient, variables \\ %{}) do
+    with {:ok, email} <- template_email(template, recipient, variables) do
+      Mailer.deliver(email)
+    end
+  end
+
+  @doc "Sends one sample email, at most five attempts per admin per ten-minute Hammer window."
+  def send_test_email(template, recipient, admin_id) do
+    with true <- is_binary(recipient) and Mailer.sendable?(String.trim(recipient)),
+         {:ok, email} <- template_email(template, recipient, sample_variables()),
+         {:allow, _count} <- RateLimit.hit({:email_studio_test, admin_id}, 600_000, 5) do
+      Mailer.deliver_logged(email, "Email studio test")
+    else
+      false -> {:error, :invalid_recipient_email}
+      {:deny, retry_after} -> {:error, {:rate_limited, retry_after}}
+      {:error, _reason} = error -> error
+    end
+  rescue
+    _exception -> {:error, :test_send_unavailable}
+  end
+
+  defp template_email(template, recipient, variables) do
     with {:ok, recipient_mailbox} <- recipient_to_mailbox(recipient),
          {:ok, rendered} <- render_template(template, variables) do
-      new()
-      |> to(recipient_mailbox)
-      |> Swoosh.Email.from(sender_mailbox(template))
-      |> maybe_reply_to(template.reply_to)
-      |> subject(rendered.subject)
-      |> html_body(rendered.html_body)
-      |> text_body(rendered.text_body)
-      |> Mailer.deliver()
+      reply_address =
+        if template.kind == :transactional,
+          do: present_or_default(template.reply_to, delivery_setup().reply_to),
+          else: template.reply_to
+
+      {:ok,
+       new()
+       |> to(recipient_mailbox)
+       |> Swoosh.Email.from(sender_mailbox(template))
+       |> maybe_reply_to(reply_address)
+       |> subject(rendered.subject)
+       |> html_body(rendered.html_body)
+       |> text_body(rendered.text_body)}
     end
   end
 
@@ -327,6 +363,38 @@ defmodule PidroServer.Emails do
   end
 
   def variable_groups, do: @variable_groups
+
+  @doc "Fictional player data for the studio and its test sends."
+  def sample_variables do
+    %{
+      "username" => "Aino Korhonen",
+      "first_name" => "Aino",
+      "last_played_at" => "2026-10-23",
+      "code" => "028641",
+      "reset_url" => "https://play.pidro.online/reset-password?token=sample-only",
+      "unsubscribe_url" => "https://play.pidro.online/unsubscribe?token=sample-only",
+      "offer_url" => "https://play.pidro.online",
+      "app_store_url" => "https://apps.apple.com/",
+      "play_store_url" => "https://play.google.com/store/apps",
+      "support_email" => delivery_setup().reply_to,
+      "purchase_platform" => "Apple App Store",
+      "renewal_date" => "2026-11-24",
+      "name" => "Aino Korhonen",
+      "email" => "aino@example.com",
+      "details" => "I played with friends in 2012.\nMy Classic name was Aino.",
+      "user_line" => "Signed in as player: 00000000-0000-4000-8000-000000000286"
+    }
+  end
+
+  @doc "Reports placeholders used but undeclared, and declarations absent from the content."
+  def placeholder_warnings(%EmailTemplate{} = template) do
+    used = required_variable_names(template)
+
+    listed =
+      Enum.map(template.variables || [], &normalize_variable_key/1) |> Enum.uniq() |> Enum.sort()
+
+    %{unknown: used -- listed, unused: listed -- used}
+  end
 
   def delivery_setup do
     mailer_config = Application.get_env(:pidro_server, PidroServer.Mailer, [])
@@ -499,6 +567,10 @@ defmodule PidroServer.Emails do
       true ->
         {:ok, email}
     end
+  end
+
+  defp sender_mailbox(%EmailTemplate{kind: :transactional}) do
+    {"Pidro", delivery_setup().from_address}
   end
 
   defp sender_mailbox(%EmailTemplate{} = template) do

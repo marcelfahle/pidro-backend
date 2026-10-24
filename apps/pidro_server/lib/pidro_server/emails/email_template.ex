@@ -67,11 +67,8 @@ defmodule PidroServer.Emails.EmailTemplate do
   end
 
   defp put_variables_from_text(changeset) do
-    case get_change(changeset, :variables_text) do
-      nil ->
-        changeset
-
-      text ->
+    case changeset.params["variables_text"] do
+      text when is_binary(text) ->
         variables =
           text
           |> String.split([",", "\n", "\r"], trim: true)
@@ -80,6 +77,9 @@ defmodule PidroServer.Emails.EmailTemplate do
           |> Enum.uniq()
 
         put_change(changeset, :variables, variables)
+
+      _absent ->
+        changeset
     end
   end
 end

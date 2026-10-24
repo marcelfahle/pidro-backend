@@ -20,6 +20,11 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
      |> assign(:kind_filter, kind)
      |> assign(:show_delete_modal, false)
      |> assign(:template_to_delete, nil)
+     |> assign(:preview_width, 390)
+     |> assign(:test_recipient, System.get_env("ADMIN_EMAIL") || "")
+     |> assign(:test_sending, false)
+     |> assign(:test_result, nil)
+     |> assign(:test_target, nil)
      |> assign_selected(selected)
      |> load_email_ops()}
   end
@@ -115,27 +120,96 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
   end
 
   @impl true
-  def handle_event("save_template", %{"template" => params}, socket) do
-    case socket.assigns.selected_template do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Create an email before saving.")}
+  def handle_event(
+        "preview_template",
+        %{"template_id" => id, "template" => params},
+        %{assigns: %{selected_template: %{id: id}}} = socket
+      ) do
+    changeset = Emails.change_template(socket.assigns.selected_template, params)
 
-      template ->
-        case Emails.update_template(template, params) do
-          {:ok, template} ->
-            {:noreply,
-             socket
-             |> assign_selected(template)
-             |> load_email_ops()
-             |> put_flash(:info, "Saved #{template.name}.")}
+    {:noreply,
+     socket
+     |> assign(:form, to_form(changeset, as: :template))
+     |> assign_preview(Ecto.Changeset.apply_changes(changeset))}
+  end
 
-          {:error, changeset} ->
-            {:noreply,
-             socket
-             |> assign(:form, to_form(changeset, as: :template))
-             |> put_flash(:error, "Fix the highlighted fields and save again.")}
-        end
+  def handle_event("preview_width", %{"width" => width}, socket) when width in ["390", "640"] do
+    {:noreply, assign(socket, :preview_width, String.to_integer(width))}
+  end
+
+  def handle_event("send_test_email", _params, %{assigns: %{test_sending: true}} = socket) do
+    {:noreply, socket}
+  end
+
+  def handle_event(
+        "send_test_email",
+        %{"template_id" => id, "recipient" => recipient},
+        %{assigns: %{selected_template: %{id: id}}} = socket
+      ) do
+    template = socket.assigns.draft_template
+
+    admin_id =
+      if socket.assigns.current_admin,
+        do: socket.assigns.current_admin.id,
+        else: :local_development
+
+    if template && socket.assigns.preview do
+      {:noreply,
+       socket
+       |> assign(:test_recipient, recipient)
+       |> assign(:test_target, "#{template.name} to #{recipient}")
+       |> assign(:test_sending, true)
+       |> assign(:test_result, nil)
+       |> start_async(:test_email, fn -> Emails.send_test_email(template, recipient, admin_id) end)}
+    else
+      {:noreply, assign(socket, :test_result, "Fix the preview before sending a test.")}
     end
+  end
+
+  @impl true
+  def handle_event(
+        "save_template",
+        %{"template_id" => id, "template" => params},
+        %{assigns: %{selected_template: %{id: id} = template}} = socket
+      ) do
+    case Emails.update_template(template, params) do
+      {:ok, template} ->
+        {:noreply,
+         socket
+         |> assign_selected(template)
+         |> load_email_ops()
+         |> put_flash(:info, "Saved #{template.name}.")}
+
+      {:error, changeset} ->
+        {:noreply,
+         socket
+         |> assign_preview(Ecto.Changeset.apply_changes(changeset))
+         |> assign(:form, to_form(changeset, as: :template))
+         |> put_flash(:error, "Fix the highlighted fields and save again.")}
+    end
+  end
+
+  # A previous editor can still emit events while a selection patch is in flight.
+  def handle_event(event, _params, socket)
+      when event in ["preview_template", "save_template", "send_test_email"] do
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_async(:test_email, {:ok, {:ok, _metadata}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:test_sending, false)
+     |> assign(:test_result, "Sent #{socket.assigns.test_target}.")}
+  end
+
+  def handle_async(:test_email, {:ok, {:error, reason}}, socket) do
+    {:noreply, socket |> assign(:test_sending, false) |> assign(:test_result, test_error(reason))}
+  end
+
+  def handle_async(:test_email, {:exit, _reason}, socket) do
+    {:noreply,
+     socket |> assign(:test_sending, false) |> assign(:test_result, test_error(:unavailable))}
   end
 
   @impl true
@@ -266,10 +340,12 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
             for={@form}
             id={"email-editor-#{@selected_template.id}"}
             phx-submit="save_template"
+            phx-change="preview_template"
             phx-hook="EmailEditor"
             data-template-id={@selected_template.id}
-            class="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_24rem]"
+            class="grid min-w-0 gap-4 2xl:grid-cols-[minmax(0,1fr)_minmax(0,640px)]"
           >
+            <input type="hidden" name="template_id" value={@selected_template.id} />
             <div class={panel_class(["min-w-0"])}>
               <div class="flex flex-col gap-3 border-b border-stone-200 px-4 py-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -304,6 +380,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                   <button
                     type="button"
                     data-editor-action="copy-html"
+                    disabled={is_nil(@preview)}
                     class={secondary_button_class()}
                   >
                     <.icon name="hero-clipboard-document" class="size-4" /> Copy HTML
@@ -311,6 +388,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                   <button
                     type="button"
                     data-editor-action="download-html"
+                    disabled={is_nil(@preview)}
                     class={secondary_button_class()}
                   >
                     <.icon name="hero-arrow-down-tray" class="size-4" /> Download
@@ -498,6 +576,8 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
 
                 <div class="bg-stone-50 p-4">
                   <div
+                    id={"email-body-#{@selected_template.id}"}
+                    phx-update="ignore"
                     data-email-body
                     contenteditable="true"
                     class="email-editor-body mx-auto min-h-[28rem] w-full max-w-[42rem] rounded-lg border border-stone-200 bg-white px-8 py-7 text-base leading-7 text-stone-950 focus:border-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-200"
@@ -513,18 +593,90 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                     <h2 class={section_heading_class()}>
                       Preview
                     </h2>
-                    <p class="mt-1 text-xs text-stone-500">Email body with a 640px frame.</p>
+                    <p class="mt-1 text-xs text-stone-500">
+                      The same rendering used for delivery, with sample data.
+                    </p>
                   </div>
                   <span class={subtle_badge_class()}>
                     Live
                   </span>
                 </div>
-                <iframe
-                  title="Email preview"
-                  data-email-preview
-                  sandbox=""
-                  class="h-[30rem] w-full bg-white"
-                ></iframe>
+                <div class="space-y-3 border-b border-stone-200 p-4">
+                  <div class="flex gap-2" aria-label="Preview width">
+                    <button
+                      :for={{label, width} <- [{"Phone · 390 px", 390}, {"Desktop · 640 px", 640}]}
+                      type="button"
+                      phx-click="preview_width"
+                      phx-value-width={width}
+                      aria-pressed={to_string(@preview_width == width)}
+                      class={
+                        if @preview_width == width,
+                          do: primary_button_class(),
+                          else: secondary_button_class()
+                      }
+                    >{label}</button>
+                  </div>
+                  <div :if={@preview} id="email-preview-metadata" class="text-sm text-stone-700">
+                    <p class="font-semibold">{@preview.subject}</p>
+                    <p>{@preview.preview_text}</p>
+                  </div>
+                  <p
+                    :if={@preview_error}
+                    id="email-preview-error"
+                    role="status"
+                    class="text-sm text-rose-700"
+                  >
+                    {@preview_error}
+                  </p>
+                </div>
+                <div class="overflow-x-auto bg-stone-100">
+                  <iframe
+                    id={"email-preview-#{@selected_template.id}"}
+                    title="Email preview"
+                    data-email-preview
+                    srcdoc={if @preview, do: @preview.html_body, else: ""}
+                    sandbox=""
+                    style={"width:#{@preview_width}px;"}
+                    class="mx-auto h-[40rem] max-w-none border-0 bg-white"
+                  ></iframe>
+                </div>
+                <div class="space-y-3 border-t border-stone-200 p-4">
+                  <label class="block text-sm font-medium text-stone-700">
+                    Test recipient
+                    <input
+                      id="test-recipient"
+                      phx-update="ignore"
+                      form="email-test-form"
+                      name="recipient"
+                      type="email"
+                      required
+                      value={@test_recipient}
+                      class={text_input_class()}
+                    />
+                  </label>
+                  <p class="text-xs text-stone-500">
+                    Uses this preview, including unsaved edits. Five tests per ten-minute window.
+                  </p>
+                  <button
+                    id="send-test-email"
+                    type="submit"
+                    form="email-test-form"
+                    disabled={@test_sending || is_nil(@preview)}
+                    class={
+                      primary_button_class(["disabled:opacity-50", "disabled:cursor-not-allowed"])
+                    }
+                  >
+                    {if @test_sending, do: "Sending…", else: "Send a test"}
+                  </button>
+                  <p
+                    :if={@test_result}
+                    id="test-send-result"
+                    role="status"
+                    class="text-sm text-stone-700"
+                  >
+                    {@test_result}
+                  </p>
+                </div>
               </div>
 
               <div class={panel_class()}>
@@ -543,6 +695,18 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                     class={textarea_input_class(["h-28", "font-mono", "text-xs"])}
                   >{field_value(@form, :variables_text)}</textarea>
                 </label>
+                <div
+                  id="placeholder-warnings"
+                  role="status"
+                  class="space-y-1 px-4 pb-4 text-sm text-amber-800"
+                >
+                  <p :if={@warnings.unknown != []}>
+                    Used but undeclared: {Enum.join(@warnings.unknown, ", ")}
+                  </p>
+                  <p :if={@warnings.unused != []}>
+                    Declared but unused: {Enum.join(@warnings.unused, ", ")}
+                  </p>
+                </div>
               </div>
 
               <div class={panel_class()}>
@@ -556,7 +720,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
                   readonly
                   spellcheck="false"
                   class="h-60 w-full resize-y border-0 bg-stone-950 p-4 font-mono text-xs leading-5 text-stone-100 focus:ring-0"
-                ></textarea>
+                >{if @preview, do: @preview.html_body, else: ""}</textarea>
               </div>
 
               <div class={panel_class()}>
@@ -586,6 +750,9 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
               </div>
             </aside>
           </.form>
+          <form id="email-test-form" phx-submit="send_test_email">
+            <input type="hidden" name="template_id" value={@selected_template.id} />
+          </form>
         <% else %>
           <div class="rounded-lg border border-dashed border-stone-200 bg-white p-8">
             <.empty_state
@@ -640,6 +807,7 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
   defp assign_selected(socket, nil) do
     socket
     |> assign(:selected_template, nil)
+    |> assign(:draft_template, nil)
     |> assign(:form, nil)
   end
 
@@ -647,7 +815,36 @@ defmodule PidroServerWeb.Dev.EmailMigrationLive do
     socket
     |> assign(:selected_template, template)
     |> assign(:form, to_form(Emails.change_template(template), as: :template))
+    |> assign_preview(template)
   end
+
+  defp assign_preview(socket, template) do
+    {preview, error} =
+      case Emails.render_template(template, Emails.sample_variables()) do
+        {:ok, rendered} ->
+          {rendered, nil}
+
+        {:error, {:missing_variables, names}} ->
+          {nil,
+           "No sample value for: #{Enum.join(names, ", ")}. Fix the placeholder to preview or send."}
+      end
+
+    socket
+    |> assign(:draft_template, template)
+    |> assign(:preview, preview)
+    |> assign(:preview_error, error)
+    |> assign(:warnings, Emails.placeholder_warnings(template))
+  end
+
+  defp test_error({:rate_limited, retry_after}),
+    do: "Five-test limit reached. Try again in #{ceil(retry_after / 60_000)} minutes."
+
+  defp test_error(reason)
+       when reason in [:missing_recipient_email, :invalid_recipient_email, :invalid_recipient],
+       do: "Enter one valid email address."
+
+  defp test_error({:missing_variables, _names}), do: "Fix the preview before sending a test."
+  defp test_error(_reason), do: "The mail could not be sent. Check the mailer logs and try again."
 
   defp load_email_ops(socket) do
     kind = socket.assigns.kind_filter
