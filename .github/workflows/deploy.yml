@@ -54,6 +54,10 @@ jobs:
       CLASSIC_API_URL: ${{ secrets.CLASSIC_API_URL }}
       CLASSIC_CLAIM_SECRET: ${{ secrets.CLASSIC_CLAIM_SECRET }}
       FB_APP_SECRET: ${{ secrets.FB_APP_SECRET }}
+      SMTP_RELAY: ${{ secrets.SMTP_RELAY }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
 
     steps:
       - name: Check deploy secrets
@@ -61,7 +65,8 @@ jobs:
         run: |
           missing=()
           for name in SSH_PRIVATE_KEY SSH_KNOWN_HOSTS KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE \
-            POSTGRES_PASSWORD CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET; do
+            POSTGRES_PASSWORD CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET \
+            SMTP_RELAY SMTP_PORT SMTP_USERNAME SMTP_PASSWORD; do
             test -n "${!name}" || missing+=("$name")
           done
 
@@ -97,7 +102,8 @@ jobs:
           echo "$SSH_PRIVATE_KEY" | ssh-add -
           # Kamal expands each $NAME from this job's environment; no value touches disk.
           for name in KAMAL_REGISTRY_PASSWORD SECRET_KEY_BASE POSTGRES_PASSWORD \
-            CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET; do
+            CLASSIC_API_URL CLASSIC_CLAIM_SECRET FB_APP_SECRET \
+            SMTP_RELAY SMTP_PORT SMTP_USERNAME SMTP_PASSWORD; do
             echo "$name=\$$name"
           done > .kamal/secrets-common
 
