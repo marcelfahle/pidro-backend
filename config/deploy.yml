@@ -61,6 +61,10 @@ env:
     - CLASSIC_API_URL
     - CLASSIC_CLAIM_SECRET
     - FB_APP_SECRET
+    - SMTP_RELAY
+    - SMTP_PORT
+    - SMTP_USERNAME
+    - SMTP_PASSWORD
 
 logging:
   driver: local
