@@ -64,6 +64,8 @@ defmodule PidroServerWeb.API.ClassicSignInCodeControllerTest do
     code = mail_code(email)
     assert email.text_body =~ "It works for 15 minutes"
     assert email.text_body =~ "If you did not ask for this, ignore this mail"
+    assert email.html_body =~ "Sent by Pidro"
+    assert email.html_body =~ code
 
     row = Repo.one!(ClassicSignInCodes)
     assert row.code_hash == :crypto.hash(:sha256, "177001" <> code)
@@ -110,6 +112,17 @@ defmodule PidroServerWeb.API.ClassicSignInCodeControllerTest do
              conn |> post(~p"/api/v1/classic/sign-in-code", @params) |> json_response(200)
 
     assert_receive {:email, _}
+  end
+
+  test "template building does not reject an address accepted by Classic", %{conn: conn} do
+    stub_profile(Map.put(@profile, "email", "player@localhost"))
+
+    assert %{"data" => %{"email_hint" => "pl•••••@localhost"}} =
+             conn |> post(~p"/api/v1/classic/sign-in-code", @params) |> json_response(200)
+
+    assert_receive {:email, email}
+    assert email.to == [{"", "player@localhost"}]
+    assert mail_code(email)
   end
 
   test "reports missing accounts and missing email honestly", %{conn: conn} do

@@ -33,6 +33,20 @@ defmodule PidroServerWeb.API.ClassicHelpControllerTest do
       assert email.text_body =~ "Email: old@example.com"
       assert email.text_body =~ "Details: Played in 2012"
       refute email.text_body =~ "Signed in"
+      assert email.html_body =~ "Sent by Pidro"
+    end)
+  end
+
+  test "missing template still mails support as plain text with the player's reply-to", %{
+    conn: conn
+  } do
+    PidroServer.Emails.get_transactional_template(:classic_help) |> PidroServer.Repo.delete!()
+    assert response(post(conn, ~p"/api/v1/classic/help", @valid), 204) == ""
+
+    assert_email_sent(fn email ->
+      assert email.to == [{"", "support@pidro.net"}]
+      assert email.reply_to == {"", "old@example.com"}
+      assert email.text_body =~ "Details: Played in 2012"
       assert email.html_body == nil
     end)
   end

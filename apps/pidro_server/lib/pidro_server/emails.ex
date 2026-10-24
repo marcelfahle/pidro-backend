@@ -6,12 +6,14 @@ defmodule PidroServer.Emails do
   import Ecto.Query
   import Swoosh.Email, except: [from: 2]
 
+  require Logger
+
   alias PidroServer.Accounts.User
   alias PidroServer.Emails.EmailTemplate
+  alias PidroServer.Emails.Layout
   alias PidroServer.Mailer
   alias PidroServer.Repo
 
-  @ses_relay "email-smtp.eu-west-1.amazonaws.com"
   @placeholder_regex ~r/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/
   @contact_headers [
     "email",
@@ -31,7 +33,8 @@ defmodule PidroServer.Emails do
       variables: [
         %{key: "{{username}}", label: "Username"},
         %{key: "{{first_name}}", label: "First name"},
-        %{key: "{{last_played_at}}", label: "Last played"}
+        %{key: "{{last_played_at}}", label: "Last played"},
+        %{key: "{{code}}", label: "Sign-in code"}
       ]
     },
     %{
@@ -192,12 +195,100 @@ defmodule PidroServer.Emails do
        %{
          subject: render_placeholders(template.subject || "", variables, :text),
          preview_text: render_placeholders(template.preview_text || "", variables, :text),
-         html_body: html_body,
+         html_body:
+           if(template.kind == :transactional,
+             do:
+               Layout.wrap(
+                 html_body,
+                 Map.get(variables, "support_email", delivery_setup().reply_to)
+               ),
+             else: html_body
+           ),
          text_body: html_to_text(html_body)
        }}
     else
       {:error, {:missing_variables, missing_variables}}
     end
+  end
+
+  @doc "Builds a player mail from its template, falling back to the original mail on failure."
+  def transactional_email(key, recipient, variables) do
+    key = normalize_template_key(key)
+    delivery = delivery_setup()
+
+    email =
+      new()
+      |> to(recipient)
+      |> Swoosh.Email.from({"Pidro", delivery.from_address})
+      |> reply_to(delivery.reply_to)
+
+    case build_transactional_email(key, email, variables) do
+      {:ok, rendered_email} ->
+        rendered_email
+
+      {:error, reason} ->
+        Logger.warning("Transactional email #{key} using fallback: #{inspect(reason)}")
+        fallback_email(email, key, normalize_variables(variables))
+    end
+  end
+
+  defp build_transactional_email(key, email, variables) do
+    with %EmailTemplate{} = template <- get_transactional_template(key),
+         {:ok, rendered} <- render_template(template, variables) do
+      {:ok,
+       email
+       |> maybe_reply_to(template.reply_to)
+       |> subject(rendered.subject)
+       |> html_body(rendered.html_body)
+       |> text_body(rendered.text_body)}
+    else
+      nil -> {:error, :template_not_found}
+      {:error, {:missing_variables, _names}} -> {:error, :missing_variables}
+    end
+  rescue
+    exception -> {:error, exception.__struct__}
+  end
+
+  defp fallback_email(email, "password_reset", %{"reset_url" => reset_url}) do
+    escaped_url = reset_url |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
+
+    email
+    |> subject("Reset your Pidro password")
+    |> text_body("""
+    Reset your Pidro password:
+
+    #{reset_url}
+
+    This link expires in 1 hour.
+    """)
+    |> html_body("""
+    <p>Reset your Pidro password:</p>
+    <p><a href="#{escaped_url}">Choose a new password</a></p>
+    <p>This link expires in 1 hour.</p>
+    """)
+  end
+
+  defp fallback_email(email, "classic_sign_in_code", %{"code" => code}) do
+    email
+    |> subject("Your Pidro sign-in code")
+    |> text_body("""
+    #{code}
+
+    It works for 15 minutes
+
+    If you did not ask for this, ignore this mail
+    """)
+  end
+
+  defp fallback_email(email, "classic_help", variables) do
+    email
+    |> subject("Help finding a Classic account: #{variables["name"]}")
+    |> text_body("""
+    Name: #{variables["name"]}
+    Email: #{variables["email"]}
+    Details: #{variables["details"]}
+    #{variables["user_line"]}
+    """)
   end
 
   def deliver_transactional(key, recipient, variables \\ %{}) do
@@ -242,7 +333,7 @@ defmodule PidroServer.Emails do
 
     %{
       mailer_adapter: inspect(Keyword.get(mailer_config, :adapter, Swoosh.Adapters.Local)),
-      relay: System.get_env("SES_SMTP_RELAY") || @ses_relay,
+      relay: Keyword.get(mailer_config, :relay),
       from_address: System.get_env("MAIL_FROM_ADDRESS") || "noreply@pidro.online",
       reply_to: System.get_env("MAIL_REPLY_TO") || "support@pidro.net"
     }

@@ -9,6 +9,140 @@ defmodule PidroServer.EmailMigrationTest do
 
   setup :set_swoosh_global
 
+  setup do
+    Repo.delete_all(PidroServer.Emails.EmailTemplate)
+    :ok
+  end
+
+  test "transactional layout wraps once without double escaping; text has no chrome" do
+    {:ok, template} = Emails.create_template(:transactional)
+    {:ok, rendered} = Emails.render_template(template, %{username: "<Aino & O'Neil>"})
+
+    assert rendered.html_body =~ "<!DOCTYPE html>"
+    assert rendered.html_body =~ "<p>Hi &lt;Aino &amp; O&#39;Neil&gt;,</p>"
+    refute rendered.html_body =~ "&amp;lt;"
+    assert rendered.html_body =~ "Sent by Pidro"
+    assert rendered.html_body =~ "color-scheme"
+    assert rendered.text_body == "Hi <Aino & O'Neil>,\n\nWrite the email body here."
+
+    {:ok, campaign} = Emails.render_template(%{template | kind: :campaign}, %{username: "Aino"})
+    assert campaign.html_body == "<p>Hi Aino,</p>\n<p>Write the email body here.</p>\n"
+  end
+
+  for {key, variables, expected} <- [
+        {:password_reset,
+         %{
+           username: "Aino",
+           reset_url: "https://play.pidro.online/reset-password?token=abc&from=mail"
+         }, "This link expires in 1 hour."},
+        {:classic_sign_in_code, %{code: "012345"}, "012345\n\nIt works for 15 minutes"},
+        {:classic_help, %{name: "Aino", email: "aino@example.com", details: nil, user_line: ""},
+         "Name: Aino\n\nEmail: aino@example.com\n\nDetails:"}
+      ] do
+    test "seeded #{key} renders with exactly its call-site variables and survives admin failures" do
+      seed_templates()
+      key = unquote(key)
+      variables = unquote(Macro.escape(variables))
+      template = Emails.get_transactional_template(key)
+      assert {:ok, rendered} = Emails.render_template(template, variables)
+      assert rendered.text_body =~ unquote(expected)
+      refute rendered.text_body =~ "Sent by Pidro"
+      refute rendered.html_body =~ "{{"
+
+      email = Emails.transactional_email(key, "aino@example.com", variables)
+      assert email.html_body == rendered.html_body
+      assert email.text_body == rendered.text_body
+
+      {:ok, template} = Emails.update_template(template, %{subject: "Changed {{typo}}"})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          fallback = Emails.transactional_email(key, "aino@example.com", variables)
+          refute fallback.subject =~ "Changed"
+          refute fallback.html_body && fallback.html_body =~ "Sent by Pidro"
+          send(self(), {:fallback, fallback})
+        end)
+
+      assert log =~ "using fallback: :missing_variables"
+      refute log =~ "aino@example.com"
+      assert_receive {:fallback, fallback}
+
+      Emails.delete_template(template)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert Emails.transactional_email(key, "aino@example.com", variables) == fallback
+        end)
+
+      assert log =~ ":template_not_found"
+    end
+  end
+
+  test "seed reruns preserve an admin's content and reply-to" do
+    seed_templates()
+    template = Emails.get_transactional_template(:classic_sign_in_code)
+
+    {:ok, edited} =
+      Emails.update_template(template, %{
+        subject: "Your code: {{code}}",
+        html_body: "<p>Code {{code}}</p>",
+        reply_to: "admin@example.com"
+      })
+
+    seed_templates()
+    assert Emails.get_template!(template.id) == edited
+    assert Emails.template_summary() == %{total: 3, transactional: 3, campaigns: 0}
+
+    email =
+      Emails.transactional_email(:classic_sign_in_code, "aino@example.com", %{code: "012345"})
+
+    assert email.subject == "Your code: 012345"
+    assert email.text_body == "Code 012345"
+    assert email.reply_to == {"", "admin@example.com"}
+  end
+
+  test "lookup exceptions fall back without exposing mail contents" do
+    Repo.query!("ALTER TABLE email_templates RENAME TO unavailable_email_templates")
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        email =
+          Emails.transactional_email(:classic_sign_in_code, "aino@example.com", %{code: "012345"})
+
+        assert email.text_body ==
+                 "012345\n\nIt works for 15 minutes\n\nIf you did not ask for this, ignore this mail\n"
+
+        assert email.html_body == nil
+      end)
+
+    assert log =~ "using fallback: Postgrex.Error"
+    refute log =~ "012345"
+    refute log =~ "aino@example.com"
+  end
+
+  test "configured sender and default reply-to do not come from template sender fields" do
+    seed_templates()
+    original = Map.new(["MAIL_FROM_ADDRESS", "MAIL_REPLY_TO"], &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      for {key, value} <- original do
+        if value, do: System.put_env(key, value), else: System.delete_env(key)
+      end
+    end)
+
+    System.put_env("MAIL_FROM_ADDRESS", "mail@example.com")
+    System.put_env("MAIL_REPLY_TO", "help@example.com")
+    template = Emails.get_transactional_template(:classic_sign_in_code)
+    Emails.update_template(template, %{from_email: "other@example.com", from_name: "Other"})
+
+    email =
+      Emails.transactional_email(:classic_sign_in_code, "aino@example.com", %{code: "012345"})
+
+    assert email.from == {"Pidro", "mail@example.com"}
+    assert email.reply_to == {"", "help@example.com"}
+    assert email.html_body =~ "mailto:help@example.com"
+  end
+
   test "subscriber_summary counts exportable contacts" do
     AccountsFixtures.user_fixture(%{username: "mail_registered", email: "registered@example.com"})
 
@@ -137,5 +271,12 @@ defmodule PidroServer.EmailMigrationTest do
              Emails.deliver_transactional("account_deletion", "pilot@example.com", %{
                username: "Pilot"
              })
+  end
+
+  defp seed_templates do
+    :pidro_server
+    |> Application.app_dir("priv/repo/transactional_email_templates.sql")
+    |> File.read!()
+    |> Repo.query!()
   end
 end

@@ -2,7 +2,7 @@ defmodule PidroServer.Accounts.ClassicHelp do
   @moduledoc """
   Forwards a "help me find my Classic account" request to support by email.
 
-  Nothing is stored or logged: the message goes out as a plain text mail with
+  Nothing is stored or logged: the message goes out as a mail with
   the player's address as reply-to.
   """
 
@@ -10,6 +10,7 @@ defmodule PidroServer.Accounts.ClassicHelp do
   import Swoosh.Email
 
   alias PidroServer.Accounts.User
+  alias PidroServer.Emails
   alias PidroServer.Mailer
 
   @types %{name: :string, email: :string, details: :string}
@@ -40,17 +41,12 @@ defmodule PidroServer.Accounts.ClassicHelp do
   end
 
   defp build_email(help, user) do
-    new()
-    |> to(System.get_env("MAIL_SUPPORT_ADDRESS") || "support@pidro.net")
-    |> from({"Pidro", System.get_env("MAIL_FROM_ADDRESS") || "noreply@pidro.online"})
+    Emails.transactional_email(
+      :classic_help,
+      System.get_env("MAIL_SUPPORT_ADDRESS") || "support@pidro.net",
+      %{name: help.name, email: help.email, details: help[:details], user_line: user_line(user)}
+    )
     |> reply_to(help.email)
-    |> subject("Help finding a Classic account: #{help.name}")
-    |> text_body("""
-    Name: #{help.name}
-    Email: #{help.email}
-    Details: #{help[:details]}
-    #{user_line(user)}
-    """)
   end
 
   defp user_line(%{id: id}), do: "Signed in as player: #{id}"

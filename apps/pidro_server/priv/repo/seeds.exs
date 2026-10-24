@@ -9,3 +9,8 @@
 #
 # We recommend using the bang functions (`insert!`, `update!`
 # and so on) as they will fail if something goes wrong.
+
+__DIR__
+|> Path.join("transactional_email_templates.sql")
+|> File.read!()
+|> PidroServer.Repo.query!()

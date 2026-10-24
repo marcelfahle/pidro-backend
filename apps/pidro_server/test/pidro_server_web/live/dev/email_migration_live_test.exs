@@ -8,6 +8,11 @@ defmodule PidroServerWeb.Dev.EmailMigrationLiveTest do
 
   setup :register_and_log_in_admin
 
+  setup do
+    PidroServer.Repo.delete_all(PidroServer.Emails.EmailTemplate)
+    :ok
+  end
+
   test "renders the email studio editor", %{conn: conn} do
     AccountsFixtures.user_fixture(%{username: "mail_ui_player", email: "mail-ui@example.com"})
     {:ok, template} = Emails.create_template(:transactional)

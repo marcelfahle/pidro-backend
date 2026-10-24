@@ -4,9 +4,9 @@ defmodule PidroServer.Accounts.ClassicSignInCodes do
   use Ecto.Schema
   import Ecto.Changeset
   import Ecto.Query
-  import Swoosh.Email, except: [from: 2]
 
   alias PidroServer.Accounts.{ClassicClient, ClassicVerification, User}
+  alias PidroServer.Emails
   alias PidroServer.Repo
 
   @primary_key {:id, :binary_id, autogenerate: true}
@@ -177,17 +177,7 @@ defmodule PidroServer.Accounts.ClassicSignInCodes do
   defp email_hint(_email), do: {:error, :classic_email_missing}
 
   defp build_email(email, code) do
-    new()
-    |> to(email)
-    |> Swoosh.Email.from({"Pidro", System.get_env("MAIL_FROM_ADDRESS") || "noreply@pidro.online"})
-    |> subject("Your Pidro sign-in code")
-    |> text_body("""
-    #{code}
-
-    It works for 15 minutes
-
-    If you did not ask for this, ignore this mail
-    """)
+    Emails.transactional_email(:classic_sign_in_code, email, %{code: code})
   end
 
   defp fetch(params, key), do: Map.get(params, key, Map.get(params, Atom.to_string(key)))

@@ -30,10 +30,10 @@ defmodule PidroServerWeb.API.AuthController do
 
   use PidroServerWeb, :controller
   use OpenApiSpex.ControllerSpecs
-  import Swoosh.Email
   require Logger
 
   alias PidroServer.Accounts.{AgeTerms, Auth, FacebookCredential, ProviderAuth, Token, User}
+  alias PidroServer.Emails
   alias PidroServer.Games.Room.Seat
   alias PidroServer.Games.RoomManager
   alias PidroServer.Games.RoomManager.Room
@@ -507,11 +507,14 @@ defmodule PidroServerWeb.API.AuthController do
   def request_password_reset(conn, %{"identifier" => identifier}) do
     with {:ok, reset} <- Auth.request_password_reset(identifier) do
       maybe_log_debug_password_reset(reset)
-      maybe_deliver_password_reset(reset)
 
+      conn =
+        conn
+        |> put_status(:ok)
+        |> json(%{data: password_reset_request_response(reset)})
+
+      maybe_deliver_password_reset(reset)
       conn
-      |> put_status(:ok)
-      |> json(%{data: password_reset_request_response(reset)})
     end
   end
 
@@ -822,31 +825,15 @@ defmodule PidroServerWeb.API.AuthController do
 
   defp maybe_deliver_password_reset(%{user: %{email: email} = user, token: token})
        when is_binary(email) and email != "" do
-    reset_url = password_reset_url(token)
-
-    email =
-      new()
-      |> to({user.username || email, email})
-      |> from({"Pidro", System.get_env("MAIL_FROM_ADDRESS") || "noreply@pidro.online"})
-      |> subject("Reset your Pidro password")
-      |> text_body("""
-      Reset your Pidro password:
-
-      #{reset_url}
-
-      This link expires in 1 hour.
-      """)
-      |> html_body("""
-      <p>Reset your Pidro password:</p>
-      <p><a href="#{reset_url}">Choose a new password</a></p>
-      <p>This link expires in 1 hour.</p>
-      """)
-
     # Sent after the answer: neither its time nor its outcome may tell a known
     # address from an unknown one. `deliver_logged/2` catches every failure, so
     # the task never crashes with the mail in its exit reason.
     Task.Supervisor.start_child(PidroServer.TaskSupervisor, fn ->
-      Mailer.deliver_logged(email, "Password reset")
+      Emails.transactional_email(:password_reset, {user.username || email, email}, %{
+        username: user.username,
+        reset_url: password_reset_url(token)
+      })
+      |> Mailer.deliver_logged("Password reset")
     end)
 
     :ok

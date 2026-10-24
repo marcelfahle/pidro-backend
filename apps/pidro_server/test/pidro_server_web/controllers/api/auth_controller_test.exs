@@ -1333,6 +1333,8 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert_receive {:email, %{to: [{"mfahle", "mfahle@example.com"}]} = email}
       assert email.text_body =~ reset_url
+      assert email.html_body =~ "Sent by Pidro"
+      assert email.html_body =~ "Choose a new password"
     end
 
     test "request answers before the mail is delivered, and the mail follows", %{conn: conn} do
@@ -1351,6 +1353,49 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert_receive {:email, email}
       assert email.text_body =~ URI.encode_www_form(token)
+    end
+
+    test "a blocked template read cannot delay the reset response", %{conn: conn} do
+      user = AccountsFixtures.user_fixture(%{email: "template-wait@example.com"})
+      handler = "reset-template-wait-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler,
+        [:pidro_server, :repo, :query],
+        fn _, _, metadata, _ ->
+          if metadata[:source] == "email_templates" do
+            send(test_pid, {:template_waiting, self()})
+
+            receive do
+              :continue_template -> :ok
+            after
+              5_000 -> :ok
+            end
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      request =
+        Task.async(fn ->
+          post(conn, ~p"/api/v1/auth/password-reset", %{"identifier" => user.username})
+        end)
+
+      assert_receive {:template_waiting, sender}, 1_000
+
+      try do
+        assert {:ok, response} = Task.yield(request, 500)
+        assert json_response(response, 200)["data"]["message"] =~ "If an account exists"
+        refute_received {:email, _}
+      after
+        send(sender, :continue_template)
+      end
+
+      assert_receive {:email, email}, 1_000
+      assert email.html_body =~ "Choose a new password"
     end
 
     test "request does not reveal missing users", %{conn: conn} do
