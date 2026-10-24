@@ -63,8 +63,11 @@ defmodule PidroServerWeb.API.ClassicSignInCodeControllerTest do
     assert email.subject == "Your Pidro sign-in code"
     code = mail_code(email)
     assert email.text_body =~ "It works for 15 minutes"
-    assert email.text_body =~ "If you did not ask for this, ignore this mail"
-    assert email.html_body =~ "Sent by Pidro"
+
+    assert email.text_body =~
+             "Didn't ask for a code? Then ignore this mail. Nobody can get in without it."
+
+    assert email.html_body =~ "Pidro, the card game from Ostrobothnia"
     assert email.html_body =~ code
 
     row = Repo.one!(ClassicSignInCodes)

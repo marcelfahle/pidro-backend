@@ -33,7 +33,7 @@ defmodule PidroServerWeb.API.ClassicHelpControllerTest do
       assert email.text_body =~ "Email: old@example.com"
       assert email.text_body =~ "Details: Played in 2012"
       refute email.text_body =~ "Signed in"
-      assert email.html_body =~ "Sent by Pidro"
+      assert email.html_body =~ "Pidro, the card game from Ostrobothnia"
     end)
   end
 

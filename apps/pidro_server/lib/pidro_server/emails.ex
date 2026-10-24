@@ -200,18 +200,19 @@ defmodule PidroServer.Emails do
 
     if missing_variables == [] do
       html_body = render_placeholders(template.html_body || "", variables, :html)
+      preview_text = render_placeholders(template.preview_text || "", variables, :text)
 
       {:ok,
        %{
          subject: render_placeholders(template.subject || "", variables, :text),
-         preview_text: render_placeholders(template.preview_text || "", variables, :text),
+         preview_text: preview_text,
          html_body:
            if(template.kind == :transactional,
              do:
-               Layout.wrap(
-                 html_body,
-                 Map.get(variables, "support_email", delivery_setup().reply_to)
-               ),
+               Layout.wrap(html_body, %{
+                 support_email: Map.get(variables, "support_email", delivery_setup().reply_to),
+                 preview_text: preview_text
+               }),
              else: html_body
            ),
          text_body: html_to_text(html_body)

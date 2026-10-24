@@ -1333,8 +1333,21 @@ defmodule PidroServerWeb.API.AuthControllerTest do
 
       assert_receive {:email, %{to: [{"mfahle", "mfahle@example.com"}]} = email}
       assert email.text_body =~ reset_url
-      assert email.html_body =~ "Sent by Pidro"
+      assert email.html_body =~ "Pidro, the card game from Ostrobothnia"
       assert email.html_body =~ "Choose a new password"
+      assert email.text_body =~ "Hi mfahle, someone asked to reset"
+    end
+
+    test "a blank username gets a natural greeting", %{conn: conn} do
+      user = AccountsFixtures.user_fixture(%{email: "blank-name@example.com"})
+      from(u in User, where: u.id == ^user.id) |> Repo.update_all(set: [username: "   "])
+
+      assert post(conn, ~p"/api/v1/auth/password-reset", %{identifier: user.email})
+             |> json_response(200)
+
+      assert_receive {:email, email}
+      assert email.html_body =~ "Hi there, someone asked to reset"
+      assert email.text_body =~ "Hi there, someone asked to reset"
     end
 
     test "request answers before the mail is delivered, and the mail follows", %{conn: conn} do

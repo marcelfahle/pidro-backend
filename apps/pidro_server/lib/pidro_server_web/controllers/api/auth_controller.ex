@@ -830,7 +830,7 @@ defmodule PidroServerWeb.API.AuthController do
     # the task never crashes with the mail in its exit reason.
     Task.Supervisor.start_child(PidroServer.TaskSupervisor, fn ->
       Emails.transactional_email(:password_reset, {user.username || email, email}, %{
-        username: user.username,
+        username: if(String.trim(user.username || "") == "", do: "there", else: user.username),
         reset_url: password_reset_url(token)
       })
       |> Mailer.deliver_logged("Password reset")
