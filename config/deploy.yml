@@ -47,7 +47,7 @@ env:
     CORS_ORIGINS: "https://www.pidro.online,https://play.pidro.online,https://app.pidro.online"
     WEB_URL: "https://play.pidro.online"
     MAIL_FROM_ADDRESS: "noreply@pidro.online"
-    MAIL_REPLY_TO: "support@pidro.net"
+    MAIL_REPLY_TO: "support@pidro.online"
     # Phase 4 privacy disclosure is live and verified on the canonical site.
     DEFERRED_INVITES_ENABLED: "true"
     DB_HOST: postgres
