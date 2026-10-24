@@ -22,7 +22,7 @@ defmodule PidroServer.Emails.Layout do
       <style>
         @media (prefers-color-scheme: dark) {
           body, .bg { background-color: #140a03 !important; }
-          .card { background-color: #0b2f5c !important; color: #f6f1e7 !important; }
+          .card { background-color: #0b2f5c !important; border-color: #1d4a7a !important; color: #f6f1e7 !important; }
           .h1 { color: #ffffff !important; }
           .muted { color: #c9d6e6 !important; }
           .card a.link, .card a:not(.email-button) { color: #f1d078 !important; }
@@ -46,7 +46,7 @@ defmodule PidroServer.Emails.Layout do
             <tr><td align="center" style="padding:0 0 18px;">
               <img src="#{logo_url}" width="200" height="124" alt="Pidro" style="display:block;width:200px;height:auto;border:0;">
             </td></tr>
-            <tr><td class="card" style="padding:36px 36px 32px;background-color:#ffffff;border-radius:16px;border-top:5px solid #e1ad3a;color:#1c2a3a;font-size:18px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word;">
+            <tr><td class="card" style="padding:36px 36px 32px;background-color:#ffffff;border-radius:16px;border:1px solid #e6ddc9;color:#1c2a3a;font-size:18px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word;">
               #{inner_html}
             </td></tr>
             <tr><td class="footer" align="center" style="padding:26px 16px 0;color:#7a5a36;font-size:14px;line-height:1.7;">
